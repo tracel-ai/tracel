@@ -13,8 +13,6 @@ use burn::{
 fn main() {
     type MyBackend = Wgpu<AutoGraphicsApi, f32, i32>;
     type MyAutodiffBackend = Autodiff<MyBackend>;
-    
-    println!("{}", tracel::heat::test::test());
 
     let device = burn::backend::wgpu::WgpuDevice::default();
     let artifact_dir = "/tmp/guide";

@@ -16,7 +16,6 @@ use burn::{
     },
 };
 
-
 impl<B: Backend> Model<B> {
     pub fn forward_classification(
         &self,
