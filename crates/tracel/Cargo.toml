@@ -9,4 +9,4 @@ readme.workspace = true
 heat-sdk = ["dep:heat-sdk"]
 
 [dependencies]
-heat-sdk = { path = "../heat-sdk", version = "0.1.0", optional = true, default-features = false }
+heat-sdk = { path = "../heat-sdk", version = "0.1.0", optional = true }

@@ -1,0 +1,8 @@
+[package]
+name = "basic-workflow"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+
+[dependencies]
+tracel = { path = "../../crates/tracel", features = ["heat-sdk"] }
