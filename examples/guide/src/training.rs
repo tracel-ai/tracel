@@ -2,7 +2,7 @@ use crate::{
     data::{MnistBatch, MnistBatcher},
     model::{Model, ModelConfig},
 };
-use burn::record::HalfPrecisionSettings;
+use burn::{data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings};
 use burn::{
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
     nn::loss::CrossEntropyLossConfig,
@@ -82,13 +82,13 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(MnistDataset::train());
+        .build(SamplerDataset::new(MnistDataset::train(), 1000));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(MnistDataset::test());
+        .build(SamplerDataset::new(MnistDataset::test(), 200));
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
