@@ -90,12 +90,19 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .num_workers(config.num_workers)
         .build(SamplerDataset::new(MnistDataset::test(), 200));
 
+
+    let client_config = tracel::heat::client::HeatSDKConfig::new(
+        "http://localhost:8000".to_string(), 
+        "api_key".to_string());
+        
+    let client = tracel::heat::client::HeatClient::create(client_config);
+
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
         .metric_valid_numeric(AccuracyMetric::new())
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
-        .with_file_checkpointer(tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new())
+        .with_file_checkpointer(tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client))
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
         .summary()
