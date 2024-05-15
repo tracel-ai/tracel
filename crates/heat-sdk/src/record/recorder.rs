@@ -8,16 +8,16 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::client;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct RemoteRecorder<S: PrecisionSettings> {
-    client: Option<Arc<client::HeatClient>>,
+    client: Arc<client::HeatClient>,
     _settings: PhantomData<S>,
 }
 
 impl<S: PrecisionSettings> RemoteRecorder<S> {
     pub fn new(client: Arc<client::HeatClient>) -> Self {
         Self {
-            client: Some(client),
+            client,
             _settings: PhantomData,
         }
     }
@@ -26,6 +26,12 @@ impl<S: PrecisionSettings> RemoteRecorder<S> {
 impl<B: Backend, S: PrecisionSettings> burn::record::FileRecorder<B> for RemoteRecorder<S> {
     fn file_extension() -> &'static str {
         "mpk"
+    }
+}
+
+impl<S: PrecisionSettings> Default for RemoteRecorder<S> {
+    fn default() -> Self {
+        unimplemented!("Default is not implemented for RemoteRecorder, as it requires a client.")
     }
 }
 
@@ -50,7 +56,6 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
 
         self.client
             .as_ref()
-            .expect("Client must be initialized.")
             .save_checkpoint_data(&path, serialized_bytes.clone())
             .map_err(|err| RecorderError::Unknown(err.to_string()))?;
 
@@ -66,7 +71,6 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
         let data = self
             .client
             .as_ref()
-            .expect("Client must be initialized.")
             .load_checkpoint_data(&path)
             .map_err(|err| RecorderError::Unknown(err.to_string()))?;
 
