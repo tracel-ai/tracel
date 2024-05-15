@@ -1,21 +1,11 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, path::PathBuf, sync::Arc};
 
-use burn::record::RecorderError;
+use burn::{
+    record::{PrecisionSettings, RecorderError},
+    tensor::backend::Backend,
+};
+use serde::{de::DeserializeOwned, Serialize};
 
-use burn::{record::PrecisionSettings, tensor::backend::Backend};
-use derive_new::new;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::PathBuf;
-
-use rmp_serde;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
-use reqwest; // uwu
-
-use std::collections::HashMap;
-
-use std::sync::Arc;
 use crate::client;
 
 #[derive(Debug, Default, Clone)]
@@ -48,17 +38,23 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
     fn save_item<I: Serialize>(
         &self,
         item: I,
-        file: Self::RecordArgs,
+        mut file: Self::RecordArgs,
     ) -> Result<Self::RecordOutput, RecorderError> {
-
-        let path = file.to_str().unwrap().to_string();
+        file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
+        let path = file
+            .to_str()
+            .expect("file should be a valid string.")
+            .to_string();
         let serialized_bytes =
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
-        self.client.as_ref()
-            .expect("Client not initialized")
-            .save_checkpoint_data(&path, serialized_bytes)
-            .map_err(|err| RecorderError::Unknown(err.to_string()))
+        self.client
+            .as_ref()
+            .expect("Client must be initialized.")
+            .save_checkpoint_data(&path, serialized_bytes.clone())
+            .map_err(|err| RecorderError::Unknown(err.to_string()))?;
+
+        Ok(())
     }
 
     fn load_item<I: DeserializeOwned>(&self, mut file: Self::LoadArgs) -> Result<I, RecorderError> {
