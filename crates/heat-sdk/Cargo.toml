@@ -1,0 +1,9 @@
+[package]
+name = "heat-sdk"
+repository = "https://github.com/tracel-ai/tracel/tree/main/crates/heat-sdk"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+
+[dependencies]
+burn = { version = "0.13.2" }
