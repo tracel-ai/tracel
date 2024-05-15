@@ -58,6 +58,19 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
     }
 
     fn load_item<I: DeserializeOwned>(&self, mut file: Self::LoadArgs) -> Result<I, RecorderError> {
-        unimplemented!("RemoteRecorder does not yet support loading")
+        file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
+        let path = file
+            .to_str()
+            .expect("file should be a valid string.")
+            .to_string();
+        let data = self
+            .client
+            .as_ref()
+            .expect("Client must be initialized.")
+            .load_checkpoint_data(&path)
+            .map_err(|err| RecorderError::Unknown(err.to_string()))?;
+
+        let item = rmp_serde::decode::from_slice(&data).expect("Should be able to deserialize.");
+        Ok(item)
     }
 }
