@@ -13,4 +13,5 @@ rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
-reqwest = { version = "0.12.4", features = ["blocking", "json"] }
+reqwest = { workspace = true, features = ["blocking", "json"] }
+thiserror = { workspace = true }

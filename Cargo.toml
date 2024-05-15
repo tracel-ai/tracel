@@ -31,5 +31,8 @@ serde = { version = "1.0.200", default-features = false, features = [
 ] } # alloc is for no_std, derive is needed
 serde_json = "1.0.64"
 
+thiserror = "1.0.30"
+reqwest = "0.12.4"
+
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
