@@ -95,8 +95,8 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .with_num_retries(10)
         .build();
 
-    let client =
-        tracel::heat::client::HeatClient::create(client_config).expect("Client should be created.");
+    let client = tracel::heat::client::HeatClient::create(client_config)
+        .expect("Failed to connect to Heat API");
     let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
 
     let learner = LearnerBuilder::new(artifact_dir)

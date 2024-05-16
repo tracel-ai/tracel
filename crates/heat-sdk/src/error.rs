@@ -8,6 +8,8 @@ pub enum HeatSDKError {
     ServerError(String),
     #[error("Client Error: {0}")]
     ClientError(String),
+    #[error("Websocket Error: {0}")]
+    WebSocketError(String),
     #[error("Unknown Error: {0}")]
     UnknownError(String),
 }
@@ -15,5 +17,11 @@ pub enum HeatSDKError {
 impl From<reqwest::Error> for HeatSDKError {
     fn from(error: reqwest::Error) -> Self {
         HeatSDKError::ServerError(error.to_string())
+    }
+}
+
+impl<T> From<std::sync::PoisonError<std::sync::MutexGuard<'_, T>>> for HeatSDKError {
+    fn from(error: std::sync::PoisonError<std::sync::MutexGuard<'_, T>>) -> Self {
+        HeatSDKError::ClientError(error.to_string())
     }
 }

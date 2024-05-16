@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, path::PathBuf, sync::Arc};
+use std::{marker::PhantomData, path::PathBuf};
 
 use burn::{
     record::{PrecisionSettings, RecorderError},
@@ -6,16 +6,16 @@ use burn::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::client;
+use crate::client::HeatClientState;
 
 #[derive(Debug, Clone)]
 pub struct RemoteRecorder<S: PrecisionSettings> {
-    client: Arc<client::HeatClient>,
+    client: HeatClientState,
     _settings: PhantomData<S>,
 }
 
 impl<S: PrecisionSettings> RemoteRecorder<S> {
-    pub fn new(client: Arc<client::HeatClient>) -> Self {
+    pub fn new(client: HeatClientState) -> Self {
         Self {
             client,
             _settings: PhantomData,
@@ -56,6 +56,8 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
 
         self.client
             .as_ref()
+            .lock()
+            .map_err(|err| RecorderError::Unknown(err.to_string()))?
             .save_checkpoint_data(&path, serialized_bytes.clone())
             .map_err(|err| RecorderError::Unknown(err.to_string()))?;
 
@@ -71,6 +73,8 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
         let data = self
             .client
             .as_ref()
+            .lock()
+            .map_err(|err| RecorderError::Unknown(err.to_string()))?
             .load_checkpoint_data(&path)
             .map_err(|err| RecorderError::Unknown(err.to_string()))?;
 

@@ -1,8 +1,12 @@
+use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
+use tungstenite::client;
 
 use crate::error::HeatSDKError;
+use crate::websocket::WebSocketClient;
+use crate::ws_messages::WsMessage;
 
 pub enum AccessMode {
     Read,
@@ -66,9 +70,10 @@ pub struct HeatClient {
     config: HeatClientConfig,
 
     http_client: reqwest::blocking::Client,
+    ws_client: WebSocketClient,
 }
 
-type HeatClientState = Arc<HeatClient>;
+pub type HeatClientState = Arc<Mutex<HeatClient>>;
 
 impl HeatClient {
     fn new(config: HeatClientConfig) -> HeatClient {
@@ -77,9 +82,12 @@ impl HeatClient {
             .build()
             .expect("Client should be created.");
 
+        let ws_client = WebSocketClient::new();
+
         HeatClient {
             config,
             http_client,
+            ws_client,
         }
     }
 
@@ -91,21 +99,32 @@ impl HeatClient {
     }
 
     pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSDKError> {
-        let client_state = Arc::new(HeatClient::new(config));
+        let client_state = Arc::new(Mutex::new(HeatClient::new(config)));
 
+        let client = client_state.lock()?;
         // Try to connect to the api, if it fails, return an error
-        for i in 0..=client_state.config.num_retries {
-            let res = client_state.health_check();
+        for i in 0..=client.config.num_retries {
+            let res = client.health_check();
 
             match res {
                 Ok(_) => break,
                 Err(e) => {
-                    if i == client_state.config.num_retries {
+                    if i == client.config.num_retries {
                         return Err(HeatSDKError::ServerTimeoutError(e.to_string()));
                     }
+                    println!("Failed to connect to the server. Retrying in 5 seconds...");
                 }
             }
         }
+
+        let mut client = client;
+
+        client
+            .ws_client
+            .connect("wss://localhost:9001/ws".to_string())
+            .expect("Should connect to websocket.");
+
+        drop(client);
 
         Ok(client_state)
     }
@@ -178,7 +197,10 @@ impl HeatClient {
         Ok(response.to_vec())
     }
 
-    pub fn log_experiment(&self, message: String) -> Result<(), HeatSDKError> {
-        todo!()
+    pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSDKError> {
+        self.ws_client
+            .send(WsMessage::Log(message))
+            .map_err(|e| HeatSDKError::WebSocketError(e.to_string()))?;
+        Ok(())
     }
 }

@@ -1,8 +1,6 @@
-use crate::client::HeatClient;
+use crate::client::HeatClientState;
 use burn::train::ApplicationLoggerInstaller;
 use tracing_subscriber::fmt::MakeWriter;
-
-use std::sync::Arc;
 
 use tracing_core::{Level, LevelFilter};
 use tracing_subscriber::filter::filter_fn;
@@ -10,21 +8,21 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{registry, Layer};
 
 pub struct RemoteExperimentLoggerInstaller {
-    client: Arc<HeatClient>,
+    client: HeatClientState,
 }
 
 impl RemoteExperimentLoggerInstaller {
-    pub fn new(client: Arc<HeatClient>) -> Self {
+    pub fn new(client: HeatClientState) -> Self {
         Self { client }
     }
 }
 
 struct RemoteWriter {
-    client: Arc<HeatClient>,
+    client: HeatClientState,
 }
 
 struct RemoteWriterMaker {
-    client: Arc<HeatClient>,
+    client: HeatClientState,
 }
 
 impl<'a> MakeWriter<'a> for RemoteWriterMaker {
@@ -40,7 +38,12 @@ impl<'a> MakeWriter<'a> for RemoteWriterMaker {
 impl std::io::Write for RemoteWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let message = String::from_utf8_lossy(buf).to_string();
-        self.client
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+
+        client
             .log_experiment(message)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
         Ok(buf.len())
