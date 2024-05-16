@@ -11,6 +11,14 @@ pub enum AccessMode {
 
 #[derive(Debug)]
 
+// enum Credentials {
+//     ApiKey(String),
+//     Login {
+//         username: String,
+//         password: String,
+//     },
+// }
+
 pub struct HeatClientConfig {
     pub endpoint: String,
     pub api_key: String, // not used yet, but will be used for authentication through the Heat backend API
@@ -169,4 +177,9 @@ impl HeatClient {
 
         Ok(response.to_vec())
     }
+
+    pub fn log_experiment(&self, message: String) -> Result<(), HeatSDKError> {
+        todo!()
+    }
+    
 }

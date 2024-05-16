@@ -97,7 +97,7 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
 
     let client =
         tracel::heat::client::HeatClient::create(client_config).expect("Client should be created.");
-    let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client);
+    let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
@@ -105,6 +105,7 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(recorder)
+        .with_application_logger(Some(Box::new(tracel::heat::log::RemoteExperimentLoggerInstaller::new(client))))
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
         .summary()

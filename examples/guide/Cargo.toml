@@ -7,7 +7,7 @@ version.workspace = true
 
 [dependencies]
 tracel = {path = "../../crates/tracel", features = ["heat-sdk"]}
-burn = { version = "0.13.2", features = ["vision", "wgpu", "train"]}
+burn = { workspace = true, features = ["vision", "wgpu", "train"]}
 
 # Serialization
 log = {workspace = true}
