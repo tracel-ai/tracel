@@ -181,5 +181,4 @@ impl HeatClient {
     pub fn log_experiment(&self, message: String) -> Result<(), HeatSDKError> {
         todo!()
     }
-    
 }

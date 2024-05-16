@@ -1,6 +1,6 @@
+use crate::client::HeatClient;
 use burn::train::ApplicationLoggerInstaller;
 use tracing_subscriber::fmt::MakeWriter;
-use crate::client::HeatClient;
 
 use std::sync::Arc;
 
@@ -8,7 +8,6 @@ use tracing_core::{Level, LevelFilter};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{registry, Layer};
-
 
 pub struct RemoteExperimentLoggerInstaller {
     client: Arc<HeatClient>,
@@ -54,7 +53,6 @@ impl std::io::Write for RemoteWriter {
 
 impl ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
     fn install(&self) -> Result<(), String> {
-
         let make_writer = RemoteWriterMaker {
             client: self.client.clone(),
         };
@@ -72,7 +70,7 @@ impl ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
                 }
                 true
             }));
-    
+
         if registry().with(layer).try_init().is_err() {
             return Err("Failed to install the file logger.".to_string());
         }
