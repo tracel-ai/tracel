@@ -2,7 +2,6 @@ use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
-use tungstenite::client;
 
 use crate::error::HeatSDKError;
 use crate::websocket::WebSocketClient;
@@ -13,8 +12,6 @@ pub enum AccessMode {
     Write,
 }
 
-#[derive(Debug)]
-
 // enum Credentials {
 //     ApiKey(String),
 //     Login {
@@ -23,6 +20,7 @@ pub enum AccessMode {
 //     },
 // }
 
+#[derive(Debug)]
 pub struct HeatClientConfig {
     pub endpoint: String,
     pub api_key: String, // not used yet, but will be used for authentication through the Heat backend API
@@ -110,9 +108,13 @@ impl HeatClient {
         });
 
         let url = format!("{}/wsid", self.get_endpoint());
-        let ws_endpoint = self.http_client.get(url)
+        let ws_endpoint = self
+            .http_client
+            .get(url)
             .json(&json)
-            .send()?.json::<WSURLResponse>()?.url;
+            .send()?
+            .json::<WSURLResponse>()?
+            .url;
         Ok(ws_endpoint)
     }
 
@@ -136,9 +138,7 @@ impl HeatClient {
 
         let ws_endpoint = client.request_ws()?;
         let mut client = client;
-        client
-            .ws_client
-            .connect(ws_endpoint)?;
+        client.ws_client.connect(ws_endpoint)?;
 
         drop(client);
 
@@ -214,9 +214,7 @@ impl HeatClient {
     }
 
     pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSDKError> {
-        self.ws_client
-            .send(WsMessage::Log(message))
-            .map_err(|e| HeatSDKError::WebSocketError(e.to_string()))?;
+        self.ws_client.send(WsMessage::Log(message))?;
         Ok(())
     }
 }
