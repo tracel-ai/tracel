@@ -6,4 +6,12 @@ version.workspace = true
 readme.workspace = true
 
 [dependencies]
-burn = { version = "0.13.2" }
+burn = { version = "0.13.2", features = ["train"] }
+
+derive-new = { workspace = true }
+rmp-serde = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+reqwest = { workspace = true, features = ["blocking", "json"] }
+thiserror = { workspace = true }
