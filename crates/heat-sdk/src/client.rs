@@ -98,6 +98,24 @@ impl HeatClient {
         Ok(())
     }
 
+    fn request_ws(&self) -> Result<String, HeatSDKError> {
+        #[derive(Deserialize)]
+        struct WSURLResponse {
+            url: String,
+        }
+
+        let json = serde_json::json!({
+            "username": "admin",
+            "password": "admin"
+        });
+
+        let url = format!("{}/wsid", self.get_endpoint());
+        let ws_endpoint = self.http_client.get(url)
+            .json(&json)
+            .send()?.json::<WSURLResponse>()?.url;
+        Ok(ws_endpoint)
+    }
+
     pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSDKError> {
         let client_state = Arc::new(Mutex::new(HeatClient::new(config)));
 
@@ -105,7 +123,6 @@ impl HeatClient {
         // Try to connect to the api, if it fails, return an error
         for i in 0..=client.config.num_retries {
             let res = client.health_check();
-
             match res {
                 Ok(_) => break,
                 Err(e) => {
@@ -117,12 +134,11 @@ impl HeatClient {
             }
         }
 
+        let ws_endpoint = client.request_ws()?;
         let mut client = client;
-
         client
             .ws_client
-            .connect("wss://localhost:9001/ws".to_string())
-            .expect("Should connect to websocket.");
+            .connect(ws_endpoint)?;
 
         drop(client);
 
