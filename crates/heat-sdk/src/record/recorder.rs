@@ -8,6 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::client;
 
+/// A recorder that saves and loads data from a remote server using the [HeatClient](client::HeatClient).
 #[derive(Debug, Clone)]
 pub struct RemoteRecorder<S: PrecisionSettings> {
     client: Arc<client::HeatClient>,
@@ -15,6 +16,7 @@ pub struct RemoteRecorder<S: PrecisionSettings> {
 }
 
 impl<S: PrecisionSettings> RemoteRecorder<S> {
+    /// Create a new RemoteRecorder with the given [HeatClient](client::HeatClient).
     pub fn new(client: Arc<client::HeatClient>) -> Self {
         Self {
             client,
