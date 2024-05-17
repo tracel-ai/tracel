@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum HeatSDKError {
+pub enum HeatSdkError {
     #[error("Server Timeout Error: {0}")]
     ServerTimeoutError(String),
     #[error("Server Error: {0}")]
@@ -12,8 +12,8 @@ pub enum HeatSDKError {
     UnknownError(String),
 }
 
-impl From<reqwest::Error> for HeatSDKError {
+impl From<reqwest::Error> for HeatSdkError {
     fn from(error: reqwest::Error) -> Self {
-        HeatSDKError::ServerError(error.to_string())
+        HeatSdkError::ServerError(error.to_string())
     }
 }

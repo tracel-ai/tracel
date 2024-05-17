@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
-use crate::error::HeatSDKError;
+use crate::error::HeatSdkError;
 
 pub enum AccessMode {
     Read,
@@ -93,7 +93,7 @@ impl HeatClient {
     }
 
     /// Create a new HeatClient with the given configuration.
-    pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSDKError> {
+    pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSdkError> {
         let client_state = Arc::new(HeatClient::new(config));
 
         // Try to connect to the api, if it fails, return an error
@@ -104,7 +104,7 @@ impl HeatClient {
                 Ok(_) => break,
                 Err(e) => {
                     if i == client_state.config.num_retries {
-                        return Err(HeatSDKError::ServerTimeoutError(e.to_string()));
+                        return Err(HeatSdkError::ServerTimeoutError(e.to_string()));
                     }
                 }
             }
@@ -171,7 +171,7 @@ impl HeatClient {
         &self,
         path: &str,
         checkpoint: Vec<u8>,
-    ) -> Result<(), HeatSDKError> {
+    ) -> Result<(), HeatSdkError> {
         let url = self.request_checkpoint_url(path, AccessMode::Write)?;
         self.upload_checkpoint(&url, checkpoint)?;
 
@@ -179,7 +179,7 @@ impl HeatClient {
     }
 
     /// Load checkpoint data from the Heat API
-    pub fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSDKError> {
+    pub fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSdkError> {
         let url = self.request_checkpoint_url(path, AccessMode::Read)?;
         let response = self.download_checkpoint(&url)?;
 
