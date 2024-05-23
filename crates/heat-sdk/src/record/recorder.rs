@@ -55,9 +55,6 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
         self.client
-            .as_ref()
-            .lock()
-            .map_err(|err| RecorderError::Unknown(err.to_string()))?
             .save_checkpoint_data(&path, serialized_bytes.clone())
             .map_err(|err| RecorderError::Unknown(err.to_string()))?;
 
@@ -72,9 +69,6 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
             .to_string();
         let data = self
             .client
-            .as_ref()
-            .lock()
-            .map_err(|err| RecorderError::Unknown(err.to_string()))?
             .load_checkpoint_data(&path)
             .map_err(|err| RecorderError::Unknown(err.to_string()))?;
 

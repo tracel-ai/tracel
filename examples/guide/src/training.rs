@@ -82,21 +82,24 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(SamplerDataset::new(MnistDataset::train(), 1000));
+        .build(SamplerDataset::new(MnistDataset::train(), 100));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(SamplerDataset::new(MnistDataset::test(), 200));
+        .build(SamplerDataset::new(MnistDataset::test(), 20));
 
     let client_config = tracel::heat::client::HeatClientConfig::builder("no_api_key")
         .with_endpoint("http://localhost:9001")
         .with_num_retries(10)
         .build();
 
-    let client = tracel::heat::client::HeatClient::create(client_config)
-        .expect("Failed to connect to Heat API");
+    let mut client = tracel::heat::client::HeatClient::create(client_config)
+        .expect("Should connect to the Heat server and create a client");
+
+    client.start_experiment().expect("Should start experiment");
+
     let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
 
     let learner = LearnerBuilder::new(artifact_dir)
@@ -106,7 +109,7 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(recorder)
         .with_application_logger(Some(Box::new(
-            tracel::heat::log::RemoteExperimentLoggerInstaller::new(client),
+            tracel::heat::log::RemoteExperimentLoggerInstaller::new(client.clone()),
         )))
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
@@ -122,4 +125,6 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
     model_trained
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
+
+    client.end_experiment().expect("Failed to end experiment");
 }

@@ -4,12 +4,17 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 
 use crate::error::HeatSDKError;
+use crate::experiment::Experiment;
 use crate::websocket::WebSocketClient;
-use crate::ws_messages::WsMessage;
 
-pub enum AccessMode {
+enum AccessMode {
     Read,
     Write,
+}
+
+#[derive(Deserialize)]
+struct URLResponse {
+    url: String,
 }
 
 // enum Credentials {
@@ -20,7 +25,7 @@ pub enum AccessMode {
 //     },
 // }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HeatClientConfig {
     pub endpoint: String,
     pub api_key: String, // not used yet, but will be used for authentication through the Heat backend API
@@ -63,15 +68,14 @@ impl HeatClientConfigBuilder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HeatClient {
     config: HeatClientConfig,
-
     http_client: reqwest::blocking::Client,
-    ws_client: WebSocketClient,
+    active_experiment: Option<Arc<Mutex<Experiment>>>,
 }
 
-pub type HeatClientState = Arc<Mutex<HeatClient>>;
+pub type HeatClientState = HeatClient;
 
 impl HeatClient {
     fn new(config: HeatClientConfig) -> HeatClient {
@@ -80,12 +84,10 @@ impl HeatClient {
             .build()
             .expect("Client should be created.");
 
-        let ws_client = WebSocketClient::new();
-
         HeatClient {
             config,
             http_client,
-            ws_client,
+            active_experiment: None,
         }
     }
 
@@ -96,22 +98,38 @@ impl HeatClient {
         Ok(())
     }
 
-    fn request_ws(&self) -> Result<String, HeatSDKError> {
+    fn create_and_start_experiment(&self) -> Result<String, HeatSDKError> {
+        #[derive(Deserialize)]
+        struct ExperimentResponse {
+            experiment_id: String,
+        }
+
+        let url = format!("{}/experiments", self.get_endpoint());
+        
+        // Create a new experiment
+        let exp_uuid = self
+            .http_client
+            .post(url)
+            .send()?
+            .json::<ExperimentResponse>()?
+            .experiment_id;
+
+        // Start the experiment
+        self.http_client.put(format!("{}/experiments/{}/start", self.get_endpoint(), exp_uuid)).send()?;
+
+        println!("Experiment UUID: {}", exp_uuid);
+        Ok(exp_uuid)
+    }
+
+    fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSDKError> {
         #[derive(Deserialize)]
         struct WSURLResponse {
             url: String,
         }
-
-        let json = serde_json::json!({
-            "username": "admin",
-            "password": "admin"
-        });
-
-        let url = format!("{}/wsid", self.get_endpoint());
+        let url = format!("{}/experiments/{}/ws", self.get_endpoint(), exp_uuid);
         let ws_endpoint = self
             .http_client
             .get(url)
-            .json(&json)
             .send()?
             .json::<WSURLResponse>()?
             .url;
@@ -119,9 +137,8 @@ impl HeatClient {
     }
 
     pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSDKError> {
-        let client_state = Arc::new(Mutex::new(HeatClient::new(config)));
+        let client = HeatClient::new(config);
 
-        let client = client_state.lock()?;
         // Try to connect to the api, if it fails, return an error
         for i in 0..=client.config.num_retries {
             let res = client.health_check();
@@ -131,30 +148,29 @@ impl HeatClient {
                     if i == client.config.num_retries {
                         return Err(HeatSDKError::ServerTimeoutError(e.to_string()));
                     }
-                    println!("Failed to connect to the server. Retrying in 5 seconds...");
+                    println!("Failed to connect to the server. Retrying...");
                 }
             }
         }
 
-        let ws_endpoint = client.request_ws()?;
-        let mut client = client;
-        client.ws_client.connect(ws_endpoint)?;
-
-        drop(client);
-
-        Ok(client_state)
+        Ok(client)
     }
 
-    pub fn get_endpoint(&self) -> String {
+    pub fn start_experiment(&mut self) -> Result<(), HeatSDKError> {
+        let exp_uuid = self.create_and_start_experiment()?;
+        let ws_endpoint = self.request_ws(exp_uuid.clone())?;
+
+        let mut ws_client = WebSocketClient::new();
+        ws_client.connect(ws_endpoint)?;
+
+        let experiment = Arc::new(Mutex::new(Experiment::new(exp_uuid, ws_client)));
+        self.active_experiment = Some(experiment);
+
+        Ok(())
+    }
+
+    fn get_endpoint(&self) -> String {
         self.config.endpoint.clone()
-    }
-
-    pub fn get_api_key(&self) -> String {
-        self.config.api_key.clone()
-    }
-
-    pub fn get_num_retries(&self) -> u8 {
-        self.config.num_retries
     }
 
     fn request_checkpoint_url(
@@ -166,11 +182,16 @@ impl HeatClient {
 
         let mut body = HashMap::new();
         body.insert("file_path", path.to_string());
-
-        #[derive(Deserialize)]
-        struct CheckpointURLResponse {
-            url: String,
-        }
+        body.insert(
+            "experiment_id",
+            self.active_experiment
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .id()
+                .clone(),
+        );
 
         let response = match access {
             AccessMode::Read => self.http_client.get(url),
@@ -178,7 +199,7 @@ impl HeatClient {
         }
         .json(&body)
         .send()?
-        .json::<CheckpointURLResponse>()?;
+        .json::<URLResponse>()?;
 
         Ok(response.url)
     }
@@ -201,8 +222,19 @@ impl HeatClient {
         checkpoint: Vec<u8>,
     ) -> Result<(), HeatSDKError> {
         let url = self.request_checkpoint_url(path, AccessMode::Write)?;
+
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         self.upload_checkpoint(&url, checkpoint)?;
 
+        let time_end = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        log::info!("Time to upload checkpoint: {}", time_end - time);
         Ok(())
     }
 
@@ -214,7 +246,41 @@ impl HeatClient {
     }
 
     pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSDKError> {
-        self.ws_client.send(WsMessage::Log(message))?;
+        self.active_experiment
+            .as_ref()
+            .unwrap()
+            .lock()?
+            .add_log(message)?;
+        Ok(())
+    }
+
+    pub fn end_experiment(&mut self) -> Result<(), HeatSDKError> {
+        let experiment = self.active_experiment.take().unwrap();
+        let experiment = experiment.lock()?;
+        let logs = experiment.logs().clone();
+
+        let logs_upload_url = self
+            .http_client
+            .post(format!(
+                "{}/experiments/{}/logs",
+                self.get_endpoint(),
+                experiment.id()
+            ))
+            .send()?
+            .json::<URLResponse>()?
+            .url;
+
+        let logs_string = logs.join("");
+
+        self.http_client
+            .put(logs_upload_url)
+            .body(logs_string)
+            .send()?;
+
+
+        // End the experiment
+        self.http_client.put(format!("{}/experiments/{}/end", self.get_endpoint(), experiment.id())).send()?;
+
         Ok(())
     }
 }

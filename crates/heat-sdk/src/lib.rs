@@ -3,6 +3,7 @@ pub mod error;
 pub mod log;
 pub mod record;
 
+mod experiment;
 mod websocket;
 mod ws_messages;
 

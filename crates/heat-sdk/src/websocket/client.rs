@@ -6,6 +6,20 @@ use super::WebSocketError;
 
 type Socket = WebSocket<MaybeTlsStream<std::net::TcpStream>>;
 
+pub enum SocketState {
+    Open,
+    Closed,
+}
+
+impl SocketState {
+    pub fn is_open(&self) -> bool {
+        match self {
+            SocketState::Open => true,
+            SocketState::Closed => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct WebSocketClient {
     state: Option<Socket>,
@@ -34,5 +48,23 @@ impl WebSocketClient {
         }
 
         Ok(())
+    }
+
+    pub fn close(&mut self) -> Result<(), WebSocketError> {
+        if let Some(socket) = &mut self.state {
+            socket
+                .close(None)
+                .map_err(|e| WebSocketError::SendError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn state(&self) -> SocketState {
+        if self.state.is_some() {
+            SocketState::Open
+        } else {
+            SocketState::Closed
+        }
     }
 }
