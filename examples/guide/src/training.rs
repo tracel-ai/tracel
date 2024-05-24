@@ -82,13 +82,13 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(SamplerDataset::new(MnistDataset::train(), 100));
+        .build(SamplerDataset::new(MnistDataset::train(), 1000));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(SamplerDataset::new(MnistDataset::test(), 20));
+        .build(SamplerDataset::new(MnistDataset::test(), 200));
 
     let client_config = tracel::heat::client::HeatClientConfig::builder("no_api_key")
         .with_endpoint("http://localhost:9001")
