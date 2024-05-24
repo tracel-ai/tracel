@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
-use crate::error::HeatSDKError;
+use crate::error::HeatSdkError;
 use crate::experiment::Experiment;
 use crate::websocket::WebSocketClient;
 
@@ -25,19 +25,25 @@ struct URLResponse {
 //     },
 // }
 
+/// Configuration for the HeatClient. Can be created using [HeatClientConfigBuilder], which is created using the [HeatClientConfig::builder] method.
 #[derive(Debug, Clone)]
 pub struct HeatClientConfig {
+    /// The endpoint of the Heat API
     pub endpoint: String,
+    /// The endpoint of the Heat API
     pub api_key: String, // not used yet, but will be used for authentication through the Heat backend API
+    /// The number of retries to attempt when connecting to the Heat API.
     pub num_retries: u8,
 }
 
 impl HeatClientConfig {
+    /// Create a new [HeatClientConfigBuilder] with the given API key.
     pub fn builder(api_key: impl Into<String>) -> HeatClientConfigBuilder {
         HeatClientConfigBuilder::new(api_key)
     }
 }
 
+/// Builder for the HeatClientConfig
 pub struct HeatClientConfigBuilder {
     config: HeatClientConfig,
 }
@@ -53,21 +59,25 @@ impl HeatClientConfigBuilder {
         }
     }
 
+    /// Set the endpoint of the Heat API
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> HeatClientConfigBuilder {
         self.config.endpoint = endpoint.into();
         self
     }
 
+    /// Set the number of retries to attempt when connecting to the Heat API
     pub fn with_num_retries(mut self, num_retries: u8) -> HeatClientConfigBuilder {
         self.config.num_retries = num_retries;
         self
     }
 
+    /// Build the HeatClientConfig
     pub fn build(self) -> HeatClientConfig {
         self.config
     }
 }
 
+/// The HeatClient is used to interact with the Heat API. It is required for all interactions with the Heat API.
 #[derive(Debug, Clone)]
 pub struct HeatClient {
     config: HeatClientConfig,
@@ -75,6 +85,7 @@ pub struct HeatClient {
     active_experiment: Option<Arc<Mutex<Experiment>>>,
 }
 
+/// Type alias for the HeatClient for simplicity
 pub type HeatClientState = HeatClient;
 
 impl HeatClient {
@@ -98,14 +109,14 @@ impl HeatClient {
         Ok(())
     }
 
-    fn create_and_start_experiment(&self) -> Result<String, HeatSDKError> {
+    fn create_and_start_experiment(&self) -> Result<String, HeatSdkError> {
         #[derive(Deserialize)]
         struct ExperimentResponse {
             experiment_id: String,
         }
 
         let url = format!("{}/experiments", self.get_endpoint());
-        
+
         // Create a new experiment
         let exp_uuid = self
             .http_client
@@ -115,13 +126,19 @@ impl HeatClient {
             .experiment_id;
 
         // Start the experiment
-        self.http_client.put(format!("{}/experiments/{}/start", self.get_endpoint(), exp_uuid)).send()?;
+        self.http_client
+            .put(format!(
+                "{}/experiments/{}/start",
+                self.get_endpoint(),
+                exp_uuid
+            ))
+            .send()?;
 
         println!("Experiment UUID: {}", exp_uuid);
         Ok(exp_uuid)
     }
 
-    fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSDKError> {
+    fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSdkError> {
         #[derive(Deserialize)]
         struct WSURLResponse {
             url: String,
@@ -136,7 +153,8 @@ impl HeatClient {
         Ok(ws_endpoint)
     }
 
-    pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSDKError> {
+    /// Create a new HeatClient with the given configuration.
+    pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSdkError> {
         let client = HeatClient::new(config);
 
         // Try to connect to the api, if it fails, return an error
@@ -146,7 +164,7 @@ impl HeatClient {
                 Ok(_) => break,
                 Err(e) => {
                     if i == client.config.num_retries {
-                        return Err(HeatSDKError::ServerTimeoutError(e.to_string()));
+                        return Err(HeatSdkError::ServerTimeoutError(e.to_string()));
                     }
                     println!("Failed to connect to the server. Retrying...");
                 }
@@ -156,7 +174,8 @@ impl HeatClient {
         Ok(client)
     }
 
-    pub fn start_experiment(&mut self) -> Result<(), HeatSDKError> {
+    /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
+    pub fn start_experiment(&mut self) -> Result<(), HeatSdkError> {
         let exp_uuid = self.create_and_start_experiment()?;
         let ws_endpoint = self.request_ws(exp_uuid.clone())?;
 
@@ -216,11 +235,12 @@ impl HeatClient {
         Ok(response.to_vec())
     }
 
+    /// Save checkpoint data to the Heat API.
     pub fn save_checkpoint_data(
         &self,
         path: &str,
         checkpoint: Vec<u8>,
-    ) -> Result<(), HeatSDKError> {
+    ) -> Result<(), HeatSdkError> {
         let url = self.request_checkpoint_url(path, AccessMode::Write)?;
 
         let time = std::time::SystemTime::now()
@@ -238,14 +258,16 @@ impl HeatClient {
         Ok(())
     }
 
-    pub fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSDKError> {
+    /// Load checkpoint data from the Heat API
+    pub fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSdkError> {
         let url = self.request_checkpoint_url(path, AccessMode::Read)?;
         let response = self.download_checkpoint(&url)?;
 
         Ok(response.to_vec())
     }
 
-    pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSDKError> {
+    /// Log a message to the active experiment.
+    pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSdkError> {
         self.active_experiment
             .as_ref()
             .unwrap()
@@ -254,7 +276,8 @@ impl HeatClient {
         Ok(())
     }
 
-    pub fn end_experiment(&mut self) -> Result<(), HeatSDKError> {
+    /// End the active experiment. This will close the WebSocket connection and upload the logs to the Heat backend.
+    pub fn end_experiment(&mut self) -> Result<(), HeatSdkError> {
         let experiment = self.active_experiment.take().unwrap();
         let experiment = experiment.lock()?;
         let logs = experiment.logs().clone();
@@ -277,9 +300,14 @@ impl HeatClient {
             .body(logs_string)
             .send()?;
 
-
         // End the experiment
-        self.http_client.put(format!("{}/experiments/{}/end", self.get_endpoint(), experiment.id())).send()?;
+        self.http_client
+            .put(format!(
+                "{}/experiments/{}/end",
+                self.get_endpoint(),
+                experiment.id()
+            ))
+            .send()?;
 
         Ok(())
     }

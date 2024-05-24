@@ -7,11 +7,13 @@ use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{registry, Layer};
 
+/// The installer for the remote experiment logger.
 pub struct RemoteExperimentLoggerInstaller {
     client: HeatClientState,
 }
 
 impl RemoteExperimentLoggerInstaller {
+    /// Creates a new instance of the remote experiment logger installer with the given [HeatClientState].
     pub fn new(client: HeatClientState) -> Self {
         Self { client }
     }
@@ -38,11 +40,6 @@ impl<'a> MakeWriter<'a> for RemoteWriterMaker {
 impl std::io::Write for RemoteWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let message = String::from_utf8_lossy(buf).to_string();
-        // let mut client = self
-        //     .client
-        //     .lock()
-        //     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
-
         self.client
             .log_experiment(message)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;

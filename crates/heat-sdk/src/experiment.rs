@@ -1,4 +1,4 @@
-use crate::{error::HeatSDKError, websocket::WebSocketClient, ws_messages::WsMessage};
+use crate::{error::HeatSdkError, websocket::WebSocketClient, ws_messages::WsMessage};
 
 #[derive(Debug)]
 pub struct Experiment {
@@ -17,7 +17,7 @@ impl Experiment {
         }
     }
 
-    pub fn add_log(&mut self, log: String) -> Result<(), HeatSDKError> {
+    pub fn add_log(&mut self, log: String) -> Result<(), HeatSdkError> {
         self.in_memory_logs.push(log.clone());
         self.ws_client.send(WsMessage::Log(log))?;
 
