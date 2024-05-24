@@ -1,5 +1,2 @@
 [alias]
 xtask = "run --manifest-path ./xtask/Cargo.toml --"
-
-[env]
-HEAT_ENDPOINT="http://127.0.0.1:9001"
