@@ -5,16 +5,12 @@ use serde::Deserialize;
 
 use crate::error::HeatSdkError;
 use crate::experiment::Experiment;
+use crate::http_schemas::URLSchema;
 use crate::websocket::WebSocketClient;
 
 enum AccessMode {
     Read,
     Write,
-}
-
-#[derive(Deserialize)]
-struct URLResponse {
-    url: String,
 }
 
 // enum Credentials {
@@ -139,16 +135,12 @@ impl HeatClient {
     }
 
     fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSdkError> {
-        #[derive(Deserialize)]
-        struct WSURLResponse {
-            url: String,
-        }
         let url = format!("{}/experiments/{}/ws", self.get_endpoint(), exp_uuid);
         let ws_endpoint = self
             .http_client
             .get(url)
             .send()?
-            .json::<WSURLResponse>()?
+            .json::<URLSchema>()?
             .url;
         Ok(ws_endpoint)
     }
@@ -218,7 +210,7 @@ impl HeatClient {
         }
         .json(&body)
         .send()?
-        .json::<URLResponse>()?;
+        .json::<URLSchema>()?;
 
         Ok(response.url)
     }
@@ -290,7 +282,7 @@ impl HeatClient {
                 experiment.id()
             ))
             .send()?
-            .json::<URLResponse>()?
+            .json::<URLSchema>()?
             .url;
 
         let logs_string = logs.join("");

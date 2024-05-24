@@ -6,5 +6,6 @@ pub mod record;
 mod experiment;
 mod websocket;
 mod ws_messages;
+mod http_schemas;
 
 pub use record::*;
