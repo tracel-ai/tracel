@@ -6,10 +6,12 @@ pub struct TempLogStore {
     http_client: reqwest::blocking::Client,
     endpoint: String,
     exp_id: String,
+    bytes: usize,
 }
 
 impl TempLogStore {
-    const LOG_LIMIT: usize = 1000;
+    // 100MB
+    const BYTE_LIMIT: usize = 100 * 1024 * 1024;
 
     pub fn new(http_client: reqwest::blocking::Client, endpoint: String, exp_id: String) -> TempLogStore {
         TempLogStore {
@@ -17,11 +19,12 @@ impl TempLogStore {
             http_client: http_client,
             endpoint: endpoint,
             exp_id: exp_id,
+            bytes: 0,
         }
     }
 
     pub fn push(&mut self, log: String) -> Result<(), HeatSdkError> {
-        if self.logs.len() >= Self::LOG_LIMIT {
+        if self.bytes + log.len() > Self::BYTE_LIMIT {
 
             let logs_upload_url = self
                 .http_client
@@ -37,7 +40,10 @@ impl TempLogStore {
             self.http_client.put(logs_upload_url).body(self.logs.join("")).send()?;
 
             self.logs.clear();
+            self.bytes = 0;
         }
+
+        self.bytes += log.len();
         self.logs.push(log);
 
         Ok(())
