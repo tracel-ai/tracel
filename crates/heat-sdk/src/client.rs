@@ -134,7 +134,7 @@ impl HeatClient {
         Ok(exp_uuid)
     }
 
-    fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSdkError> {
+    fn request_ws(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
         let url = format!("{}/experiments/{}/ws", self.config.endpoint.clone(), exp_uuid);
         let ws_endpoint = self
             .http_client
@@ -169,7 +169,7 @@ impl HeatClient {
     /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
     pub fn start_experiment(&mut self) -> Result<(), HeatSdkError> {
         let exp_uuid = self.create_and_start_experiment()?;
-        let ws_endpoint = self.request_ws(exp_uuid.clone())?;
+        let ws_endpoint = self.request_ws(exp_uuid.as_str())?;
 
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint)?;
