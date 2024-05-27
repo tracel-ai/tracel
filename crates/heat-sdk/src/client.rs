@@ -13,14 +13,6 @@ enum AccessMode {
     Write,
 }
 
-// enum Credentials {
-//     ApiKey(String),
-//     Login {
-//         username: String,
-//         password: String,
-//     },
-// }
-
 /// Configuration for the HeatClient. Can be created using [HeatClientConfigBuilder], which is created using the [HeatClientConfig::builder] method.
 #[derive(Debug, Clone)]
 pub struct HeatClientConfig {
