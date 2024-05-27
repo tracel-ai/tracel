@@ -99,7 +99,7 @@ impl HeatClient {
     }
 
     fn health_check(&self) -> Result<(), reqwest::Error> {
-        let url = format!("{}/health", self.get_endpoint());
+        let url = format!("{}/health", self.config.endpoint.clone());
         self.http_client.get(url).send()?;
 
         Ok(())
@@ -111,7 +111,7 @@ impl HeatClient {
             experiment_id: String,
         }
 
-        let url = format!("{}/experiments", self.get_endpoint());
+        let url = format!("{}/experiments", self.config.endpoint.clone());
 
         // Create a new experiment
         let exp_uuid = self
@@ -125,7 +125,7 @@ impl HeatClient {
         self.http_client
             .put(format!(
                 "{}/experiments/{}/start",
-                self.get_endpoint(),
+                self.config.endpoint.clone(),
                 exp_uuid
             ))
             .send()?;
@@ -135,7 +135,7 @@ impl HeatClient {
     }
 
     fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSdkError> {
-        let url = format!("{}/experiments/{}/ws", self.get_endpoint(), exp_uuid);
+        let url = format!("{}/experiments/{}/ws", self.config.endpoint.clone(), exp_uuid);
         let ws_endpoint = self
             .http_client
             .get(url)
@@ -180,16 +180,12 @@ impl HeatClient {
         Ok(())
     }
 
-    fn get_endpoint(&self) -> String {
-        self.config.endpoint.clone()
-    }
-
     fn request_checkpoint_url(
         &self,
         path: &str,
         access: AccessMode,
     ) -> Result<String, reqwest::Error> {
-        let url = format!("{}/checkpoints", self.get_endpoint());
+        let url = format!("{}/checkpoints", self.config.endpoint.clone());
 
         let mut body = HashMap::new();
         body.insert("file_path", path.to_string());
@@ -278,7 +274,7 @@ impl HeatClient {
             .http_client
             .post(format!(
                 "{}/experiments/{}/logs",
-                self.get_endpoint(),
+                self.config.endpoint.clone(),
                 experiment.id()
             ))
             .send()?
@@ -296,11 +292,19 @@ impl HeatClient {
         self.http_client
             .put(format!(
                 "{}/experiments/{}/end",
-                self.get_endpoint(),
+                self.config.endpoint.clone(),
                 experiment.id()
             ))
             .send()?;
 
         Ok(())
+    }
+}
+
+impl Drop for HeatClient {
+    fn drop(&mut self) {
+        if let Some(_) = self.active_experiment.as_ref() {
+            self.end_experiment().expect("Should be able to end experiment after dropping HeatClient.");
+        }
     }
 }
