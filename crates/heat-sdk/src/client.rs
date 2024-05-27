@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
@@ -180,6 +180,12 @@ impl HeatClient {
         Ok(())
     }
 
+    pub fn get_experiment_log_sender(&self) -> Result<mpsc::Sender<String>, HeatSdkError> {
+        let experiment = self.active_experiment.as_ref().unwrap();
+        let experiment = experiment.lock().unwrap();
+        Ok(experiment.get_log_sender()?)
+    }
+
     fn get_endpoint(&self) -> String {
         self.config.endpoint.clone()
     }
@@ -270,9 +276,13 @@ impl HeatClient {
 
     /// End the active experiment. This will close the WebSocket connection and upload the logs to the Heat backend.
     pub fn end_experiment(&mut self) -> Result<(), HeatSdkError> {
-        let experiment = self.active_experiment.take().unwrap();
-        let experiment = experiment.lock()?;
-        let logs = experiment.logs().clone();
+        let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
+        let mut experiment = experiment.lock()?;
+
+        // Stop the websocket handling thread
+        experiment.stop();
+
+        let logs = experiment.try_logs().expect("Logs should be available.");
 
         let logs_upload_url = self
             .http_client
