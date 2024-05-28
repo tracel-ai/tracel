@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 
 use crate::error::HeatSdkError;
-use crate::experiment::Experiment;
+use crate::experiment::{Experiment, WsMessage};
 use crate::http_schemas::URLSchema;
 use crate::websocket::WebSocketClient;
 
@@ -180,10 +180,10 @@ impl HeatClient {
         Ok(())
     }
 
-    pub fn get_experiment_log_sender(&self) -> Result<mpsc::Sender<String>, HeatSdkError> {
+    pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
         let experiment = self.active_experiment.as_ref().unwrap();
         let experiment = experiment.lock().unwrap();
-        Ok(experiment.get_log_sender()?)
+        Ok(experiment.get_ws_sender()?)
     }
 
     fn get_endpoint(&self) -> String {

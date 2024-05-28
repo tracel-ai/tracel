@@ -1,10 +1,22 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum Split {
+    Train,
+    Val,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum WsMessage {
-    Metric(String),
+    MetricLog {
+        name: String,
+        epoch: usize,
+        metric: f64,
+        split: Split
+    },
     Log(String),
     Error(String),
+    Close,
 }
 
 impl<S: Into<String> + Clone> From<S> for WsMessage {

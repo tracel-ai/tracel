@@ -1,6 +1,7 @@
 use std::sync::mpsc::{self, Sender};
 
 use crate::client::HeatClientState;
+use crate::experiment::WsMessage;
 use burn::train::ApplicationLoggerInstaller;
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -22,7 +23,7 @@ impl RemoteExperimentLoggerInstaller {
 }
 
 struct RemoteWriter {
-    sender: Option<Sender<String>>,
+    sender: Option<Sender<WsMessage>>,
 }
 
 struct RemoteWriterMaker {
@@ -33,7 +34,7 @@ impl<'a> MakeWriter<'a> for RemoteWriterMaker {
     type Writer = RemoteWriter;
 
     fn make_writer(&self) -> Self::Writer {
-        if let Ok(sender) = self.client.get_experiment_log_sender() {
+        if let Ok(sender) = self.client.get_experiment_sender() {
             RemoteWriter { sender: Some(sender) }
         } else {
             RemoteWriter { sender: None }
@@ -49,7 +50,7 @@ impl std::io::Write for RemoteWriter {
         //     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
         
         if let Some(sender) = &self.sender {
-            sender.send(message).unwrap();
+            sender.send(WsMessage::Log(message)).unwrap();
         }
         Ok(buf.len())
     }
