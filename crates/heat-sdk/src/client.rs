@@ -1,21 +1,25 @@
+use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
 use crate::error::HeatSdkError;
+use crate::experiment::{Experiment, TempLogStore};
+use crate::http_schemas::URLSchema;
+use crate::websocket::WebSocketClient;
 
-pub enum AccessMode {
+enum AccessMode {
     Read,
     Write,
 }
 
 /// Configuration for the HeatClient. Can be created using [HeatClientConfigBuilder], which is created using the [HeatClientConfig::builder] method.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HeatClientConfig {
     /// The endpoint of the Heat API
     pub endpoint: String,
-    /// The API key to authenticate with the Heat API.
-    pub api_key: String, // not used at the moment
+    /// The endpoint of the Heat API
+    pub api_key: String, // not used yet, but will be used for authentication through the Heat backend API
     /// The number of retries to attempt when connecting to the Heat API.
     pub num_retries: u8,
 }
@@ -62,15 +66,15 @@ impl HeatClientConfigBuilder {
 }
 
 /// The HeatClient is used to interact with the Heat API. It is required for all interactions with the Heat API.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HeatClient {
     config: HeatClientConfig,
-
     http_client: reqwest::blocking::Client,
+    active_experiment: Option<Arc<Mutex<Experiment>>>,
 }
 
-/// The HeatClientState is a shared state for the HeatClient. It is used to ensure that the client is thread-safe when used in Burn.
-type HeatClientState = Arc<HeatClient>;
+/// Type alias for the HeatClient for simplicity
+pub type HeatClientState = HeatClient;
 
 impl HeatClient {
     fn new(config: HeatClientConfig) -> HeatClient {
@@ -82,50 +86,92 @@ impl HeatClient {
         HeatClient {
             config,
             http_client,
+            active_experiment: None,
         }
     }
 
     fn health_check(&self) -> Result<(), reqwest::Error> {
-        let url = format!("{}/health", self.get_endpoint());
+        let url = format!("{}/health", self.config.endpoint.clone());
         self.http_client.get(url).send()?;
 
         Ok(())
     }
 
+    fn create_and_start_experiment(&self) -> Result<String, HeatSdkError> {
+        #[derive(Deserialize)]
+        struct ExperimentResponse {
+            experiment_id: String,
+        }
+
+        let url = format!("{}/experiments", self.config.endpoint.clone());
+
+        // Create a new experiment
+        let exp_uuid = self
+            .http_client
+            .post(url)
+            .send()?
+            .json::<ExperimentResponse>()?
+            .experiment_id;
+
+        // Start the experiment
+        self.http_client
+            .put(format!(
+                "{}/experiments/{}/start",
+                self.config.endpoint.clone(),
+                exp_uuid
+            ))
+            .send()?;
+
+        println!("Experiment UUID: {}", exp_uuid);
+        Ok(exp_uuid)
+    }
+
+    fn request_ws(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
+        let url = format!("{}/experiments/{}/ws", self.config.endpoint.clone(), exp_uuid);
+        let ws_endpoint = self
+            .http_client
+            .get(url)
+            .send()?
+            .json::<URLSchema>()?
+            .url;
+        Ok(ws_endpoint)
+    }
+
     /// Create a new HeatClient with the given configuration.
     pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSdkError> {
-        let client_state = Arc::new(HeatClient::new(config));
+        let client = HeatClient::new(config);
 
         // Try to connect to the api, if it fails, return an error
-        for i in 0..=client_state.config.num_retries {
-            let res = client_state.health_check();
-
+        for i in 0..=client.config.num_retries {
+            let res = client.health_check();
             match res {
                 Ok(_) => break,
                 Err(e) => {
-                    if i == client_state.config.num_retries {
+                    if i == client.config.num_retries {
                         return Err(HeatSdkError::ServerTimeoutError(e.to_string()));
                     }
+                    println!("Failed to connect to the server. Retrying...");
                 }
             }
         }
 
-        Ok(client_state)
+        Ok(client)
     }
 
-    /// Get the endpoint of the Heat API
-    pub fn get_endpoint(&self) -> String {
-        self.config.endpoint.clone()
-    }
+    /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
+    pub fn start_experiment(&mut self) -> Result<(), HeatSdkError> {
+        let exp_uuid = self.create_and_start_experiment()?;
+        let ws_endpoint = self.request_ws(exp_uuid.as_str())?;
 
-    /// Get the API key of the Heat API
-    pub fn get_api_key(&self) -> String {
-        self.config.api_key.clone()
-    }
+        let mut ws_client = WebSocketClient::new();
+        ws_client.connect(ws_endpoint)?;
 
-    /// Get the number of retries to attempt when connecting to the Heat API
-    pub fn get_num_retries(&self) -> u8 {
-        self.config.num_retries
+        let exp_log_store = TempLogStore::new(self.http_client.clone(), self.config.endpoint.clone(), exp_uuid.clone());
+
+        let experiment = Arc::new(Mutex::new(Experiment::new(exp_uuid, ws_client, exp_log_store)));
+        self.active_experiment = Some(experiment);
+
+        Ok(())
     }
 
     fn request_checkpoint_url(
@@ -133,15 +179,20 @@ impl HeatClient {
         path: &str,
         access: AccessMode,
     ) -> Result<String, reqwest::Error> {
-        let url = format!("{}/checkpoints", self.get_endpoint());
+        let url = format!("{}/checkpoints", self.config.endpoint.clone());
 
         let mut body = HashMap::new();
         body.insert("file_path", path.to_string());
-
-        #[derive(Deserialize)]
-        struct CheckpointURLResponse {
-            url: String,
-        }
+        body.insert(
+            "experiment_id",
+            self.active_experiment
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .id()
+                .clone(),
+        );
 
         let response = match access {
             AccessMode::Read => self.http_client.get(url),
@@ -149,7 +200,7 @@ impl HeatClient {
         }
         .json(&body)
         .send()?
-        .json::<CheckpointURLResponse>()?;
+        .json::<URLSchema>()?;
 
         Ok(response.url)
     }
@@ -173,8 +224,19 @@ impl HeatClient {
         checkpoint: Vec<u8>,
     ) -> Result<(), HeatSdkError> {
         let url = self.request_checkpoint_url(path, AccessMode::Write)?;
+
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         self.upload_checkpoint(&url, checkpoint)?;
 
+        let time_end = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        log::info!("Time to upload checkpoint: {}", time_end - time);
         Ok(())
     }
 
@@ -184,5 +246,62 @@ impl HeatClient {
         let response = self.download_checkpoint(&url)?;
 
         Ok(response.to_vec())
+    }
+
+    /// Log a message to the active experiment.
+    pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSdkError> {
+        self.active_experiment
+            .as_ref()
+            .unwrap()
+            .lock()?
+            .add_log(message)?;
+        Ok(())
+    }
+
+    /// End the active experiment. This will close the WebSocket connection and upload the logs to the Heat backend.
+    pub fn end_experiment(&mut self) -> Result<(), HeatSdkError> {
+        let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
+        let experiment = experiment.lock()?;
+        let logs = experiment.logs().clone();
+
+        let logs_upload_url = self
+            .http_client
+            .post(format!(
+                "{}/experiments/{}/logs",
+                self.config.endpoint.clone(),
+                experiment.id()
+            ))
+            .send()?
+            .json::<URLSchema>()?
+            .url;
+
+        let logs_string = logs.join("");
+
+        self.http_client
+            .put(logs_upload_url)
+            .body(logs_string)
+            .send()?;
+
+        // End the experiment
+        self.http_client
+            .put(format!(
+                "{}/experiments/{}/end",
+                self.config.endpoint.clone(),
+                experiment.id()
+            ))
+            .send()?;
+
+        Ok(())
+    }
+}
+
+impl Drop for HeatClient {
+    fn drop(&mut self) {
+        // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
+        if let Some(exp_arc) = &self.active_experiment {
+            if Arc::strong_count(&exp_arc) == 1 {
+                self.end_experiment().expect("Should be able to end the experiment after dropping the last client.");
+            }
+        }
     }
 }
