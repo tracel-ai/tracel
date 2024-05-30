@@ -95,7 +95,7 @@ impl Experiment {
         if let Some(handler) = self.handler.take() {
             let result = handler.join();
             let mut logs = result.logs;
-            logs.flush();
+            logs.flush().expect("Should be able to flush logs");
         }
     }
     

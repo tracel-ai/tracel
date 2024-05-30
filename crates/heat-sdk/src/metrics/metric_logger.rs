@@ -7,31 +7,26 @@ use burn::train::metric::{MetricEntry, NumericEntry};
 use crate::client::HeatClientState;
 use crate::experiment::{Split, WsMessage};
 
-enum LoggerSplit {
-    Training,
-    Validation,
-}
-
 pub struct RemoteMetricLogger {
     sender: mpsc::Sender<WsMessage>,
     epoch: usize,
-    logger_phase: LoggerSplit,
+    split: Split,
 }
 
 impl RemoteMetricLogger {
     pub fn new_train(client: HeatClientState) -> Self {
-        Self::new(client, LoggerSplit::Training)
+        Self::new(client, Split::Train)
     }
 
     pub fn new_validation(client: HeatClientState) -> Self {
-        Self::new(client, LoggerSplit::Validation)
+        Self::new(client, Split::Val)
     }
 
-    fn new (client: HeatClientState, logger_phase: LoggerSplit) -> Self {
+    fn new (client: HeatClientState, split: Split) -> Self {
         Self { 
             sender: client.get_experiment_sender().unwrap(),
             epoch: 1,
-            logger_phase,
+            split,
         }
     }
 }
@@ -78,10 +73,7 @@ impl MetricLogger for RemoteMetricLogger {
                 NumericEntry::Value(v) => v,
                 NumericEntry::Aggregated(v, _) => v,
             },
-            split: match self.logger_phase {
-                LoggerSplit::Training => Split::Train,
-                LoggerSplit::Validation => Split::Val,
-            },
+            split: self.split.clone(),
         }).unwrap();
     }
 

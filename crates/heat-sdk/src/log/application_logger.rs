@@ -1,4 +1,4 @@
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::Sender;
 
 use crate::client::HeatClientState;
 use crate::experiment::WsMessage;
