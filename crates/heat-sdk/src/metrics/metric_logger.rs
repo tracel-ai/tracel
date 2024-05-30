@@ -7,6 +7,7 @@ use burn::train::metric::{MetricEntry, NumericEntry};
 use crate::client::HeatClientState;
 use crate::experiment::{Split, WsMessage};
 
+/// The remote metric logger, used to send metric logs to Heat.
 pub struct RemoteMetricLogger {
     sender: mpsc::Sender<WsMessage>,
     epoch: usize,
@@ -14,15 +15,17 @@ pub struct RemoteMetricLogger {
 }
 
 impl RemoteMetricLogger {
+    /// Create a new instance of the remote metric logger for `Training` with the given [HeatClientState].
     pub fn new_train(client: HeatClientState) -> Self {
         Self::new(client, Split::Train)
     }
 
+    /// Create a new instance of the remote metric logger for `Validation` with the given [HeatClientState].
     pub fn new_validation(client: HeatClientState) -> Self {
         Self::new(client, Split::Val)
     }
 
-    fn new (client: HeatClientState, split: Split) -> Self {
+    fn new(client: HeatClientState, split: Split) -> Self {
         Self { 
             sender: client.get_experiment_sender().unwrap(),
             epoch: 1,
@@ -78,12 +81,11 @@ impl MetricLogger for RemoteMetricLogger {
     }
 
     fn end_epoch(&mut self, epoch: usize) {
-        
         self.epoch = epoch + 1;
     }
 
     /// Read the logs for an epoch.
     fn read_numeric(&mut self, name: &str, epoch: usize) -> Result<Vec<NumericEntry>, String> {
-        Ok(vec![])
+        Ok(vec![]) // Not implemented
     }
 }
