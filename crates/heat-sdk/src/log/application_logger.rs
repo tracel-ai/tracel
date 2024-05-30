@@ -45,10 +45,7 @@ impl<'a> MakeWriter<'a> for RemoteWriterMaker {
 impl std::io::Write for RemoteWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let message = String::from_utf8_lossy(buf).to_string();
-        // self.client
-        //     .log_experiment(message)
-        //     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
-        
+
         if let Some(sender) = &self.sender {
             sender.send(WsMessage::Log(message)).unwrap();
         }

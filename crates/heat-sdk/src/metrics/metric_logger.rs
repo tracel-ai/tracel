@@ -1,38 +1,37 @@
-use std::fmt::format;
+
 use std::sync::mpsc;
 
-use burn::train::logger;
-use burn::train::{logger::MetricLogger};
+use burn::train::logger::MetricLogger;
 use burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::client::HeatClientState;
 use crate::experiment::{Split, WsMessage};
 
-enum LoggerPhase {
-    Train,
+enum LoggerSplit {
+    Training,
     Validation,
 }
 
 pub struct RemoteMetricLogger {
     sender: mpsc::Sender<WsMessage>,
     epoch: usize,
-    logger_phase: LoggerPhase,
+    logger_phase: LoggerSplit,
 }
 
 impl RemoteMetricLogger {
     pub fn new_train(client: HeatClientState) -> Self {
-        Self { 
-            sender: client.get_experiment_sender().unwrap(),
-            epoch: 1,
-            logger_phase: LoggerPhase::Train,
-        }
+        Self::new(client, LoggerSplit::Training)
     }
 
     pub fn new_validation(client: HeatClientState) -> Self {
+        Self::new(client, LoggerSplit::Validation)
+    }
+
+    fn new (client: HeatClientState, logger_phase: LoggerSplit) -> Self {
         Self { 
             sender: client.get_experiment_sender().unwrap(),
             epoch: 1,
-            logger_phase: LoggerPhase::Validation,
+            logger_phase,
         }
     }
 }
@@ -75,13 +74,13 @@ impl MetricLogger for RemoteMetricLogger {
         self.sender.send(WsMessage::MetricLog {
             name: key.clone(),
             epoch: self.epoch,
-            metric: match numeric_entry {
+            value: match numeric_entry {
                 NumericEntry::Value(v) => v,
                 NumericEntry::Aggregated(v, _) => v,
             },
             split: match self.logger_phase {
-                LoggerPhase::Train => Split::Train,
-                LoggerPhase::Validation => Split::Val,
+                LoggerSplit::Training => Split::Train,
+                LoggerSplit::Validation => Split::Val,
             },
         }).unwrap();
     }

@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 
 use crate::error::HeatSdkError;
-use crate::experiment::{Experiment, WsMessage};
+use crate::experiment::{Experiment, WsMessage, TempLogStore};
 use crate::http_schemas::URLSchema;
 use crate::websocket::WebSocketClient;
 
@@ -12,14 +12,6 @@ enum AccessMode {
     Read,
     Write,
 }
-
-// enum Credentials {
-//     ApiKey(String),
-//     Login {
-//         username: String,
-//         password: String,
-//     },
-// }
 
 /// Configuration for the HeatClient. Can be created using [HeatClientConfigBuilder], which is created using the [HeatClientConfig::builder] method.
 #[derive(Debug, Clone)]
@@ -99,7 +91,7 @@ impl HeatClient {
     }
 
     fn health_check(&self) -> Result<(), reqwest::Error> {
-        let url = format!("{}/health", self.get_endpoint());
+        let url = format!("{}/health", self.config.endpoint.clone());
         self.http_client.get(url).send()?;
 
         Ok(())
@@ -111,7 +103,7 @@ impl HeatClient {
             experiment_id: String,
         }
 
-        let url = format!("{}/experiments", self.get_endpoint());
+        let url = format!("{}/experiments", self.config.endpoint.clone());
 
         // Create a new experiment
         let exp_uuid = self
@@ -125,7 +117,7 @@ impl HeatClient {
         self.http_client
             .put(format!(
                 "{}/experiments/{}/start",
-                self.get_endpoint(),
+                self.config.endpoint.clone(),
                 exp_uuid
             ))
             .send()?;
@@ -134,8 +126,8 @@ impl HeatClient {
         Ok(exp_uuid)
     }
 
-    fn request_ws(&self, exp_uuid: String) -> Result<String, HeatSdkError> {
-        let url = format!("{}/experiments/{}/ws", self.get_endpoint(), exp_uuid);
+    fn request_ws(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
+        let url = format!("{}/experiments/{}/ws", self.config.endpoint.clone(), exp_uuid);
         let ws_endpoint = self
             .http_client
             .get(url)
@@ -169,12 +161,14 @@ impl HeatClient {
     /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
     pub fn start_experiment(&mut self) -> Result<(), HeatSdkError> {
         let exp_uuid = self.create_and_start_experiment()?;
-        let ws_endpoint = self.request_ws(exp_uuid.clone())?;
+        let ws_endpoint = self.request_ws(exp_uuid.as_str())?;
 
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint)?;
 
-        let experiment = Arc::new(Mutex::new(Experiment::new(exp_uuid, ws_client)));
+        let exp_log_store = TempLogStore::new(self.http_client.clone(), self.config.endpoint.clone(), exp_uuid.clone());
+
+        let experiment = Arc::new(Mutex::new(Experiment::new(exp_uuid, ws_client, exp_log_store)));
         self.active_experiment = Some(experiment);
 
         Ok(())
@@ -186,16 +180,12 @@ impl HeatClient {
         Ok(experiment.get_ws_sender()?)
     }
 
-    fn get_endpoint(&self) -> String {
-        self.config.endpoint.clone()
-    }
-
     fn request_checkpoint_url(
         &self,
         path: &str,
         access: AccessMode,
     ) -> Result<String, reqwest::Error> {
-        let url = format!("{}/checkpoints", self.get_endpoint());
+        let url = format!("{}/checkpoints", self.config.endpoint.clone());
 
         let mut body = HashMap::new();
         body.insert("file_path", path.to_string());
@@ -264,16 +254,6 @@ impl HeatClient {
         Ok(response.to_vec())
     }
 
-    /// Log a message to the active experiment.
-    pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSdkError> {
-        self.active_experiment
-            .as_ref()
-            .unwrap()
-            .lock()?
-            .add_log(message)?;
-        Ok(())
-    }
-
     /// End the active experiment. This will close the WebSocket connection and upload the logs to the Heat backend.
     pub fn end_experiment(&mut self) -> Result<(), HeatSdkError> {
         let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
@@ -282,35 +262,26 @@ impl HeatClient {
         // Stop the websocket handling thread
         experiment.stop();
 
-        let logs = experiment.try_logs().expect("Logs should be available.");
-
-        let logs_upload_url = self
-            .http_client
-            .post(format!(
-                "{}/experiments/{}/logs",
-                self.get_endpoint(),
-                experiment.id()
-            ))
-            .send()?
-            .json::<URLSchema>()?
-            .url;
-
-        let logs_string = logs.join("");
-
-        self.http_client
-            .put(logs_upload_url)
-            .body(logs_string)
-            .send()?;
-
-        // End the experiment
+        // End the experiment in the backend
         self.http_client
             .put(format!(
                 "{}/experiments/{}/end",
-                self.get_endpoint(),
+                self.config.endpoint.clone(),
                 experiment.id()
             ))
             .send()?;
 
         Ok(())
+    }
+}
+
+impl Drop for HeatClient {
+    fn drop(&mut self) {
+        // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
+        if let Some(exp_arc) = &self.active_experiment {
+            if Arc::strong_count(&exp_arc) == 1 {
+                self.end_experiment().expect("Should be able to end the experiment after dropping the last client.");
+            }
+        }
     }
 }

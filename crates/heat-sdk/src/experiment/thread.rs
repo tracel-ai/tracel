@@ -2,7 +2,7 @@ use std::{sync::mpsc, thread::JoinHandle};
 
 use crate::websocket::WebSocketClient;
 
-use super::WsMessage;
+use super::{TempLogStore, WsMessage};
 
 pub trait ExperimentThread<R> {
     fn run(self) -> R;
@@ -10,26 +10,28 @@ pub trait ExperimentThread<R> {
 
 #[derive(Debug)]
 pub struct WSThreadResult {
-    pub logs: Vec<String>,
+    pub logs: TempLogStore,
 }
 
 struct ExperimentWSThread {
     ws_client: WebSocketClient,
     receiver: mpsc::Receiver<WsMessage>,
+    in_memory_logs: TempLogStore,
 }
 
 impl ExperimentWSThread {
-    pub fn new(ws_client: WebSocketClient, receiver: mpsc::Receiver<WsMessage>) -> Self {
+    pub fn new(ws_client: WebSocketClient, receiver: mpsc::Receiver<WsMessage>, in_memory_logs: TempLogStore) -> Self {
         Self {
             ws_client,
             receiver,
+            in_memory_logs,
         }
     }
 }
 
 impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
     fn run(mut self) -> WSThreadResult {
-        let mut logs: Vec<String> = Vec::new();
+        let mut logs = self.in_memory_logs;
 
         loop {
             let res = self.receiver.recv();
@@ -37,11 +39,11 @@ impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
                 break;
             }
             match res.unwrap() {
-                WsMessage::MetricLog { name, epoch, metric, split } => {
-                    self.ws_client.send(WsMessage::MetricLog { name, epoch, metric, split }).unwrap();
+                WsMessage::MetricLog { name, epoch, value, split } => {
+                    self.ws_client.send(WsMessage::MetricLog { name, epoch, value, split }).unwrap();
                 }
                 WsMessage::Log(log) => {
-                    logs.push(log.clone());
+                    logs.push(log.clone()).unwrap();
                     self.ws_client.send(WsMessage::Log(log)).unwrap();
                 }
                 WsMessage::Error(err) => {
@@ -53,8 +55,7 @@ impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
             }
         }
         self.ws_client.close().unwrap();
-
-
+        
         WSThreadResult { logs }
     }
 }
@@ -66,10 +67,10 @@ pub struct ExperimentWSHandler {
 }
 
 impl ExperimentWSHandler {
-    pub fn new(ws_client: WebSocketClient) -> Self {
+    pub fn new(ws_client: WebSocketClient, log_store: TempLogStore) -> Self {
         let (sender, receiver) = mpsc::channel();
 
-        let thread = ExperimentWSThread::new(ws_client, receiver);
+        let thread = ExperimentWSThread::new(ws_client, receiver, log_store);
         let handle = std::thread::spawn(move || thread.run());
 
         Self { sender, handle }

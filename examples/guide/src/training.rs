@@ -131,5 +131,5 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 
-    client.end_experiment().expect("Failed to end experiment");
+    client.end_experiment().expect("Should be able to end the experiment.");
 }

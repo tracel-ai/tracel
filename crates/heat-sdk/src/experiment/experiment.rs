@@ -1,51 +1,86 @@
 
-use crate::{error::HeatSdkError, websocket::WebSocketClient};
+use crate::{error::HeatSdkError, http_schemas::URLSchema, websocket::WebSocketClient};
 use std::sync::mpsc;
 
 use super::{thread::ExperimentWSHandler, WsMessage};
 
 #[derive(Debug)]
-pub struct Experiment {
-    id: String,
-    in_memory_logs: Option<Vec<String>>,
-    // ws_client: WebSocketClient,
-    handler: Option<ExperimentWSHandler>,
-    // scheduler_checkpoint_handler: Option<ExperimentCheckpointerHandler>,
-    // optimizer_checkpoint_handler: Option<ExperimentCheckpointerHandler>,
-    // experiment_checkpoint_handler: Option<ExperimentCheckpointerHandler>,
+pub struct TempLogStore {
+    logs: Vec<String>,
+    http_client: reqwest::blocking::Client,
+    endpoint: String,
+    exp_id: String,
+    bytes: usize,
 }
 
-impl Experiment {
-    pub fn new(id: String, ws_client: WebSocketClient) -> Experiment {
-        assert!(ws_client.state().is_open());
+impl TempLogStore {
+    // 100MB
+    const BYTE_LIMIT: usize = 3 * 1024;
 
-        let handler = ExperimentWSHandler::new(ws_client);
-
-        Experiment {
-            id,
-            in_memory_logs: Some(Vec::new()),
-            // ws_client: ws_client,
-            handler: Some(handler),
+    pub fn new(http_client: reqwest::blocking::Client, endpoint: String, exp_id: String) -> TempLogStore {
+        TempLogStore {
+            logs: Vec::new(),
+            http_client: http_client,
+            endpoint: endpoint,
+            exp_id: exp_id,
+            bytes: 0,
         }
     }
 
-    pub fn add_log(&mut self, log: String) -> Result<(), HeatSdkError> {
-        // self.in_memory_logs.push(log.clone());
-        // self.ws_client.send(WsMessage::Log(log))?;
+    pub fn push(&mut self, log: String) -> Result<(), HeatSdkError> {
+        if self.bytes + log.len() > Self::BYTE_LIMIT {
+            self.flush()?;
+        }
+
+        self.bytes += log.len();
+        self.logs.push(log);
 
         Ok(())
     }
 
-    pub fn id(&self) -> &String {
-        &self.id
+    pub fn flush(&mut self) -> Result<(), HeatSdkError> {
+        if !self.logs.is_empty() {
+            let logs_upload_url = self
+                .http_client
+                .post(format!(
+                    "{}/experiments/{}/logs",
+                    self.endpoint,
+                    self.exp_id
+                ))
+                .send()?
+                .json::<URLSchema>()?
+                .url;
+
+            self.http_client.put(logs_upload_url).body(self.logs.join("")).send()?;
+
+            self.logs.clear();
+            self.bytes = 0;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Experiment {
+    id: String,
+    handler: Option<ExperimentWSHandler>,
+}
+
+impl Experiment {
+    pub fn new(id: String, ws_client: WebSocketClient, log_store: TempLogStore) -> Experiment {
+        assert!(ws_client.state().is_open());
+
+        let handler = ExperimentWSHandler::new(ws_client, log_store);
+
+        Experiment {
+            id,
+            handler: Some(handler),
+        }
     }
 
-    pub fn try_logs(&self) -> Result<Vec<String>, HeatSdkError> {
-        if let Some(logs) = &self.in_memory_logs {
-            Ok(logs.clone())
-        } else {
-            Err(HeatSdkError::ClientError("Logs not yet available".to_string()))
-        }
+    pub fn id(&self) -> &String {
+        &self.id
     }
 
     pub fn get_ws_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
@@ -57,11 +92,10 @@ impl Experiment {
     }
 
     pub fn stop(&mut self) {
-        // self.ws_client.close().unwrap();
-        
         if let Some(handler) = self.handler.take() {
             let result = handler.join();
-            self.in_memory_logs.replace(result.logs);
+            let mut logs = result.logs;
+            logs.flush();
         }
     }
     
@@ -70,7 +104,6 @@ impl Experiment {
 
 impl Drop for Experiment {
     fn drop(&mut self) {
-        // self.ws_client.close().unwrap();
         self.stop();
     }
 }

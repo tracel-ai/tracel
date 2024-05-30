@@ -11,8 +11,8 @@ pub enum WsMessage {
     MetricLog {
         name: String,
         epoch: usize,
-        metric: f64,
-        split: Split
+        value: f64,
+        split: Split,
     },
     Log(String),
     Error(String),
