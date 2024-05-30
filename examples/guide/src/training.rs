@@ -2,7 +2,9 @@ use crate::{
     data::{MnistBatch, MnistBatcher},
     model::{Model, ModelConfig},
 };
-use burn::{data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*};
+use burn::{
+    data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*,
+};
 use burn::{
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
     nn::loss::CrossEntropyLossConfig,
@@ -102,7 +104,8 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
 
     let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
     let train_metric_logger = tracel::heat::metrics::RemoteMetricLogger::new_train(client.clone());
-    let valid_metric_logger = tracel::heat::metrics::RemoteMetricLogger::new_validation(client.clone());
+    let valid_metric_logger =
+        tracel::heat::metrics::RemoteMetricLogger::new_validation(client.clone());
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
@@ -131,5 +134,7 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 
-    client.end_experiment().expect("Should be able to end the experiment.");
+    client
+        .end_experiment()
+        .expect("Should be able to end the experiment.");
 }

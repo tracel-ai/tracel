@@ -20,7 +20,11 @@ struct ExperimentWSThread {
 }
 
 impl ExperimentWSThread {
-    pub fn new(ws_client: WebSocketClient, receiver: mpsc::Receiver<WsMessage>, in_memory_logs: TempLogStore) -> Self {
+    pub fn new(
+        ws_client: WebSocketClient,
+        receiver: mpsc::Receiver<WsMessage>,
+        in_memory_logs: TempLogStore,
+    ) -> Self {
         Self {
             ws_client,
             receiver,
@@ -39,8 +43,20 @@ impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
                 break;
             }
             match res.unwrap() {
-                WsMessage::MetricLog { name, epoch, value, split } => {
-                    self.ws_client.send(WsMessage::MetricLog { name, epoch, value, split }).unwrap();
+                WsMessage::MetricLog {
+                    name,
+                    epoch,
+                    value,
+                    split,
+                } => {
+                    self.ws_client
+                        .send(WsMessage::MetricLog {
+                            name,
+                            epoch,
+                            value,
+                            split,
+                        })
+                        .unwrap();
                 }
                 WsMessage::Log(log) => {
                     logs.push(log.clone()).unwrap();
@@ -55,7 +71,7 @@ impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
             }
         }
         self.ws_client.close().unwrap();
-        
+
         WSThreadResult { logs }
     }
 }
@@ -79,7 +95,7 @@ impl ExperimentWSHandler {
     pub fn get_sender(&self) -> mpsc::Sender<WsMessage> {
         self.sender.clone()
     }
-    
+
     pub fn join(self) -> WSThreadResult {
         self.sender.send(WsMessage::Close).unwrap();
         self.handle.join().unwrap()

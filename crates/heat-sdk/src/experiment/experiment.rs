@@ -1,4 +1,3 @@
-
 use crate::{error::HeatSdkError, http_schemas::URLSchema, websocket::WebSocketClient};
 use std::sync::mpsc;
 
@@ -17,7 +16,11 @@ impl TempLogStore {
     // 100MB
     const BYTE_LIMIT: usize = 3 * 1024;
 
-    pub fn new(http_client: reqwest::blocking::Client, endpoint: String, exp_id: String) -> TempLogStore {
+    pub fn new(
+        http_client: reqwest::blocking::Client,
+        endpoint: String,
+        exp_id: String,
+    ) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
             http_client: http_client,
@@ -44,14 +47,16 @@ impl TempLogStore {
                 .http_client
                 .post(format!(
                     "{}/experiments/{}/logs",
-                    self.endpoint,
-                    self.exp_id
+                    self.endpoint, self.exp_id
                 ))
                 .send()?
                 .json::<URLSchema>()?
                 .url;
 
-            self.http_client.put(logs_upload_url).body(self.logs.join("")).send()?;
+            self.http_client
+                .put(logs_upload_url)
+                .body(self.logs.join(""))
+                .send()?;
 
             self.logs.clear();
             self.bytes = 0;
@@ -87,7 +92,9 @@ impl Experiment {
         if let Some(handler) = &self.handler {
             Ok(handler.get_sender())
         } else {
-            Err(HeatSdkError::ClientError("Experiment handling thread not started".to_string()))
+            Err(HeatSdkError::ClientError(
+                "Experiment handling thread not started".to_string(),
+            ))
         }
     }
 
@@ -98,8 +105,6 @@ impl Experiment {
             logs.flush().expect("Should be able to flush logs");
         }
     }
-    
-
 }
 
 impl Drop for Experiment {

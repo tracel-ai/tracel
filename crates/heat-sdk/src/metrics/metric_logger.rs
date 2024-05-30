@@ -1,4 +1,3 @@
-
 use std::sync::mpsc;
 
 use burn::train::logger::MetricLogger;
@@ -26,7 +25,7 @@ impl RemoteMetricLogger {
     }
 
     fn new(client: HeatClientState, split: Split) -> Self {
-        Self { 
+        Self {
             sender: client.get_experiment_sender().unwrap(),
             epoch: 1,
             split,
@@ -69,15 +68,17 @@ impl MetricLogger for RemoteMetricLogger {
         let numeric_entry: NumericEntry = deserialize_numeric_entry(value).unwrap();
 
         // send to server
-        self.sender.send(WsMessage::MetricLog {
-            name: key.clone(),
-            epoch: self.epoch,
-            value: match numeric_entry {
-                NumericEntry::Value(v) => v,
-                NumericEntry::Aggregated(v, _) => v,
-            },
-            split: self.split.clone(),
-        }).unwrap();
+        self.sender
+            .send(WsMessage::MetricLog {
+                name: key.clone(),
+                epoch: self.epoch,
+                value: match numeric_entry {
+                    NumericEntry::Value(v) => v,
+                    NumericEntry::Aggregated(v, _) => v,
+                },
+                split: self.split.clone(),
+            })
+            .unwrap();
     }
 
     fn end_epoch(&mut self, epoch: usize) {

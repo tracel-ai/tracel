@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 
 use crate::error::HeatSdkError;
-use crate::experiment::{Experiment, WsMessage, TempLogStore};
+use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http_schemas::URLSchema;
 use crate::websocket::WebSocketClient;
 
@@ -127,13 +127,12 @@ impl HeatClient {
     }
 
     fn request_ws(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
-        let url = format!("{}/experiments/{}/ws", self.config.endpoint.clone(), exp_uuid);
-        let ws_endpoint = self
-            .http_client
-            .get(url)
-            .send()?
-            .json::<URLSchema>()?
-            .url;
+        let url = format!(
+            "{}/experiments/{}/ws",
+            self.config.endpoint.clone(),
+            exp_uuid
+        );
+        let ws_endpoint = self.http_client.get(url).send()?.json::<URLSchema>()?.url;
         Ok(ws_endpoint)
     }
 
@@ -166,9 +165,17 @@ impl HeatClient {
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint)?;
 
-        let exp_log_store = TempLogStore::new(self.http_client.clone(), self.config.endpoint.clone(), exp_uuid.clone());
+        let exp_log_store = TempLogStore::new(
+            self.http_client.clone(),
+            self.config.endpoint.clone(),
+            exp_uuid.clone(),
+        );
 
-        let experiment = Arc::new(Mutex::new(Experiment::new(exp_uuid, ws_client, exp_log_store)));
+        let experiment = Arc::new(Mutex::new(Experiment::new(
+            exp_uuid,
+            ws_client,
+            exp_log_store,
+        )));
         self.active_experiment = Some(experiment);
 
         Ok(())
@@ -280,7 +287,8 @@ impl Drop for HeatClient {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
         if let Some(exp_arc) = &self.active_experiment {
             if Arc::strong_count(&exp_arc) == 1 {
-                self.end_experiment().expect("Should be able to end the experiment after dropping the last client.");
+                self.end_experiment()
+                    .expect("Should be able to end the experiment after dropping the last client.");
             }
         }
     }

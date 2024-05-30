@@ -35,7 +35,9 @@ impl<'a> MakeWriter<'a> for RemoteWriterMaker {
 
     fn make_writer(&self) -> Self::Writer {
         if let Ok(sender) = self.client.get_experiment_sender() {
-            RemoteWriter { sender: Some(sender) }
+            RemoteWriter {
+                sender: Some(sender),
+            }
         } else {
             RemoteWriter { sender: None }
         }
