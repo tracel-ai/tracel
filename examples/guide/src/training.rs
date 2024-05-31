@@ -17,6 +17,7 @@ use burn::{
         ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep,
     },
 };
+use tracel::heat::client::HeatClient;
 
 impl<B: Backend> Model<B> {
     pub fn forward_classification(
@@ -69,7 +70,12 @@ fn create_artifact_dir(artifact_dir: &str) {
     std::fs::create_dir_all(artifact_dir).ok();
 }
 
-pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
+pub fn train<B: AutodiffBackend>(
+    client: &mut HeatClient,
+    artifact_dir: &str,
+    config: TrainingConfig,
+    device: B::Device,
+) {
     create_artifact_dir(artifact_dir);
     config
         .save(format!("{artifact_dir}/config.json"))
@@ -92,15 +98,9 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .num_workers(config.num_workers)
         .build(SamplerDataset::new(MnistDataset::test(), 200));
 
-    let client_config = tracel::heat::client::HeatClientConfig::builder("no_api_key")
-        .with_endpoint("http://localhost:9001")
-        .with_num_retries(10)
-        .build();
-
-    let mut client = tracel::heat::client::HeatClient::create(client_config)
-        .expect("Should connect to the Heat server and create a client");
-
-    client.start_experiment().expect("Should start experiment");
+    client
+        .start_experiment()
+        .expect("Experiment should be started");
 
     let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
     let train_metric_logger = tracel::heat::metrics::RemoteMetricLogger::new_train(client.clone());
@@ -136,5 +136,5 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
 
     client
         .end_experiment()
-        .expect("Should be able to end the experiment.");
+        .expect("Experiment should end successfully ");
 }

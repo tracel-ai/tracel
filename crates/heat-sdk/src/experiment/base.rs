@@ -23,9 +23,9 @@ impl TempLogStore {
     ) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
-            http_client: http_client,
-            endpoint: endpoint,
-            exp_id: exp_id,
+            http_client,
+            endpoint,
+            exp_id,
             bytes: 0,
         }
     }

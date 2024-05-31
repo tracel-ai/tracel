@@ -86,7 +86,7 @@ impl MetricLogger for RemoteMetricLogger {
     }
 
     /// Read the logs for an epoch.
-    fn read_numeric(&mut self, name: &str, epoch: usize) -> Result<Vec<NumericEntry>, String> {
+    fn read_numeric(&mut self, _name: &str, _epoch: usize) -> Result<Vec<NumericEntry>, String> {
         Ok(vec![]) // Not implemented
     }
 }

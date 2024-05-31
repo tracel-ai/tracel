@@ -19,13 +19,12 @@ pub enum HeatSdkError {
 impl From<reqwest::Error> for HeatSdkError {
     fn from(error: reqwest::Error) -> Self {
         match error.status() {
-            Some(status) => {
-                if status == reqwest::StatusCode::REQUEST_TIMEOUT {
+            Some(status) => match status {
+                reqwest::StatusCode::REQUEST_TIMEOUT => {
                     HeatSdkError::ServerTimeoutError(error.to_string())
-                } else {
-                    HeatSdkError::ServerError(error.to_string())
                 }
-            }
+                _ => HeatSdkError::ServerError(status.to_string()),
+            },
             None => HeatSdkError::ServerError(error.to_string()),
         }
     }

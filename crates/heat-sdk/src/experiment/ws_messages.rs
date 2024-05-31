@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -29,8 +31,9 @@ impl<S: Into<String> + Clone> From<S> for WsMessage {
     }
 }
 
-impl ToString for WsMessage {
-    fn to_string(&self) -> String {
-        serde_json::to_string(self).unwrap()
+impl fmt::Display for WsMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let json_string = serde_json::to_string(self).expect("WsMessage should serialize to JSON");
+        write!(f, "{}", json_string)
     }
 }

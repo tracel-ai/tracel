@@ -1,7 +1,8 @@
 use std::sync::{mpsc, Mutex};
 use std::{collections::HashMap, sync::Arc};
 
-use serde::Deserialize;
+use reqwest::header::{COOKIE, SET_COOKIE};
+use serde::{Deserialize, Serialize};
 
 use crate::error::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
@@ -13,21 +14,39 @@ enum AccessMode {
     Write,
 }
 
+/// Credentials to connect to the Heat server
+#[derive(Serialize, Debug, Clone)]
+pub struct HeatCredentials {
+    api_key: String,
+}
+
+impl HeatCredentials {
+    pub fn new(api_key: String) -> Self {
+        Self { api_key }
+    }
+}
+
+impl From<HeatCredentials> for String {
+    fn from(val: HeatCredentials) -> Self {
+        val.api_key
+    }
+}
+
 /// Configuration for the HeatClient. Can be created using [HeatClientConfigBuilder], which is created using the [HeatClientConfig::builder] method.
 #[derive(Debug, Clone)]
 pub struct HeatClientConfig {
     /// The endpoint of the Heat API
     pub endpoint: String,
-    /// The endpoint of the Heat API
-    pub api_key: String, // not used yet, but will be used for authentication through the Heat backend API
+    /// Heat credential to create a session with the Heat API
+    pub credentials: HeatCredentials,
     /// The number of retries to attempt when connecting to the Heat API.
     pub num_retries: u8,
 }
 
 impl HeatClientConfig {
     /// Create a new [HeatClientConfigBuilder] with the given API key.
-    pub fn builder(api_key: impl Into<String>) -> HeatClientConfigBuilder {
-        HeatClientConfigBuilder::new(api_key)
+    pub fn builder(creds: HeatCredentials) -> HeatClientConfigBuilder {
+        HeatClientConfigBuilder::new(creds)
     }
 }
 
@@ -37,11 +56,11 @@ pub struct HeatClientConfigBuilder {
 }
 
 impl HeatClientConfigBuilder {
-    pub(crate) fn new(api_key: impl Into<String>) -> HeatClientConfigBuilder {
+    pub(crate) fn new(creds: HeatCredentials) -> HeatClientConfigBuilder {
         HeatClientConfigBuilder {
             config: HeatClientConfig {
                 endpoint: "http://127.0.0.1:9001".into(),
-                api_key: api_key.into(),
+                credentials: creds,
                 num_retries: 3,
             },
         }
@@ -70,6 +89,7 @@ impl HeatClientConfigBuilder {
 pub struct HeatClient {
     config: HeatClientConfig,
     http_client: reqwest::blocking::Client,
+    session_cookie: String,
     active_experiment: Option<Arc<Mutex<Experiment>>>,
 }
 
@@ -86,10 +106,12 @@ impl HeatClient {
         HeatClient {
             config,
             http_client,
+            session_cookie: "".to_string(),
             active_experiment: None,
         }
     }
 
+    #[allow(dead_code)]
     fn health_check(&self) -> Result<(), reqwest::Error> {
         let url = format!("{}/health", self.config.endpoint.clone());
         self.http_client.get(url).send()?;
@@ -109,7 +131,9 @@ impl HeatClient {
         let exp_uuid = self
             .http_client
             .post(url)
+            .header(COOKIE, &self.session_cookie)
             .send()?
+            .error_for_status()?
             .json::<ExperimentResponse>()?
             .experiment_id;
 
@@ -120,10 +144,40 @@ impl HeatClient {
                 self.config.endpoint.clone(),
                 exp_uuid
             ))
-            .send()?;
+            .header(COOKIE, &self.session_cookie)
+            .send()?
+            .error_for_status()?;
 
         println!("Experiment UUID: {}", exp_uuid);
         Ok(exp_uuid)
+    }
+
+    fn connect(&mut self) -> Result<(), HeatSdkError> {
+        let url = format!("{}/login/api-key", self.config.endpoint.clone());
+        let res = self
+            .http_client
+            .post(url)
+            .form::<HeatCredentials>(&self.config.credentials)
+            .send()?;
+        // store session cookie
+        if res.status().is_success() {
+            let cookie_header = res.headers().get(SET_COOKIE);
+            if let Some(cookie) = cookie_header {
+                cookie
+                    .to_str()
+                    .expect("Session cookie should be convert to str")
+                    .clone_into(&mut self.session_cookie);
+            } else {
+                return Err(HeatSdkError::ClientError(
+                    "Cannot connect to Heat server, bad session ID.".to_string(),
+                ));
+            }
+        } else {
+            let error_message = format!("Cannot connect to Heat server({:?})", res.text()?);
+            return Err(HeatSdkError::ClientError(error_message));
+        }
+
+        Ok(())
     }
 
     fn request_ws(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
@@ -132,18 +186,24 @@ impl HeatClient {
             self.config.endpoint.clone(),
             exp_uuid
         );
-        let ws_endpoint = self.http_client.get(url).send()?.json::<URLSchema>()?.url;
+        let ws_endpoint = self
+            .http_client
+            .get(url)
+            .header(COOKIE, &self.session_cookie)
+            .send()?
+            .error_for_status()?
+            .json::<URLSchema>()?
+            .url;
         Ok(ws_endpoint)
     }
 
     /// Create a new HeatClient with the given configuration.
     pub fn create(config: HeatClientConfig) -> Result<HeatClientState, HeatSdkError> {
-        let client = HeatClient::new(config);
+        let mut client = HeatClient::new(config);
 
         // Try to connect to the api, if it fails, return an error
         for i in 0..=client.config.num_retries {
-            let res = client.health_check();
-            match res {
+            match client.connect() {
                 Ok(_) => break,
                 Err(e) => {
                     if i == client.config.num_retries {
@@ -163,7 +223,7 @@ impl HeatClient {
         let ws_endpoint = self.request_ws(exp_uuid.as_str())?;
 
         let mut ws_client = WebSocketClient::new();
-        ws_client.connect(ws_endpoint)?;
+        ws_client.connect(ws_endpoint, &self.session_cookie)?;
 
         let exp_log_store = TempLogStore::new(
             self.http_client.clone(),
@@ -184,7 +244,7 @@ impl HeatClient {
     pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
         let experiment = self.active_experiment.as_ref().unwrap();
         let experiment = experiment.lock().unwrap();
-        Ok(experiment.get_ws_sender()?)
+        experiment.get_ws_sender()
     }
 
     fn request_checkpoint_url(
@@ -211,8 +271,10 @@ impl HeatClient {
             AccessMode::Read => self.http_client.get(url),
             AccessMode::Write => self.http_client.post(url),
         }
+        .header(COOKIE, &self.session_cookie)
         .json(&body)
         .send()?
+        .error_for_status()?
         .json::<URLSchema>()?;
 
         Ok(response.url)
@@ -276,7 +338,9 @@ impl HeatClient {
                 self.config.endpoint.clone(),
                 experiment.id()
             ))
-            .send()?;
+            .header(COOKIE, &self.session_cookie)
+            .send()?
+            .error_for_status()?;
 
         Ok(())
     }
@@ -286,7 +350,7 @@ impl Drop for HeatClient {
     fn drop(&mut self) {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
         if let Some(exp_arc) = &self.active_experiment {
-            if Arc::strong_count(&exp_arc) == 1 {
+            if Arc::strong_count(exp_arc) == 1 {
                 self.end_experiment()
                     .expect("Should be able to end the experiment after dropping the last client.");
             }
