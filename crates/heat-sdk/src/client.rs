@@ -229,6 +229,7 @@ impl HeatClient {
             self.http_client.clone(),
             self.config.endpoint.clone(),
             exp_uuid.clone(),
+            self.session_cookie.clone(),
         );
 
         let experiment = Arc::new(Mutex::new(Experiment::new(
