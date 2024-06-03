@@ -17,7 +17,7 @@ fn main() {
     type MyAutodiffBackend = Autodiff<MyBackend>;
 
     let args = Args::parse();
-    let mut heat = heat_client(&args.key, &args.url);
+    let mut heat = heat_client(&args.key, &args.url, &args.project);
     let device = burn::backend::wgpu::WgpuDevice::default();
     let artifact_dir = "/tmp/guide";
     crate::training::train::<MyAutodiffBackend>(
@@ -46,11 +46,15 @@ struct Args {
     /// Base URL of the Heat server.
     #[arg(short, long, default_value = "http://localhost:9001")]
     url: String,
+
+    /// The project ID in which the experiment will be created.
+    #[arg(short, long)]
+    project: String,
 }
 
-fn heat_client(api_key: &str, url: &str) -> HeatClient {
+fn heat_client(api_key: &str, url: &str, project: &str) -> HeatClient {
     let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
-    let client_config = tracel::heat::client::HeatClientConfig::builder(creds)
+    let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
         .with_endpoint(url)
         .with_num_retries(10)
         .build();
