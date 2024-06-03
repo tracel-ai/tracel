@@ -2,7 +2,9 @@ use crate::{
     data::{MnistBatch, MnistBatcher},
     model::{Model, ModelConfig},
 };
-use burn::{data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings};
+use burn::{
+    data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*,
+};
 use burn::{
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
     nn::loss::CrossEntropyLossConfig,
@@ -101,12 +103,18 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
     client.start_experiment().expect("Should start experiment");
 
     let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
+    let train_metric_logger = tracel::heat::metrics::RemoteMetricLogger::new_train(client.clone());
+    let valid_metric_logger =
+        tracel::heat::metrics::RemoteMetricLogger::new_validation(client.clone());
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
         .metric_valid_numeric(AccuracyMetric::new())
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
+        .metric_train_numeric(CpuMemory::new())
+        .metric_valid_numeric(CpuMemory::new())
+        .metric_loggers(train_metric_logger, valid_metric_logger)
         .with_file_checkpointer(recorder)
         .with_application_logger(Some(Box::new(
             tracel::heat::log::RemoteExperimentLoggerInstaller::new(client.clone()),
@@ -126,5 +134,7 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 
-    client.end_experiment().expect("Should be able to end the experiment.");
+    client
+        .end_experiment()
+        .expect("Should be able to end the experiment.");
 }

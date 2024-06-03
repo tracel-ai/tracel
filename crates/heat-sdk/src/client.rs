@@ -1,10 +1,10 @@
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
 use crate::error::HeatSdkError;
-use crate::experiment::{Experiment, TempLogStore};
+use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http_schemas::URLSchema;
 use crate::websocket::WebSocketClient;
 
@@ -127,13 +127,12 @@ impl HeatClient {
     }
 
     fn request_ws(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
-        let url = format!("{}/experiments/{}/ws", self.config.endpoint.clone(), exp_uuid);
-        let ws_endpoint = self
-            .http_client
-            .get(url)
-            .send()?
-            .json::<URLSchema>()?
-            .url;
+        let url = format!(
+            "{}/experiments/{}/ws",
+            self.config.endpoint.clone(),
+            exp_uuid
+        );
+        let ws_endpoint = self.http_client.get(url).send()?.json::<URLSchema>()?.url;
         Ok(ws_endpoint)
     }
 
@@ -166,12 +165,26 @@ impl HeatClient {
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint)?;
 
-        let exp_log_store = TempLogStore::new(self.http_client.clone(), self.config.endpoint.clone(), exp_uuid.clone());
+        let exp_log_store = TempLogStore::new(
+            self.http_client.clone(),
+            self.config.endpoint.clone(),
+            exp_uuid.clone(),
+        );
 
-        let experiment = Arc::new(Mutex::new(Experiment::new(exp_uuid, ws_client, exp_log_store)));
+        let experiment = Arc::new(Mutex::new(Experiment::new(
+            exp_uuid,
+            ws_client,
+            exp_log_store,
+        )));
         self.active_experiment = Some(experiment);
 
         Ok(())
+    }
+
+    pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
+        let experiment = self.active_experiment.as_ref().unwrap();
+        let experiment = experiment.lock().unwrap();
+        Ok(experiment.get_ws_sender()?)
     }
 
     fn request_checkpoint_url(
@@ -248,41 +261,15 @@ impl HeatClient {
         Ok(response.to_vec())
     }
 
-    /// Log a message to the active experiment.
-    pub fn log_experiment(&mut self, message: String) -> Result<(), HeatSdkError> {
-        self.active_experiment
-            .as_ref()
-            .unwrap()
-            .lock()?
-            .add_log(message)?;
-        Ok(())
-    }
-
     /// End the active experiment. This will close the WebSocket connection and upload the logs to the Heat backend.
     pub fn end_experiment(&mut self) -> Result<(), HeatSdkError> {
         let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
-        let experiment = experiment.lock()?;
-        let logs = experiment.logs().clone();
+        let mut experiment = experiment.lock()?;
 
-        let logs_upload_url = self
-            .http_client
-            .post(format!(
-                "{}/experiments/{}/logs",
-                self.config.endpoint.clone(),
-                experiment.id()
-            ))
-            .send()?
-            .json::<URLSchema>()?
-            .url;
+        // Stop the websocket handling thread
+        experiment.stop();
 
-        let logs_string = logs.join("");
-
-        self.http_client
-            .put(logs_upload_url)
-            .body(logs_string)
-            .send()?;
-
-        // End the experiment
+        // End the experiment in the backend
         self.http_client
             .put(format!(
                 "{}/experiments/{}/end",
@@ -300,7 +287,8 @@ impl Drop for HeatClient {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
         if let Some(exp_arc) = &self.active_experiment {
             if Arc::strong_count(&exp_arc) == 1 {
-                self.end_experiment().expect("Should be able to end the experiment after dropping the last client.");
+                self.end_experiment()
+                    .expect("Should be able to end the experiment after dropping the last client.");
             }
         }
     }
