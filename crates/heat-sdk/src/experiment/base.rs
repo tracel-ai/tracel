@@ -1,3 +1,5 @@
+use reqwest::header::COOKIE;
+
 use crate::{error::HeatSdkError, http_schemas::URLSchema, websocket::WebSocketClient};
 use std::sync::mpsc;
 
@@ -10,6 +12,7 @@ pub struct TempLogStore {
     endpoint: String,
     exp_id: String,
     bytes: usize,
+    session_cookie: String,
 }
 
 impl TempLogStore {
@@ -20,13 +23,15 @@ impl TempLogStore {
         http_client: reqwest::blocking::Client,
         endpoint: String,
         exp_id: String,
+        session_cookie: String,
     ) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
-            http_client: http_client,
-            endpoint: endpoint,
-            exp_id: exp_id,
+            http_client,
+            endpoint,
+            exp_id,
             bytes: 0,
+            session_cookie,
         }
     }
 
@@ -49,6 +54,7 @@ impl TempLogStore {
                     "{}/experiments/{}/logs",
                     self.endpoint, self.exp_id
                 ))
+                .header(COOKIE, self.session_cookie.clone())
                 .send()?
                 .json::<URLSchema>()?
                 .url;

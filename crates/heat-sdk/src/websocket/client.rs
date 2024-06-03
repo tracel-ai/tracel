@@ -1,6 +1,7 @@
+use reqwest::header::COOKIE;
 use serde::Serialize;
 
-use tungstenite::{stream::MaybeTlsStream, *};
+use tungstenite::{client::IntoClientRequest, connect, stream::MaybeTlsStream, Message, WebSocket};
 
 use super::WebSocketError;
 
@@ -30,8 +31,11 @@ impl WebSocketClient {
         WebSocketClient { state: None }
     }
 
-    pub fn connect(&mut self, url: String) -> Result<(), WebSocketError> {
-        let (socket, _) = connect(url)
+    pub fn connect(&mut self, url: String, cookie: &str) -> Result<(), WebSocketError> {
+        let mut req = url.into_client_request().unwrap();
+        let headers = req.headers_mut();
+        headers.append(COOKIE, cookie.parse().unwrap());
+        let (socket, _) = connect(req)
             // .await
             .map_err(|e| WebSocketError::ConnectionError(e.to_string()))?;
 
