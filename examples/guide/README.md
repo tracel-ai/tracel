@@ -5,5 +5,5 @@ This example corresponds to the [book's guide](https://burn.dev/book/basic-workf
 ## Example Usage
 
 ```sh
-cargo run --example guide -- --key "INSERT-API-KEY-HERE
+cargo run --example guide -- --key "INSERT-API-KEY-HERE" --project "INSERT-PROJECT-ID-HERE"
 ```

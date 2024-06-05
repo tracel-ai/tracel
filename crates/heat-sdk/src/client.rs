@@ -41,12 +41,14 @@ pub struct HeatClientConfig {
     pub credentials: HeatCredentials,
     /// The number of retries to attempt when connecting to the Heat API.
     pub num_retries: u8,
+    /// The project ID to create the experiment in.
+    pub project_id: String,
 }
 
 impl HeatClientConfig {
     /// Create a new [HeatClientConfigBuilder] with the given API key.
-    pub fn builder(creds: HeatCredentials) -> HeatClientConfigBuilder {
-        HeatClientConfigBuilder::new(creds)
+    pub fn builder(creds: HeatCredentials, project_id: &str) -> HeatClientConfigBuilder {
+        HeatClientConfigBuilder::new(creds, project_id)
     }
 }
 
@@ -56,12 +58,13 @@ pub struct HeatClientConfigBuilder {
 }
 
 impl HeatClientConfigBuilder {
-    pub(crate) fn new(creds: HeatCredentials) -> HeatClientConfigBuilder {
+    pub(crate) fn new(creds: HeatCredentials, project_id: &str) -> HeatClientConfigBuilder {
         HeatClientConfigBuilder {
             config: HeatClientConfig {
                 endpoint: "http://127.0.0.1:9001".into(),
                 credentials: creds,
                 num_retries: 3,
+                project_id: project_id.into(),
             },
         }
     }
@@ -125,7 +128,11 @@ impl HeatClient {
             experiment_id: String,
         }
 
-        let url = format!("{}/experiments", self.config.endpoint.clone());
+        let url = format!(
+            "{}/projects/{}/experiments",
+            self.config.endpoint.clone(),
+            self.config.project_id.clone()
+        );
 
         // Create a new experiment
         let exp_uuid = self

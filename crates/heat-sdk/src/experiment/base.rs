@@ -16,8 +16,8 @@ pub struct TempLogStore {
 }
 
 impl TempLogStore {
-    // 100MB
-    const BYTE_LIMIT: usize = 3 * 1024;
+    // 100 MiB
+    const BYTE_LIMIT: usize = 100 * 1024 * 1024;
 
     pub fn new(
         http_client: reqwest::blocking::Client,
