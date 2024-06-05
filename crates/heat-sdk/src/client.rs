@@ -344,8 +344,7 @@ impl HeatClient {
             .active_experiment
             .as_ref()
             .unwrap()
-            .lock()
-            .unwrap()
+            .lock()?
             .id()
             .clone();
 
