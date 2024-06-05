@@ -24,7 +24,6 @@ pub struct RemoteRecorder<S: PrecisionSettings> {
 }
 
 impl<S: PrecisionSettings> RemoteRecorder<S> {
-
     fn new(client: HeatClientState, checkpointer: RecorderStrategy) -> Self {
         Self {
             client,
@@ -43,7 +42,6 @@ impl<S: PrecisionSettings> RemoteRecorder<S> {
     pub fn final_model(client: HeatClientState) -> Self {
         Self::new(client, RecorderStrategy::Final)
     }
-    
 }
 
 impl<B: Backend, S: PrecisionSettings> burn::record::FileRecorder<B> for RemoteRecorder<S> {
@@ -101,11 +99,10 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
             .to_string();
 
         let data = match self.checkpointer {
-            RecorderStrategy::Checkpoint => {
-                self.client
-                    .load_checkpoint_data(&path)
-                    .map_err(|err| RecorderError::Unknown(err.to_string()))?
-            }
+            RecorderStrategy::Checkpoint => self
+                .client
+                .load_checkpoint_data(&path)
+                .map_err(|err| RecorderError::Unknown(err.to_string()))?,
             RecorderStrategy::Final => {
                 unimplemented!("Final model loading is not implemented yet.")
             }

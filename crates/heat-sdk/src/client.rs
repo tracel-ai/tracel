@@ -334,32 +334,46 @@ impl HeatClient {
     }
 
     pub(crate) fn save_final_model(&self, data: Vec<u8>) -> Result<(), HeatSdkError> {
-
         if self.active_experiment.is_none() {
             return Err(HeatSdkError::ClientError(
                 "No active experiment to upload final model.".to_string(),
             ));
         }
 
-        let experiment_id = self.active_experiment.as_ref().unwrap().lock().unwrap().id().clone();
+        let experiment_id = self
+            .active_experiment
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .id()
+            .clone();
 
-        let url = format!("{}/experiments/{}/save_model", self.config.endpoint.clone(), experiment_id);
+        let url = format!(
+            "{}/experiments/{}/save_model",
+            self.config.endpoint.clone(),
+            experiment_id
+        );
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(url)
             .header(COOKIE, &self.session_cookie)
             .send()?
             .error_for_status()?
             .json::<URLSchema>()?;
-        
+
         self.http_client.put(response.url).body(data).send()?;
 
         Ok(())
     }
 
-    /// End the active experiment and upload the final model to the Heat backend. 
+    /// End the active experiment and upload the final model to the Heat backend.
     /// This will close the WebSocket connection and upload the logs to the Heat backend.
-    pub fn end_experiment_with_model<B, S>(&mut self, model: impl burn::module::Module<B>) -> Result<(), HeatSdkError>
+    pub fn end_experiment_with_model<B, S>(
+        &mut self,
+        model: impl burn::module::Module<B>,
+    ) -> Result<(), HeatSdkError>
     where
         B: Backend,
         S: burn::record::PrecisionSettings,
@@ -373,15 +387,17 @@ impl HeatClient {
         self.end_experiment_internal(Ok(()))
     }
 
-    /// End the active experiment with an error reason. 
+    /// End the active experiment with an error reason.
     /// This will close the WebSocket connection and upload the logs to the Heat backend.
     /// No model will be uploaded.
-    pub fn end_experiment_with_error(&mut self, error_reason: String) -> Result<(), HeatSdkError>
-    {
+    pub fn end_experiment_with_error(&mut self, error_reason: String) -> Result<(), HeatSdkError> {
         self.end_experiment_internal(Err(error_reason))
     }
 
-    fn end_experiment_internal(&mut self, end_status: Result<(), String>) -> Result<(), HeatSdkError> {
+    fn end_experiment_internal(
+        &mut self,
+        end_status: Result<(), String>,
+    ) -> Result<(), HeatSdkError> {
         let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
         let mut experiment = experiment.lock()?;
 
@@ -407,7 +423,6 @@ impl HeatClient {
 
         Ok(())
     }
-    
 }
 
 impl Drop for HeatClient {

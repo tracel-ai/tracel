@@ -102,7 +102,8 @@ pub fn train<B: AutodiffBackend>(
         .start_experiment()
         .expect("Experiment should be started");
 
-    let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::checkpoint(client.clone());
+    let recorder =
+        tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::checkpoint(client.clone());
     let train_metric_logger = tracel::heat::metrics::RemoteMetricLogger::new_train(client.clone());
     let valid_metric_logger =
         tracel::heat::metrics::RemoteMetricLogger::new_validation(client.clone());
@@ -130,7 +131,8 @@ pub fn train<B: AutodiffBackend>(
 
     let model_trained = learner.fit(dataloader_train, dataloader_test);
 
-    model_trained.clone()
+    model_trained
+        .clone()
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 
