@@ -1,12 +1,14 @@
 use std::sync::{mpsc, Mutex};
 use std::{collections::HashMap, sync::Arc};
 
+use burn::module::Module;
+use burn::tensor::backend::Backend;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 
 use crate::error::HeatSdkError;
-use crate::experiment::{Experiment, TempLogStore, WsMessage};
-use crate::http_schemas::URLSchema;
+use crate::experiment::{self, Experiment, TempLogStore, WsMessage};
+use crate::http_schemas::{EndStatusSchema, URLSchema};
 use crate::websocket::WebSocketClient;
 
 enum AccessMode {
@@ -301,7 +303,7 @@ impl HeatClient {
     }
 
     /// Save checkpoint data to the Heat API.
-    pub fn save_checkpoint_data(
+    pub(crate) fn save_checkpoint_data(
         &self,
         path: &str,
         checkpoint: Vec<u8>,
@@ -324,20 +326,72 @@ impl HeatClient {
     }
 
     /// Load checkpoint data from the Heat API
-    pub fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSdkError> {
+    pub(crate) fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSdkError> {
         let url = self.request_checkpoint_url(path, AccessMode::Read)?;
         let response = self.download_checkpoint(&url)?;
 
         Ok(response.to_vec())
     }
 
-    /// End the active experiment. This will close the WebSocket connection and upload the logs to the Heat backend.
-    pub fn end_experiment(&mut self) -> Result<(), HeatSdkError> {
+    pub(crate) fn save_final_model(&self, data: Vec<u8>) -> Result<(), HeatSdkError> {
+
+        if self.active_experiment.is_none() {
+            return Err(HeatSdkError::ClientError(
+                "No active experiment to upload final model.".to_string(),
+            ));
+        }
+
+        let experiment_id = self.active_experiment.as_ref().unwrap().lock().unwrap().id().clone();
+
+        let url = format!("{}/experiments/{}/save_model", self.config.endpoint.clone(), experiment_id);
+
+        let response = self.http_client
+            .post(url)
+            .header(COOKIE, &self.session_cookie)
+            .send()?
+            .error_for_status()?
+            .json::<URLSchema>()?;
+        
+        self.http_client.put(response.url).body(data).send()?;
+
+        Ok(())
+    }
+
+    /// End the active experiment and upload the final model to the Heat backend. 
+    /// This will close the WebSocket connection and upload the logs to the Heat backend.
+    pub fn end_experiment_with_model<B, S>(&mut self, model: impl burn::module::Module<B>) -> Result<(), HeatSdkError>
+    where
+        B: Backend,
+        S: burn::record::PrecisionSettings,
+    {
+        let recorder = crate::record::RemoteRecorder::<S>::final_model(self.clone());
+        let res = model.save_file("", &recorder);
+        if let Err(e) = res {
+            return Err(HeatSdkError::ClientError(e.to_string()));
+        }
+
+        self.end_experiment_internal(Ok(()))
+    }
+
+    /// End the active experiment with an error reason. 
+    /// This will close the WebSocket connection and upload the logs to the Heat backend.
+    /// No model will be uploaded.
+    pub fn end_experiment_with_error(&mut self, error_reason: String) -> Result<(), HeatSdkError>
+    {
+        self.end_experiment_internal(Err(error_reason))
+    }
+
+    fn end_experiment_internal(&mut self, end_status: Result<(), String>) -> Result<(), HeatSdkError> {
         let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
         let mut experiment = experiment.lock()?;
 
         // Stop the websocket handling thread
         experiment.stop();
+
+        let result_schema: EndStatusSchema = match end_status {
+            Ok(_) => EndStatusSchema::Ok(),
+            Err(e) => EndStatusSchema::Error(e),
+        };
 
         // End the experiment in the backend
         self.http_client
@@ -347,11 +401,13 @@ impl HeatClient {
                 experiment.id()
             ))
             .header(COOKIE, &self.session_cookie)
+            .json(&result_schema)
             .send()?
             .error_for_status()?;
 
         Ok(())
     }
+    
 }
 
 impl Drop for HeatClient {
@@ -359,7 +415,7 @@ impl Drop for HeatClient {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
         if let Some(exp_arc) = &self.active_experiment {
             if Arc::strong_count(exp_arc) == 1 {
-                self.end_experiment()
+                self.end_experiment_internal(Ok(()))
                     .expect("Should be able to end the experiment after dropping the last client.");
             }
         }
