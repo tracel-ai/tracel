@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::HeatSdkError;
 use crate::experiment::{self, Experiment, TempLogStore, WsMessage};
-use crate::http_schemas::{EndStatusSchema, URLSchema};
+use crate::http_schemas::{EndExperimentSchema, URLSchema};
 use crate::websocket::WebSocketClient;
 
 enum AccessMode {
@@ -383,30 +383,25 @@ impl HeatClient {
             return Err(HeatSdkError::ClientError(e.to_string()));
         }
 
-        self.end_experiment_internal(Ok(()))
+        self.end_experiment_internal(EndExperimentSchema::Success)
     }
 
     /// End the active experiment with an error reason.
     /// This will close the WebSocket connection and upload the logs to the Heat backend.
     /// No model will be uploaded.
     pub fn end_experiment_with_error(&mut self, error_reason: String) -> Result<(), HeatSdkError> {
-        self.end_experiment_internal(Err(error_reason))
+        self.end_experiment_internal(EndExperimentSchema::Fail(error_reason))
     }
 
     fn end_experiment_internal(
         &mut self,
-        end_status: Result<(), String>,
+        end_status: EndExperimentSchema,
     ) -> Result<(), HeatSdkError> {
         let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
         let mut experiment = experiment.lock()?;
 
         // Stop the websocket handling thread
         experiment.stop();
-
-        let result_schema: EndStatusSchema = match end_status {
-            Ok(_) => EndStatusSchema::Ok(),
-            Err(e) => EndStatusSchema::Error(e),
-        };
 
         // End the experiment in the backend
         self.http_client
@@ -416,7 +411,7 @@ impl HeatClient {
                 experiment.id()
             ))
             .header(COOKIE, &self.session_cookie)
-            .json(&result_schema)
+            .json(&end_status)
             .send()?
             .error_for_status()?;
 
@@ -429,7 +424,7 @@ impl Drop for HeatClient {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
         if let Some(exp_arc) = &self.active_experiment {
             if Arc::strong_count(exp_arc) == 1 {
-                self.end_experiment_internal(Ok(()))
+                self.end_experiment_internal(EndExperimentSchema::Success)
                     .expect("Should be able to end the experiment after dropping the last client.");
             }
         }
