@@ -8,5 +8,5 @@ pub struct URLSchema {
 #[derive(Serialize)]
 pub enum EndExperimentSchema {
     Success,
-    Fail(String)
+    Fail(String),
 }
