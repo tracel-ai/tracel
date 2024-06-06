@@ -1,6 +1,6 @@
 use crate::{
     data::{MnistBatch, MnistBatcher},
-    model::{Model, ModelConfig},
+    model::{self, Model, ModelConfig},
 };
 use burn::{
     data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*,
@@ -90,19 +90,20 @@ pub fn train<B: AutodiffBackend>(
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(SamplerDataset::new(MnistDataset::train(), 1000));
+        .build(SamplerDataset::new(MnistDataset::train(), 100));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(SamplerDataset::new(MnistDataset::test(), 200));
+        .build(SamplerDataset::new(MnistDataset::test(), 20));
 
     client
         .start_experiment()
         .expect("Experiment should be started");
 
-    let recorder = tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::new(client.clone());
+    let recorder =
+        tracel::heat::RemoteRecorder::<HalfPrecisionSettings>::checkpoint(client.clone());
     let train_metric_logger = tracel::heat::metrics::RemoteMetricLogger::new_train(client.clone());
     let valid_metric_logger =
         tracel::heat::metrics::RemoteMetricLogger::new_validation(client.clone());
@@ -131,10 +132,11 @@ pub fn train<B: AutodiffBackend>(
     let model_trained = learner.fit(dataloader_train, dataloader_test);
 
     model_trained
+        .clone()
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 
     client
-        .end_experiment()
-        .expect("Experiment should end successfully ");
+        .end_experiment_with_model::<B, HalfPrecisionSettings>(model_trained)
+        .expect("Experiment should end successfully");
 }

@@ -8,20 +8,39 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::client::HeatClientState;
 
+/// The strategy to use when saving data.
+#[derive(Debug, Clone)]
+pub enum RecorderStrategy {
+    Checkpoint,
+    Final,
+}
+
 /// A recorder that saves and loads data from a remote server using the [HeatClientState](HeatClientState).
 #[derive(Debug, Clone)]
 pub struct RemoteRecorder<S: PrecisionSettings> {
     client: HeatClientState,
+    checkpointer: RecorderStrategy,
     _settings: PhantomData<S>,
 }
 
 impl<S: PrecisionSettings> RemoteRecorder<S> {
-    /// Create a new RemoteRecorder with the given [HeatClientState].
-    pub fn new(client: HeatClientState) -> Self {
+    fn new(client: HeatClientState, checkpointer: RecorderStrategy) -> Self {
         Self {
             client,
+            checkpointer,
             _settings: PhantomData,
         }
+    }
+
+    /// Create a new RemoteRecorder with the given [HeatClientState].
+    pub fn checkpoint(client: HeatClientState) -> Self {
+        Self::new(client, RecorderStrategy::Checkpoint)
+    }
+
+    /// Create a new RemoteRecorder with the given [HeatClientState].
+    /// This recorder will save the data as a final trained model.
+    pub fn final_model(client: HeatClientState) -> Self {
+        Self::new(client, RecorderStrategy::Final)
     }
 }
 
@@ -56,9 +75,18 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
         let serialized_bytes =
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
-        self.client
-            .save_checkpoint_data(&path, serialized_bytes.clone())
-            .map_err(|err| RecorderError::Unknown(err.to_string()))?;
+        match self.checkpointer {
+            RecorderStrategy::Checkpoint => {
+                self.client
+                    .save_checkpoint_data(&path, serialized_bytes.clone())
+                    .map_err(|err| RecorderError::Unknown(err.to_string()))?;
+            }
+            RecorderStrategy::Final => {
+                self.client
+                    .save_final_model(serialized_bytes.clone())
+                    .map_err(|err| RecorderError::Unknown(err.to_string()))?;
+            }
+        }
 
         Ok(())
     }
@@ -69,10 +97,16 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
             .to_str()
             .expect("file should be a valid string.")
             .to_string();
-        let data = self
-            .client
-            .load_checkpoint_data(&path)
-            .map_err(|err| RecorderError::Unknown(err.to_string()))?;
+
+        let data = match self.checkpointer {
+            RecorderStrategy::Checkpoint => self
+                .client
+                .load_checkpoint_data(&path)
+                .map_err(|err| RecorderError::Unknown(err.to_string()))?,
+            RecorderStrategy::Final => {
+                unimplemented!("Final model loading is not implemented yet.")
+            }
+        };
 
         let item = rmp_serde::decode::from_slice(&data).expect("Should be able to deserialize.");
         Ok(item)
