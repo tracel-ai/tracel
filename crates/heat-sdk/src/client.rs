@@ -1,14 +1,13 @@
 use std::sync::{mpsc, Mutex};
 use std::{collections::HashMap, sync::Arc};
 
-use burn::module::Module;
 use burn::tensor::backend::Backend;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 
 use crate::error::HeatSdkError;
-use crate::experiment::{self, Experiment, TempLogStore, WsMessage};
-use crate::http_schemas::{EndExperimentSchema, URLSchema};
+use crate::experiment::{Experiment, TempLogStore, WsMessage};
+use crate::http_schemas::{EndExperimentSchema, StartExperimentSchema, URLSchema};
 use crate::websocket::WebSocketClient;
 
 enum AccessMode {
@@ -124,7 +123,7 @@ impl HeatClient {
         Ok(())
     }
 
-    fn create_and_start_experiment(&self) -> Result<String, HeatSdkError> {
+    fn create_and_start_experiment(&self, config: &impl Serialize) -> Result<String, HeatSdkError> {
         #[derive(Deserialize)]
         struct ExperimentResponse {
             experiment_id: String,
@@ -146,6 +145,10 @@ impl HeatClient {
             .json::<ExperimentResponse>()?
             .experiment_id;
 
+        let json = StartExperimentSchema {
+            config: serde_json::to_value(config).unwrap(),
+        };
+
         // Start the experiment
         self.http_client
             .put(format!(
@@ -154,6 +157,7 @@ impl HeatClient {
                 exp_uuid
             ))
             .header(COOKIE, &self.session_cookie)
+            .json(&json)
             .send()?
             .error_for_status()?;
 
@@ -227,8 +231,8 @@ impl HeatClient {
     }
 
     /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
-    pub fn start_experiment(&mut self) -> Result<(), HeatSdkError> {
-        let exp_uuid = self.create_and_start_experiment()?;
+    pub fn start_experiment(&mut self, config: &impl Serialize) -> Result<(), HeatSdkError> {
+        let exp_uuid = self.create_and_start_experiment(config)?;
         let ws_endpoint = self.request_ws(exp_uuid.as_str())?;
 
         let mut ws_client = WebSocketClient::new();

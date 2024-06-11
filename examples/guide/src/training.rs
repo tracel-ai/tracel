@@ -99,7 +99,7 @@ pub fn train<B: AutodiffBackend>(
         .build(SamplerDataset::new(MnistDataset::test(), 20));
 
     client
-        .start_experiment()
+        .start_experiment(&config)
         .expect("Experiment should be started");
 
     let recorder =

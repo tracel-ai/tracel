@@ -10,3 +10,8 @@ pub enum EndExperimentSchema {
     Success,
     Fail(String),
 }
+
+#[derive(Serialize)]
+pub struct StartExperimentSchema {
+    pub config: serde_json::Value,
+}
