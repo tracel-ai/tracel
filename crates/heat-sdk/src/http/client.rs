@@ -12,6 +12,20 @@ pub enum EndExperimentStatus {
     Fail(String),
 }
 
+impl From<reqwest::Error> for HeatSdkError {
+    fn from(error: reqwest::Error) -> Self {
+        match error.status() {
+            Some(status) => match status {
+                reqwest::StatusCode::REQUEST_TIMEOUT => {
+                    HeatSdkError::ServerTimeoutError(error.to_string())
+                }
+                _ => HeatSdkError::ServerError(status.to_string()),
+            },
+            None => HeatSdkError::ServerError(error.to_string()),
+        }
+    }
+}
+
 /// A client for making HTTP requests to the Heat API.
 ///
 /// The client can be used to interact with the Heat server, such as creating and starting experiments, saving and loading checkpoints, and uploading logs.

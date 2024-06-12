@@ -16,20 +16,6 @@ pub enum HeatSdkError {
     UnknownError(String),
 }
 
-impl From<reqwest::Error> for HeatSdkError {
-    fn from(error: reqwest::Error) -> Self {
-        match error.status() {
-            Some(status) => match status {
-                reqwest::StatusCode::REQUEST_TIMEOUT => {
-                    HeatSdkError::ServerTimeoutError(error.to_string())
-                }
-                _ => HeatSdkError::ServerError(status.to_string()),
-            },
-            None => HeatSdkError::ServerError(error.to_string()),
-        }
-    }
-}
-
 impl<T> From<std::sync::PoisonError<std::sync::MutexGuard<'_, T>>> for HeatSdkError {
     fn from(error: std::sync::PoisonError<std::sync::MutexGuard<'_, T>>) -> Self {
         HeatSdkError::ClientError(error.to_string())
