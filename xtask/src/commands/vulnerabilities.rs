@@ -1,12 +1,9 @@
 use std::collections::HashMap;
-use std::time::Instant;
 
-use crate::logging::init_logger;
 use crate::utils::cargo::{ensure_cargo_crate_is_installed, run_cargo};
 use crate::utils::rustup::{
     is_current_toolchain_nightly, rustup_add_component, rustup_get_installed_targets,
 };
-use crate::utils::time::format_duration;
 use crate::utils::Params;
 use crate::{endgroup, group};
 use std::fmt;
@@ -43,10 +40,6 @@ pub(crate) enum VulnerabilityCheck {
 
 impl VulnerabilityCheck {
     pub(crate) fn run(&self) -> anyhow::Result<()> {
-        // Setup logger
-        init_logger().init();
-        // Start time measurement
-        let start = Instant::now();
         match self {
             Self::NightlyChecks => cargo_careful(),
             Self::AddressSanitizer => Sanitizer::Address.run_tests(),
@@ -68,18 +61,6 @@ impl VulnerabilityCheck {
                 Sanitizer::Thread.run_tests();
             }
         }
-
-        // Stop time measurement
-        //
-        // Compute runtime duration
-        let duration = start.elapsed();
-
-        // Print duration
-        info!(
-            "\x1B[32;1mTime elapsed for the current execution: {}\x1B[0m",
-            format_duration(&duration)
-        );
-
         Ok(())
     }
 }

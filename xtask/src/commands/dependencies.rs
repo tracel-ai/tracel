@@ -1,12 +1,10 @@
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use crate::{
     endgroup, group,
-    logging::init_logger,
     utils::{
         cargo::{ensure_cargo_crate_is_installed, run_cargo},
         rustup::is_current_toolchain_nightly,
-        time::format_duration,
         Params,
     },
 };
@@ -26,10 +24,6 @@ pub(crate) enum DependencyCheck {
 
 impl DependencyCheck {
     pub(crate) fn run(&self) -> anyhow::Result<()> {
-        // Setup logger
-        init_logger().init();
-        // Start time measurement
-        let start = Instant::now();
         match self {
             Self::Audit => cargo_audit(),
             Self::Deny => cargo_deny(),
@@ -40,18 +34,6 @@ impl DependencyCheck {
                 cargo_udeps();
             }
         }
-
-        // Stop time measurement
-        //
-        // Compute runtime duration
-        let duration = start.elapsed();
-
-        // Print duration
-        info!(
-            "\x1B[32;1mTime elapsed for the current execution: {}\x1B[0m",
-            format_duration(&duration)
-        );
-
         Ok(())
     }
 }
