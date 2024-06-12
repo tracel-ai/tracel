@@ -1,0 +1,48 @@
+name: CI
+
+env:
+  CARGO_TERM_COLOR: always
+
+# For now we execute CI only on PR to save on CI time
+on:
+  pull_request: {}
+
+jobs:
+  crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          components: clippy, rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo xtask ci --target crates format
+      - name: Lint
+        run: cargo xtask ci --target crates lint
+      - name: Unit Tests
+        run: cargo xtask ci --target crates unit-tests
+      - name: Integration Tests
+        run: cargo xtask ci --target crates integration-tests
+      - name: Documentation Tests
+        run: cargo xtask ci --target crates doc-tests
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          components: clippy, rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo xtask ci --target examples format
+      - name: Lint
+        run: cargo xtask ci --target examples lint
+      - name: Unit Tests
+        run: cargo xtask ci --target examples unit-tests
+      - name: Integration Tests
+        run: cargo xtask ci --target examples integration-tests
+      - name: Documentation Tests
+        run: cargo xtask ci --target examples doc-tests
