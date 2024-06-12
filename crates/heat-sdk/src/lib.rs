@@ -5,7 +5,7 @@ pub mod metrics;
 pub mod record;
 
 mod experiment;
-mod http_schemas;
+mod http;
 mod websocket;
 
 pub use record::*;
