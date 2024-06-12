@@ -15,10 +15,7 @@ impl TempLogStore {
     // 100 MiB
     const BYTE_LIMIT: usize = 100 * 1024 * 1024;
 
-    pub fn new(
-        http_client: HttpClient,
-        exp_id: String,
-    ) -> TempLogStore {
+    pub fn new(http_client: HttpClient, exp_id: String) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
             http_client,
@@ -41,7 +38,8 @@ impl TempLogStore {
     pub fn flush(&mut self) -> Result<(), HeatSdkError> {
         if !self.logs.is_empty() {
             let logs_upload_url = self.http_client.request_logs_upload_url(&self.exp_id)?;
-            self.http_client.upload_bytes_to_url(&logs_upload_url, self.logs.join("").into_bytes())?;
+            self.http_client
+                .upload_bytes_to_url(&logs_upload_url, self.logs.join("").into_bytes())?;
 
             self.logs.clear();
             self.bytes = 0;

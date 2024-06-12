@@ -1,5 +1,5 @@
-use std::sync::{mpsc, Mutex};
 use std::sync::Arc;
+use std::sync::{mpsc, Mutex};
 
 use burn::tensor::backend::Backend;
 use serde::Serialize;
@@ -134,8 +134,9 @@ impl HeatClient {
 
     /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
     pub fn start_experiment(&mut self, config: &impl Serialize) -> Result<(), HeatSdkError> {
-
-        let exp_uuid = self.http_client.create_experiment(&self.config.project_id)?;
+        let exp_uuid = self
+            .http_client
+            .create_experiment(&self.config.project_id)?;
         self.http_client.start_experiment(&exp_uuid, config)?;
 
         println!("Experiment UUID: {}", exp_uuid);
@@ -145,10 +146,7 @@ impl HeatClient {
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint, &self.session_cookie)?;
 
-        let exp_log_store = TempLogStore::new(
-            self.http_client.clone(),
-            exp_uuid.clone(),
-        );
+        let exp_log_store = TempLogStore::new(self.http_client.clone(), exp_uuid.clone());
 
         let experiment = Arc::new(Mutex::new(Experiment::new(
             exp_uuid,
@@ -182,7 +180,9 @@ impl HeatClient {
             .id()
             .clone();
 
-        let url = self.http_client.request_checkpoint_save_url(&exp_uuid, path)?;
+        let url = self
+            .http_client
+            .request_checkpoint_save_url(&exp_uuid, path)?;
 
         let time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -211,7 +211,9 @@ impl HeatClient {
             .id()
             .clone();
 
-        let url = self.http_client.request_checkpoint_load_url(&exp_uuid, path)?;
+        let url = self
+            .http_client
+            .request_checkpoint_load_url(&exp_uuid, path)?;
         let response = self.http_client.download_bytes_from_url(&url)?;
 
         Ok(response)
@@ -233,7 +235,9 @@ impl HeatClient {
             .id()
             .clone();
 
-        let url = self.http_client.request_final_model_save_url(&experiment_id)?;
+        let url = self
+            .http_client
+            .request_final_model_save_url(&experiment_id)?;
         self.http_client.upload_bytes_to_url(&url, data)?;
 
         Ok(())
@@ -276,7 +280,8 @@ impl HeatClient {
         experiment.stop();
 
         // End the experiment in the backend
-        self.http_client.end_experiment(&experiment.id(), end_status)?;
+        self.http_client
+            .end_experiment(&experiment.id(), end_status)?;
 
         Ok(())
     }

@@ -7,14 +7,13 @@ use crate::{client::HeatCredentials, error::HeatSdkError, http::schemas::StartEx
 
 use super::schemas::{CreateExperimentResponseSchema, EndExperimentSchema, URLSchema};
 
-
 pub enum EndExperimentStatus {
     Success,
     Fail(String),
 }
 
 /// A client for making HTTP requests to the Heat API.
-/// 
+///
 /// The client can be used to interact with the Heat server, such as creating and starting experiments, saving and loading checkpoints, and uploading logs.
 #[derive(Debug, Clone)]
 pub struct HttpClient {
@@ -77,21 +76,17 @@ impl HttpClient {
             let error_message: String = format!("Cannot connect to Heat server({:?})", res.text()?);
             return Err(HeatSdkError::ClientError(error_message));
         }
-    
+
         Ok(())
     }
 
     /// Request a WebSocket URL for the given experiment.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
     pub fn request_websocket_url(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/experiments/{}/ws",
-            self.base_url.clone(),
-            exp_uuid
-        );
+        let url = format!("{}/experiments/{}/ws", self.base_url.clone(), exp_uuid);
         let ws_endpoint = self
             .http_client
             .get(url)
@@ -104,16 +99,12 @@ impl HttpClient {
     }
 
     /// Create a new experiment for the given project.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
     pub fn create_experiment(&self, project_id: &str) -> Result<String, HeatSdkError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/experiments",
-            self.base_url,
-            project_id
-        );
+        let url = format!("{}/projects/{}/experiments", self.base_url, project_id);
 
         // Create a new experiment
         let exp_uuid = self
@@ -129,9 +120,13 @@ impl HttpClient {
     }
 
     /// Start the experiment with the given configuration.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
-    pub fn start_experiment(&self, exp_uuid: &str, config: &impl Serialize) -> Result<(), HeatSdkError> {
+    pub fn start_experiment(
+        &self,
+        exp_uuid: &str,
+        config: &impl Serialize,
+    ) -> Result<(), HeatSdkError> {
         self.validate_session_cookie()?;
 
         let json = StartExperimentSchema {
@@ -140,11 +135,7 @@ impl HttpClient {
 
         // Start the experiment
         self.http_client
-            .put(format!(
-                "{}/experiments/{}/start",
-                self.base_url,
-                exp_uuid
-            ))
+            .put(format!("{}/experiments/{}/start", self.base_url, exp_uuid))
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&json)
             .send()?
@@ -154,9 +145,13 @@ impl HttpClient {
     }
 
     /// End the experiment with the given status.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
-    pub fn end_experiment(&self, exp_uuid: &str, end_status: EndExperimentStatus) -> Result<(), HeatSdkError> {
+    pub fn end_experiment(
+        &self,
+        exp_uuid: &str,
+        end_status: EndExperimentStatus,
+    ) -> Result<(), HeatSdkError> {
         self.validate_session_cookie()?;
 
         let url = format!("{}/experiments/{}/end", self.base_url, exp_uuid);
@@ -177,9 +172,13 @@ impl HttpClient {
     }
 
     /// Save the checkpoint data to the Heat server.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
-    pub fn request_checkpoint_save_url(&self, exp_uuid: &str, path: &str) -> Result<String, HeatSdkError> {
+    pub fn request_checkpoint_save_url(
+        &self,
+        exp_uuid: &str,
+        path: &str,
+    ) -> Result<String, HeatSdkError> {
         self.validate_session_cookie()?;
 
         let url: String = format!("{}/checkpoints", self.base_url);
@@ -188,7 +187,8 @@ impl HttpClient {
         body.insert("file_path", path.to_string());
         body.insert("experiment_id", exp_uuid.to_string());
 
-        let save_url = self.http_client
+        let save_url = self
+            .http_client
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&body)
@@ -201,9 +201,13 @@ impl HttpClient {
     }
 
     /// Request a URL to load the checkpoint data from the Heat server.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
-    pub fn request_checkpoint_load_url(&self, exp_uuid: &str, path: &str) -> Result<String, HeatSdkError> {
+    pub fn request_checkpoint_load_url(
+        &self,
+        exp_uuid: &str,
+        path: &str,
+    ) -> Result<String, HeatSdkError> {
         self.validate_session_cookie()?;
 
         let url: String = format!("{}/checkpoints/load", self.base_url);
@@ -212,7 +216,8 @@ impl HttpClient {
         body.insert("file_path", path.to_string());
         body.insert("experiment_id", exp_uuid.to_string());
 
-        let load_url = self.http_client
+        let load_url = self
+            .http_client
             .get(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&body)
@@ -225,14 +230,15 @@ impl HttpClient {
     }
 
     /// Request a URL to save the final model to the Heat server.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
     pub fn request_final_model_save_url(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
         self.validate_session_cookie()?;
 
         let url = format!("{}/experiments/{}/save_model", self.base_url, exp_uuid);
 
-        let save_url = self.http_client
+        let save_url = self
+            .http_client
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
@@ -244,14 +250,15 @@ impl HttpClient {
     }
 
     /// Request a URL to upload logs to the Heat server.
-    /// 
+    ///
     /// The client must be logged in before calling this method.
     pub fn request_logs_upload_url(&self, exp_uuid: &str) -> Result<String, HeatSdkError> {
         self.validate_session_cookie()?;
 
         let url = format!("{}/experiments/{}/logs", self.base_url, exp_uuid);
 
-        let logs_upload_url = self.http_client
+        let logs_upload_url = self
+            .http_client
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
@@ -275,7 +282,8 @@ impl HttpClient {
 
     /// Generic method to download bytes from the given URL.
     pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, HeatSdkError> {
-        let data = self.http_client
+        let data = self
+            .http_client
             .get(url)
             .send()?
             .error_for_status()?
@@ -293,5 +301,4 @@ impl HttpClient {
         }
         Ok(())
     }
-
 }
