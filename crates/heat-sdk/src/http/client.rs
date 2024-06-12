@@ -50,6 +50,11 @@ impl HttpClient {
         Ok(())
     }
 
+    /// Get the session cookie if it exists.
+    pub fn get_session_cookie(&self) -> Option<&String> {
+        self.session_cookie.as_ref()
+    }
+
     /// Log in to the Heat server with the given credentials.
     pub fn login(&mut self, credentials: &HeatCredentials) -> Result<(), HeatSdkError> {
         let url = format!("{}/login/api-key", self.base_url);

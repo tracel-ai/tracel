@@ -87,7 +87,6 @@ impl HeatClientConfigBuilder {
 pub struct HeatClient {
     config: HeatClientConfig,
     http_client: HttpClient,
-    session_cookie: String,
     active_experiment: Option<Arc<Mutex<Experiment>>>,
 }
 
@@ -101,7 +100,6 @@ impl HeatClient {
         HeatClient {
             config,
             http_client,
-            session_cookie: "".to_string(),
             active_experiment: None,
         }
     }
@@ -144,7 +142,7 @@ impl HeatClient {
         let ws_endpoint = self.http_client.request_websocket_url(&exp_uuid)?;
 
         let mut ws_client = WebSocketClient::new();
-        ws_client.connect(ws_endpoint, &self.session_cookie)?;
+        ws_client.connect(ws_endpoint, self.http_client.get_session_cookie().unwrap())?;
 
         let exp_log_store = TempLogStore::new(self.http_client.clone(), exp_uuid.clone());
 
