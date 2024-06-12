@@ -1,6 +1,6 @@
 use crate::{
     data::{MnistBatch, MnistBatcher},
-    model::{self, Model, ModelConfig},
+    model::{Model, ModelConfig},
 };
 use burn::{
     data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*,
