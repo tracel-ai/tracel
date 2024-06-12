@@ -1,18 +1,13 @@
 use std::sync::{mpsc, Mutex};
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use burn::tensor::backend::Backend;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::error::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::websocket::WebSocketClient;
-
-enum AccessMode {
-    Read,
-    Write,
-}
 
 /// Credentials to connect to the Heat server
 #[derive(Serialize, Debug, Clone)]
@@ -91,7 +86,6 @@ impl HeatClientConfigBuilder {
 #[derive(Debug, Clone)]
 pub struct HeatClient {
     config: HeatClientConfig,
-    // http_client_: reqwest::blocking::Client,
     http_client: HttpClient,
     session_cookie: String,
     active_experiment: Option<Arc<Mutex<Experiment>>>,
@@ -146,7 +140,7 @@ impl HeatClient {
 
         println!("Experiment UUID: {}", exp_uuid);
 
-        let ws_endpoint = self.http_client.request_ws(&exp_uuid)?;
+        let ws_endpoint = self.http_client.request_websocket_url(&exp_uuid)?;
 
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint, &self.session_cookie)?;
@@ -166,6 +160,7 @@ impl HeatClient {
         Ok(())
     }
 
+    /// Get the sender for the active experiment's WebSocket connection.
     pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
         let experiment = self.active_experiment.as_ref().unwrap();
         let experiment = experiment.lock().unwrap();
@@ -222,6 +217,7 @@ impl HeatClient {
         Ok(response)
     }
 
+    /// Save the final model to the Heat backend.
     pub(crate) fn save_final_model(&self, data: Vec<u8>) -> Result<(), HeatSdkError> {
         if self.active_experiment.is_none() {
             return Err(HeatSdkError::ClientError(
