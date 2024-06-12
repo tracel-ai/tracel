@@ -281,7 +281,7 @@ impl HeatClient {
 
         // End the experiment in the backend
         self.http_client
-            .end_experiment(&experiment.id(), end_status)?;
+            .end_experiment(experiment.id(), end_status)?;
 
         Ok(())
     }
