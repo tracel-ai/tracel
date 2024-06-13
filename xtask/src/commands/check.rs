@@ -4,7 +4,7 @@ use anyhow::{Ok, Result, anyhow};
 use clap::{Args, Subcommand};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-use crate::utils::{prompt::{ask_once, separator}, workspace::{get_workspace_members, WorkspaceMemberType}};
+use crate::{endgroup, group, utils::{prompt::ask_once, workspace::{get_workspace_members, WorkspaceMemberType}}};
 
 use super::Target;
 
@@ -20,6 +20,8 @@ pub(crate) struct CheckCmdArgs {
 #[derive(EnumString, EnumIter, Display, Clone, PartialEq, Subcommand)]
 #[strum(serialize_all = "lowercase")]
 enum CheckCommand {
+    /// Run audit command.
+    Audit,
     /// Run format command.
     Format,
     /// Run ling command.
@@ -30,6 +32,7 @@ enum CheckCommand {
 
 pub(crate) fn handle_command(args: CheckCmdArgs, answer: Option<bool>) -> anyhow::Result<()> {
     match args.command {
+        CheckCommand::Audit => run_audit(&args.target),
         CheckCommand::Format => run_format(&args.target, answer),
         CheckCommand::Lint => run_lint(&args.target, answer),
         CheckCommand::All => {
@@ -45,6 +48,27 @@ pub(crate) fn handle_command(args: CheckCmdArgs, answer: Option<bool>) -> anyhow
                 ))
         },
     }
+}
+
+pub(crate) fn run_audit(target: &Target) -> anyhow::Result<()> {
+    match target {
+        Target::Crates | Target::Examples => {
+            group!("Audit");
+            info!("Command line: cargo audit -q");
+            let status = Command::new("cargo")
+                .args(["audit", "-q"])
+                .status()
+                .map_err(|e| anyhow!("Failed to execute cargo audit: {}", e))?;
+            if !status.success() {
+                return Err(anyhow!("Audit check execution failed"));
+            }
+            endgroup!();
+        },
+        Target::All => Target::iter()
+            .filter(|p| *p != Target::All && *p != Target::Examples)
+            .try_for_each(|p| run_audit(&p))?,
+    }
+    Ok(())
 }
 
 fn run_format(target: &Target, mut answer: Option<bool>) -> Result<()> {
@@ -65,8 +89,7 @@ fn run_format(target: &Target, mut answer: Option<bool>) -> Result<()> {
 
             if answer.unwrap() {
                 for member in members {
-                    separator();
-                    info!("Running cargo fmt on member: {}", &member.name);
+                    group!("Format: {}", member.name);
                     info!("Command line: cargo fmt -p {}", &member.name);
                     let status = Command::new("cargo")
                         .args(["fmt", "-p", &member.name])
@@ -75,6 +98,7 @@ fn run_format(target: &Target, mut answer: Option<bool>) -> Result<()> {
                     if !status.success() {
                         return Err(anyhow!("Format check execution failed for {}", &member.name));
                     }
+                    endgroup!();
                 }
             }
         },
@@ -110,8 +134,7 @@ fn run_lint(target: &Target, mut answer: Option<bool>) -> anyhow::Result<()> {
 
             if answer.unwrap() {
                 for member in members {
-                    separator();
-                    info!("Running cargo clippy on member: {}", &member.name);
+                    group!("Lint: {}", member.name);
                     info!("Command line: cargo clippy --no-deps --fix --allow-dirty -p {}", &member.name);
                     let status = Command::new("cargo")
                         .args(["clippy", "--no-deps", "--fix", "--allow-dirty", "-p", &member.name])
@@ -120,6 +143,7 @@ fn run_lint(target: &Target, mut answer: Option<bool>) -> anyhow::Result<()> {
                     if !status.success() {
                         return Err(anyhow!("Lint fix execution failed for {}", &member.name));
                     }
+                    endgroup!();
                 }
             }
         },

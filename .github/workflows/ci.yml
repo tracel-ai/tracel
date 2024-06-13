@@ -21,6 +21,8 @@ jobs:
         run: cargo xtask ci --target crates format
       - name: Lint
         run: cargo xtask ci --target crates lint
+      - name: Audit
+        run: cargo xtask ci --target crates audit
       - name: Unit Tests
         run: cargo xtask ci --target crates unit-tests
       - name: Integration Tests

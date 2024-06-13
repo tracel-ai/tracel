@@ -20,6 +20,8 @@ pub(crate) struct CICmdArgs {
 #[derive(EnumString, EnumIter, Display, Clone, PartialEq, Subcommand)]
 #[strum(serialize_all = "lowercase")]
 pub(crate) enum CICommand {
+    /// Run audit command.
+    Audit,
     /// Run format command.
     Format,
     /// Run lint command.
@@ -38,6 +40,7 @@ pub(crate) enum CICommand {
 
 pub(crate) fn handle_command(args: CICmdArgs) -> anyhow::Result<()> {
     match args.command {
+        CICommand::Audit => run_audit(&args.target),
         CICommand::Format => run_format(&args.target),
         CICommand::Lint => run_lint(&args.target),
         CICommand::UnitTests => run_unit_tests(&args.target),
@@ -67,7 +70,7 @@ fn run_format(target: &Target) -> Result<()> {
             };
 
             for member in members {
-                group!("Check: {}", member.name);
+                group!("Format: {}", member.name);
                 info!("Command line: cargo fmt --check -p {}", &member.name);
                 let status = Command::new("cargo")
                     .args(["fmt", "--check", "-p", &member.name])
@@ -119,19 +122,20 @@ fn run_lint(target: &Target) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn run_audit(target: &Target) -> anyhow::Result<()> {
+    super::check::run_audit(&target)
+}
+
 fn run_unit_tests(target: &Target) -> anyhow::Result<()> {
-    run_unit(&target)?;
-    Ok(())
+    run_unit(&target)
 }
 
 fn run_integration_tests(target: &Target) -> anyhow::Result<()> {
-    run_integration(&target)?;
-    Ok(())
+    run_integration(&target)
 }
 
 fn run_doc_tests(target: &Target) -> anyhow::Result<()> {
-    run_documentation(&target)?;
-    Ok(())
+    run_documentation(&target)
 }
 
 fn run_all_tests(target: &Target) -> anyhow::Result<()> {

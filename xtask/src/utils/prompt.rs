@@ -10,7 +10,3 @@ pub(crate) fn ask_once(prompt: &str) -> bool {
         .expect("should be able to read stdin line");
     input.trim().to_lowercase() == "yes" || input.trim().to_lowercase() == "y"
 }
-
-pub(crate) fn separator() {
-    info!("-----------------------------------------------------------");
-}
