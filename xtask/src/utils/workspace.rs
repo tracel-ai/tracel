@@ -1,5 +1,4 @@
 use std::{path::Path, process::Command};
-
 use serde_json::Value;
 
 const MEMBER_PATH_PREFIX: &str = if cfg!(target_os = "windows") {
@@ -14,6 +13,7 @@ pub(crate) enum WorkspaceMemberType {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct WorkspaceMember {
     pub(crate) name: String,
     pub(crate) path: String,
