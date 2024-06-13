@@ -4,7 +4,7 @@ use anyhow::{Ok, Result, anyhow};
 use clap::{Args, Subcommand};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-use crate::{endgroup, group, utils::{prompt::ask_once, workspace::{get_workspace_members, WorkspaceMemberType}}};
+use crate::{endgroup, group, utils::{cargo::ensure_cargo_crate_is_installed, prompt::ask_once, workspace::{get_workspace_members, WorkspaceMemberType}}};
 
 use super::Target;
 
@@ -32,7 +32,7 @@ enum CheckCommand {
 
 pub(crate) fn handle_command(args: CheckCmdArgs, answer: Option<bool>) -> anyhow::Result<()> {
     match args.command {
-        CheckCommand::Audit => run_audit(&args.target),
+        CheckCommand::Audit => run_audit(&args.target, answer),
         CheckCommand::Format => run_format(&args.target, answer),
         CheckCommand::Lint => run_lint(&args.target, answer),
         CheckCommand::All => {
@@ -50,23 +50,34 @@ pub(crate) fn handle_command(args: CheckCmdArgs, answer: Option<bool>) -> anyhow
     }
 }
 
-pub(crate) fn run_audit(target: &Target) -> anyhow::Result<()> {
+pub(crate) fn run_audit(target: &Target, mut answer: Option<bool>) -> anyhow::Result<()> {
     match target {
         Target::Crates | Target::Examples => {
-            group!("Audit");
-            info!("Command line: cargo audit -q");
-            let status = Command::new("cargo")
-                .args(["audit", "-q"])
-                .status()
-                .map_err(|e| anyhow!("Failed to execute cargo audit: {}", e))?;
-            if !status.success() {
-                return Err(anyhow!("Audit check execution failed"));
+            if answer.is_none() {
+                answer = Some(ask_once(
+                    "This will run the audit check with autofix mode enabled.",
+                ));
+            };
+            if answer.unwrap() {
+                ensure_cargo_crate_is_installed("cargo-audit", Some("fix"), false)?;
+                group!("Audit: Crates and Examples");
+                info!("Command line: cargo audit fix");
+                let status = Command::new("cargo")
+                    .args(["audit", "-q", "--color", "always", "fix"])
+                    .status()
+                    .map_err(|e| anyhow!("Failed to execute cargo audit: {}", e))?;
+                if !status.success() {
+                    return Err(anyhow!("Audit check execution failed"));
+                }
+                endgroup!();
             }
-            endgroup!();
         },
-        Target::All => Target::iter()
-            .filter(|p| *p != Target::All && *p != Target::Examples)
-            .try_for_each(|p| run_audit(&p))?,
+        Target::All => {
+            let answer = ask_once("This will run audit checks on all targets.");
+            Target::iter()
+                .filter(|p| *p != Target::All && *p != Target::Examples)
+                .try_for_each(|p| run_audit(&p, Some(answer)))?;
+        }
     }
     Ok(())
 }
