@@ -15,3 +15,13 @@ pub enum EndExperimentSchema {
 pub struct StartExperimentSchema {
     pub config: serde_json::Value,
 }
+
+#[derive(Serialize)]
+pub struct HeatCredentialsSchema {
+    pub api_key: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateExperimentResponseSchema {
+    pub experiment_id: String,
+}

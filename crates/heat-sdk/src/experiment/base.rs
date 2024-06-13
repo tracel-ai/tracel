@@ -1,6 +1,4 @@
-use reqwest::header::COOKIE;
-
-use crate::{error::HeatSdkError, http_schemas::URLSchema, websocket::WebSocketClient};
+use crate::{error::HeatSdkError, http::HttpClient, websocket::WebSocketClient};
 use std::sync::mpsc;
 
 use super::{thread::ExperimentWSHandler, WsMessage};
@@ -8,30 +6,21 @@ use super::{thread::ExperimentWSHandler, WsMessage};
 #[derive(Debug)]
 pub struct TempLogStore {
     logs: Vec<String>,
-    http_client: reqwest::blocking::Client,
-    endpoint: String,
+    http_client: HttpClient,
     exp_id: String,
     bytes: usize,
-    session_cookie: String,
 }
 
 impl TempLogStore {
     // 100 MiB
     const BYTE_LIMIT: usize = 100 * 1024 * 1024;
 
-    pub fn new(
-        http_client: reqwest::blocking::Client,
-        endpoint: String,
-        exp_id: String,
-        session_cookie: String,
-    ) -> TempLogStore {
+    pub fn new(http_client: HttpClient, exp_id: String) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
             http_client,
-            endpoint,
             exp_id,
             bytes: 0,
-            session_cookie,
         }
     }
 
@@ -48,21 +37,9 @@ impl TempLogStore {
 
     pub fn flush(&mut self) -> Result<(), HeatSdkError> {
         if !self.logs.is_empty() {
-            let logs_upload_url = self
-                .http_client
-                .post(format!(
-                    "{}/experiments/{}/logs",
-                    self.endpoint, self.exp_id
-                ))
-                .header(COOKIE, self.session_cookie.clone())
-                .send()?
-                .json::<URLSchema>()?
-                .url;
-
+            let logs_upload_url = self.http_client.request_logs_upload_url(&self.exp_id)?;
             self.http_client
-                .put(logs_upload_url)
-                .body(self.logs.join(""))
-                .send()?;
+                .upload_bytes_to_url(&logs_upload_url, self.logs.join("").into_bytes())?;
 
             self.logs.clear();
             self.bytes = 0;
