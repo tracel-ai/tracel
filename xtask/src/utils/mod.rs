@@ -1,9 +1,12 @@
+use std::process::Command;
+
 pub(crate) mod cargo;
 pub(crate) mod process;
-pub(crate) mod rustup;
+pub(crate) mod prompt;
 pub(crate) mod time;
 pub(crate) mod workspace;
 
+#[derive(Clone)]
 pub(crate) struct Params {
     pub params: Vec<String>,
 }
@@ -46,4 +49,16 @@ impl<Rhs: Into<Params>> std::ops::Add<Rhs> for Params {
         self.params.extend(rhs.params);
         self
     }
+}
+
+pub fn get_command_line_from_command(command: &Command) -> String {
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| format!("\"{}\"", arg.to_string_lossy().into_owned()))
+        .collect();
+    format!(
+        "{} {}",
+        command.get_program().to_string_lossy(),
+        args.join(" ")
+    )
 }
