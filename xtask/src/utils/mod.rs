@@ -1,7 +1,4 @@
-pub(crate) mod cargo;
-pub(crate) mod process;
 pub(crate) mod prompt;
-pub(crate) mod rustup;
 pub(crate) mod time;
 pub(crate) mod workspace;
 

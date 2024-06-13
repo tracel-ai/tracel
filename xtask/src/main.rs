@@ -30,17 +30,6 @@ enum Command {
     Test(commands::test::TestCmdArgs),
     /// Runs all tests and checks that should pass before opening a Pull Request.
     PullRequestChecks,
-    /// Run the specified dependencies check locally
-    Dependencies {
-        /// The dependency check to run
-        dependency_check: commands::dependencies::DependencyCheck,
-    },
-    /// Run the specified vulnerability check locally. These commands must be called with 'cargo +nightly'.
-    Vulnerabilities {
-        /// The vulnerability check to run.
-        /// For the reference visit the page `<https://doc.rust-lang.org/beta/unstable-book/compiler-flags/sanitizer.html>`
-        vulnerability_check: commands::vulnerabilities::VulnerabilityCheck,
-    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -53,10 +42,6 @@ fn main() -> anyhow::Result<()> {
         Command::CI(args) => commands::ci::handle_command(args),
         Command::Test(args) => commands::test::handle_command(args),
         Command::PullRequestChecks => commands::pull_request_checks::handle_command(),
-        Command::Dependencies { dependency_check } => dependency_check.run(),
-        Command::Vulnerabilities {
-            vulnerability_check,
-        } => vulnerability_check.run(),
     }?;
 
     let duration = start.elapsed();
