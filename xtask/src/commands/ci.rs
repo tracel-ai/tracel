@@ -4,7 +4,7 @@ use anyhow::{Ok, Result, anyhow};
 use clap::{Args, Subcommand};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-use crate::{endgroup, group, utils::workspace::{get_workspace_members, WorkspaceMemberType}};
+use crate::{endgroup, group, utils::{cargo::ensure_cargo_crate_is_installed, workspace::{get_workspace_members, WorkspaceMemberType}}};
 
 use super::{test::{run_documentation, run_integration, run_unit}, Target};
 
@@ -49,7 +49,7 @@ pub(crate) fn handle_command(args: CICmdArgs) -> anyhow::Result<()> {
         CICommand::AllTests => run_all_tests(&args.target),
         CICommand::All => {
             CICommand::iter()
-                .filter(|c| *c != CICommand::All)
+                .filter(|c| *c != CICommand::All && *c != CICommand::AllTests)
                 .try_for_each(|c| handle_command(
                     CICmdArgs {
                         command: c,
@@ -58,6 +58,30 @@ pub(crate) fn handle_command(args: CICmdArgs) -> anyhow::Result<()> {
                 ))
         },
     }
+}
+
+fn run_audit(target: &Target) -> anyhow::Result<()> {
+    match target {
+        Target::Crates | Target::Examples => {
+            group!("Audit: Crates and Examples");
+            ensure_cargo_crate_is_installed("cargo-audit", Some("fix"), false)?;
+            info!("Command line: cargo audit");
+            let status = Command::new("cargo")
+                .args(["audit", "-q", "--color", "always"])
+                .status()
+                .map_err(|e| anyhow!("Failed to execute cargo audit: {}", e))?;
+            if !status.success() {
+                return Err(anyhow!("Audit check execution failed"));
+            }
+            endgroup!();
+        },
+        Target::All => {
+            Target::iter()
+                .filter(|t| *t != Target::All && *t != Target::Examples)
+                .try_for_each(|t| run_audit(&t))?;
+        },
+    }
+    Ok(())
 }
 
 fn run_format(target: &Target) -> Result<()> {
@@ -120,10 +144,6 @@ fn run_lint(target: &Target) -> anyhow::Result<()> {
         },
     }
     Ok(())
-}
-
-fn run_audit(target: &Target) -> anyhow::Result<()> {
-    super::check::run_audit(&target)
 }
 
 fn run_unit_tests(target: &Target) -> anyhow::Result<()> {
