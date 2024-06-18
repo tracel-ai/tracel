@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator;
 
-use super::ci::{self, CICmdArgs, CICommand};
+use super::{ci::{self, CICmdArgs, CICommand}, test::run_guide};
 
 pub(crate) fn handle_command() -> anyhow::Result<()> {
     CICommand::iter()
@@ -10,5 +10,7 @@ pub(crate) fn handle_command() -> anyhow::Result<()> {
             target: super::Target::All,
             command: c.clone(),
         })
-    )
+    )?;
+    // Execute the guide example
+    run_guide()
 }
