@@ -16,6 +16,44 @@ cargo xtask pull-request-checks
 
 **Pro-tip:** create an alias in your shell of choice to map `cargo xtask` to something easy to type like `cx`.
 
+For bash:
+
+```bash
+nano ~/.bashrc
+
+# add this to the file
+alias cx='cargo xtask'
+
+# save and source the file or restart the shell session
+source ~/.bashrc
+```
+
+For fish:
+
+```fish
+nano ~/.config/fish/config.fish
+
+
+# add this to the file
+alias cx='cargo xtask'
+
+# save and source the file or restart the shell session
+source ~/.config/fish/config.fish
+```
+
+For powershell:
+
+```powershell
+notepad $PROFILE
+
+# add this at the end of file
+function cx {
+    cargo xtask $args
+}
+
+# save and quit then open a new powershell terminal
+```
+
 ### Tests
 
 To run the tests it is mandatory to use the `cargo xtask test` command as it makes sure that all
