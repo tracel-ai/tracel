@@ -4,7 +4,9 @@
 //! # Tracel
 
 /// Heat SDK
-#[cfg(feature = "heat-sdk")]
 pub mod heat {
+    #[cfg(feature = "heat-cli")]
+    pub use heat_cli::*;
+    #[cfg(feature = "heat-sdk")]
     pub use heat_sdk::*;
 }
