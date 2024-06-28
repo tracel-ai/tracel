@@ -7,7 +7,7 @@ readme.workspace = true
 
 [dependencies]
 burn = { workspace = true, features = ["train"]}
-heat-cli = { path = "../heat-cli", version = "0.1.0" }
+heat-macros = { path = "../heat-macros", version = "0.1.0" }
 
 derive-new = { workspace = true }
 rmp-serde = { workspace = true }

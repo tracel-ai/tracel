@@ -1,5 +1,5 @@
 [package]
-name = "heat-cli"
+name = "heat-macros"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

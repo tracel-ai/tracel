@@ -5,7 +5,7 @@
 
 /// Heat SDK
 pub mod heat {
-    #[cfg(feature = "heat-cli")]
+    #[cfg(feature = "heat-macros")]
     pub use heat_cli::*;
     #[cfg(feature = "heat-sdk")]
     pub use heat_sdk::*;
