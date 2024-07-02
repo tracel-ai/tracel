@@ -30,31 +30,41 @@ enum RunType {
 #[derive(Parser, Debug)]
 struct RunArgs {
     /// Backend to use
-
     #[clap(short = 'b', long = "backend", required = true)]
     backend: BackendValue,
+    /// Config file path
+    #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true)]
+    configs: Vec<String>,
 }
 
 #[derive(Debug, Clone, ValueEnum, Display)]
 enum BackendValue {
-    #[strum(to_string = "candle")]
-    Candle,
-    #[strum(to_string = "tch")]
-    Tch,
     #[strum(to_string = "wgpu")]
     Wgpu,
+    #[strum(to_string = "tch")]
+    Tch,
+    #[strum(to_string = "ndarray")]
+    Ndarray,
 }
 
 fn main() {
     println!("Running CLI.");
     let args: Args = Args::parse();
     let backend = match args.command {
-        Commands::Run(run_type) => match run_type {
-            RunType::Local(run_args) => run_args.backend,
-            RunType::Remote(run_args) => run_args.backend,
+        Commands::Run(ref run_type) => match run_type {
+            RunType::Local(run_args) => &run_args.backend,
+            RunType::Remote(run_args) => &run_args.backend,
         },
         _ => unimplemented!(),
     };
+    let config_path = match args.command {
+        Commands::Run(ref run_type) => match run_type {
+            RunType::Local(run_args) => &run_args.configs,
+            RunType::Remote(run_args) => &run_args.configs,
+        },
+        _ => unimplemented!(),
+    };
+
     let mut feature_flags: Vec<String> = Vec::new();
     match backend {
         BackendValue::Wgpu => {
@@ -62,17 +72,19 @@ fn main() {
         }
         BackendValue::Tch => {
             feature_flags.push("heat-macros/tch".to_string());
-        }
-        _ => unimplemented!(),
+        },
+        BackendValue::Ndarray => {
+            feature_flags.push("heat-macros/ndarray".to_string());
+        },
     }
-
-    feature_flags.push("heat-macros/test_ft".to_string());
 
     let status = StdCommand::new("cargo")
         .arg("run")
         .arg("--release")
         .args(vec!["--bin", "guide-test"])
         .args(vec!["--features", &feature_flags.join(",")])
+        .arg("--")
+        .args(vec!["--configs", &config_path.join(" ")])
         .status()
         .expect("Failed to build the project");
 

@@ -5,11 +5,12 @@ publish = false
 version.workspace = true
 
 [dependencies]
-burn = { workspace = true, features = ["vision", "wgpu", "train", "tch"] }
+burn = { workspace = true, features = ["vision", "wgpu", "train", "tch", "ndarray"] }
 clap = { workspace = true, features = ["derive"] }
 log = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true }
 tracel = { path = "../../crates/tracel", features = ["heat-sdk", "heat-macros"] }
 strum = { workspace = true }
 

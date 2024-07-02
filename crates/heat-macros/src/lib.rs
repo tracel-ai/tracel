@@ -1,13 +1,9 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use std::{
-    collections::HashSet,
-    sync::{Mutex, OnceLock},
-};
+
 use strum::Display;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, ItemFn, Meta,
-    Path,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, FnArg, ItemFn, Meta, Path, Type
 };
 
 #[derive(Eq, Hash, PartialEq, Display)]
@@ -78,6 +74,7 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     enum BackendType {
         Wgpu,
         Tch,
+        Ndarray,
     }
 
     // --- Select backend type ---
@@ -89,6 +86,8 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         backends.push(BackendType::Wgpu);
         #[cfg(feature = "tch")]
         backends.push(BackendType::Tch);
+        #[cfg(feature = "ndarray")]
+        backends.push(BackendType::Ndarray);
 
         if backends.len() > 1 {
             errors.push(Error::new(
@@ -109,35 +108,43 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     };
     // --- Select backend type ---
 
-    let cfg_quote = {
-        let mut cfg_quote = quote! {};
+    let backend_quote = {
+        let mut backend_quote = quote! {};
         match backend {
             BackendType::Wgpu => {
-                cfg_quote = quote! {
-                    #cfg_quote
+                backend_quote = quote! {
+                    #backend_quote
                     type MyBackend = burn::backend::Wgpu<f32, i32>;
                     type MyAutodiffBackend = burn::backend::Autodiff<MyBackend>;
                     let device = burn::backend::wgpu::WgpuDevice::default();
                 };
             }
             BackendType::Tch => {
-                cfg_quote = quote! {
-                    #cfg_quote
+                backend_quote = quote! {
+                    #backend_quote
                     type MyBackend = burn::backend::libtorch::LibTorch<f32>;
                     type MyAutodiffBackend = burn::backend::Autodiff<MyBackend>;
                     let device = burn::backend::libtorch::LibTorchDevice::default();
                 };
             }
+            BackendType::Ndarray => {
+                backend_quote = quote! {
+                    #backend_quote
+                    type MyBackend = burn::backend::ndarray::NdArray<f32>;
+                    type MyAutodiffBackend = burn::backend::Autodiff<MyBackend>;
+                    let device = burn::backend::ndarray::NdArrayDevice::default();
+                };
+            }
         }
-        cfg_quote
+        backend_quote
     };
 
     let heat_main = quote! {
         pub mod __heat_main {
             pub use crate::guide_mod::*;
 
-        pub fn heat_main() {
-            #cfg_quote
+        pub fn heat_main(config_path: &str) {
+            #backend_quote
 
             fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
                 let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
@@ -153,8 +160,8 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
 
             let mut client = heat_client("90902bd6-053a-4ae8-a51c-002898b549fb", "http://127.0.0.1:9001", "4dbca6a9-8245-4a8b-b954-83ef9ba459d1");
 
-            let config = TrainingConfig::new(ModelConfig::new(10, 512), AdamConfig::new());
-
+            let config = Config::load(config_path).expect("Config should be loaded");
+            
             client
             .start_experiment(&config)
             .expect("Experiment should be started");

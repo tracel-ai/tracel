@@ -12,13 +12,13 @@ pub mod training;
 pub use burn;
 
 pub mod guide_mod {
-    use tracel::heat::{client::HeatClient, heat};
+    use tracel::heat::{heat, client::HeatClient};
 
-    use burn::optim::AdamConfig;
     use burn::tensor::backend::AutodiffBackend;
+    use burn::prelude::Config;
 
-    pub use crate::model::{Model, ModelConfig};
-    pub use crate::training::{self, TrainingConfig};
+    use crate::model::Model;
+    use crate::training::{self, TrainingConfig};
 
     #[heat(training)]
     pub fn training<B: AutodiffBackend>(

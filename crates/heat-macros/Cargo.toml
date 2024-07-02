@@ -16,3 +16,4 @@ strum = { workspace = true }
 [features]
 wgpu = []
 tch = []
+ndarray = []
