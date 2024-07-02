@@ -40,8 +40,6 @@ impl TryFrom<Path> for ProcedureType {
     }
 }
 
-static MACRO_LOCK: OnceLock<Mutex<HashSet<ProcedureType>>> = OnceLock::new();
-
 #[proc_macro_attribute]
 pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut errors = Vec::<Error>::new();
@@ -49,54 +47,11 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
     let item = parse_macro_input!(item as ItemFn);
 
-    let used = MACRO_LOCK.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut used_guard = used.lock().unwrap();
-
     if args.len() != 1 {
         errors.push(Error::new(
             args.span(),
             "Expected one argument for the #[heat] attribute. Please provide `training`, `inference` or `setup`",
         ));
-    }
-
-    // The procedure type must be the first argument in the attribute
-    let proc_type = match args.first().unwrap() {
-        Meta::Path(path) => match ProcedureType::try_from(path.clone()) {
-            Ok(proc_type) => proc_type,
-            Err(err) => {
-                return err.to_compile_error().into();
-            }
-        },
-        _ => {
-            return Error::new(args.span(), "Expected `training`, `inference` or `setup`")
-                .to_compile_error()
-                .into();
-        }
-    };
-
-    if (*used_guard).contains(&proc_type) {
-        errors.push(Error::new_spanned(
-            args.clone(),
-            format!(
-                "The #[heat] attribute `{}` can only be used once in the crate.",
-                proc_type.to_string()
-            ),
-        ));
-    } else {
-        match proc_type {
-            ProcedureType::Training => {
-                (*used_guard).insert(proc_type);
-            }
-            _ => {
-                errors.push(Error::new_spanned(
-                    args.clone(),
-                    format!(
-                        "The #[heat] attribute `{}` is not supported yet.",
-                        proc_type.to_string()
-                    ),
-                ));
-            }
-        }
     }
 
     let fn_generics = &item.sig.generics;
@@ -119,10 +74,71 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let fn_name = &item.sig.ident;
 
+    #[allow(dead_code)]
+    enum BackendType {
+        Wgpu,
+        Tch,
+    }
+
+    // --- Select backend type ---
+    const DEFAULT_BACKEND: BackendType = BackendType::Wgpu;
+    let backend = {
+        let mut backends: Vec<BackendType> = Vec::new();
+
+        #[cfg(feature = "wgpu")]
+        backends.push(BackendType::Wgpu);
+        #[cfg(feature = "tch")]
+        backends.push(BackendType::Tch);
+
+        if backends.len() > 1 {
+            errors.push(Error::new(
+                item.sig.ident.span(),
+                "Only one backend can be enabled at a time",
+            ));
+        }
+
+        let backend = {
+            if backends.is_empty() {
+                DEFAULT_BACKEND
+            } else {
+                backends.pop().unwrap()
+            }
+        };
+
+        backend
+    };
+    // --- Select backend type ---
+
+    let cfg_quote = {
+        let mut cfg_quote = quote! {};
+        match backend {
+            BackendType::Wgpu => {
+                cfg_quote = quote! {
+                    #cfg_quote
+                    type MyBackend = burn::backend::Wgpu<f32, i32>;
+                    type MyAutodiffBackend = burn::backend::Autodiff<MyBackend>;
+                    let device = burn::backend::wgpu::WgpuDevice::default();
+                };
+            }
+            BackendType::Tch => {
+                cfg_quote = quote! {
+                    #cfg_quote
+                    type MyBackend = burn::backend::libtorch::LibTorch<f32>;
+                    type MyAutodiffBackend = burn::backend::Autodiff<MyBackend>;
+                    let device = burn::backend::libtorch::LibTorchDevice::default();
+                };
+            }
+        }
+        cfg_quote
+    };
+
     let heat_main = quote! {
-        fn heat_main()
-        {
-            use burn::prelude::Module;
+        pub mod __heat_main {
+            pub use crate::guide_mod::*;
+
+        pub fn heat_main() {
+            #cfg_quote
+
             fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
                 let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
                 let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
@@ -133,14 +149,11 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
                     .expect("Should connect to the Heat server and create a client")
             }
 
-            type MyBackend = burn::backend::Wgpu<burn::backend::wgpu::AutoGraphicsApi, f32, i32>;
-            type MyAutodiffBackend = burn::backend::Autodiff<MyBackend>;
-            let device = burn::backend::wgpu::WgpuDevice::default();
             let artifact_dir = "/tmp/guide";
 
             let mut client = heat_client("90902bd6-053a-4ae8-a51c-002898b549fb", "http://127.0.0.1:9001", "4dbca6a9-8245-4a8b-b954-83ef9ba459d1");
 
-            let config = guide_cli::training::TrainingConfig::new(guide_cli::model::ModelConfig::new(10, 512), AdamConfig::new());
+            let config = TrainingConfig::new(ModelConfig::new(10, 512), AdamConfig::new());
 
             client
             .start_experiment(&config)
@@ -160,7 +173,7 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
                     .expect("Experiment should end successfully");
                 }
             }
-        }
+        }}
     };
 
     // If there are any errors, combine them and return
@@ -176,5 +189,14 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         return combined_error.to_compile_error().into();
     }
 
-    quote! {#item #heat_main}.into()
+    quote! {
+        #item
+        #heat_main
+    }
+    .into()
 }
+
+// #[cfg(feature = "test_ft")]
+// fn test() {
+//     compile_error!("This is a test feature");
+// }

@@ -1838,6 +1838,7 @@ dependencies = [
  "log",
  "reqwest",
  "serde",
+ "strum",
  "tracel",
 ]
 
@@ -1917,6 +1918,13 @@ dependencies = [
  "thiserror",
  "widestring",
  "winapi",
+]
+
+[[package]]
+name = "heat-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
