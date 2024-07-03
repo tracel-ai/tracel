@@ -16,7 +16,7 @@ use burn::{
         ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep,
     },
 };
-use tracel::heat::client::HeatClient;
+use tracel::heat::{macros::heat, client::HeatClient};
 
 impl<B: Backend> Model<B> {
     pub fn forward_classification(
@@ -127,4 +127,13 @@ pub fn train<B: AutodiffBackend>(
     let model_trained = learner.fit(dataloader_train, dataloader_test);
 
     Ok(model_trained)
+}
+
+#[heat(training)]
+pub(crate) fn training<B: AutodiffBackend>(
+    mut client: HeatClient,
+    devices: Vec<B::Device>,
+    config: TrainingConfig,
+) -> Result<Model<B>, ()> {
+    train::<B>(&mut client, "/tmp/guide", config, devices[0].clone())
 }

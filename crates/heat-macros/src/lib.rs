@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 
 use strum::Display;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, FnArg, ItemFn, Meta, Path, Type
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, ItemFn, Meta, Path,
 };
 
 #[derive(Eq, Hash, PartialEq, Display)]
@@ -68,7 +68,9 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
+    // name of the function
     let fn_name = &item.sig.ident;
+
 
     #[allow(dead_code)]
     enum BackendType {
@@ -96,18 +98,14 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
             ));
         }
 
-        let backend = {
-            if backends.is_empty() {
-                DEFAULT_BACKEND
-            } else {
-                backends.pop().unwrap()
-            }
-        };
-
-        backend
+        if backends.is_empty() {
+            DEFAULT_BACKEND
+        } else {
+            backends.pop().unwrap()
+        }
     };
+    
     // --- Select backend type ---
-
     let backend_quote = {
         let mut backend_quote = quote! {};
         match backend {
@@ -140,47 +138,48 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let heat_main = quote! {
-        pub mod __heat_main {
-            pub use crate::guide_mod::*;
+            pub use tracel::heat::run::*;
 
-        pub fn heat_main(config_path: &str) {
-            #backend_quote
+            pub fn heat_main() {
+                #backend_quote
 
-            fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
-                let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
-                let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
-                    .with_endpoint(url)
-                    .with_num_retries(10)
-                    .build();
-                tracel::heat::client::HeatClient::create(client_config)
-                    .expect("Should connect to the Heat server and create a client")
-            }
-
-            let artifact_dir = "/tmp/guide";
-
-            let mut client = heat_client("90902bd6-053a-4ae8-a51c-002898b549fb", "http://127.0.0.1:9001", "4dbca6a9-8245-4a8b-b954-83ef9ba459d1");
-
-            let config = Config::load(config_path).expect("Config should be loaded");
-            
-            client
-            .start_experiment(&config)
-            .expect("Experiment should be started");
-
-            let res = #fn_name::<MyAutodiffBackend>(client.clone(), vec![device], config);
-
-            match res {
-                Ok(model) => {
-                    client
-                    .end_experiment_with_model::<MyAutodiffBackend, burn::record::HalfPrecisionSettings>(model.clone())
-                    .expect("Experiment should end successfully");
+                fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
+                    let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
+                    let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
+                        .with_endpoint(url)
+                        .with_num_retries(10)
+                        .build();
+                    tracel::heat::client::HeatClient::create(client_config)
+                        .expect("Should connect to the Heat server and create a client")
                 }
-                Err(_) => {
+
+                let artifact_dir = "/tmp/guide";
+
+                let mut client = heat_client("dcaf7eb9-5acc-47d7-8b93-ca0fbb234096", "http://127.0.0.1:9001", "331a3907-bfd8-45e5-af54-1fee73a3c1b1");
+
+                for config_path in get_run_config().configs_paths {
+                    let config = burn::prelude::Config::load(config_path).expect("Config should be loaded");
+
                     client
-                    .end_experiment_with_error("Error during training".to_string())
-                    .expect("Experiment should end successfully");
+                    .start_experiment(&config)
+                    .expect("Experiment should be started");
+
+                    let res = #fn_name::<MyAutodiffBackend>(client.clone(), vec![device.clone()], config);
+
+                    match res {
+                        Ok(model) => {
+                            client
+                            .end_experiment_with_model::<MyAutodiffBackend, burn::record::HalfPrecisionSettings>(model.clone())
+                            .expect("Experiment should end successfully");
+                        }
+                        Err(_) => {
+                            client
+                            .end_experiment_with_error("Error during training".to_string())
+                            .expect("Experiment should end successfully");
+                        }
+                    }
                 }
             }
-        }}
     };
 
     // If there are any errors, combine them and return
@@ -203,7 +202,31 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-// #[cfg(feature = "test_ft")]
-// fn test() {
-//     compile_error!("This is a test feature");
-// }
+#[proc_macro_attribute]
+pub fn heat_cli_main(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as ItemFn);
+
+    let item_sig = &item.sig;
+    let item_block = &item.block;
+
+    // cause an error if the function has a body
+    if !item_block.stmts.is_empty() {
+        return Error::new(
+            item_block.span(),
+            "The cli main function should not have a body",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    let item = quote! {
+        #item_sig {
+            tracel::heat::cli::cli_main();
+        }
+    };
+
+    quote! {
+        #item
+    }
+    .into()
+}

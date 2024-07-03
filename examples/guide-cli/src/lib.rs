@@ -10,22 +10,3 @@ pub mod model;
 pub mod training;
 
 pub use burn;
-
-pub mod guide_mod {
-    use tracel::heat::{heat, client::HeatClient};
-
-    use burn::tensor::backend::AutodiffBackend;
-    use burn::prelude::Config;
-
-    use crate::model::Model;
-    use crate::training::{self, TrainingConfig};
-
-    #[heat(training)]
-    pub fn training<B: AutodiffBackend>(
-        mut client: HeatClient,
-        devices: Vec<B::Device>,
-        config: TrainingConfig,
-    ) -> Result<Model<B>, ()> {
-        training::train::<B>(&mut client, "/tmp/guide", config, devices[0].clone())
-    }
-}

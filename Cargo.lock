@@ -864,6 +864,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-random"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87e00182fe74b066627d63b85fd550ac2998d4b0bd86bfed477a0ae4c7c71359"
+dependencies = [
+ "const-random-macro",
+]
+
+[[package]]
+name = "const-random-macro"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9d839f2a20b0aee515dc581a6172f2321f96cab76c1a38a4c584a194955390e"
+dependencies = [
+ "getrandom",
+ "once_cell",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "constant_time_eq"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1093,6 +1113,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.68",
+]
+
+[[package]]
+name = "derive-syn-parse"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e79116f119dd1dba1abf1f3405f03b9b0e79a27a3883864bfebded8a3dc768cd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -1834,11 +1865,9 @@ name = "guide-cli"
 version = "0.1.0"
 dependencies = [
  "burn",
- "clap",
  "log",
- "reqwest",
  "serde",
- "strum",
+ "serde_json",
  "tracel",
 ]
 
@@ -1921,13 +1950,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "heat-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "heat-macros"
 version = "0.1.0"
 dependencies = [
@@ -1942,13 +1964,16 @@ name = "heat-sdk"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "clap",
  "derive-new",
  "heat-macros",
  "log",
+ "macro_magic",
  "reqwest",
  "rmp-serde",
  "serde",
  "serde_json",
+ "strum",
  "thiserror",
  "tracing",
  "tracing-core",
@@ -2425,6 +2450,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3262e75e648fce39813cb56ac41f3c3e3f65217ebf3844d818d1f9398cfb0dc"
 dependencies = [
  "hashbrown 0.14.5",
+]
+
+[[package]]
+name = "macro_magic"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e03844fc635e92f3a0067e25fa4bf3e3dbf3f2927bf3aa01bb7bc8f1c428949d"
+dependencies = [
+ "macro_magic_macros",
+]
+
+[[package]]
+name = "macro_magic_core"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "468155613a44cfd825f1fb0ffa532b018253920d404e6fca1e8d43155198a46d"
+dependencies = [
+ "const-random",
+ "derive-syn-parse",
+ "macro_magic_core_macros",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.68",
+]
+
+[[package]]
+name = "macro_magic_core_macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea73aa640dc01d62a590d48c0c3521ed739d53b27f919b25c3551e233481654"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.68",
+]
+
+[[package]]
+name = "macro_magic_macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef9d79ae96aaba821963320eb2b6e34d17df1e5a83d8a1985c29cc5be59577b3"
+dependencies = [
+ "macro_magic_core",
+ "quote",
+ "syn 2.0.68",
 ]
 
 [[package]]
@@ -4139,6 +4209,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
+]
+
+[[package]]
 name = "tinyvec"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4305,7 +4384,6 @@ checksum = "b6bc1c9ce2b5135ac7f93c72918fc37feb872bdc6a5533a8b85eb4b86bfdae52"
 name = "tracel"
 version = "0.1.0"
 dependencies = [
- "heat-macros",
  "heat-sdk",
 ]
 

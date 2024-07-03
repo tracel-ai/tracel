@@ -9,3 +9,14 @@ mod http;
 mod websocket;
 
 pub use record::*;
+
+#[cfg(feature = "cli")]
+pub mod macros {
+    pub use heat_macros::*;
+}
+
+#[cfg(feature = "cli")]
+pub mod cli;
+
+#[cfg(feature = "cli")]
+pub mod run;
