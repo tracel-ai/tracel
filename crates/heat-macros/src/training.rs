@@ -68,8 +68,8 @@ pub(crate) fn generate_training(
             let config = burn::prelude::Config::load(run_config.config_path.clone()).expect("Config should be loaded");
 
             client
-            .start_experiment(&config)
-            .expect("Experiment should be started");
+                .start_experiment(&config)
+                .expect("Experiment should be started");
 
             let res = #fn_name::<#autodiff_backend_type>(client.clone(), vec![device.clone()], config);
 

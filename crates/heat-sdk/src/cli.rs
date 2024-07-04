@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::process::Command as StdCommand;
 use strum::Display;
 
+use crate::{Flag, Plugin};
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -30,8 +32,8 @@ enum RunType {
 #[derive(Parser, Debug)]
 struct RunArgs {
     /// Backend to use
-    #[clap(short = 'b', long = "backend", required = true)]
-    backend: BackendValue,
+    #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true)]
+    backends: Vec<BackendValue>,
     /// Config file path
     #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true)]
     configs: Vec<String>,
@@ -57,10 +59,10 @@ enum BackendValue {
 pub fn cli_main() {
     println!("Running CLI.");
     let args: Args = Args::parse();
-    let backend = match args.command {
+    let backends = match args.command {
         Commands::Run(ref run_type) => match run_type {
-            RunType::Local(run_args) => &run_args.backend,
-            RunType::Remote(run_args) => &run_args.backend,
+            RunType::Local(run_args) => &run_args.backends,
+            RunType::Remote(run_args) => &run_args.backends,
         },
         _ => unimplemented!(),
     };
@@ -86,36 +88,42 @@ pub fn cli_main() {
         _ => unimplemented!(),
     };
 
-    let mut feature_flags: Vec<String> = Vec::new();
-    match backend {
-        BackendValue::Wgpu => {
-            feature_flags.push("heat-macros/wgpu".to_string());
-        }
-        BackendValue::Tch => {
-            feature_flags.push("heat-macros/tch".to_string());
-        }
-        BackendValue::Ndarray => {
-            feature_flags.push("heat-macros/ndarray".to_string());
+    let mut commands_to_run: Vec<StdCommand> = Vec::new();
+
+    for backend in backends {
+        for config_path in config_paths {
+            let mut feature_flags: Vec<String> = Vec::new();
+            match backend {
+                BackendValue::Wgpu => {
+                    feature_flags.push("heat-macros/wgpu".to_string());
+                }
+                BackendValue::Tch => {
+                    feature_flags.push("heat-macros/tch".to_string());
+                }
+                BackendValue::Ndarray => {
+                    feature_flags.push("heat-macros/ndarray".to_string());
+                }
+            }
+            let mut cmd = StdCommand::new("cargo");
+            cmd.arg("run")
+                .arg("--release")
+                .args(vec!["--bin", "guide-test"])
+                .args(vec!["--features", &feature_flags.join(",")])
+                .arg("--")
+                .args(vec!["--config", &config_path])
+                .args(vec!["--project", &project])
+                .args(vec!["--key", &key]);
+
+            commands_to_run.push(cmd);
         }
     }
 
-    for config_path in config_paths {
-        let mut cmd = StdCommand::new("cargo");
-        cmd.arg("run")
-            .arg("--release")
-            .args(vec!["--bin", "guide-test"])
-            .args(vec!["--features", &feature_flags.join(",")])
-            .arg("--")
-            .args(vec!["--config", &config_path])
-            .args(vec!["--project", &project])
-            .args(vec!["--key", &key]);
-
+    for mut cmd in commands_to_run {
         println!("Running command: {:?}", cmd);
 
-        let status = cmd.status().expect("Failed to build the project");
-
+        let status = cmd.status().expect("Failed to execute command");
         if !status.success() {
-            panic!("Failed to build the project");
+            panic!("Command failed: {:?}", cmd);
         }
     }
 }

@@ -91,16 +91,27 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         return compile_errors(errors).into();
     }
 
+    let fn_name = &item.sig.ident;
+    let proc_type_str =
+        syn::Ident::new(&procedure_type.to_string(), proc_macro2::Span::call_site());
     quote! {
         #item
         #generated_code
+
+        tracel::heat::register_flag!(
+            tracel::heat::Flag,
+            tracel::heat::Flag::new(
+                Box::leak(format!("{}::{}", module_path!(), stringify!(#fn_name)).into_boxed_str())
+                , stringify!(#proc_type_str)));
     }
     .into()
 }
 
 #[proc_macro_attribute]
-pub fn heat_cli_main(_args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
+
+    let module_path = parse_macro_input!(args as Path); // Parse the module path
 
     let item_sig = &item.sig;
     let item_block = &item.block;
@@ -115,7 +126,15 @@ pub fn heat_cli_main(_args: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
+    let mod_tokens = syn::Ident::new(
+        &format!("__{}", uuid::Uuid::new_v4().simple()),
+        proc_macro2::Span::call_site(),
+    );
     let item = quote! {
+        mod #mod_tokens {
+            pub extern crate #module_path;
+        }
+
         #item_sig {
             tracel::heat::cli::cli_main();
         }
