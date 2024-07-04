@@ -1,9 +1,10 @@
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::quote;
 
 use strum::Display;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, ItemFn, Meta, Path,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, ItemFn, Meta,
+    Path,
 };
 
 #[derive(Eq, Hash, PartialEq, Display)]
@@ -71,7 +72,6 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     // name of the function
     let fn_name = &item.sig.ident;
 
-
     #[allow(dead_code)]
     enum BackendType {
         Wgpu,
@@ -104,7 +104,7 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
             backends.pop().unwrap()
         }
     };
-    
+
     // --- Select backend type ---
     let backend_quote = {
         let mut backend_quote = quote! {};
@@ -138,8 +138,6 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let heat_main = quote! {
-            pub use tracel::heat::run::*;
-
             pub fn heat_main() {
                 #backend_quote
 
@@ -152,12 +150,11 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
                     tracel::heat::client::HeatClient::create(client_config)
                         .expect("Should connect to the Heat server and create a client")
                 }
+                let run_config = tracel::heat::run::get_run_config();
 
-                let artifact_dir = "/tmp/guide";
+                let mut client = heat_client(&run_config.key, &run_config.heat_endpoint, &run_config.project);
 
-                let mut client = heat_client("dcaf7eb9-5acc-47d7-8b93-ca0fbb234096", "http://127.0.0.1:9001", "331a3907-bfd8-45e5-af54-1fee73a3c1b1");
-
-                for config_path in get_run_config().configs_paths {
+                for config_path in run_config.configs_paths {
                     let config = burn::prelude::Config::load(config_path).expect("Config should be loaded");
 
                     client

@@ -35,6 +35,13 @@ struct RunArgs {
     /// Config file path
     #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true)]
     configs: Vec<String>,
+    /// The project ID
+    // todo: support project name and creating a project if it doesn't exist
+    #[clap(short = 'p', long = "project", required = true)]
+    project: String,
+    /// The API key
+    #[clap(short = 'k', long = "key", required = true)]
+    key: String,
 }
 
 #[derive(Debug, Clone, ValueEnum, Display)]
@@ -64,6 +71,20 @@ pub fn cli_main() {
         },
         _ => unimplemented!(),
     };
+    let project = match args.command {
+        Commands::Run(ref run_type) => match run_type {
+            RunType::Local(run_args) => &run_args.project,
+            RunType::Remote(run_args) => &run_args.project,
+        },
+        _ => unimplemented!(),
+    };
+    let key = match args.command {
+        Commands::Run(ref run_type) => match run_type {
+            RunType::Local(run_args) => &run_args.key,
+            RunType::Remote(run_args) => &run_args.key,
+        },
+        _ => unimplemented!(),
+    };
 
     let mut feature_flags: Vec<String> = Vec::new();
     match backend {
@@ -85,6 +106,8 @@ pub fn cli_main() {
         .args(vec!["--features", &feature_flags.join(",")])
         .arg("--")
         .args(vec!["--configs", &config_path.join(" ")])
+        .args(vec!["--project", &project])
+        .args(vec!["--key", &key])
         .status()
         .expect("Failed to build the project");
 
