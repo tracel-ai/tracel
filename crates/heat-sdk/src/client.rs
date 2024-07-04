@@ -162,10 +162,13 @@ impl HeatClient {
             .active_experiment
             .read()
             .expect("Should be able to lock active_experiment as read.");
-        active_experiment
-            .as_ref()
-            .expect("Experiment should exist.")
-            .get_ws_sender()
+        if let Some(w) = active_experiment.as_ref() {
+            w.get_ws_sender()
+        } else {
+            Err(HeatSdkError::ClientError(
+                "No active experiment to get sender.".to_string(),
+            ))
+        }
     }
 
     /// Save checkpoint data to the Heat API.

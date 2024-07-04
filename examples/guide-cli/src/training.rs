@@ -3,7 +3,9 @@ use crate::{
     model::{Model, ModelConfig},
 };
 use burn::{
-    data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*,
+    data::dataset::transform::SamplerDataset,
+    record::HalfPrecisionSettings,
+    train::metric::*,
 };
 use burn::{
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
@@ -16,7 +18,7 @@ use burn::{
         ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep,
     },
 };
-use tracel::heat::{macros::heat, client::HeatClient};
+use tracel::heat::{client::HeatClient, macros::heat};
 
 impl<B: Backend> Model<B> {
     pub fn forward_classification(

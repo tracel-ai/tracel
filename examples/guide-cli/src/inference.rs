@@ -1,19 +1,15 @@
-use crate::{data::MnistBatcher, model::Model, training::TrainingConfig};
+use crate::{data::MnistBatcher, model::Model};
 use burn::{
-    data::{dataloader::batcher::Batcher, dataset::vision::MnistItem},
+    data::{
+        dataloader::batcher::Batcher,
+        dataset::{vision::MnistItem, Dataset},
+    },
     prelude::*,
-    record::{CompactRecorder, Recorder},
+    tensor::backend::AutodiffBackend,
 };
+use tracel::heat::macros::heat;
 
-pub fn infer<B: Backend>(artifact_dir: &str, device: B::Device, item: MnistItem) {
-    let config = TrainingConfig::load(format!("{artifact_dir}/config.json"))
-        .expect("Config should exist for the model");
-    let record = CompactRecorder::new()
-        .load(format!("{artifact_dir}/model").into(), &device)
-        .expect("Trained model should exist");
-
-    let model: Model<B> = config.model.init(&device).load_record(record);
-
+pub fn infer<B: Backend>(model: Model<B>, device: B::Device, item: MnistItem) {
     let label = item.label;
     let batcher = MnistBatcher::new(device);
     let batch = batcher.batch(vec![item]);
@@ -21,4 +17,15 @@ pub fn infer<B: Backend>(artifact_dir: &str, device: B::Device, item: MnistItem)
     let predicted = output.argmax(1).flatten::<1>(0, 1).into_scalar();
 
     println!("Predicted {} Expected {}", predicted, label);
+}
+
+#[heat(inference)]
+pub(crate) fn inference<B: AutodiffBackend>(model: Model<B>, device: B::Device) -> () {
+    crate::inference::infer::<B>(
+        model,
+        device,
+        burn::data::dataset::vision::MnistDataset::test()
+            .get(42)
+            .unwrap(),
+    );
 }

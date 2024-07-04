@@ -4,8 +4,8 @@ use clap::Parser;
 #[clap(author, version, about, long_about = None)]
 struct RunArgs {
     /// Config file path
-    #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true)]
-    configs: Vec<String>,
+    #[clap(short = 'c', long = "config", required = true)]
+    config: String,
     /// The project ID
     // todo: support project name and creating a project if it doesn't exist
     #[clap(short = 'p', long = "project", required = true)]
@@ -23,7 +23,7 @@ struct RunArgs {
 }
 
 pub struct RunConfig {
-    pub configs_paths: Vec<String>,
+    pub config_path: String,
     pub project: String,
     pub key: String,
     pub heat_endpoint: String,
@@ -32,7 +32,7 @@ pub struct RunConfig {
 pub fn get_run_config() -> RunConfig {
     let args = RunArgs::parse();
     RunConfig {
-        configs_paths: args.configs,
+        config_path: args.config,
         project: args.project,
         key: args.key,
         heat_endpoint: args.heat_endpoint,

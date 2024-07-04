@@ -64,7 +64,7 @@ pub fn cli_main() {
         },
         _ => unimplemented!(),
     };
-    let config_path = match args.command {
+    let config_paths = match args.command {
         Commands::Run(ref run_type) => match run_type {
             RunType::Local(run_args) => &run_args.configs,
             RunType::Remote(run_args) => &run_args.configs,
@@ -99,19 +99,23 @@ pub fn cli_main() {
         }
     }
 
-    let status = StdCommand::new("cargo")
-        .arg("run")
-        .arg("--release")
-        .args(vec!["--bin", "guide-test"])
-        .args(vec!["--features", &feature_flags.join(",")])
-        .arg("--")
-        .args(vec!["--configs", &config_path.join(" ")])
-        .args(vec!["--project", &project])
-        .args(vec!["--key", &key])
-        .status()
-        .expect("Failed to build the project");
+    for config_path in config_paths {
+        let mut cmd = StdCommand::new("cargo");
+        cmd.arg("run")
+            .arg("--release")
+            .args(vec!["--bin", "guide-test"])
+            .args(vec!["--features", &feature_flags.join(",")])
+            .arg("--")
+            .args(vec!["--config", &config_path])
+            .args(vec!["--project", &project])
+            .args(vec!["--key", &key]);
 
-    if !status.success() {
-        panic!("Failed to build the project");
+        println!("Running command: {:?}", cmd);
+
+        let status = cmd.status().expect("Failed to build the project");
+
+        if !status.success() {
+            panic!("Failed to build the project");
+        }
     }
 }
