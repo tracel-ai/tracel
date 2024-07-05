@@ -15,7 +15,6 @@ mod training;
 pub(crate) enum ProcedureType {
     Training,
     Inference,
-    Setup,
 }
 
 impl TryFrom<Path> for ProcedureType {
@@ -26,15 +25,14 @@ impl TryFrom<Path> for ProcedureType {
             Some(ident) => match ident.to_string().as_str() {
                 "training" => Ok(Self::Training),
                 "inference" => Ok(Self::Inference),
-                "setup" => Ok(Self::Setup),
                 _ => Err(Error::new_spanned(
                     path,
-                    "Expected `training`, `inference` or `setup`",
+                    "Expected `training` or `inference`",
                 )),
             },
             None => Err(Error::new_spanned(
                 path,
-                "Expected `training`, `inference` or `setup`",
+                "Expected `training` or `inference`",
             )),
         }
     }
@@ -47,6 +45,22 @@ fn compile_errors(errors: Vec<Error>) -> proc_macro2::TokenStream {
         .collect()
 }
 
+pub(crate) fn generate_flag_register_stream(
+    item: &ItemFn,
+    procedure_type: &ProcedureType,
+) -> proc_macro2::TokenStream {
+    let fn_name = &item.sig.ident;
+    let proc_type_str =
+        syn::Ident::new(&procedure_type.to_string(), proc_macro2::Span::call_site());
+    quote! {
+        tracel::heat::register_flag!(
+            tracel::heat::Flag,
+            tracel::heat::Flag::new(
+                Box::leak(format!("{}::{}", module_path!(), stringify!(#fn_name)).into_boxed_str())
+                , stringify!(#proc_type_str)));
+    }
+}
+
 #[proc_macro_attribute]
 pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut errors = Vec::<Error>::new();
@@ -56,10 +70,11 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     if args.len() != 1 {
         errors.push(Error::new(
             args.span(),
-            "Expected one argument for the #[heat] attribute. Please provide `training`, `inference` or `setup`.",
+            "Expected one argument for the #[heat] attribute. Please provide `training` or `inference`.",
         ));
     }
 
+    // Determine the proc type (training or inference)
     let procedure_type = match ProcedureType::try_from(
         args.first()
             .expect("Should be able to get first arg.")
@@ -72,37 +87,28 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let mut generated_code = match procedure_type {
+    // Generate the code for the procedure
+    let generated_code = match procedure_type {
         ProcedureType::Training => generate_training(&args, &item),
         ProcedureType::Inference => generate_inference(&args, &item),
-        _ => {
-            unimplemented!()
-        }
-    };
-
-    if let Err(ref mut err) = generated_code {
-        errors.append(err);
-        return compile_errors(errors).into();
     }
-    let generated_code = generated_code.expect("Should be able to generate code.");
+    .unwrap_or_else(|mut errs| {
+        errors.append(&mut errs);
+        TokenStream::new().into()
+    });
 
     // If there are any errors, combine them and return
     if !errors.is_empty() {
         return compile_errors(errors).into();
     }
 
-    let fn_name = &item.sig.ident;
-    let proc_type_str =
-        syn::Ident::new(&procedure_type.to_string(), proc_macro2::Span::call_site());
+    let flag_register = generate_flag_register_stream(&item, &procedure_type);
+
     quote! {
         #item
         #generated_code
 
-        tracel::heat::register_flag!(
-            tracel::heat::Flag,
-            tracel::heat::Flag::new(
-                Box::leak(format!("{}::{}", module_path!(), stringify!(#fn_name)).into_boxed_str())
-                , stringify!(#proc_type_str)));
+        #flag_register
     }
     .into()
 }

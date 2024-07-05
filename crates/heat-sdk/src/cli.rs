@@ -2,8 +2,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::process::Command as StdCommand;
 use strum::Display;
 
-use crate::{Flag, Plugin};
-
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {

@@ -20,7 +20,7 @@ pub fn infer<B: Backend>(model: Model<B>, device: B::Device, item: MnistItem) {
 }
 
 #[heat(inference)]
-pub(crate) fn inference<B: AutodiffBackend>(model: Model<B>, device: B::Device) -> () {
+pub(crate) fn inference<B: AutodiffBackend>(model: Model<B>, device: B::Device) {
     crate::inference::infer::<B>(
         model,
         device,

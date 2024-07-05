@@ -28,7 +28,7 @@ pub(crate) fn generate_training(
         }
     };
 
-    // Function name
+    // Extract signature information
     let fn_name = &item.sig.ident;
 
     // Select backend
@@ -49,7 +49,7 @@ pub(crate) fn generate_training(
 
     Ok(quote! {
         #backend_types
-        pub fn heat_training_main() -> Result<Model<#autodiff_backend_type>, ()>{
+        pub fn heat_training_main() -> Result<impl Module<#autodiff_backend_type>, tracel::heat::error::HeatSdkError> {
             let device = #backend_default_device_quote;
 
             fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
@@ -74,19 +74,19 @@ pub(crate) fn generate_training(
             let res = #fn_name::<#autodiff_backend_type>(client.clone(), vec![device.clone()], config);
 
             match res {
-                Ok(ref model) => {
+                Ok(model) => {
                     client
                     .end_experiment_with_model::<#autodiff_backend_type, burn::record::HalfPrecisionSettings>(model.clone())
                     .expect("Experiment should end successfully");
+                    Ok(model)
                 }
                 Err(_) => {
                     client
                     .end_experiment_with_error("Error during training".to_string())
                     .expect("Experiment should end successfully");
+                    Err(tracel::heat::error::HeatSdkError::MacroError("Error during training".to_string()))
                 }
-            };
-
-            return res;
+            }
         }
     })
 }

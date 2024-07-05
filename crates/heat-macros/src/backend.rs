@@ -12,6 +12,7 @@ pub(crate) enum BackendType {
 }
 
 impl BackendType {
+    /// Returns the token stream for the default device for the backend.
     pub fn default_device_stream(&self) -> proc_macro2::TokenStream {
         match self {
             BackendType::Wgpu => {
@@ -73,6 +74,7 @@ pub(crate) fn generate_backend_typedef_stream(
     }
 }
 
+/// Chooses a backend type based on the enabled features.
 pub(crate) fn get_backend_type(item: &ItemFn) -> Result<BackendType, Error> {
     let mut backends: Vec<BackendType> = Vec::new();
 
