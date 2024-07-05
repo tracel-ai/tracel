@@ -1,3 +1,4 @@
+use syn::{parse_quote, GenericArgument, PathArguments, ReturnType, Type, TypePath};
 use syn::{punctuated::Punctuated, spanned::Spanned, token::Comma, Error, ItemFn, Meta};
 
 use crate::backend::*;
@@ -43,13 +44,42 @@ pub(crate) fn generate_training(
     let (_, autodiff_backend_type) = get_backend_type_names(&ProcedureType::Training);
     let backend_default_device_quote = backend.default_device_stream();
 
+    // Generate return type of the function
+    let mut modified_module_type = None;
+
+    if let ReturnType::Type(_, type_box) = &item.sig.output {
+        if let Type::Path(TypePath { path, .. }) = &**type_box {
+            if path.segments.last().unwrap().ident == "Result" {
+                if let PathArguments::AngleBracketed(angle_bracketed) =
+                    &path.segments.last().unwrap().arguments
+                {
+                    let args: Vec<_> = angle_bracketed.args.iter().collect();
+                    if let GenericArgument::Type(Type::Path(type_path)) = args[0] {
+                        let model_type = &type_path.path.segments.last().unwrap().ident;
+                        let new_model_type: syn::Type =
+                            parse_quote! { #model_type<#autodiff_backend_type> };
+                        let new_result_type = GenericArgument::Type(new_model_type);
+                        modified_module_type = Some(new_result_type);
+                    }
+                }
+            }
+        }
+    }
+
+    if modified_module_type.is_none() {
+        errors.push(Error::new(
+            item.sig.output.span(),
+            "Expected return type to be Result<M<B>, _> where M<B> is the module type with the backend B.",
+        ));
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
 
     Ok(quote! {
         #backend_types
-        pub fn heat_training_main() -> Result<impl Module<#autodiff_backend_type>, tracel::heat::error::HeatSdkError> {
+        pub fn heat_training_main() -> Result<#modified_module_type, tracel::heat::error::HeatSdkError> {
             let device = #backend_default_device_quote;
 
             fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
