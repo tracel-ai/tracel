@@ -1962,7 +1962,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "heat-macros"
+name = "heat-sdk"
+version = "0.1.0"
+dependencies = [
+ "burn",
+ "derive-new",
+ "heat-sdk-cli",
+ "log",
+ "macro_magic",
+ "reqwest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
+ "tungstenite",
+]
+
+[[package]]
+name = "heat-sdk-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "gensym",
+ "heat-sdk-cli-macros",
+ "inventory",
+ "once_cell",
+ "paste",
+ "strum",
+]
+
+[[package]]
+name = "heat-sdk-cli-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -1970,32 +2003,6 @@ dependencies = [
  "strum",
  "syn 2.0.68",
  "uuid",
-]
-
-[[package]]
-name = "heat-sdk"
-version = "0.1.0"
-dependencies = [
- "burn",
- "clap",
- "derive-new",
- "gensym",
- "heat-macros",
- "inventory",
- "log",
- "macro_magic",
- "once_cell",
- "paste",
- "reqwest",
- "rmp-serde",
- "serde",
- "serde_json",
- "strum",
- "thiserror",
- "tracing",
- "tracing-core",
- "tracing-subscriber",
- "tungstenite",
 ]
 
 [[package]]

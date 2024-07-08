@@ -7,7 +7,7 @@ use burn::{
     prelude::*,
     tensor::backend::AutodiffBackend,
 };
-use tracel::heat::macros::heat;
+use tracel::heat::sdk_cli::macros::heat;
 
 pub fn infer<B: Backend>(model: Model<B>, device: B::Device, item: MnistItem) {
     let label = item.label;

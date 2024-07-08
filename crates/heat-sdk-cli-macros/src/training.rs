@@ -83,7 +83,7 @@ pub(crate) fn generate_training(
             }
 
             let device = #backend_default_device_quote;
-            let run_config = tracel::heat::run::get_run_config();
+            let run_config = tracel::heat::sdk_cli::run::get_run_config();
 
             let mut client = create_heat_client(&run_config.key, &run_config.heat_endpoint, &run_config.project);
             let training_config = burn::prelude::Config::load(run_config.config_path.clone()).expect("Config should be loaded");

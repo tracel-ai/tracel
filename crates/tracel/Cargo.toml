@@ -7,7 +7,6 @@ readme.workspace = true
 
 [features]
 heat-sdk = ["dep:heat-sdk"]
-heat-cli = ["heat-sdk?/cli"]
 
 [dependencies]
 heat-sdk = { path = "../heat-sdk", version = "0.1.0", optional = true }
