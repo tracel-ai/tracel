@@ -1,6 +1,7 @@
 use crate::ProcedureType;
 use quote::quote;
-use syn::Error;
+use syn::spanned::Spanned;
+use syn::{Error, Generics};
 use syn::{Ident, ItemFn};
 
 #[allow(dead_code)]
@@ -93,4 +94,33 @@ pub(crate) fn get_backend_type(item: &ItemFn) -> Result<BackendType, Error> {
             "Only one backend can be enabled at a time. Please enable only one of `wgpu`, `tch` or `ndarray` features.",
         ))
     }
+}
+
+/// Enforces that the function has exactly one generic parameter named `B` for the backend type.
+pub(crate) fn enforce_fn_backend_generic(generics: &Generics) -> Result<(), Error> {
+    if generics.params.len() != 1 {
+        return Err(Error::new(
+            generics.span(),
+            "Expected exactly one generic parameter (which should be the backend type).",
+        ));
+    }
+
+    match generics.params.first() {
+        Some(syn::GenericParam::Type(backend_type)) => {
+            if backend_type.ident != "B" {
+                return Err(Error::new(
+                    backend_type.ident.span(),
+                    "Expected backend generic parameter to be named `B`",
+                ));
+            }
+        }
+        _ => {
+            return Err(Error::new(
+                generics.span(),
+                "Expected generic parameter to of a type. Not a lifetime or const",
+            ))
+        }
+    };
+
+    Ok(())
 }

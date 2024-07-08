@@ -1,9 +1,32 @@
-use syn::{parse_quote, GenericArgument, PathArguments, ReturnType, Type, TypePath};
+use syn::{parse_quote, GenericArgument, Ident, PathArguments, ReturnType, Type, TypePath};
 use syn::{punctuated::Punctuated, spanned::Spanned, token::Comma, Error, ItemFn, Meta};
 
 use crate::backend::*;
 use crate::ProcedureType;
 use quote::quote;
+
+/// Returns the module type used for the training function injected with the backend of the function.
+fn get_training_module_type(item: &ItemFn, new_backend: &Ident) -> Option<GenericArgument> {
+    if let ReturnType::Type(_, type_box) = &item.sig.output {
+        if let Type::Path(TypePath { path, .. }) = &**type_box {
+            if path.segments.last().unwrap().ident == "Result" {
+                if let PathArguments::AngleBracketed(angle_bracketed) =
+                    &path.segments.last().unwrap().arguments
+                {
+                    let args: Vec<_> = angle_bracketed.args.iter().collect();
+                    if let GenericArgument::Type(Type::Path(type_path)) = args[0] {
+                        let model_type = &type_path.path.segments.last().unwrap().ident;
+                        let new_model_type: syn::Type = parse_quote! { #model_type<#new_backend> };
+                        let new_result_type = GenericArgument::Type(new_model_type);
+                        return Some(new_result_type);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
 
 pub(crate) fn generate_training(
     _args: &Punctuated<Meta, Comma>,
@@ -11,26 +34,14 @@ pub(crate) fn generate_training(
 ) -> Result<proc_macro2::TokenStream, Vec<Error>> {
     let mut errors = Vec::<Error>::new();
 
-    let fn_generics = &item.sig.generics;
-    if fn_generics.params.len() != 1 {
-        errors.push(Error::new(
-            fn_generics.span(),
-            "Expected exactly one generic parameter",
-        ));
-    }
-
-    match fn_generics.params.first() {
-        Some(syn::GenericParam::Type(_)) => {}
-        _ => {
-            errors.push(Error::new(
-                fn_generics.span(),
-                "Expected BackendType as a generic parameter",
-            ));
-        }
-    };
-
     // Extract signature information
     let fn_name = &item.sig.ident;
+    let fn_generics = &item.sig.generics;
+
+    // Enforce backend generic (should be exactly one generic parameter named `B` for the backend type)
+    if let Err(err) = enforce_fn_backend_generic(fn_generics) {
+        errors.push(err);
+    }
 
     // Select backend
     let backend = match get_backend_type(item) {
@@ -45,28 +56,9 @@ pub(crate) fn generate_training(
     let backend_default_device_quote = backend.default_device_stream();
 
     // Generate return type of the function
-    let mut modified_module_type = None;
+    let training_module_type = get_training_module_type(item, &autodiff_backend_type);
 
-    if let ReturnType::Type(_, type_box) = &item.sig.output {
-        if let Type::Path(TypePath { path, .. }) = &**type_box {
-            if path.segments.last().unwrap().ident == "Result" {
-                if let PathArguments::AngleBracketed(angle_bracketed) =
-                    &path.segments.last().unwrap().arguments
-                {
-                    let args: Vec<_> = angle_bracketed.args.iter().collect();
-                    if let GenericArgument::Type(Type::Path(type_path)) = args[0] {
-                        let model_type = &type_path.path.segments.last().unwrap().ident;
-                        let new_model_type: syn::Type =
-                            parse_quote! { #model_type<#autodiff_backend_type> };
-                        let new_result_type = GenericArgument::Type(new_model_type);
-                        modified_module_type = Some(new_result_type);
-                    }
-                }
-            }
-        }
-    }
-
-    if modified_module_type.is_none() {
+    if training_module_type.is_none() {
         errors.push(Error::new(
             item.sig.output.span(),
             "Expected return type to be Result<M<B>, _> where M<B> is the module type with the backend B.",
@@ -79,10 +71,8 @@ pub(crate) fn generate_training(
 
     Ok(quote! {
         #backend_types
-        pub fn heat_training_main() -> Result<#modified_module_type, tracel::heat::error::HeatSdkError> {
-            let device = #backend_default_device_quote;
-
-            fn heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
+        pub fn heat_training_main() -> Result<#training_module_type, tracel::heat::error::HeatSdkError> {
+            fn create_heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
                 let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
                 let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
                     .with_endpoint(url)
@@ -91,17 +81,18 @@ pub(crate) fn generate_training(
                 tracel::heat::client::HeatClient::create(client_config)
                     .expect("Should connect to the Heat server and create a client")
             }
+
+            let device = #backend_default_device_quote;
             let run_config = tracel::heat::run::get_run_config();
 
-            let mut client = heat_client(&run_config.key, &run_config.heat_endpoint, &run_config.project);
-
-            let config = burn::prelude::Config::load(run_config.config_path.clone()).expect("Config should be loaded");
+            let mut client = create_heat_client(&run_config.key, &run_config.heat_endpoint, &run_config.project);
+            let training_config = burn::prelude::Config::load(run_config.config_path.clone()).expect("Config should be loaded");
 
             client
-                .start_experiment(&config)
+                .start_experiment(&training_config)
                 .expect("Experiment should be started");
 
-            let res = #fn_name::<#autodiff_backend_type>(client.clone(), vec![device.clone()], config);
+            let res = #fn_name::<#autodiff_backend_type>(client.clone(), vec![device.clone()], training_config);
 
             match res {
                 Ok(model) => {

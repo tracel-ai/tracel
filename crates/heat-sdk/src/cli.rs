@@ -23,12 +23,12 @@ enum Commands {
 
 #[derive(Parser, Debug)]
 enum RunType {
-    Local(RunArgs),
-    Remote(RunArgs),
+    Local(LocalRunArgs),
+    Remote(RemoteRunArgs),
 }
 
 #[derive(Parser, Debug)]
-struct RunArgs {
+struct LocalRunArgs {
     /// Backend to use
     #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true)]
     backends: Vec<BackendValue>,
@@ -44,64 +44,45 @@ struct RunArgs {
     key: String,
 }
 
+#[derive(Parser, Debug)]
+struct RemoteRunArgs {
+    // #todo
+}
+
 #[derive(Debug, Clone, ValueEnum, Display)]
+#[strum(serialize_all = "snake_case")]
 enum BackendValue {
-    #[strum(to_string = "wgpu")]
     Wgpu,
-    #[strum(to_string = "tch")]
     Tch,
-    #[strum(to_string = "ndarray")]
     Ndarray,
+}
+
+impl BackendValue {
+    pub fn into_heat_feature_flag(&self) -> String {
+        match self {
+            BackendValue::Wgpu => "heat-macros/wgpu".to_string(),
+            BackendValue::Tch => "heat-macros/tch".to_string(),
+            BackendValue::Ndarray => "heat-macros/ndarray".to_string(),
+        }
+    }
 }
 
 pub fn cli_main() {
     println!("Running CLI.");
     let args: Args = Args::parse();
-    let backends = match args.command {
-        Commands::Run(ref run_type) => match run_type {
-            RunType::Local(run_args) => &run_args.backends,
-            RunType::Remote(run_args) => &run_args.backends,
-        },
-        _ => unimplemented!(),
-    };
-    let config_paths = match args.command {
-        Commands::Run(ref run_type) => match run_type {
-            RunType::Local(run_args) => &run_args.configs,
-            RunType::Remote(run_args) => &run_args.configs,
-        },
-        _ => unimplemented!(),
-    };
-    let project = match args.command {
-        Commands::Run(ref run_type) => match run_type {
-            RunType::Local(run_args) => &run_args.project,
-            RunType::Remote(run_args) => &run_args.project,
-        },
-        _ => unimplemented!(),
-    };
-    let key = match args.command {
-        Commands::Run(ref run_type) => match run_type {
-            RunType::Local(run_args) => &run_args.key,
-            RunType::Remote(run_args) => &run_args.key,
-        },
+    let run_args = match args.command {
+        Commands::Run(RunType::Local(run_args)) => run_args,
         _ => unimplemented!(),
     };
 
     let mut commands_to_run: Vec<StdCommand> = Vec::new();
 
-    for backend in backends {
-        for config_path in config_paths {
+    for backend in &run_args.backends {
+        for config_path in &run_args.configs {
             let mut feature_flags: Vec<String> = Vec::new();
-            match backend {
-                BackendValue::Wgpu => {
-                    feature_flags.push("heat-macros/wgpu".to_string());
-                }
-                BackendValue::Tch => {
-                    feature_flags.push("heat-macros/tch".to_string());
-                }
-                BackendValue::Ndarray => {
-                    feature_flags.push("heat-macros/ndarray".to_string());
-                }
-            }
+
+            feature_flags.push(backend.into_heat_feature_flag());
+
             let mut cmd = StdCommand::new("cargo");
             cmd.arg("run")
                 .arg("--release")
@@ -109,8 +90,8 @@ pub fn cli_main() {
                 .args(vec!["--features", &feature_flags.join(",")])
                 .arg("--")
                 .args(vec!["--config", &config_path])
-                .args(vec!["--project", &project])
-                .args(vec!["--key", &key]);
+                .args(vec!["--project", &run_args.project])
+                .args(vec!["--key", &run_args.key]);
 
             commands_to_run.push(cmd);
         }
