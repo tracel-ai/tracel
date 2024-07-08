@@ -54,8 +54,8 @@ pub(crate) fn generate_flag_register_stream(
         syn::Ident::new(&procedure_type.to_string(), proc_macro2::Span::call_site());
     quote! {
         tracel::heat::sdk_cli::register_flag!(
-            tracel::heat::sdk_cli::Flag,
-            tracel::heat::sdk_cli::Flag::new(
+            tracel::heat::sdk_cli::registry::Flag,
+            tracel::heat::sdk_cli::registry::Flag::new(
                 Box::leak(format!("{}::{}", module_path!(), stringify!(#fn_name)).into_boxed_str())
                 , stringify!(#proc_type_str)));
     }

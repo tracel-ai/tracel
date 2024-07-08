@@ -3,6 +3,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct RunArgs {
+    target_procedure: String,
     /// Config file path
     #[clap(short = 'c', long = "config", required = true)]
     config: String,
