@@ -1,12 +1,16 @@
+use std::str::FromStr;
+
 use crate::ProcedureType;
 use quote::quote;
+use strum::{Display, EnumString};
 use syn::spanned::Spanned;
 use syn::{Error, Generics};
 use syn::{Ident, ItemFn};
 
 #[allow(dead_code)]
-#[derive(Clone)]
-pub(crate) enum BackendType {
+#[derive(Clone, Display, EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub enum BackendType {
     Wgpu,
     Tch,
     Ndarray,
@@ -49,13 +53,14 @@ impl BackendType {
     }
 }
 
-static DEFAULT_BACKEND: BackendType = BackendType::Wgpu;
-
 /// Returns the backend type names for the given procedure type.
 /// Ex: For ProcedureType::Training, the backend type name will be MyTrainingBackend and autodiff backend type name will be MyTrainingAutodiffBackend.
-pub(crate) fn get_backend_type_names(proc_type: &ProcedureType) -> (syn::Ident, syn::Ident) {
-    let backend = format!("My{}Backend", proc_type);
-    let autodiff_backend = format!("My{}AutodiffBackend", proc_type);
+pub(crate) fn get_backend_type_names(
+    proc_type: &ProcedureType,
+    fn_name: &str,
+) -> (syn::Ident, syn::Ident) {
+    let backend = format!("My{}{}Backend", proc_type, fn_name);
+    let autodiff_backend = format!("My{}{}AutodiffBackend", proc_type, fn_name);
     let backend_type_name = Ident::new(&backend, proc_macro2::Span::call_site());
     let autodiff_backend_type_name = Ident::new(&autodiff_backend, proc_macro2::Span::call_site());
     (backend_type_name, autodiff_backend_type_name)
@@ -65,8 +70,10 @@ pub(crate) fn get_backend_type_names(proc_type: &ProcedureType) -> (syn::Ident, 
 pub(crate) fn generate_backend_typedef_stream(
     backend: &BackendType,
     proc_type: &ProcedureType,
+    fn_name: &str,
 ) -> proc_macro2::TokenStream {
-    let (backend_type_name, autodiff_backend_type_name) = get_backend_type_names(proc_type);
+    let (backend_type_name, autodiff_backend_type_name) =
+        get_backend_type_names(proc_type, fn_name);
     let backend_type = backend.backend_stream();
 
     quote! {
@@ -76,24 +83,13 @@ pub(crate) fn generate_backend_typedef_stream(
 }
 
 /// Chooses a backend type based on the enabled features.
-pub(crate) fn get_backend_type(item: &ItemFn) -> Result<BackendType, Error> {
-    let mut backends: Vec<BackendType> = Vec::new();
-
-    #[cfg(feature = "wgpu")]
-    backends.push(BackendType::Wgpu);
-    #[cfg(feature = "tch")]
-    backends.push(BackendType::Tch);
-    #[cfg(feature = "ndarray")]
-    backends.push(BackendType::Ndarray);
-
-    match backends.len() {
-        0 => Ok(DEFAULT_BACKEND.clone()),
-        1 => Ok(backends.pop().expect("Should be able to pop one backend.")),
-        _ => Err(Error::new(
+pub(crate) fn get_backend_type(item: &ItemFn, backend: &str) -> Result<BackendType, Error> {
+    BackendType::from_str(backend).map_err(|_| {
+        Error::new(
             item.sig.ident.span(),
-            "Only one backend can be enabled at a time. Please enable only one of `wgpu`, `tch` or `ndarray` features.",
-        ))
-    }
+            format!("Invalid backend type: {}", backend),
+        )
+    })
 }
 
 /// Enforces that the function has exactly one generic parameter named `B` for the backend type.

@@ -1,12 +1,17 @@
 #[derive(Clone, Debug)]
 pub struct Flag {
     pub mod_path: &'static str,
-    pub name: &'static str,
+    pub fn_name: &'static str,
+    pub proc_type: &'static str,
 }
 
 impl Flag {
-    pub fn new(mod_path: &'static str, name: &'static str) -> Self {
-        Flag { mod_path, name }
+    pub fn new(mod_path: &'static str, fn_name: &'static str, proc_type: &'static str) -> Self {
+        Flag {
+            mod_path,
+            fn_name,
+            proc_type,
+        }
     }
 }
 
@@ -37,4 +42,11 @@ macro_rules! register_flag {
             $crate::registry::inventory::submit!($crate::registry::Plugin(&[<$gensym _register_flag_>]));
         }
     };
+}
+
+pub(crate) fn get_flags() -> Vec<Flag> {
+    inventory::iter::<Plugin<Flag>>
+        .into_iter()
+        .map(|plugin| (*plugin.0).to_owned())
+        .collect()
 }

@@ -8,6 +8,7 @@ use training::generate_training;
 
 mod backend;
 mod inference;
+mod metadata;
 mod training;
 
 #[derive(Eq, Hash, PartialEq, Display)]
@@ -50,14 +51,17 @@ pub(crate) fn generate_flag_register_stream(
     procedure_type: &ProcedureType,
 ) -> proc_macro2::TokenStream {
     let fn_name = &item.sig.ident;
-    let proc_type_str =
-        syn::Ident::new(&procedure_type.to_string(), proc_macro2::Span::call_site());
+    let proc_type_str = syn::Ident::new(
+        &procedure_type.to_string().to_lowercase(),
+        proc_macro2::Span::call_site(),
+    );
     quote! {
         tracel::heat::sdk_cli::register_flag!(
             tracel::heat::sdk_cli::registry::Flag,
             tracel::heat::sdk_cli::registry::Flag::new(
-                Box::leak(format!("{}::{}", module_path!(), stringify!(#fn_name)).into_boxed_str())
-                , stringify!(#proc_type_str)));
+                module_path!(),
+                stringify!(#fn_name),
+                stringify!(#proc_type_str)));
     }
 }
 
@@ -87,10 +91,16 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let project_dir = std::env::var("HEAT_PROJECT_DIR");
+    let is_generating_cli = project_dir.is_ok();
+    let project_dir = project_dir.unwrap_or(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+
     // Generate the code for the procedure
     let generated_code = match procedure_type {
-        ProcedureType::Training => generate_training(&args, &item),
-        ProcedureType::Inference => generate_inference(&args, &item),
+        ProcedureType::Training => generate_training(&args, &item, is_generating_cli, &project_dir),
+        ProcedureType::Inference => {
+            generate_inference(&args, &item, is_generating_cli, &project_dir)
+        }
     }
     .unwrap_or_else(|mut errs| {
         errors.append(&mut errs);
@@ -102,9 +112,14 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         return compile_errors(errors).into();
     }
 
-    let flag_register = generate_flag_register_stream(&item, &procedure_type);
+    let flag_register = if is_generating_cli {
+        quote! {}
+    } else {
+        generate_flag_register_stream(&item, &procedure_type)
+    };
 
     quote! {
+        #[allow(dead_code)]
         #item
         #generated_code
 

@@ -3,7 +3,7 @@ pub mod macros {
 }
 
 pub mod cli;
-pub mod run;
 
 pub mod crate_gen;
+pub mod logging;
 pub mod registry;

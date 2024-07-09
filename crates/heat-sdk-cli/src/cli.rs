@@ -1,6 +1,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use colored::Colorize;
 use std::{path::PathBuf, process::Command as StdCommand};
 use strum::Display;
+
+use crate::logging::BURN_ORANGE;
+use crate::{print_err, print_info};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -15,30 +19,36 @@ enum Commands {
     /// [--backend={wgpu|cuda|candle|tch}]
     #[command(subcommand)]
     Run(RunLocationType),
-    /// #todo
-    Login,
-    /// #todo
-    Logout,
+    // #[command(subcommand)]
+    // Ls(LsSubcommand),
+
+    // /// todo
+    // Login,
+    // /// todo
+    // Logout,
 }
+
+pub struct LsSubcommand {}
 
 #[derive(Parser, Debug)]
 enum RunLocationType {
     #[command(subcommand)]
     Local(LocalRunSubcommand),
-    #[command(subcommand)]
-    Remote(RemoteRunSubcommand),
+    // /// todo
+    // #[command(subcommand)]
+    // Remote(RemoteRunSubcommand),
 }
 
 #[derive(Parser, Debug)]
 enum LocalRunSubcommand {
     Training(LocalTrainingRunArgs),
-    Inference(LocalInferenceRunArgs),
+    // Inference(LocalInferenceRunArgs),
 }
 
 #[derive(Parser, Debug)]
 struct LocalTrainingRunArgs {
     /// The training functions to run
-    #[clap(short = 'f', long="function", value_delimiter = ',', num_args = 1.., required = true)]
+    #[clap(short = 'f', long="functions", value_delimiter = ',', num_args = 1.., required = true)]
     functions: Vec<String>,
     /// Backend to use
     #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true)]
@@ -96,81 +106,165 @@ enum BackendValue {
     Ndarray,
 }
 
-impl BackendValue {
-    pub fn into_heat_feature_flag(&self) -> String {
-        match self {
-            BackendValue::Wgpu => "heat-macros/wgpu".to_string(),
-            BackendValue::Tch => "heat-macros/tch".to_string(),
-            BackendValue::Ndarray => "heat-macros/ndarray".to_string(),
-        }
-    }
+fn generate_metadata_file(project_dir: &str, backend: &BackendValue) {
+    let metadata_file_path = format!(
+        "{}/.heat/crates/heat-sdk-cli/run_metadata.toml",
+        project_dir
+    );
 
-    pub fn into_burn_feature_flag(&self) -> String {
-        match self {
-            BackendValue::Wgpu => "burn/wgpu".to_string(),
-            BackendValue::Tch => "burn/tch".to_string(),
-            BackendValue::Ndarray => "burn/ndarray".to_string(),
+    let mut metadata_toml = toml_edit::DocumentMut::new();
+    let mut options = toml_edit::Table::new();
+    options["backend"] = toml_edit::value(backend.to_string());
+
+    metadata_toml["options"] = toml_edit::Item::Table(options);
+
+    // Check if the metadata file exists and if it's different from the current metadata
+    let should_write = match std::fs::read(&metadata_file_path) {
+        Ok(ref content) => content != metadata_toml.to_string().as_bytes(),
+        Err(_) => true,
+    };
+
+    if should_write {
+        if let Err(e) = std::fs::write(metadata_file_path, metadata_toml.to_string()) {
+            eprintln!("Failed to write bin file: {}", e);
         }
     }
 }
 
+#[derive(Debug)]
+pub struct RunCommand {
+    command: StdCommand,
+}
+
+#[derive(Debug)]
+pub struct BuildCommand {
+    command: StdCommand,
+    backend: BackendValue,
+    burn_features: Vec<String>,
+}
+
 pub fn cli_main() {
-    println!("Running CLI.");
-    let args: Args = Args::parse();
-    println!("Args: {:?}", args);
-    let run_args = match args.command {
+    print_info!("Running CLI.");
+    let args = Args::try_parse();
+    if args.is_err() {
+        print_err!("{}", args.unwrap_err());
+        std::process::exit(1);
+    }
+
+    let run_args = match args.unwrap().command {
         Commands::Run(RunLocationType::Local(LocalRunSubcommand::Training(run_args))) => run_args,
-        _ => unimplemented!(),
     };
 
     let project_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
 
-    let mut commands_to_run: Vec<StdCommand> = Vec::new();
-
+    // Check that all passed functions exist
+    let flags = crate::registry::get_flags();
     for function in &run_args.functions {
-        for backend in &run_args.backends {
-            for config_path in &run_args.configs {
-                let mut feature_flags: Vec<String> = Vec::new();
-                let mut burn_features: Vec<String> = Vec::new();
+        let function_flags = flags
+            .iter()
+            .filter(|flag| flag.fn_name == function)
+            .collect::<Vec<&crate::registry::Flag>>();
+        if function_flags.is_empty() {
+            print_err!("Function `{}` is not registered as a training function. Annotate a training function with #[heat(training)] to register it.", function);
+            std::process::exit(1);
+        } else if function_flags.len() > 1 {
+            let function_strings = function_flags
+                .iter()
+                .map(|flag| {
+                    format!(
+                        "  {} {}::{}",
+                        "-".custom_color(BURN_ORANGE),
+                        flag.mod_path.bold(),
+                        flag.fn_name.bold()
+                    )
+                })
+                .collect::<Vec<String>>();
+            print_err!("Function `{}` is registered multiple times. Please write the entire module path of the desired function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings.join("\n"));
+            std::process::exit(1);
+        }
+    }
 
-                feature_flags.push(backend.into_heat_feature_flag());
+    let mut commands_to_run: Vec<(BuildCommand, RunCommand)> = Vec::new();
 
-                burn_features.push(backend.into_burn_feature_flag());
+    for backend in &run_args.backends {
+        for config_path in &run_args.configs {
+            for function in &run_args.functions {
+                let burn_features: Vec<String> = vec![backend.to_string()];
 
-                crate::crate_gen::create_crate(
-                    burn_features
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<&str>>(),
-                );
-
-                let mut cmd = StdCommand::new("cargo");
-                cmd.arg("run")
+                let mut build_cmd = StdCommand::new("cargo");
+                build_cmd
+                    .arg("build")
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args(vec![
-                        "--manifest-path",
-                        ".heat/crates/heat-sdk-cli/Cargo.toml",
-                    ])
-                    .arg("--release")
-                    .args(vec!["--features", &feature_flags.join(",")])
-                    .arg("--")
-                    .args(vec!["--training", &function])
-                    .args(vec!["--config", &config_path])
-                    .args(vec!["--project", &run_args.project])
-                    .args(vec!["--key", &run_args.key]);
+                    .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
+                    .arg("--release");
 
-                commands_to_run.push(cmd);
+                let mut run_cmd = StdCommand::new("cargo");
+                run_cmd
+                    .arg("run")
+                    .current_dir(&project_dir)
+                    .env("HEAT_PROJECT_DIR", &project_dir)
+                    .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
+                    .arg("--release")
+                    .arg("--")
+                    .args(["--project", &run_args.project])
+                    .args(["--key", &run_args.key])
+                    .args(["train", function, config_path]);
+
+                commands_to_run.push((
+                    BuildCommand {
+                        command: build_cmd,
+                        backend: backend.clone(),
+                        burn_features: burn_features.clone(),
+                    },
+                    RunCommand { command: run_cmd },
+                ));
             }
         }
     }
 
     for mut cmd in commands_to_run {
-        println!("Running command: {:?}", cmd);
+        print_info!("Building experiment project with command: {:?}", cmd.0);
+        crate::crate_gen::create_crate(
+            cmd.0
+                .burn_features
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>(),
+        );
+        generate_metadata_file(&project_dir, &cmd.0.backend);
 
-        let status = cmd.status().expect("Failed to execute command");
-        if !status.success() {
-            panic!("Command failed: {:?}", cmd);
+        let build_status = cmd.0.command.status();
+        match build_status {
+            Err(e) => {
+                print_err!("Failed to build experiment project: {:?}", e);
+                std::process::exit(1);
+            }
+            Ok(status) if !status.success() => {
+                print_err!("Failed to build experiment project: {:?}", cmd);
+                std::process::exit(1);
+            }
+            _ => {
+                print_info!("Project built successfully.");
+            }
+        }
+
+        print_info!("Running experiment with command: {:?}", cmd.1);
+        let run_status = cmd.1.command.status();
+        match run_status {
+            Err(e) => {
+                print_err!("Failed to run experiment: {:?}", e);
+                std::process::exit(1);
+            }
+            Ok(status) if !status.success() => {
+                print_err!("Failed to run experiment: {:?}", cmd);
+                std::process::exit(1);
+            }
+            _ => {
+                print_info!("Experiment ran successfully.");
+            }
         }
     }
+
+    print_info!("Successfully ran all experiments. Exiting.");
 }

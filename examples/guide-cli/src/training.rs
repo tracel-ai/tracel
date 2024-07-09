@@ -132,10 +132,19 @@ pub fn train<B: AutodiffBackend>(
 }
 
 #[heat(training)]
-pub(crate) fn training<B: AutodiffBackend>(
+fn training<B: AutodiffBackend>(
     mut client: HeatClient,
     devices: Vec<B::Device>,
     config: TrainingConfig,
 ) -> Result<Model<B>, ()> {
     train::<B>(&mut client, "/tmp/guide", config, devices[0].clone())
+}
+
+#[heat(training)]
+fn training2<B: AutodiffBackend>(
+    mut client: HeatClient,
+    devices: Vec<B::Device>,
+    config: TrainingConfig,
+) -> Result<Model<B>, ()> {
+    train::<B>(&mut client, "/tmp/guide2", config, devices[0].clone())
 }

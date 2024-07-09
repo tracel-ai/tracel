@@ -2,7 +2,7 @@ use crate::{data::MnistBatcher, model::Model};
 use burn::{
     data::{
         dataloader::batcher::Batcher,
-        dataset::{vision::MnistItem, Dataset},
+        dataset::vision::MnistItem,
     },
     prelude::*,
     tensor::backend::AutodiffBackend,
@@ -18,6 +18,7 @@ pub fn infer<B: Backend>(model: Model<B>, device: B::Device, item: MnistItem) {
 
     println!("Predicted {} Expected {}", predicted, label);
 }
+
 
 #[heat(inference)]
 pub(crate) fn inference<B: AutodiffBackend>(model: Model<B>, device: B::Device, item: MnistItem) {
