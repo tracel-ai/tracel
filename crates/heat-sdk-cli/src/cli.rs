@@ -63,6 +63,9 @@ struct LocalTrainingRunArgs {
     /// The API key
     #[clap(short = 'k', long = "key", required = true)]
     key: String,
+    /// Determines whether experiments sohuld be run in parallel or sequentially. Run in parallel if true.
+    #[clap(long = "parallel", default_value = "false")]
+    parallel: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -128,6 +131,92 @@ fn generate_metadata_file(project_dir: &str, backend: &BackendValue) {
         if let Err(e) = std::fs::write(metadata_file_path, metadata_toml.to_string()) {
             eprintln!("Failed to write bin file: {}", e);
         }
+    }
+}
+
+fn execute_experiment_command(
+    build_command: BuildCommand,
+    run_command: RunCommand,
+    project_dir: &str,
+) -> Result<(), String> {
+    execute_build_command(build_command, project_dir)?;
+    execute_run_command(run_command)?;
+    
+    Ok(())
+}
+
+fn execute_build_command(mut build_command: BuildCommand, project_dir: &str) -> Result<(), String> {
+    print_info!(
+        "Building experiment project with command: {:?}",
+        build_command
+    );
+    crate::crate_gen::create_crate(
+        build_command
+            .burn_features
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<&str>>(),
+    );
+    generate_metadata_file(&project_dir, &build_command.backend);
+
+    let build_status = build_command.command.status();
+    match build_status {
+        Err(e) => {
+            return Err(format!("Failed to build experiment project: {:?}", e));
+        }
+        Ok(status) if !status.success() => {
+            return Err(format!(
+                "Failed to build experiment project: {:?}",
+                build_command
+            ));
+        }
+        _ => {
+            print_info!("Project built successfully.");
+        }
+    }
+
+    Ok(())
+}
+
+fn execute_run_command(mut run_command: RunCommand) -> Result<(), String> {
+    print_info!("Running experiment with command: {:?}", run_command);
+    let run_status = run_command.command.status();
+    match run_status {
+        Err(e) => {
+            return Err(format!("Failed to run experiment: {:?}", e));
+        }
+        Ok(status) if !status.success() => {
+            return Err(format!("Failed to run experiment: {:?}", run_command));
+        }
+        _ => {
+            print_info!("Experiment ran successfully.");
+        }
+    }
+
+    Ok(())
+}
+
+fn execute_sequentially(commands: Vec<(BuildCommand, RunCommand)>, project_dir: &str) {
+    for cmd in commands {
+        execute_experiment_command(cmd.0, cmd.1, project_dir)
+            .expect("Should be able to build and run experiment.");
+    }
+}
+
+fn execute_parallel(commands: Vec<(BuildCommand, RunCommand)>, project_dir: &str) {
+    let mut handles = vec![];
+    for cmd in commands {
+        let project_dir = project_dir.to_string();
+
+        let handle = std::thread::spawn(move || {
+            execute_experiment_command(cmd.0, cmd.1, &project_dir)
+                .expect("Should be able to build and run experiment.");
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
     }
 }
 
@@ -212,6 +301,10 @@ pub fn cli_main() {
                 run_cmd
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
+                    .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
+                    .arg("--release")
+                    .arg("--quiet")
+                    .arg("--")
                     .args(["--project", &run_args.project])
                     .args(["--key", &run_args.key])
                     .args(["train", function, config_path]);
@@ -228,47 +321,10 @@ pub fn cli_main() {
         }
     }
 
-    for mut cmd in commands_to_run {
-        print_info!("Building experiment project with command: {:?}", cmd.0);
-        crate::crate_gen::create_crate(
-            cmd.0
-                .burn_features
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<&str>>(),
-        );
-        generate_metadata_file(&project_dir, &cmd.0.backend);
-
-        let build_status = cmd.0.command.status();
-        match build_status {
-            Err(e) => {
-                print_err!("Failed to build experiment project: {:?}", e);
-                std::process::exit(1);
-            }
-            Ok(status) if !status.success() => {
-                print_err!("Failed to build experiment project: {:?}", cmd);
-                std::process::exit(1);
-            }
-            _ => {
-                print_info!("Project built successfully.");
-            }
-        }
-
-        print_info!("Running experiment with command: {:?}", cmd.1);
-        let run_status = cmd.1.command.status();
-        match run_status {
-            Err(e) => {
-                print_err!("Failed to run experiment: {:?}", e);
-                std::process::exit(1);
-            }
-            Ok(status) if !status.success() => {
-                print_err!("Failed to run experiment: {:?}", cmd);
-                std::process::exit(1);
-            }
-            _ => {
-                print_info!("Experiment ran successfully.");
-            }
-        }
+    if !run_args.parallel {
+        execute_sequentially(commands_to_run, &project_dir);
+    } else {
+        execute_parallel(commands_to_run, &project_dir);
     }
 
     print_info!("Successfully ran all experiments. Exiting.");
