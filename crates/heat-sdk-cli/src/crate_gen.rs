@@ -156,7 +156,10 @@ pub fn create_crate(burn_features: Vec<&str>) {
     let project_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME should be set.");
 
     let mut crate_path = PathBuf::from(project_dir.clone());
+
     crate_path.push(get_heat_dir());
+    std::fs::create_dir_all(&crate_path).expect("Should be able to create crate directory.");
+
     std::fs::write(crate_path.join(".gitignore"), "*")
         .expect("Should be able to write gitignore file.");
 

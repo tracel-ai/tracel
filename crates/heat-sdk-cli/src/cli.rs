@@ -197,16 +197,21 @@ pub fn cli_main() {
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
                     .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
+                    .args(["--message-format", "short"])
                     .arg("--release");
 
-                let mut run_cmd = StdCommand::new("cargo");
+                const EXE: &str = std::env::consts::EXE_SUFFIX;
+
+                let src_exe_path = format!("{}/.heat/crates/heat-sdk-cli/target/release/generated_heat_crate{}", &project_dir, EXE);
+                let dest_exe_path = format!("{}/.heat/bin/generated_heat_crate{}", &project_dir, EXE);
+                
+                std::fs::create_dir_all(format!("{}/.heat/bin", &project_dir)).expect("Failed to create bin directory");
+                std::fs::copy(&src_exe_path, &dest_exe_path).expect("Failed to copy executable");
+
+                let mut run_cmd = StdCommand::new(dest_exe_path);
                 run_cmd
-                    .arg("run")
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
-                    .arg("--release")
-                    .arg("--")
                     .args(["--project", &run_args.project])
                     .args(["--key", &run_args.key])
                     .args(["train", function, config_path]);
