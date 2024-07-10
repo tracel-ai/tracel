@@ -54,7 +54,7 @@ fn generate_main_rs() -> String {
 
         quote! {
              #flag_name => {
-                let _ = #syn_func_path(config_path.to_string(), key.to_string(), project.to_string(), heat_endpoint.to_string());
+                #syn_func_path(config_path.to_string(), key.to_string(), project.to_string(), heat_endpoint.to_string()).expect(&format!("Should be able to run training function. {}", #flag_name));
             }
         }
     }).collect();

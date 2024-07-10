@@ -101,7 +101,7 @@ struct RemoteInferenceRunArgs {
     //todo
 }
 
-#[derive(Debug, Clone, ValueEnum, Display)]
+#[derive(Debug, Clone, ValueEnum, Display, Hash, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 enum BackendValue {
     Wgpu,
@@ -138,14 +138,19 @@ fn execute_experiment_command(
     build_command: BuildCommand,
     run_command: RunCommand,
     project_dir: &str,
+    parallel: bool,
 ) -> Result<(), String> {
-    execute_build_command(build_command, project_dir)?;
+    execute_build_command(build_command, project_dir, parallel)?;
     execute_run_command(run_command)?;
-    
+
     Ok(())
 }
 
-fn execute_build_command(mut build_command: BuildCommand, project_dir: &str) -> Result<(), String> {
+fn execute_build_command(
+    mut build_command: BuildCommand,
+    project_dir: &str,
+    parallel: bool,
+) -> Result<(), String> {
     print_info!(
         "Building experiment project with command: {:?}",
         build_command
@@ -157,7 +162,7 @@ fn execute_build_command(mut build_command: BuildCommand, project_dir: &str) -> 
             .map(|s| s.as_str())
             .collect::<Vec<&str>>(),
     );
-    generate_metadata_file(&project_dir, &build_command.backend);
+    generate_metadata_file(project_dir, &build_command.backend);
 
     let build_status = build_command.command.status();
     match build_status {
@@ -175,6 +180,25 @@ fn execute_build_command(mut build_command: BuildCommand, project_dir: &str) -> 
         }
     }
 
+    const EXE: &str = std::env::consts::EXE_SUFFIX;
+
+    let src_exe_path = format!(
+        "{}/.heat/crates/heat-sdk-cli/target/release/generated_heat_crate{}",
+        &project_dir, EXE
+    );
+    let dest_exe_path = format!(
+        "{}/.heat/bin/generated_heat_crate_{}{}",
+        &project_dir, build_command.run_id, EXE
+    );
+
+    std::fs::create_dir_all(format!("{}/.heat/bin", &project_dir))
+        .expect("Failed to create bin directory");
+    if let Err(e) = std::fs::copy(src_exe_path, dest_exe_path) {
+        if !parallel {
+            return Err(format!("Failed to copy executable: {:?}", e));
+        }
+    }
+
     Ok(())
 }
 
@@ -183,7 +207,7 @@ fn execute_run_command(mut run_command: RunCommand) -> Result<(), String> {
     let run_status = run_command.command.status();
     match run_status {
         Err(e) => {
-            return Err(format!("Failed to run experiment: {:?}", e));
+            return Err(format!("Error running experiment command: {:?}", e));
         }
         Ok(status) if !status.success() => {
             return Err(format!("Failed to run experiment: {:?}", run_command));
@@ -196,28 +220,63 @@ fn execute_run_command(mut run_command: RunCommand) -> Result<(), String> {
     Ok(())
 }
 
-fn execute_sequentially(commands: Vec<(BuildCommand, RunCommand)>, project_dir: &str) {
+fn execute_sequentially(
+    commands: Vec<(BuildCommand, RunCommand)>,
+    project_dir: &str,
+) -> Result<(), String> {
     for cmd in commands {
-        execute_experiment_command(cmd.0, cmd.1, project_dir)
-            .expect("Should be able to build and run experiment.");
+        execute_experiment_command(cmd.0, cmd.1, project_dir, false)?
     }
+
+    Ok(())
 }
 
-fn execute_parallel(commands: Vec<(BuildCommand, RunCommand)>, project_dir: &str) {
+fn execute_parallel_build_all_then_run(
+    commands: Vec<(BuildCommand, RunCommand)>,
+    project_dir: &str,
+) -> Result<(), String> {
+    let (build_commands, run_commands): (Vec<BuildCommand>, Vec<RunCommand>) =
+        commands.into_iter().unzip();
+
+    // Execute all build commands in parallel
     let mut handles = vec![];
-    for cmd in commands {
-        let project_dir = project_dir.to_string();
+    for build_command in build_commands {
+        let inner_project_dir = project_dir.to_string();
 
         let handle = std::thread::spawn(move || {
-            execute_experiment_command(cmd.0, cmd.1, &project_dir)
-                .expect("Should be able to build and run experiment.");
+            execute_build_command(build_command, &inner_project_dir, true)
+                .expect("Should be able to build experiment.");
         });
         handles.push(handle);
     }
 
     for handle in handles {
-        handle.join().unwrap();
+        match handle.join() {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!("Failed to join thread: {:?}", e));
+            }
+        }
     }
+
+    // Execute all run commands in parallel
+    let mut handles = vec![];
+    for run_command in run_commands {
+        let handle = std::thread::spawn(move || {
+            execute_run_command(run_command).expect("Should be able to build and run experiment.");
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        match handle.join() {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!("Failed to join thread: {:?}", e));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -230,10 +289,12 @@ pub struct BuildCommand {
     command: StdCommand,
     backend: BackendValue,
     burn_features: Vec<String>,
+    run_id: String,
 }
 
 pub fn cli_main() {
     print_info!("Running CLI.");
+    let time_begin = std::time::Instant::now();
     let args = Args::try_parse();
     if args.is_err() {
         print_err!("{}", args.unwrap_err());
@@ -279,6 +340,7 @@ pub fn cli_main() {
         for config_path in &run_args.configs {
             for function in &run_args.functions {
                 let burn_features: Vec<String> = vec![backend.to_string()];
+                let run_id = format!("{}", backend);
 
                 let mut build_cmd = StdCommand::new("cargo");
                 build_cmd
@@ -290,21 +352,15 @@ pub fn cli_main() {
                     .arg("--release");
 
                 const EXE: &str = std::env::consts::EXE_SUFFIX;
-
-                let src_exe_path = format!("{}/.heat/crates/heat-sdk-cli/target/release/generated_heat_crate{}", &project_dir, EXE);
-                let dest_exe_path = format!("{}/.heat/bin/generated_heat_crate{}", &project_dir, EXE);
-                
-                std::fs::create_dir_all(format!("{}/.heat/bin", &project_dir)).expect("Failed to create bin directory");
-                std::fs::copy(&src_exe_path, &dest_exe_path).expect("Failed to copy executable");
+                let dest_exe_path = format!(
+                    "{}/.heat/bin/generated_heat_crate_{}{}",
+                    &project_dir, run_id, EXE
+                );
 
                 let mut run_cmd = StdCommand::new(dest_exe_path);
                 run_cmd
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
-                    .arg("--release")
-                    .arg("--quiet")
-                    .arg("--")
                     .args(["--project", &run_args.project])
                     .args(["--key", &run_args.key])
                     .args(["train", function, config_path]);
@@ -314,6 +370,7 @@ pub fn cli_main() {
                         command: build_cmd,
                         backend: backend.clone(),
                         burn_features: burn_features.clone(),
+                        run_id,
                     },
                     RunCommand { command: run_cmd },
                 ));
@@ -321,11 +378,23 @@ pub fn cli_main() {
         }
     }
 
-    if !run_args.parallel {
-        execute_sequentially(commands_to_run, &project_dir);
+    let res = if run_args.parallel {
+        execute_parallel_build_all_then_run(commands_to_run, &project_dir)
     } else {
-        execute_parallel(commands_to_run, &project_dir);
-    }
+        execute_sequentially(commands_to_run, &project_dir)
+    };
 
-    print_info!("Successfully ran all experiments. Exiting.");
+    match res {
+        Ok(()) => {
+            print_info!("All experiments have run succesfully!.");
+            print_info!(
+                "Experiments took {} seconds to run!",
+                time_begin.elapsed().as_secs_f64()
+            );
+        }
+        Err(e) => {
+            print_err!("An error has occured while running experiments: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
