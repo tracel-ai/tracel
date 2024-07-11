@@ -132,7 +132,7 @@ pub fn train<B: AutodiffBackend>(
 }
 
 #[heat(training)]
-fn training<B: AutodiffBackend>(
+pub fn training<B: AutodiffBackend>(
     mut client: HeatClient,
     devices: Vec<B::Device>,
     config: TrainingConfig,
@@ -141,7 +141,7 @@ fn training<B: AutodiffBackend>(
 }
 
 #[heat(training)]
-fn training2<B: AutodiffBackend>(
+pub fn training2<B: AutodiffBackend>(
     mut client: HeatClient,
     devices: Vec<B::Device>,
     config: TrainingConfig,

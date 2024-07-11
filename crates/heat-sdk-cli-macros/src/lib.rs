@@ -51,6 +51,8 @@ pub(crate) fn generate_flag_register_stream(
     procedure_type: &ProcedureType,
 ) -> proc_macro2::TokenStream {
     let fn_name = &item.sig.ident;
+    let serialized_fn_item = syn_serde::json::to_string(item);
+    let serialized_lit_arr = syn::LitByteStr::new(serialized_fn_item.as_bytes(), item.span());
     let proc_type_str = syn::Ident::new(
         &procedure_type.to_string().to_lowercase(),
         proc_macro2::Span::call_site(),
@@ -61,12 +63,23 @@ pub(crate) fn generate_flag_register_stream(
             tracel::heat::sdk_cli::registry::Flag::new(
                 module_path!(),
                 stringify!(#fn_name),
-                stringify!(#proc_type_str)));
+                stringify!(#proc_type_str),
+                #serialized_lit_arr));
     }
 }
 
 #[proc_macro_attribute]
 pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
+    let project_dir = std::env::var("HEAT_PROJECT_DIR");
+    if let Ok(_) = project_dir {
+        let item: proc_macro2::TokenStream = item.into();
+        return
+        quote!{
+            #[allow(dead_code)]
+            #item
+        }.into();
+    }
+    
     let mut errors = Vec::<Error>::new();
     let args = parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
     let item = parse_macro_input!(item as ItemFn);

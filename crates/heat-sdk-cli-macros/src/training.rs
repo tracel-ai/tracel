@@ -147,11 +147,11 @@ pub(crate) fn generate_training(
                 tracel::heat::client::HeatClient::create(client_config)
                     .expect("Should connect to the Heat server and create a client")
             }
-
-            let device = #backend_default_device_quote;
-
+            
             let mut client = create_heat_client(&key, &heat_endpoint, &project);
             let training_config = burn::prelude::Config::load(config_path).expect("Config should be loaded");
+            
+            let device = #backend_default_device_quote;
 
             client
                 .start_experiment(&training_config)

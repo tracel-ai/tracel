@@ -16,7 +16,7 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// {remote|local}
-    /// [--backend={wgpu|cuda|candle|tch}]
+    /// [--backend={wgpu|tch|ndarray}]
     #[command(subcommand)]
     Run(RunLocationType),
     // #[command(subcommand)]
@@ -111,7 +111,7 @@ enum BackendValue {
 
 fn generate_metadata_file(project_dir: &str, backend: &BackendValue) {
     let metadata_file_path = format!(
-        "{}/.heat/crates/heat-sdk-cli/run_metadata.toml",
+        "{}/.heat/crates/generated-heat-sdk-crate/run_metadata.toml",
         project_dir
     );
 
@@ -161,6 +161,7 @@ fn execute_build_command(
             .iter()
             .map(|s| s.as_str())
             .collect::<Vec<&str>>(),
+            &build_command.backend.to_string(),
     );
     generate_metadata_file(project_dir, &build_command.backend);
 
@@ -183,7 +184,7 @@ fn execute_build_command(
     const EXE: &str = std::env::consts::EXE_SUFFIX;
 
     let src_exe_path = format!(
-        "{}/.heat/crates/heat-sdk-cli/target/release/generated_heat_crate{}",
+        "{}/.heat/crates/generated-heat-sdk-crate/target/release/generated_heat_crate{}",
         &project_dir, EXE
     );
     let dest_exe_path = format!(
@@ -347,7 +348,7 @@ pub fn cli_main() {
                     .arg("build")
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args(["--manifest-path", ".heat/crates/heat-sdk-cli/Cargo.toml"])
+                    .args(["--manifest-path", ".heat/crates/generated-heat-sdk-crate/Cargo.toml"])
                     .args(["--message-format", "short"])
                     .arg("--release");
 

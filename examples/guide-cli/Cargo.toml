@@ -6,11 +6,4 @@ version.workspace = true
 
 [dependencies]
 burn = { workspace = true, features = ["vision", "train"] }
-log = { workspace = true }
-serde = { workspace = true, features = ["std", "derive"] }
-serde_json = { workspace = true }
 tracel = { path = "../../crates/tracel", features = ["heat-sdk"] }
-
-[[bin]]
-name = "guide-test"
-path = "src/bin/guide-test.rs"
