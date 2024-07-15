@@ -13,6 +13,7 @@ rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+rand = { version = "0.8.5" }
 reqwest = { workspace = true, features = ["blocking", "json"] }
 tungstenite = { version = "0.21.0" }
 thiserror = { workspace = true }

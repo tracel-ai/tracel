@@ -1877,6 +1877,7 @@ dependencies = [
  "burn",
  "derive-new",
  "log",
+ "rand",
  "reqwest",
  "rmp-serde",
  "serde",
