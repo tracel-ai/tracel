@@ -1,10 +1,17 @@
 use std::process::Command;
 
-use anyhow::{Ok, Result, anyhow};
+use anyhow::{anyhow, Ok, Result};
 use clap::{Args, Subcommand};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-use crate::{endgroup, group, utils::{cargo::ensure_cargo_crate_is_installed, prompt::ask_once, workspace::{get_workspace_members, WorkspaceMemberType}}};
+use crate::{
+    endgroup, group,
+    utils::{
+        cargo::ensure_cargo_crate_is_installed,
+        prompt::ask_once,
+        workspace::{get_workspace_members, WorkspaceMemberType},
+    },
+};
 
 use super::Target;
 
@@ -36,17 +43,21 @@ pub(crate) fn handle_command(args: CheckCmdArgs, answer: Option<bool>) -> anyhow
         CheckCommand::Format => run_format(&args.target, answer),
         CheckCommand::Lint => run_lint(&args.target, answer),
         CheckCommand::All => {
-            let answer = ask_once("This will run all the checks with autofix on all members of the workspace.");
+            let answer = ask_once(
+                "This will run all the checks with autofix on all members of the workspace.",
+            );
             CheckCommand::iter()
                 .filter(|c| *c != CheckCommand::All)
-                .try_for_each(|c| handle_command(
-                    CheckCmdArgs {
-                        command: c,
-                        target: args.target.clone()
-                    },
-                    Some(answer),
-                ))
-        },
+                .try_for_each(|c| {
+                    handle_command(
+                        CheckCmdArgs {
+                            command: c,
+                            target: args.target.clone(),
+                        },
+                        Some(answer),
+                    )
+                })
+        }
     }
 }
 
@@ -71,7 +82,7 @@ pub(crate) fn run_audit(target: &Target, mut answer: Option<bool>) -> anyhow::Re
                 }
                 endgroup!();
             }
-        },
+        }
         Target::All => {
             let answer = ask_once("This will run audit checks on all targets.");
             Target::iter()
@@ -94,7 +105,11 @@ fn run_format(target: &Target, mut answer: Option<bool>) -> Result<()> {
             if answer.is_none() {
                 answer = Some(ask_once(&format!(
                     "This will run format checks on all {} of the workspace.",
-                    if *target == Target::Crates { "crates" } else { "examples" }
+                    if *target == Target::Crates {
+                        "crates"
+                    } else {
+                        "examples"
+                    }
                 )));
             }
 
@@ -107,22 +122,27 @@ fn run_format(target: &Target, mut answer: Option<bool>) -> Result<()> {
                         .status()
                         .map_err(|e| anyhow!("Failed to execute cargo fmt: {}", e))?;
                     if !status.success() {
-                        return Err(anyhow!("Format check execution failed for {}", &member.name));
+                        return Err(anyhow!(
+                            "Format check execution failed for {}",
+                            &member.name
+                        ));
                     }
                     endgroup!();
                 }
             }
-        },
+        }
         Target::All => {
             if answer.is_none() {
-                answer = Some(ask_once("This will run format check on all members of the workspace."));
+                answer = Some(ask_once(
+                    "This will run format check on all members of the workspace.",
+                ));
             }
             if answer.unwrap() {
                 Target::iter()
                     .filter(|t| *t != Target::All)
                     .try_for_each(|t| run_format(&t, answer))?;
             }
-        },
+        }
     }
     Ok(())
 }
@@ -139,16 +159,30 @@ fn run_lint(target: &Target, mut answer: Option<bool>) -> anyhow::Result<()> {
             if answer.is_none() {
                 answer = Some(ask_once(&format!(
                     "This will run lint fix on all {} of the workspace.",
-                    if *target == Target::Crates { "crates" } else { "examples" }
+                    if *target == Target::Crates {
+                        "crates"
+                    } else {
+                        "examples"
+                    }
                 )));
             }
 
             if answer.unwrap() {
                 for member in members {
                     group!("Lint: {}", member.name);
-                    info!("Command line: cargo clippy --no-deps --fix --allow-dirty -p {}", &member.name);
+                    info!(
+                        "Command line: cargo clippy --no-deps --fix --allow-dirty -p {}",
+                        &member.name
+                    );
                     let status = Command::new("cargo")
-                        .args(["clippy", "--no-deps", "--fix", "--allow-dirty", "-p", &member.name])
+                        .args([
+                            "clippy",
+                            "--no-deps",
+                            "--fix",
+                            "--allow-dirty",
+                            "-p",
+                            &member.name,
+                        ])
                         .status()
                         .map_err(|e| anyhow!("Failed to execute cargo clippy: {}", e))?;
                     if !status.success() {
@@ -157,17 +191,19 @@ fn run_lint(target: &Target, mut answer: Option<bool>) -> anyhow::Result<()> {
                     endgroup!();
                 }
             }
-        },
+        }
         Target::All => {
             if answer.is_none() {
-                answer = Some(ask_once("This will run lint fix on all members of the workspace."));
+                answer = Some(ask_once(
+                    "This will run lint fix on all members of the workspace.",
+                ));
             }
             if answer.unwrap() {
                 Target::iter()
                     .filter(|t| *t != Target::All)
                     .try_for_each(|t| run_lint(&t, answer))?;
             }
-        },
+        }
     }
     Ok(())
 }
