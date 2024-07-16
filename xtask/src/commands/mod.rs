@@ -8,7 +8,7 @@ use strum::{Display, EnumIter, EnumString};
 
 #[derive(EnumString, EnumIter, Display, Clone, PartialEq, ValueEnum)]
 #[strum(serialize_all = "lowercase")]
-pub(crate) enum Target{
+pub(crate) enum Target {
     All,
     Crates,
     Examples,

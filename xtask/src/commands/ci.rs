@@ -1,12 +1,21 @@
 use std::process::Command;
 
-use anyhow::{Ok, Result, anyhow};
+use anyhow::{anyhow, Ok, Result};
 use clap::{Args, Subcommand};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-use crate::{endgroup, group, utils::{cargo::ensure_cargo_crate_is_installed, workspace::{get_workspace_members, WorkspaceMemberType}}};
+use crate::{
+    endgroup, group,
+    utils::{
+        cargo::ensure_cargo_crate_is_installed,
+        workspace::{get_workspace_members, WorkspaceMemberType},
+    },
+};
 
-use super::{test::{run_documentation, run_integration, run_unit}, Target};
+use super::{
+    test::{run_documentation, run_integration, run_unit},
+    Target,
+};
 
 #[derive(Args)]
 pub(crate) struct CICmdArgs {
@@ -47,16 +56,14 @@ pub(crate) fn handle_command(args: CICmdArgs) -> anyhow::Result<()> {
         CICommand::IntegrationTests => run_integration_tests(&args.target),
         CICommand::DocTests => run_doc_tests(&args.target),
         CICommand::AllTests => run_all_tests(&args.target),
-        CICommand::All => {
-            CICommand::iter()
-                .filter(|c| *c != CICommand::All && *c != CICommand::AllTests)
-                .try_for_each(|c| handle_command(
-                    CICmdArgs {
-                        command: c,
-                        target: args.target.clone()
-                    },
-                ))
-        },
+        CICommand::All => CICommand::iter()
+            .filter(|c| *c != CICommand::All && *c != CICommand::AllTests)
+            .try_for_each(|c| {
+                handle_command(CICmdArgs {
+                    command: c,
+                    target: args.target.clone(),
+                })
+            }),
     }
 }
 
@@ -74,12 +81,12 @@ fn run_audit(target: &Target) -> anyhow::Result<()> {
                 return Err(anyhow!("Audit check execution failed"));
             }
             endgroup!();
-        },
+        }
         Target::All => {
             Target::iter()
                 .filter(|t| *t != Target::All && *t != Target::Examples)
                 .try_for_each(|t| run_audit(&t))?;
-        },
+        }
     }
     Ok(())
 }
@@ -101,16 +108,19 @@ fn run_format(target: &Target) -> Result<()> {
                     .status()
                     .map_err(|e| anyhow!("Failed to execute cargo fmt: {}", e))?;
                 if !status.success() {
-                    return Err(anyhow!("Format check execution failed for {}", &member.name));
+                    return Err(anyhow!(
+                        "Format check execution failed for {}",
+                        &member.name
+                    ));
                 }
                 endgroup!();
             }
-        },
+        }
         Target::All => {
             Target::iter()
                 .filter(|t| *t != Target::All)
                 .try_for_each(|t| run_format(&t))?;
-        },
+        }
     }
     Ok(())
 }
@@ -126,9 +136,20 @@ fn run_lint(target: &Target) -> anyhow::Result<()> {
 
             for member in members {
                 group!("Lint: {}", member.name);
-                info!("Command line: cargo clippy --no-deps -p {} -- --deny warnings", &member.name);
+                info!(
+                    "Command line: cargo clippy --no-deps -p {} -- --deny warnings",
+                    &member.name
+                );
                 let status = Command::new("cargo")
-                    .args(["clippy", "--no-deps", "-p", &member.name, "--", "--deny", "warnings",])
+                    .args([
+                        "clippy",
+                        "--no-deps",
+                        "-p",
+                        &member.name,
+                        "--",
+                        "--deny",
+                        "warnings",
+                    ])
                     .status()
                     .map_err(|e| anyhow!("Failed to execute cargo clippy: {}", e))?;
                 if !status.success() {
@@ -136,12 +157,12 @@ fn run_lint(target: &Target) -> anyhow::Result<()> {
                 }
                 endgroup!();
             }
-        },
+        }
         Target::All => {
             Target::iter()
                 .filter(|t| *t != Target::All)
                 .try_for_each(|t| run_lint(&t))?;
-        },
+        }
     }
     Ok(())
 }

@@ -7,13 +7,13 @@ mod training;
 
 use crate::{model::ModelConfig, training::TrainingConfig};
 use burn::{
-    backend::{wgpu::AutoGraphicsApi, Autodiff, Wgpu},
+    backend::{Autodiff, Wgpu},
     data::dataset::Dataset,
     optim::AdamConfig,
 };
 
 fn main() {
-    type MyBackend = Wgpu<AutoGraphicsApi, f32, i32>;
+    type MyBackend = Wgpu<f32, i32>;
     type MyAutodiffBackend = Autodiff<MyBackend>;
 
     let args = Args::parse();
