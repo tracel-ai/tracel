@@ -6,15 +6,16 @@ version.workspace = true
 readme.workspace = true
 
 [features]
+default = []
+cli = ["dep:heat-sdk-cli", "heat-sdk-cli-macros/build-cli"]
 
 [dependencies]
-heat-sdk-cli = { path = "../heat-sdk-cli", version = "0.1.0" }
+heat-sdk-cli-macros = { path = "../heat-sdk-cli-macros" }
+heat-sdk-cli = { path = "../heat-sdk-cli", optional = true }
 
 burn = { workspace = true, features = ["train"] }
 
-derive-new = { workspace = true }
 log = { workspace = true }
-macro_magic = { version = "*" }
 reqwest = { workspace = true, features = ["blocking", "json"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }

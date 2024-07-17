@@ -10,6 +10,16 @@ mod websocket;
 
 pub use record::*;
 
+
 pub mod sdk_cli {
+    #[cfg(feature = "cli")]
     pub use heat_sdk_cli::*;
+
+    pub mod macros {
+        pub use heat_sdk_cli_macros::heat;
+
+        #[cfg(feature = "cli")]
+        pub use heat_sdk_cli_macros::heat_cli_main;
+    }
+    
 }

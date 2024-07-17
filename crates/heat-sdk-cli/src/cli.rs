@@ -161,7 +161,7 @@ fn execute_build_command(
             .iter()
             .map(|s| s.as_str())
             .collect::<Vec<&str>>(),
-            &build_command.backend.to_string(),
+        &build_command.backend.to_string(),
     );
     generate_metadata_file(project_dir, &build_command.backend);
 
@@ -308,6 +308,26 @@ pub fn cli_main() {
 
     let project_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
 
+
+    // print all functions that are registered as training functions
+    let flags = crate::registry::get_flags();
+    let training_functions = flags
+        .iter()
+        .filter(|flag| flag.proc_type == "training")
+        .map(|flag| {
+            format!(
+                "  {} {}::{}",
+                "-".custom_color(BURN_ORANGE),
+                flag.mod_path.bold(),
+                flag.fn_name.bold()
+            )
+        })
+        .collect::<Vec<String>>();
+    print_info!("Registered training functions:");
+    for function in training_functions {
+        print_info!("{}", function);
+    }
+
     // Check that all passed functions exist
     let flags = crate::registry::get_flags();
     for function in &run_args.functions {
@@ -345,12 +365,19 @@ pub fn cli_main() {
 
                 let mut build_cmd = StdCommand::new("cargo");
                 build_cmd
+                    .arg("+nightly")
                     .arg("build")
+                    .arg("--release")
+                    .arg("--no-default-features")
                     .current_dir(&project_dir)
                     .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args(["--manifest-path", ".heat/crates/generated-heat-sdk-crate/Cargo.toml"])
-                    .args(["--message-format", "short"])
-                    .arg("--release");
+                    .arg("--timings=html")
+                    .arg("-Zunstable-options")
+                    .args([
+                        "--manifest-path",
+                        ".heat/crates/generated-heat-sdk-crate/Cargo.toml",
+                    ])
+                    .args(["--message-format", "short"]);
 
                 const EXE: &str = std::env::consts::EXE_SUFFIX;
                 let dest_exe_path = format!(
