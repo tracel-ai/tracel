@@ -10,6 +10,7 @@ mod websocket;
 
 pub use record::*;
 
+pub mod command;
 
 pub mod sdk_cli {
     #[cfg(feature = "cli")]

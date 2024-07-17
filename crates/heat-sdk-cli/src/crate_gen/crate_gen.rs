@@ -240,23 +240,30 @@ fn generate_training_function(
 ) -> proc_macro2::TokenStream {
     quote! {    
         let mut client = create_heat_client(&key, &heat_endpoint, &project);
-        let training_config = burn::prelude::Config::load(config_path).expect("Config should be loaded");
+        let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
 
-        client
-            .start_experiment(&training_config)
+        let mut train_cmd_context = TrainCommandContext::new(client, vec![device], training_config_str);
+
+        let conf_ser = train_cmd_context.config().as_bytes().to_vec();
+        train_cmd_context.client()
+            .start_experiment(&conf_ser)
             .expect("Experiment should be started");
+
+        pub fn trigger<D, B: Backend, T, M: Module<B>, H: TrainCommandHandler<D, B, T, M>>(handler: H, context: TrainCommandContext<D>) -> TrainResult<M> {
+            handler.call(context)
+        }
 
         let res = #train_func_match;
 
         match res {
             Ok(model) => {
-                client
+                train_cmd_context.client()
                 .end_experiment_with_model::<#autodiff_backend, burn::record::HalfPrecisionSettings>(model.clone())
                 .expect("Experiment should end successfully");
                 // Ok(model)
             }
             Err(_) => {
-                client
+                train_cmd_context.client()
                 .end_experiment_with_error("Error during training".to_string())
                 .expect("Experiment should end successfully");
                 // Err(tracel::heat::error::HeatSdkError::MacroError("Error during training".to_string()))
@@ -269,8 +276,9 @@ fn generate_training_function(
 fn generate_proc_call(item: syn::ItemFn, mod_path: &str, fn_name: &str) -> proc_macro2::TokenStream {
     let syn_func_path = syn::parse_str::<syn::Path>(&format!("{}::{}", mod_path, fn_name)).expect("Failed to parse path.");
 
-    quote! {
-        #syn_func_path(client.clone(), vec![device], training_config)
+    quote! {        
+        let res = trigger(#syn_func_path, train_cmd_context.clone());
+        res
     }
 }
 
@@ -319,6 +327,9 @@ fn generate_main_rs(main_backend: &str) -> String {
     let bin_content: proc_macro2::TokenStream = quote! {
         #backend_types
         #clap_cli
+
+        use tracel::heat::command::train::*;
+        use burn::prelude::*;
 
         fn create_heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
             let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
