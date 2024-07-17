@@ -152,8 +152,14 @@ pub fn training2<B: AutodiffBackend>(
 
 #[heat(training)]
 pub fn custom_training<B: AutodiffBackend>(
-    DeviceVec(devices): DeviceVec<String>,
+    DeviceVec(devices): DeviceVec<B::Device>,
 ) -> Result<Model<B>, ()> {
     println!("Custom training: {:?}", devices);
+    Err(())
+}
+
+#[heat(training)]
+pub fn nothingburger<B: AutodiffBackend>() -> Result<Model<B>, ()> {
+    println!("Nothingburger");
     Err(())
 }

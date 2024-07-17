@@ -83,6 +83,16 @@ pub trait TrainCommandHandler<D, B: Backend, T, M: Module<B>> {
     fn call(self, context: TrainCommandContext<D>) -> TrainResult<M>;
 }
 
+impl<D, F, M, B> TrainCommandHandler<D, B, (), M> for F
+where
+    F: Fn() -> TrainResult<M>,
+    M: Module<B>,
+    B: Backend,
+{
+    fn call(self, _: TrainCommandContext<D>) -> TrainResult<M> {
+        (self)()
+    }
+}
 
 impl<D, F, T, M, B> TrainCommandHandler<D, B, (T,), M> for F
 where
