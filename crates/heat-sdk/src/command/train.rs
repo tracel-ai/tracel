@@ -8,7 +8,6 @@ pub struct DeviceVec<T>(pub Vec<T>);
 #[derive(Debug, Clone)]
 pub struct ConfigValue<T: Config>(pub T);
 
-
 #[derive(Debug, Clone)]
 pub struct TrainCommandContext<T> {
     client: HeatClient,
@@ -40,7 +39,6 @@ impl<T> TrainCommandContext<T> {
     pub fn into_inner(self) -> (HeatClient, Vec<T>, String) {
         (self.client, self.devices, self.config)
     }
-    
 }
 
 trait FromTrainCommandContext<T> {
@@ -70,7 +68,7 @@ impl<T> IntoIterator for DeviceVec<T> {
     }
 }
 
-impl<T, C: Config> FromTrainCommandContext<T> for C  {
+impl<T, C: Config> FromTrainCommandContext<T> for C {
     fn from_context(context: &TrainCommandContext<T>) -> Self {
         println!("Inferred usage of context.config");
         C::load_binary(context.config.as_bytes()).expect("Config should be loaded")
@@ -119,7 +117,7 @@ where
     }
 }
 
-impl <D, F, T1, T2, T3, M, B> TrainCommandHandler<D, B, (T1, T2, T3), M> for F
+impl<D, F, T1, T2, T3, M, B> TrainCommandHandler<D, B, (T1, T2, T3), M> for F
 where
     F: Fn(T1, T2, T3) -> TrainResult<M>,
     T1: FromTrainCommandContext<D>,
@@ -129,6 +127,10 @@ where
     B: Backend,
 {
     fn call(self, context: TrainCommandContext<D>) -> TrainResult<M> {
-        (self)(T1::from_context(&context), T2::from_context(&context), T3::from_context(&context))
+        (self)(
+            T1::from_context(&context),
+            T2::from_context(&context),
+            T3::from_context(&context),
+        )
     }
 }

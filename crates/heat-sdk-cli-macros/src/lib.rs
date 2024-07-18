@@ -1,15 +1,8 @@
-use inference::generate_inference;
 use proc_macro::TokenStream;
 use quote::quote;
 
 use strum::Display;
 use syn::{parse_macro_input, punctuated::Punctuated, spanned::Spanned, Error, ItemFn, Meta, Path};
-use training::generate_training;
-
-mod backend;
-mod inference;
-mod metadata;
-mod training;
 
 #[derive(Eq, Hash, PartialEq, Display)]
 #[strum(serialize_all = "PascalCase")]
@@ -71,15 +64,15 @@ pub(crate) fn generate_flag_register_stream(
 #[proc_macro_attribute]
 pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     let project_dir = std::env::var("HEAT_PROJECT_DIR");
-    if let Ok(_) = project_dir {
+    if project_dir.is_ok() {
         let item: proc_macro2::TokenStream = item.into();
-        return
-        quote!{
+        return quote! {
             #[allow(dead_code)]
             #item
-        }.into();
+        }
+        .into();
     }
-    
+
     let mut errors = Vec::<Error>::new();
     let args = parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
     let item = parse_macro_input!(item as ItemFn);
@@ -104,42 +97,20 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let project_dir = std::env::var("HEAT_PROJECT_DIR");
-    let is_generating_cli = project_dir.is_ok();
-    let project_dir = project_dir.unwrap_or(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-
-    // Generate the code for the procedure
-    let generated_code = match procedure_type {
-        ProcedureType::Training => generate_training(&args, &item, is_generating_cli, &project_dir),
-        ProcedureType::Inference => {
-            generate_inference(&args, &item, is_generating_cli, &project_dir)
-        }
-    }
-    .unwrap_or_else(|mut errs| {
-        errors.append(&mut errs);
-        TokenStream::new().into()
-    });
-
     // If there are any errors, combine them and return
     if !errors.is_empty() {
         return compile_errors(errors).into();
     }
 
-    let flag_register = if is_generating_cli {
-        quote! {}
+    let flag_register = if cfg!(feature = "build-cli") {
+        generate_flag_register_stream(&item, &procedure_type)
     } else {
-        if cfg!(feature = "build-cli") {
-            generate_flag_register_stream(&item, &procedure_type)
-        }
-        else {
-            quote! {}
-        }
+        quote! {}
     };
 
     quote! {
         #[allow(dead_code)]
         #item
-        #generated_code
 
         #flag_register
     }
@@ -190,7 +161,7 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
 /// Usage example:
 /// ```rust
 /// #[heat_import_extern_crate(crate_name)]
-/// 
+///
 #[proc_macro_attribute]
 pub fn heat_import_extern_crate(_args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);

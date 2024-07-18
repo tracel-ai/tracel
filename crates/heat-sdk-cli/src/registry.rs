@@ -7,7 +7,12 @@ pub struct Flag {
 }
 
 impl Flag {
-    pub fn new(mod_path: &'static str, fn_name: &'static str, proc_type: &'static str, token_stream: &'static [u8]) -> Self {
+    pub fn new(
+        mod_path: &'static str,
+        fn_name: &'static str,
+        proc_type: &'static str,
+        token_stream: &'static [u8],
+    ) -> Self {
         Flag {
             mod_path,
             fn_name,

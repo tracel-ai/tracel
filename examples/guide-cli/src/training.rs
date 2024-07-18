@@ -3,9 +3,7 @@ use crate::{
     model::{Model, ModelConfig},
 };
 use burn::{
-    data::dataset::transform::SamplerDataset,
-    record::HalfPrecisionSettings,
-    train::metric::*,
+    data::dataset::transform::SamplerDataset, record::HalfPrecisionSettings, train::metric::*,
 };
 use burn::{
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
@@ -148,7 +146,6 @@ pub fn training2<B: AutodiffBackend>(
 ) -> Result<Model<B>, ()> {
     train::<B>(&mut client, "/tmp/guide2", config, devices[0].clone())
 }
-
 
 #[heat(training)]
 pub fn custom_training<B: AutodiffBackend>(

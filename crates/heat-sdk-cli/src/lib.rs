@@ -1,8 +1,7 @@
 pub mod cli;
 
+pub mod cli_commands;
+pub mod commands;
 pub mod crate_gen;
 pub mod logging;
 pub mod registry;
-
-#[cfg(feature = "fail")]
-compile_error!("fail feature is not supported in heat-sdk-cli");

@@ -13,12 +13,9 @@ syn = { workspace = true }
 proc-macro2 = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 uuid = { workspace = true }
-toml = "0.8.14"
+toml = "0.8.15"
 serde = { version = "1.0.204", features = ["derive"] }
 syn-serde = { version = "0.3.1", features = ["json"] }
 
 [features]
-wgpu = []
-tch = []
-ndarray = []
 build-cli = []

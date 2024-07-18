@@ -5,6 +5,8 @@ version.workspace = true
 readme.workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
+
 clap = { workspace = true, features = ["derive", "cargo"] }
 colored = { workspace = true }
 strum = { workspace = true }
