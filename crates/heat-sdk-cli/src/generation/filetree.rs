@@ -6,15 +6,20 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum FileTree {
     File(String, Vec<u8>),
+    FileRef(String),
     Directory(String, Vec<FileTree>),
 }
 
 impl FileTree {
     pub fn new_file(name: impl Into<String>, content: impl Into<Vec<u8>>) -> Self {
         FileTree::File(name.into(), content.into())
+    }
+
+    pub fn new_file_ref(name: impl Into<String>) -> Self {
+        FileTree::FileRef(name.into())
     }
 
     pub fn new_dir(name: impl Into<String>, children: impl Into<Vec<FileTree>>) -> Self {
@@ -38,29 +43,46 @@ impl FileTree {
         }
     }
 
-    pub fn insert(&mut self, file_tree: FileTree) {
+    pub fn insert(&mut self, file_tree: FileTree) -> &mut Self {
         match self.try_insert(file_tree) {
-            Ok(_) => {}
+            Ok(_) => self,
             Err(_) => panic!("Cannot insert into a file"),
         }
     }
 
-    pub fn read_from(path: &Path) -> std::io::Result<Self> {
+    pub fn read_from(
+        path: &Path,
+        ref_suffixes: &[&str],
+        ignore_names: &[&str],
+    ) -> std::io::Result<Self> {
         if path.is_file() {
             let mut buf = Vec::new();
             std::fs::File::open(path)?.read_to_end(&mut buf)?;
+            if ref_suffixes
+                .iter()
+                .any(|&s| path.file_name().unwrap().to_string_lossy().ends_with(s))
+            {
+                return Ok(FileTree::FileRef(
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                ));
+            }
             Ok(FileTree::File(
-                path.file_name().unwrap().to_string_lossy().to_string(),
+                path.file_name().unwrap().to_string_lossy().into_owned(),
                 buf,
             ))
         } else {
             let mut children = Vec::new();
             for entry in std::fs::read_dir(path)? {
                 let entry = entry?;
-                children.push(FileTree::read_from(&entry.path())?);
+                let name = entry.file_name();
+                if ignore_names.iter().any(|&n| name == n) {
+                    continue;
+                }
+                let file_tree = FileTree::read_from(&entry.path(), ref_suffixes, ignore_names)?;
+                children.push(file_tree);
             }
             Ok(FileTree::Directory(
-                path.file_name().unwrap().to_string_lossy().to_string(),
+                path.file_name().unwrap().to_string_lossy().into_owned(),
                 children,
             ))
         }
@@ -83,6 +105,11 @@ impl FileTree {
                     file.write_all(content)?;
                 }
             }
+            FileTree::FileRef(name) => {
+                if !path.join(name).exists() {
+                    std::fs::File::create(path.join(name))?;
+                }
+            }
             FileTree::Directory(name, children) => {
                 let dir = path.join(name);
                 std::fs::create_dir_all(&dir)?;
@@ -92,5 +119,14 @@ impl FileTree {
             }
         }
         Ok(())
+    }
+
+    pub fn get_name(&self) -> String {
+        match self {
+            FileTree::File(name, _) => name,
+            FileTree::FileRef(name) => name,
+            FileTree::Directory(name, _) => name,
+        }
+        .clone()
     }
 }

@@ -1,28 +1,23 @@
 use quote::quote;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::print_err;
+use crate::{generation::FileTree, print_err};
 
-use super::{
-    cargo_toml::{CargoToml, Dependency, QueryType},
-    filetree::FileTree,
-};
+use super::cargo_toml::{CargoToml, Dependency, QueryType};
 
 pub struct GeneratedCrate {
     name: String,
-    path: PathBuf,
     cargo_toml: CargoToml,
     src: FileTree,
 }
 
 impl GeneratedCrate {
-    pub fn new(name: String, path: PathBuf) -> Self {
+    pub fn new(name: String) -> Self {
         let mut cargo_toml = CargoToml::default();
         cargo_toml.set_package_name(name.clone());
         Self {
             name,
-            path,
             cargo_toml,
             src: FileTree::Directory("src".to_string(), vec![]),
         }
@@ -34,6 +29,10 @@ impl GeneratedCrate {
 
     pub fn src_mut(&mut self) -> &mut FileTree {
         &mut self.src
+    }
+
+    pub fn name(&self) -> String {
+        self.name.clone()
     }
 
     pub fn add_dependency(&mut self, dependency: Dependency) {
@@ -57,14 +56,14 @@ impl GeneratedCrate {
         self.cargo_toml.set_package_edition(edition)
     }
 
-    pub fn write(&self) {
+    pub fn write_to(&self, path: &Path) -> Result<(), std::io::Error> {
         let cargo_toml_str = self.cargo_toml.to_string();
 
-        let cargotoml_path = self.path.join("Cargo.toml");
+        let cargotoml_path = path.join("Cargo.toml");
         std::fs::write(cargotoml_path, cargo_toml_str)
             .expect("Should be able to write Cargo.toml file.");
 
-        self.src.write_to(&self.path);
+        self.src.write_to(path)
     }
 
     pub fn into_file_tree(self) -> FileTree {
@@ -96,74 +95,6 @@ pub struct MetadataDependency {
     pub path: Option<String>,
     pub registry: Option<String>,
 }
-
-// fn get_cargo_toml_dependency(package: &MetadataDependency) -> toml_edit::Item {
-//     let mut dep = toml_edit::table();
-//     let is_local = package.path.is_some();
-//     dep["version"] = toml_edit::value(&package.req);
-//     if is_local {
-//         dep["path"] = toml_edit::value(package.path.as_ref().unwrap());
-//     } else {
-//         if let Some(source) = &package.source {
-//             let source_kind = {
-//                 if source.starts_with("git") {
-//                     "git"
-//                 } else if source.starts_with("registry") {
-//                     "registry"
-//                 } else {
-//                     "other"
-//                 }
-//             };
-
-//             let source = source.as_str().strip_prefix(&format!("{}+", source_kind)).expect("Should be able to strip prefix.");
-//             let url = url::Url::parse(source).expect("Should be able to parse url.");
-
-//             let dep_url = format!("{}://{}{}", url.scheme(), url.host_str().expect("Should be able to get host"), url.path());
-
-//             enum QueryType {
-//                 Branch(String),
-//                 Tag(String),
-//                 Rev(String),
-//             }
-
-//             match source_kind {
-//                 "git" => {
-//                     let query = url.query();
-//                     let query_type = match query {
-//                         Some(q) => {
-//                             let parts: Vec<&str> = q.split('=').collect();
-//                             match parts[0] {
-//                                 "branch" => QueryType::Branch(parts[1].to_string()),
-//                                 "tag" => QueryType::Tag(parts[1].to_string()),
-//                                 "rev" => QueryType::Rev(parts[1].to_string()),
-//                                 _ => panic!("Error"),
-//                             }
-//                         }
-//                         None => QueryType::Branch("master".to_string()),
-//                     };
-
-//                     match query_type {
-//                         QueryType::Branch(branch) => {
-//                             dep["branch"] = toml_edit::value(branch);
-//                         }
-//                         QueryType::Tag(tag) => {
-//                             dep["tag"] = toml_edit::value(tag);
-//                         }
-//                         QueryType::Rev(rev) => {
-//                             dep["rev"] = toml_edit::value(rev);
-//                         }
-//                     }
-
-//                     dep["git"] = toml_edit::value(dep_url);
-//                 }
-//                 "registry" => {}
-//                 _ => { panic!("Error") }
-//             }
-//         }
-//     }
-
-//     dep
-// }
 
 fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
     let version = package.req.clone();
@@ -264,81 +195,6 @@ fn find_required_dependencies(req_deps: Vec<&str>) -> Vec<Dependency> {
 
     req_deps_metadata.iter().map(get_cargo_dependency).collect()
 }
-
-// fn generate_cargo_toml(project_name: &str, project_dir: &str, burn_features: Vec<&str>) -> String {
-
-//     let mut cargo_toml = toml_edit::DocumentMut::new();
-//     // package settings
-//     let mut package = toml_edit::Table::new();
-//     package.insert("edition", toml_edit::value("2021"));
-//     package.insert("version", toml_edit::value("0.1.0"));
-//     package.insert("name", toml_edit::value("generated_heat_crate"));
-
-//     // dependencies
-//     let mut dependencies = toml_edit::Table::new();
-//     dependencies[project_name]["path"] = toml_edit::value(project_dir);
-//     if let Some(t) = dependencies[project_name].as_inline_table_mut() {
-//         t.fmt()
-//     }
-
-//     dependencies["clap"]["version"] = toml_edit::value("*");
-
-//     dependencies["clap"]["features"] = toml_edit::Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
-//     if let Some(a) = dependencies["clap"]["features"].as_array_mut() {
-//         a.push("cargo");
-//     }
-
-//     let manifest_cmd = std::process::Command::new("cargo")
-//         .arg("metadata")
-//         .arg("--no-deps")
-//         .args(["--format-version", "1"])
-//         .args(["--manifest-path", &format!("{}/Cargo.toml", &project_dir)])
-//         .current_dir(&project_dir)
-//         .output()
-//         .expect("Should be able to run cargo init.");
-
-//     let our_package_name = std::env::var("CARGO_PKG_NAME").expect("Should be able to get package name.");
-
-//     let manifest_str = std::str::from_utf8(&manifest_cmd.stdout).expect("Should be able to parse stdout.");
-//     let manifest_json: serde_json::Value = serde_json::from_str(manifest_str).expect("Should be able to parse json.");
-//     let packages_array = manifest_json["packages"].as_array().expect("Should be able to get workspace members.");
-//     let our_package = packages_array.iter().find(|package| package["name"] == our_package_name).expect("Should be able to find our package.");
-//     let our_package_dependencies = our_package["dependencies"].as_array().expect("Should be able to get dependencies.");
-
-//     let tracel_dep = our_package_dependencies.iter().find(|dep| dep["name"] == "tracel").expect("Should be able to find tracel dependency.");
-//     let burn_dep = our_package_dependencies.iter().find(|dep| dep["name"] == "burn").expect("Should be able to find burn dependency.");
-
-//     let tracel_dep_metadata = serde_json::from_value::<MetadataDependency>(tracel_dep.clone()).expect("Should be able to parse tracel dep metadata.");
-//     let burn_dep_metadata = serde_json::from_value::<MetadataDependency>(burn_dep.clone()).expect("Should be able to parse burn dep metadata.");
-
-//     dependencies["tracel"] = get_cargo_toml_dependency(&tracel_dep_metadata);
-//     if let Some(t) = dependencies["tracel"].as_inline_table_mut() {
-//         t.fmt()
-//     }
-//     dependencies["tracel"]["features"] = toml_edit::Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
-//     if let Some(a) = dependencies["tracel"]["features"].as_array_mut() {
-//         a.push("heat-sdk");
-
-//     }
-
-//     dependencies["burn"] = get_cargo_toml_dependency(&burn_dep_metadata);
-//     if let Some(t) = dependencies["burn"].as_inline_table_mut() {
-//         t.fmt()
-//     }
-//     dependencies["burn"]["features"] = toml_edit::Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
-//     if let Some(a) = dependencies["burn"]["features"].as_array_mut() {
-//         a.extend(burn_features);
-//     }
-
-//     // workspace
-//     let workspace = toml_edit::table();
-
-//     // insert into cargo_toml
-//     cargo_toml.insert("package", toml_edit::Item::Table(package));
-//     cargo_toml.insert("dependencies", toml_edit::Item::Table(dependencies));
-//     cargo_toml.insert("workspace", workspace);
-//     cargo_toml.to_string()
-// }
 
 fn generate_clap_cli() -> proc_macro2::TokenStream {
     quote! {
@@ -484,7 +340,7 @@ fn generate_main_rs(main_backend: &str) -> String {
         }
     };
 
-    let backend = match crate::crate_gen::backend::get_backend_type(main_backend) {
+    let backend = match crate::generation::crate_gen::backend::get_backend_type(main_backend) {
         Ok(backend) => backend,
         Err(err) => {
             print_err!("{}", err);
@@ -492,9 +348,10 @@ fn generate_main_rs(main_backend: &str) -> String {
         }
     };
 
-    let backend_types = crate::crate_gen::backend::generate_backend_typedef_stream(&backend);
+    let backend_types =
+        crate::generation::crate_gen::backend::generate_backend_typedef_stream(&backend);
     let (_backend_type_name, autodiff_backend_type_name) =
-        crate::crate_gen::backend::get_backend_type_names();
+        crate::generation::crate_gen::backend::get_backend_type_names();
     let backend_default_device = backend.default_device_stream();
 
     let clap_cli = generate_clap_cli();
@@ -546,96 +403,48 @@ fn generate_main_rs(main_backend: &str) -> String {
     prettyplease::unparse(&syn_tree).to_string()
 }
 
-pub fn create_crate(burn_features: Vec<&str>, backend: &str) {
-    let project_dir =
-        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR should be set.");
-    let project_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME should be set.");
+pub fn create_crate(
+    crate_name: &str,
+    user_project_name: &str,
+    user_project_dir: &str,
+    burn_features: Vec<&str>,
+    backend: &str,
+) -> GeneratedCrate {
+    // Create the generated crate package
+    let mut generated_crate = GeneratedCrate::new(crate_name.to_string());
+    generated_crate.set_package_edition("2021".to_string());
+    generated_crate.set_package_version("0.0.0".to_string());
 
-    let mut heat_tree = FileTree::new_dir(".heat", [FileTree::new_file(".gitignore", b"*")]);
+    // Add dependencies
+    generated_crate.add_dependency(Dependency::new_path(
+        user_project_name.to_string(),
+        "*".to_string(),
+        user_project_dir.to_string(),
+        vec![],
+    ));
+    generated_crate.add_dependency(Dependency::new(
+        "clap".to_string(),
+        "*".to_string(),
+        vec!["cargo".to_string()],
+    ));
+    find_required_dependencies(vec!["tracel", "burn"])
+        .drain(..)
+        .for_each(|mut dep| {
+            if dep.name == "burn" {
+                burn_features.iter().for_each(|feature| {
+                    dep.add_feature(feature.to_string());
+                });
+            }
+            if dep.name == "tracel" {
+                dep.add_feature("heat-sdk".to_string());
+            }
+            generated_crate.add_dependency(dep);
+        });
 
-    let mut crates_dir = FileTree::new_dir("crates", []);
+    // Generate source files
+    generated_crate
+        .src_mut()
+        .insert(FileTree::new_file("main.rs", generate_main_rs(backend)));
 
-    {
-        let mut generated_crate = GeneratedCrate::new(
-            "generated-heat-sdk-crate".to_string(),
-            PathBuf::from(project_dir.clone()),
-        );
-        generated_crate.set_package_edition("2021".to_string());
-        generated_crate.set_package_version("0.1.0".to_string());
-        generated_crate.add_dependency(Dependency::new_path(
-            project_name.clone(),
-            "*".to_string(),
-            project_dir.clone(),
-            vec![],
-        ));
-        generated_crate.add_dependency(Dependency::new(
-            "clap".to_string(),
-            "*".to_string(),
-            vec!["cargo".to_string()],
-        ));
-        find_required_dependencies(vec!["tracel", "burn"])
-            .drain(..)
-            .for_each(|mut dep| {
-                if dep.name == "burn" {
-                    burn_features.iter().for_each(|feature| {
-                        dep.add_feature(feature.to_string());
-                    });
-                }
-                if dep.name == "tracel" {
-                    dep.add_feature("heat-sdk".to_string());
-                }
-                generated_crate.add_dependency(dep);
-            });
-
-        generated_crate
-            .src_mut()
-            .insert(FileTree::new_file("main.rs", generate_main_rs(backend)));
-
-        crates_dir.insert(generated_crate.into_file_tree());
-    }
-
-    heat_tree.insert(crates_dir);
-    heat_tree
-        .write_to(&PathBuf::from(project_dir.clone()))
-        .expect("Should be able to write crate.");
-
-    // // generated_crate.src_mut().
-
-    // let mut crate_path = PathBuf::from(project_dir.clone());
-
-    // // crate_path.push(get_heat_dir());
-    // // std::fs::create_dir_all(&crate_path).expect("Should be able to create crate directory.");
-
-    // // std::fs::write(crate_path.join(".gitignore"), "*")
-    // //     .expect("Should be able to write gitignore file.");
-
-    // crate_path.extend(["crates", "generated-heat-sdk-crate"]);
-    // std::fs::create_dir_all(&crate_path).expect("Should be able to create crate directory.");
-
-    // // src + src/main.rs
-    // let mut main_path = crate_path.join("src");
-    // std::fs::create_dir_all(&main_path).expect("Should be able to create src directory.");
-    // main_path.push("main.rs");
-
-    // // generate and paste new code into main.rs if content has changed since last run
-    // let last_bin_content = std::fs::read_to_string(&main_path);
-    // let new_bin_content = generate_main_rs(backend);
-
-    // let should_write = match last_bin_content {
-    //     Ok(ref content) => content != &new_bin_content,
-    //     Err(_) => true,
-    // };
-
-    // // todo hash comparison
-    // if should_write {
-    //     if let Err(e) = std::fs::write(&main_path, &new_bin_content) {
-    //         eprintln!("Failed to write bin file: {}", e);
-    //     }
-    // }
-
-    // let cargo_toml_str = generate_cargo_toml(&project_name, &project_dir, burn_features);
-
-    // let cargotoml_path = crate_path.join("Cargo.toml");
-    // std::fs::write(cargotoml_path, cargo_toml_str)
-    //     .expect("Should be able to write Cargo.toml file.");
+    generated_crate
 }

@@ -4,12 +4,13 @@ use colored::Colorize;
 use crate::{
     commands::{
         execute_parallel_build_all_then_run, execute_sequentially, BuildCommand, RunCommand,
+        RunParams,
     },
-    crate_gen::backend::BackendType,
+    context::HeatCliContext,
+    generation::crate_gen::backend::BackendType,
     logging::BURN_ORANGE,
-    print_err, print_info,
+    print_info,
 };
-use std::process::Command as StdCommand;
 
 #[derive(Parser, Debug)]
 pub struct LocalTrainingRunArgs {
@@ -44,9 +45,10 @@ pub struct LocalTrainingRunArgs {
     parallel: bool,
 }
 
-pub(crate) fn handle_command(args: LocalTrainingRunArgs) -> anyhow::Result<()> {
-    let project_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-
+pub(crate) fn handle_command(
+    args: LocalTrainingRunArgs,
+    mut context: HeatCliContext,
+) -> anyhow::Result<()> {
     // print all functions that are registered as training functions
     let flags = crate::registry::get_flags();
     let training_functions = flags
@@ -74,8 +76,7 @@ pub(crate) fn handle_command(args: LocalTrainingRunArgs) -> anyhow::Result<()> {
             .filter(|flag| flag.fn_name == function)
             .collect::<Vec<&crate::registry::Flag>>();
         if function_flags.is_empty() {
-            print_err!("Function `{}` is not registered as a training function. Annotate a training function with #[heat(training)] to register it.", function);
-            std::process::exit(1);
+            return Err(anyhow::anyhow!(format!("Function `{}` is not registered as a training function. Annotate a training function with #[heat(training)] to register it.", function)));
         } else if function_flags.len() > 1 {
             let function_strings = function_flags
                 .iter()
@@ -88,12 +89,13 @@ pub(crate) fn handle_command(args: LocalTrainingRunArgs) -> anyhow::Result<()> {
                     )
                 })
                 .collect::<Vec<String>>();
-            print_err!("Function `{}` is registered multiple times. Please write the entire module path of the desired function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings.join("\n"));
-            std::process::exit(1);
+            return Err(anyhow::anyhow!(format!("Function `{}` is registered multiple times. Please write the entire module path of the desired function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings.join("\n"))));
         }
     }
 
     let mut commands_to_run: Vec<(BuildCommand, RunCommand)> = Vec::new();
+
+    context.set_generated_crate_name("generated-heat-sdk-crate".to_string());
 
     for backend in &args.backends {
         for config_path in &args.configs {
@@ -101,50 +103,31 @@ pub(crate) fn handle_command(args: LocalTrainingRunArgs) -> anyhow::Result<()> {
                 let burn_features: Vec<String> = vec![backend.to_string()];
                 let run_id = format!("{}", backend);
 
-                let mut build_cmd = StdCommand::new("cargo");
-                build_cmd
-                    .arg("build")
-                    .arg("--release")
-                    .arg("--no-default-features")
-                    .current_dir(&project_dir)
-                    .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args([
-                        "--manifest-path",
-                        ".heat/crates/generated-heat-sdk-crate/Cargo.toml",
-                    ])
-                    .args(["--message-format", "short"]);
-
-                const EXE: &str = std::env::consts::EXE_SUFFIX;
-                let dest_exe_path = format!(
-                    "{}/.heat/bin/generated-heat-sdk-crate-{}{}",
-                    &project_dir, run_id, EXE
-                );
-
-                let mut run_cmd = StdCommand::new(dest_exe_path);
-                run_cmd
-                    .current_dir(&project_dir)
-                    .env("HEAT_PROJECT_DIR", &project_dir)
-                    .args(["--project", &args.project])
-                    .args(["--key", &args.key])
-                    .args(["train", function, config_path]);
-
                 commands_to_run.push((
                     BuildCommand {
-                        command: build_cmd,
+                        run_id: run_id.clone(),
                         backend: backend.clone(),
                         burn_features: burn_features.clone(),
-                        run_id,
+                        profile: "release".to_owned(),
                     },
-                    RunCommand { command: run_cmd },
+                    RunCommand {
+                        run_id,
+                        run_params: RunParams::Training {
+                            function: function.to_owned(),
+                            config_path: config_path.to_owned(),
+                            project: args.project.clone(),
+                            key: args.key.clone(),
+                        },
+                    },
                 ));
             }
         }
     }
 
     let res = if args.parallel {
-        execute_parallel_build_all_then_run(commands_to_run, &project_dir)
+        execute_parallel_build_all_then_run(commands_to_run, context)
     } else {
-        execute_sequentially(commands_to_run, &project_dir)
+        execute_sequentially(commands_to_run, context)
     };
 
     match res {
@@ -152,8 +135,10 @@ pub(crate) fn handle_command(args: LocalTrainingRunArgs) -> anyhow::Result<()> {
             print_info!("All experiments have run succesfully!.");
         }
         Err(e) => {
-            print_err!("An error has occured while running experiments: {}", e);
-            std::process::exit(1);
+            return Err(anyhow::anyhow!(format!(
+                "An error has occured while running experiments: {}",
+                e
+            )));
         }
     }
 

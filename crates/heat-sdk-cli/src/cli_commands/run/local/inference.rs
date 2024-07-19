@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::crate_gen::backend::BackendType;
+use crate::generation::crate_gen::backend::BackendType;
 
 /// Run an inference locally.
 /// Not yet supported.

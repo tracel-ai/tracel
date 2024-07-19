@@ -1,6 +1,8 @@
 use clap::Parser;
 
-use super::{
+use crate::context::HeatCliContext;
+
+use crate::cli_commands::{
     local::{self, LocalRunSubcommand},
     remote::{self, RemoteRunSubcommand},
 };
@@ -17,9 +19,9 @@ pub enum RunLocationType {
     Remote(RemoteRunSubcommand),
 }
 
-pub(crate) fn handle_command(args: RunLocationType) -> anyhow::Result<()> {
+pub(crate) fn handle_command(args: RunLocationType, context: HeatCliContext) -> anyhow::Result<()> {
     match args {
-        RunLocationType::Local(local_args) => local::handle_command(local_args),
+        RunLocationType::Local(local_args) => local::handle_command(local_args, context),
         RunLocationType::Remote(remote_args) => remote::handle_command(remote_args),
     }
 }
