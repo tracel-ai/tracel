@@ -1,8 +1,6 @@
-use std::str::FromStr;
-
 use quote::quote;
 use strum::{Display, EnumString};
-use syn::{Error, Ident};
+use syn::Ident;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Display, EnumString)]
@@ -69,14 +67,4 @@ pub(crate) fn generate_backend_typedef_stream(backend: &BackendType) -> proc_mac
         type #backend_type_name = #backend_type;
         type #autodiff_backend_type_name = burn::backend::Autodiff<#backend_type_name>;
     }
-}
-
-/// Chooses a backend type based on the enabled features.
-pub(crate) fn get_backend_type(backend: &str) -> Result<BackendType, Error> {
-    BackendType::from_str(backend).map_err(|_| {
-        Error::new(
-            proc_macro2::Span::call_site(),
-            format!("Invalid backend type: {}", backend),
-        )
-    })
 }

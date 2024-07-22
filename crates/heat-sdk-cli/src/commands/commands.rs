@@ -1,5 +1,4 @@
 use crate::{context::HeatCliContext, generation::crate_gen::backend::BackendType, print_info};
-use std::process::Command as StdCommand;
 
 /// Contains the data necessary to run an experiment.
 #[derive(Debug, Clone)]
@@ -25,8 +24,6 @@ pub struct BuildCommand {
     // pub command: Command,
     pub run_id: String,
     pub backend: BackendType,
-    pub burn_features: Vec<String>,
-    pub profile: String,
     // pub dest_exe_name: String
 }
 
@@ -57,48 +54,8 @@ pub(crate) fn execute_build_command(
         build_command
     );
 
-    let generated_crate = crate::generation::crate_gen::create_crate(
-        context
-            .generated_crate_name()
-            .expect("Generated crate name should be set."),
-        context.user_project_name(),
-        context
-            .user_crate_dir()
-            .to_str()
-            .expect("User crate dir should be a valid path."),
-        build_command
-            .burn_features
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<&str>>(),
-        &build_command.backend.to_string(),
-    );
-
-    context.generate_crate(generated_crate);
-
-    let profile_arg = match build_command.profile.as_str() {
-        "release" => "--release",
-        "debug" => "--debug",
-        _ => {
-            return Err(anyhow::anyhow!(format!(
-                "Invalid profile: {}",
-                build_command.profile
-            )));
-        }
-    };
-
-    let build_status = StdCommand::new("cargo")
-        .arg("build")
-        .arg(profile_arg)
-        .arg("--no-default-features")
-        .current_dir(context.user_crate_dir())
-        .env("HEAT_PROJECT_DIR", context.user_crate_dir())
-        .args([
-            "--manifest-path",
-            &format!("{}/Cargo.toml", context.get_generated_crate_path()),
-        ])
-        .args(["--message-format", "short"])
-        .status();
+    context.generate_crate(&build_command)?;
+    let build_status = context.make_build_command(&build_command)?.status();
 
     match build_status {
         Err(e) => {
@@ -127,25 +84,8 @@ pub(crate) fn execute_run_command(
     context: &HeatCliContext,
 ) -> anyhow::Result<()> {
     print_info!("Running experiment with command: {:?}", run_command);
-
-    let mut command = match &run_command.run_params {
-        RunParams::Training {
-            function,
-            config_path,
-            project,
-            key,
-        } => {
-            let bin_exe_path = context.get_binary_exe_path(&run_command.run_id);
-            let mut command = StdCommand::new(bin_exe_path);
-            command
-                .current_dir(context.user_crate_dir())
-                .env("HEAT_PROJECT_DIR", context.user_crate_dir())
-                .args(["--project", project])
-                .args(["--key", key])
-                .args(["train", function, config_path]);
-            command
-        }
-    };
+    
+    let mut command = context.make_run_command(&run_command);
 
     let run_status = command.status();
     match run_status {

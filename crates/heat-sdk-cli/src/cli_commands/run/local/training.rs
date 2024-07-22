@@ -100,15 +100,12 @@ pub(crate) fn handle_command(
     for backend in &args.backends {
         for config_path in &args.configs {
             for function in &args.functions {
-                let burn_features: Vec<String> = vec![backend.to_string()];
                 let run_id = format!("{}", backend);
 
                 commands_to_run.push((
                     BuildCommand {
                         run_id: run_id.clone(),
                         backend: backend.clone(),
-                        burn_features: burn_features.clone(),
-                        profile: "release".to_owned(),
                     },
                     RunCommand {
                         run_id,

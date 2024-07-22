@@ -60,22 +60,6 @@ impl Dependency {
     pub fn add_feature(&mut self, feature: String) {
         self.features.push(feature);
     }
-
-    pub fn remove_feature(&mut self, feature: &str) {
-        self.features.retain(|f| f != feature);
-    }
-
-    pub fn set_version(&mut self, version: String) {
-        self.version = version;
-    }
-
-    pub fn set_kind(&mut self, kind: DependencyKind) {
-        self.kind = kind;
-    }
-
-    pub fn set_name(&mut self, name: String) {
-        self.name = name;
-    }
 }
 
 pub struct CargoToml {
@@ -84,6 +68,7 @@ pub struct CargoToml {
 }
 
 impl CargoToml {
+    #[allow(dead_code)]
     pub fn new(package: Package, dependencies: Vec<Dependency>) -> Self {
         Self {
             package,
@@ -93,10 +78,6 @@ impl CargoToml {
 
     pub fn add_dependency(&mut self, dependency: Dependency) {
         self.dependencies.push(dependency);
-    }
-
-    pub fn remove_dependency(&mut self, name: &str) {
-        self.dependencies.retain(|dep| dep.name != name);
     }
 
     pub fn set_package_name(&mut self, name: String) {

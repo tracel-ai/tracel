@@ -99,60 +99,58 @@ impl HeatDir {
         self.binaries.insert(binary_name.to_string(), binary);
     }
 
-    pub fn get_binary(&self, binary_name: &str) -> Option<&FileTree> {
-        self.binaries.get(binary_name)
-    }
-
-    pub fn get_binary_path(&self, bin_name: &str) -> Option<String> {
+    pub fn get_binary_path(&self, bin_name: &str) -> Option<PathBuf> {
         match self.binaries.get(bin_name)? {
-            FileTree::FileRef(name) => Some(format!(
+            FileTree::FileRef(name) => Some(PathBuf::from(format!(
                 "{}/{}/{}",
                 HEAT_DIR_NAME,
                 HEAT_BIN_DIR_NAME,
                 name.clone()
-            )),
-            FileTree::File(name, _) => Some(format!(
+            ))),
+            FileTree::File(name, _) => Some(PathBuf::from(format!(
                 "{}/{}/{}",
                 HEAT_DIR_NAME,
                 HEAT_BIN_DIR_NAME,
                 name.clone()
-            )),
+            ))),
             _ => None,
         }
     }
 
-    pub fn get_crate_path(&self, user_crate_dir: &PathBuf, crate_name: &str) -> Option<String> {
+    pub fn get_crate_path(&self, user_crate_dir: &Path, crate_name: &str) -> Option<PathBuf> {
         match self.crates.get(crate_name)? {
-            FileTree::Directory(name, _) => Some(format!(
-                "{}/{}/{}/{}",
+            FileTree::Directory(name, _) => Some(
                 user_crate_dir
-                    .to_str()
-                    .expect("User crate dir should be a valid path."),
-                HEAT_DIR_NAME,
-                HEAT_CRATES_DIR_NAME,
-                name.clone()
-            )),
+                    .join(HEAT_DIR_NAME)
+                    .join(HEAT_CRATES_DIR_NAME)
+                    .join(name),
+            ),
             _ => None,
         }
     }
 
-    pub fn get_crate_target_path(&self, crate_name: &str) -> Option<String> {
+    #[allow(dead_code)]
+    pub fn get_crates_dir(&self, user_crate_dir: &Path) -> PathBuf {
+        user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_CRATES_DIR_NAME)
+    }
+
+    pub fn get_bin_dir(&self, user_crate_dir: &Path) -> PathBuf {
+        user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_BIN_DIR_NAME)
+    }
+
+    pub fn get_crate_target_path(&self, crate_name: &str) -> Option<PathBuf> {
         match self.crates.get(crate_name)? {
-            FileTree::Directory(name, _) => Some(format!(
+            FileTree::Directory(name, _) => Some(PathBuf::from(format!(
                 "{}/{}/{}/target",
                 HEAT_DIR_NAME,
                 HEAT_CRATES_DIR_NAME,
                 name.clone()
-            )),
+            ))),
             _ => None,
         }
     }
 
-    pub fn get_binary_dir_path(&self) -> String {
-        format!("{}/{}", HEAT_DIR_NAME, HEAT_BIN_DIR_NAME)
-    }
-
-    pub fn write_bin_dir(&self, user_crate_dir: &PathBuf) {
+    pub fn write_bin_dir(&self, user_crate_dir: &Path) {
         let bin_dir_path = format!(
             "{}/{}/{}",
             user_crate_dir
@@ -170,7 +168,7 @@ impl HeatDir {
         }
     }
 
-    pub fn write_crates_dir(&self, user_crate_dir: &PathBuf) {
+    pub fn write_crates_dir(&self, user_crate_dir: &Path) {
         let crates_dir_path = format!(
             "{}/{}/{}",
             user_crate_dir
@@ -188,6 +186,7 @@ impl HeatDir {
         }
     }
 
+    #[allow(dead_code)]
     pub fn into_file_tree(self) -> FileTree {
         let mut heat_dir = vec![];
 
@@ -209,6 +208,7 @@ impl HeatDir {
         FileTree::Directory(HEAT_DIR_NAME.to_string(), heat_dir)
     }
 
+    #[allow(dead_code)]
     pub fn write_all_to(self, path: &Path) -> Self {
         let file_tree = self.into_file_tree();
         file_tree

@@ -1,10 +1,12 @@
 use quote::quote;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
-use crate::{generation::FileTree, print_err};
+use crate::generation::FileTree;
 
-use super::cargo_toml::{CargoToml, Dependency, QueryType};
+use super::{
+    backend::BackendType,
+    cargo_toml::{CargoToml, Dependency, QueryType},
+};
 
 pub struct GeneratedCrate {
     name: String,
@@ -23,10 +25,6 @@ impl GeneratedCrate {
         }
     }
 
-    pub fn src(&self) -> &FileTree {
-        &self.src
-    }
-
     pub fn src_mut(&mut self) -> &mut FileTree {
         &mut self.src
     }
@@ -39,31 +37,12 @@ impl GeneratedCrate {
         self.cargo_toml.add_dependency(dependency);
     }
 
-    pub fn remove_dependency(&mut self, name: &str) {
-        self.cargo_toml.remove_dependency(name);
-    }
-
-    pub fn set_package_name(&mut self, name: String) {
-        self.name = name.clone();
-        self.cargo_toml.set_package_name(name)
-    }
-
     pub fn set_package_version(&mut self, version: String) {
         self.cargo_toml.set_package_version(version)
     }
 
     pub fn set_package_edition(&mut self, edition: String) {
         self.cargo_toml.set_package_edition(edition)
-    }
-
-    pub fn write_to(&self, path: &Path) -> Result<(), std::io::Error> {
-        let cargo_toml_str = self.cargo_toml.to_string();
-
-        let cargotoml_path = path.join("Cargo.toml");
-        std::fs::write(cargotoml_path, cargo_toml_str)
-            .expect("Should be able to write Cargo.toml file.");
-
-        self.src.write_to(path)
     }
 
     pub fn into_file_tree(self) -> FileTree {
@@ -75,10 +54,6 @@ impl GeneratedCrate {
             ],
         )
     }
-}
-
-pub fn get_heat_dir() -> PathBuf {
-    PathBuf::from(".heat")
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -312,7 +287,7 @@ fn generate_proc_call(
     }
 }
 
-fn generate_main_rs(main_backend: &str) -> String {
+fn generate_main_rs(main_backend: &BackendType) -> String {
     let flags = crate::registry::get_flags();
 
     let train_match_arms: Vec<proc_macro2::TokenStream> = flags
@@ -340,19 +315,19 @@ fn generate_main_rs(main_backend: &str) -> String {
         }
     };
 
-    let backend = match crate::generation::crate_gen::backend::get_backend_type(main_backend) {
-        Ok(backend) => backend,
-        Err(err) => {
-            print_err!("{}", err);
-            std::process::exit(1);
-        }
-    };
+    // let backend = match crate::generation::crate_gen::backend::get_backend_type(main_backend) {
+    //     Ok(backend) => backend,
+    //     Err(err) => {
+    //         print_err!("{}", err);
+    //         std::process::exit(1);
+    //     }
+    // };
 
     let backend_types =
-        crate::generation::crate_gen::backend::generate_backend_typedef_stream(&backend);
+        crate::generation::crate_gen::backend::generate_backend_typedef_stream(&main_backend);
     let (_backend_type_name, autodiff_backend_type_name) =
         crate::generation::crate_gen::backend::get_backend_type_names();
-    let backend_default_device = backend.default_device_stream();
+    let backend_default_device = main_backend.default_device_stream();
 
     let clap_cli = generate_clap_cli();
     let generated_training =
@@ -408,7 +383,7 @@ pub fn create_crate(
     user_project_name: &str,
     user_project_dir: &str,
     burn_features: Vec<&str>,
-    backend: &str,
+    backend: &BackendType,
 ) -> GeneratedCrate {
     // Create the generated crate package
     let mut generated_crate = GeneratedCrate::new(crate_name.to_string());

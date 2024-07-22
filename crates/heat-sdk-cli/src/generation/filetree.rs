@@ -6,10 +6,15 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+/// A tree structure representing a file system.
+/// Can be written to and read from the file system.
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum FileTree {
+    /// A file with a name and content.
     File(String, Vec<u8>),
+    /// A reference to a file. Does not contain content.
     FileRef(String),
+    /// A directory with a name and children.
     Directory(String, Vec<FileTree>),
 }
 
@@ -24,13 +29,6 @@ impl FileTree {
 
     pub fn new_dir(name: impl Into<String>, children: impl Into<Vec<FileTree>>) -> Self {
         FileTree::Directory(name.into(), children.into())
-    }
-
-    pub fn as_dir(&self) -> Option<&Vec<FileTree>> {
-        match self {
-            FileTree::Directory(_, children) => Some(children),
-            _ => None,
-        }
     }
 
     pub fn try_insert(&mut self, file_tree: FileTree) -> Result<&mut Self, ()> {
@@ -91,7 +89,6 @@ impl FileTree {
     pub fn write_to(&self, path: &Path) -> std::io::Result<()> {
         match self {
             FileTree::File(name, content) => {
-                // read file if it exists and check if it's the same
                 let should_write =
                     if let Ok(mut file) = OpenOptions::new().read(true).open(path.join(name)) {
                         let mut buf = Vec::new();
@@ -121,6 +118,7 @@ impl FileTree {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get_name(&self) -> String {
         match self {
             FileTree::File(name, _) => name,
