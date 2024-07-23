@@ -3,20 +3,17 @@ use burn::{config::Config, module::Module, tensor::backend::Backend};
 use crate::client::HeatClient;
 
 #[derive(Debug, Clone)]
-pub struct DeviceVec<T>(pub Vec<T>);
+pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 
 #[derive(Debug, Clone)]
-pub struct ConfigValue<T: Config>(pub T);
-
-#[derive(Debug, Clone)]
-pub struct TrainCommandContext<T> {
+pub struct TrainCommandContext<B: Backend> {
     client: HeatClient,
-    devices: Vec<T>,
+    devices: Vec<B::Device>,
     config: String,
 }
 
-impl<T> TrainCommandContext<T> {
-    pub fn new(client: HeatClient, devices: Vec<T>, config: String) -> Self {
+impl<B: Backend> TrainCommandContext<B> {
+    pub fn new(client: HeatClient, devices: Vec<B::Device>, config: String) -> Self {
         Self {
             client,
             devices,
@@ -28,39 +25,35 @@ impl<T> TrainCommandContext<T> {
         &mut self.client
     }
 
-    pub fn devices(&mut self) -> &mut Vec<T> {
+    pub fn devices(&mut self) -> &mut Vec<B::Device> {
         &mut self.devices
     }
 
     pub fn config(&self) -> &str {
         &self.config
     }
-
-    pub fn into_inner(self) -> (HeatClient, Vec<T>, String) {
-        (self.client, self.devices, self.config)
-    }
 }
 
-trait FromTrainCommandContext<T> {
-    fn from_context(context: &TrainCommandContext<T>) -> Self;
+trait FromTrainCommandContext<B: Backend> {
+    fn from_context(context: &TrainCommandContext<B>) -> Self;
 }
 
-impl<T> FromTrainCommandContext<T> for HeatClient {
-    fn from_context(context: &TrainCommandContext<T>) -> Self {
+impl<B: Backend> FromTrainCommandContext<B> for HeatClient {
+    fn from_context(context: &TrainCommandContext<B>) -> Self {
         println!("Inferred usage of context.client");
         context.client.clone()
     }
 }
 
-impl<T: Clone> FromTrainCommandContext<T> for DeviceVec<T> {
-    fn from_context(context: &TrainCommandContext<T>) -> Self {
+impl<B: Backend> FromTrainCommandContext<B> for MultiDevice<B> {
+    fn from_context(context: &TrainCommandContext<B>) -> Self {
         println!("Inferred usage of context.devices");
-        DeviceVec(context.devices.clone())
+        MultiDevice(context.devices.clone())
     }
 }
 
-impl<T> IntoIterator for DeviceVec<T> {
-    type Item = T;
+impl<B: Backend> IntoIterator for MultiDevice<B> {
+    type Item = B::Device;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -68,69 +61,65 @@ impl<T> IntoIterator for DeviceVec<T> {
     }
 }
 
-impl<T, C: Config> FromTrainCommandContext<T> for C {
-    fn from_context(context: &TrainCommandContext<T>) -> Self {
+impl<B: Backend, T: Config> FromTrainCommandContext<B> for T  {
+    fn from_context(context: &TrainCommandContext<B>) -> Self {
         println!("Inferred usage of context.config");
-        C::load_binary(context.config.as_bytes()).expect("Config should be loaded")
+        T::load_binary(context.config.as_bytes()).expect("Config should be loaded")
     }
 }
 
 pub type TrainResult<M> = Result<M, ()>;
 
-pub trait TrainCommandHandler<D, B: Backend, T, M: Module<B>> {
-    fn call(self, context: TrainCommandContext<D>) -> TrainResult<M>;
+pub trait TrainCommandHandler<B: Backend, T, M: Module<B>> {
+    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M>;
 }
 
-impl<D, F, M, B> TrainCommandHandler<D, B, (), M> for F
+impl<F, M, B> TrainCommandHandler<B, (), M> for F
 where
     F: Fn() -> TrainResult<M>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, _: TrainCommandContext<D>) -> TrainResult<M> {
+    fn call(self, _context: TrainCommandContext<B>) -> TrainResult<M> {
         (self)()
     }
 }
 
-impl<D, F, T, M, B> TrainCommandHandler<D, B, (T,), M> for F
+impl<F, T, M, B> TrainCommandHandler<B, (T,), M> for F
 where
     F: Fn(T) -> TrainResult<M>,
-    T: FromTrainCommandContext<D>,
+    T: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<D>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
         (self)(T::from_context(&context))
     }
 }
 
-impl<D, F, T1, T2, M, B> TrainCommandHandler<D, B, (T1, T2), M> for F
+impl<F, T1, T2, M, B> TrainCommandHandler<B, (T1, T2), M> for F
 where
     F: Fn(T1, T2) -> TrainResult<M>,
-    T1: FromTrainCommandContext<D>,
-    T2: FromTrainCommandContext<D>,
+    T1: FromTrainCommandContext<B>,
+    T2: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<D>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
         (self)(T1::from_context(&context), T2::from_context(&context))
     }
 }
 
-impl<D, F, T1, T2, T3, M, B> TrainCommandHandler<D, B, (T1, T2, T3), M> for F
+impl <F, T1, T2, T3, M, B> TrainCommandHandler<B, (T1, T2, T3), M> for F
 where
     F: Fn(T1, T2, T3) -> TrainResult<M>,
-    T1: FromTrainCommandContext<D>,
-    T2: FromTrainCommandContext<D>,
-    T3: FromTrainCommandContext<D>,
+    T1: FromTrainCommandContext<B>,
+    T2: FromTrainCommandContext<B>,
+    T3: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<D>) -> TrainResult<M> {
-        (self)(
-            T1::from_context(&context),
-            T2::from_context(&context),
-            T3::from_context(&context),
-        )
+    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+        (self)(T1::from_context(&context), T2::from_context(&context), T3::from_context(&context))
     }
 }

@@ -16,7 +16,7 @@ use burn::{
         ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep,
     },
 };
-use tracel::heat::{client::HeatClient, command::DeviceVec, sdk_cli::macros::heat};
+use tracel::heat::{client::HeatClient, command::MultiDevice, sdk_cli::macros::heat};
 
 impl<B: Backend> Model<B> {
     pub fn forward_classification(
@@ -133,7 +133,7 @@ pub fn train<B: AutodiffBackend>(
 pub fn training<B: AutodiffBackend>(
     mut client: HeatClient,
     config: TrainingConfig,
-    DeviceVec(devices): DeviceVec<B::Device>,
+    MultiDevice(devices): MultiDevice<B>,
 ) -> Result<Model<B>, ()> {
     train::<B>(&mut client, "/tmp/guide", config, devices[0].clone())
 }
@@ -141,7 +141,7 @@ pub fn training<B: AutodiffBackend>(
 #[heat(training)]
 pub fn training2<B: AutodiffBackend>(
     config: TrainingConfig,
-    DeviceVec(devices): DeviceVec<B::Device>,
+    MultiDevice(devices): MultiDevice<B>,
     mut client: HeatClient,
 ) -> Result<Model<B>, ()> {
     train::<B>(&mut client, "/tmp/guide2", config, devices[0].clone())
@@ -149,7 +149,7 @@ pub fn training2<B: AutodiffBackend>(
 
 #[heat(training)]
 pub fn custom_training<B: AutodiffBackend>(
-    DeviceVec(devices): DeviceVec<B::Device>,
+    MultiDevice(devices): MultiDevice<B>,
 ) -> Result<Model<B>, ()> {
     println!("Custom training: {:?}", devices);
     Err(())

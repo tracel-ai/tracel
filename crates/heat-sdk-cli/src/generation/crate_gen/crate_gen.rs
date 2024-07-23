@@ -242,7 +242,7 @@ fn generate_training_function(
     autodiff_backend: &proc_macro2::Ident,
 ) -> proc_macro2::TokenStream {
     quote! {
-        let mut client = create_heat_client(&key, &heat_endpoint, &project);
+        let client = create_heat_client(&key, &heat_endpoint, &project);
         let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
 
         let mut train_cmd_context = TrainCommandContext::new(client, vec![device], training_config_str);
@@ -252,7 +252,7 @@ fn generate_training_function(
             .start_experiment(&conf_ser)
             .expect("Experiment should be started");
 
-        pub fn trigger<D, B: Backend, T, M: Module<B>, H: TrainCommandHandler<D, B, T, M>>(handler: H, context: TrainCommandContext<D>) -> TrainResult<M> {
+        pub fn trigger<B: Backend, T, M: Module<B>, H: TrainCommandHandler<B, T, M>>(handler: H, context: TrainCommandContext<B>) -> TrainResult<M> {
             handler.call(context)
         }
 
