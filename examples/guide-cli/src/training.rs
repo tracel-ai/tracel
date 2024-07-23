@@ -16,7 +16,7 @@ use burn::{
         ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep,
     },
 };
-use tracel::heat::{client::HeatClient, command::MultiDevice, sdk_cli::macros::heat};
+use tracel::heat::{client::HeatClient, command::MultiDevice, macros::heat};
 
 impl<B: Backend> Model<B> {
     pub fn forward_classification(

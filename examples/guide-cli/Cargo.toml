@@ -6,10 +6,7 @@ version.workspace = true
 
 [dependencies]
 burn = { workspace = true, features = ["vision", "train"] }
-tracel = { path = "../../crates/tracel", features = ["heat-sdk"] }
-
-[dev-dependencies]
-tracel = { path = "../../crates/tracel", features = ["cli"] }
+tracel = { path = "../../crates/tracel", features = ["heat-sdk", "heat-sdk-cli"] }
 
 [profile.dev]
 opt-level = 0
