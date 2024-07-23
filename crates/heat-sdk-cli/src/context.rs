@@ -121,7 +121,7 @@ impl HeatCliContext {
 
     pub fn make_build_command(
         &self,
-        cmd_desc: &BuildCommand,
+        _cmd_desc: &BuildCommand,
     ) -> anyhow::Result<std::process::Command> {
         let profile_arg = match self.build_profile.as_str() {
             "release" => "--release",

@@ -143,6 +143,7 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     );
     let item = quote! {
         mod #mod_tokens {
+            #[allow(unused_imports)]
             pub use #module_path;
         }
 

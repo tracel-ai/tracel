@@ -274,7 +274,7 @@ fn generate_training_function(
 }
 
 fn generate_proc_call(
-    item: syn::ItemFn,
+    _item: syn::ItemFn,
     mod_path: &str,
     fn_name: &str,
 ) -> proc_macro2::TokenStream {
