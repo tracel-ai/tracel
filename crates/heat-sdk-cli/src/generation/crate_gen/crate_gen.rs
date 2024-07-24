@@ -324,7 +324,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
     // };
 
     let backend_types =
-        crate::generation::crate_gen::backend::generate_backend_typedef_stream(&main_backend);
+        crate::generation::crate_gen::backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, autodiff_backend_type_name) =
         crate::generation::crate_gen::backend::get_backend_type_names();
     let backend_default_device = main_backend.default_device_stream();

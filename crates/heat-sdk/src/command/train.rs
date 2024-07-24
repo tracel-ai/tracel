@@ -61,7 +61,7 @@ impl<B: Backend> IntoIterator for MultiDevice<B> {
     }
 }
 
-impl<B: Backend, T: Config> FromTrainCommandContext<B> for T  {
+impl<B: Backend, T: Config> FromTrainCommandContext<B> for T {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
         println!("Inferred usage of context.config");
         T::load_binary(context.config.as_bytes()).expect("Config should be loaded")
@@ -110,7 +110,7 @@ where
     }
 }
 
-impl <F, T1, T2, T3, M, B> TrainCommandHandler<B, (T1, T2, T3), M> for F
+impl<F, T1, T2, T3, M, B> TrainCommandHandler<B, (T1, T2, T3), M> for F
 where
     F: Fn(T1, T2, T3) -> TrainResult<M>,
     T1: FromTrainCommandContext<B>,
@@ -120,6 +120,10 @@ where
     B: Backend,
 {
     fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
-        (self)(T1::from_context(&context), T2::from_context(&context), T3::from_context(&context))
+        (self)(
+            T1::from_context(&context),
+            T2::from_context(&context),
+            T3::from_context(&context),
+        )
     }
 }
