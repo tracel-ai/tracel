@@ -1,6 +1,6 @@
 use burn::{config::Config, module::Module, tensor::backend::Backend};
 
-use crate::client::HeatClient;
+use crate::{client::HeatClient, errors::training::TrainingError};
 
 #[derive(Debug, Clone)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
@@ -68,7 +68,7 @@ impl<B: Backend, T: Config> FromTrainCommandContext<B> for T {
     }
 }
 
-pub type TrainResult<M> = Result<M, ()>;
+pub type TrainResult<M> = Result<M, TrainingError>;
 
 pub trait TrainCommandHandler<B: Backend, T, M: Module<B>> {
     fn call(self, context: TrainCommandContext<B>) -> TrainResult<M>;

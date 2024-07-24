@@ -106,8 +106,8 @@ impl Default for CargoToml {
     }
 }
 
-impl ToString for CargoToml {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for CargoToml {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut cargo_toml = toml_edit::DocumentMut::new();
         let mut package = toml_edit::table();
         package["edition"] = toml_edit::value(&self.package.edition);
@@ -147,6 +147,7 @@ impl ToString for CargoToml {
 
         cargo_toml["workspace"] = toml_edit::table();
 
-        cargo_toml.to_string()
+        let res = cargo_toml.to_string();
+        write!(f, "{}", res)
     }
 }

@@ -157,37 +157,3 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     }
     .into()
 }
-
-///
-/// Usage example:
-/// ```rust
-/// #[heat_import_extern_crate(crate_name)]
-///
-#[proc_macro_attribute]
-pub fn heat_import_extern_crate(_args: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as ItemFn);
-
-    let item_sig = &item.sig;
-    let item_block = &item.block;
-
-    // cause an error if the function has a body
-    if !item_block.stmts.is_empty() {
-        return Error::new(
-            item_block.span(),
-            "The import_extern_crate function should not have a body",
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    let item = quote! {
-        #item_sig {
-            tracel::heat::sdk_cli::cli::import_extern_crate();
-        }
-    };
-
-    quote! {
-        #item
-    }
-    .into()
-}

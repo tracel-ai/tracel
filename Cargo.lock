@@ -2036,6 +2036,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "strum",
  "thiserror",
  "tracing",
  "tracing-core",

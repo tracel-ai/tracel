@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use burn::tensor::backend::Backend;
 use serde::Serialize;
 
-use crate::error::HeatSdkError;
+use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::websocket::WebSocketClient;

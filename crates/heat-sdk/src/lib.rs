@@ -1,5 +1,5 @@
 pub mod client;
-pub mod error;
+pub mod errors;
 pub mod log;
 pub mod metrics;
 pub mod record;

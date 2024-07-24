@@ -22,6 +22,7 @@ macro_rules! print_err {
     };
 }
 
+#[allow(dead_code)]
 pub fn print_warn(warn_message: &str) {
     println!(
         "[{}] {}: {}",

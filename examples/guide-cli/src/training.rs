@@ -16,7 +16,9 @@ use burn::{
         ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep,
     },
 };
-use tracel::heat::{client::HeatClient, command::MultiDevice, macros::heat};
+use tracel::heat::{
+    client::HeatClient, command::MultiDevice, errors::training::TrainingError, macros::heat,
+};
 
 impl<B: Backend> Model<B> {
     pub fn forward_classification(
@@ -74,7 +76,7 @@ pub fn train<B: AutodiffBackend>(
     artifact_dir: &str,
     config: TrainingConfig,
     device: B::Device,
-) -> Result<Model<B>, ()> {
+) -> Result<Model<B>, TrainingError> {
     create_artifact_dir(artifact_dir);
     config
         .save(format!("{artifact_dir}/config.json"))
@@ -134,7 +136,7 @@ pub fn training<B: AutodiffBackend>(
     mut client: HeatClient,
     config: TrainingConfig,
     MultiDevice(devices): MultiDevice<B>,
-) -> Result<Model<B>, ()> {
+) -> Result<Model<B>, TrainingError> {
     train::<B>(&mut client, "/tmp/guide", config, devices[0].clone())
 }
 
@@ -143,20 +145,20 @@ pub fn training2<B: AutodiffBackend>(
     config: TrainingConfig,
     MultiDevice(devices): MultiDevice<B>,
     mut client: HeatClient,
-) -> Result<Model<B>, ()> {
+) -> Result<Model<B>, TrainingError> {
     train::<B>(&mut client, "/tmp/guide2", config, devices[0].clone())
 }
 
 #[heat(training)]
 pub fn custom_training<B: AutodiffBackend>(
     MultiDevice(devices): MultiDevice<B>,
-) -> Result<Model<B>, ()> {
+) -> Result<Model<B>, TrainingError> {
     println!("Custom training: {:?}", devices);
-    Err(())
+    Err(().into())
 }
 
 #[heat(training)]
-pub fn nothingburger<B: AutodiffBackend>() -> Result<Model<B>, ()> {
+pub fn nothingburger<B: AutodiffBackend>() -> Result<Model<B>, TrainingError> {
     println!("Nothingburger");
-    Err(())
+    Err(().into())
 }
