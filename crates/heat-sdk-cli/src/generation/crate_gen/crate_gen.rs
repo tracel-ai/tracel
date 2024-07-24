@@ -244,12 +244,12 @@ fn generate_training_function(
     quote! {
         let client = create_heat_client(&key, &heat_endpoint, &project);
         let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
+        let training_config: serde_json::Value = serde_json::from_str(&training_config_str).expect("Config should be deserialized");
 
         let mut train_cmd_context = TrainCommandContext::new(client, vec![device], training_config_str);
 
-        let conf_ser = train_cmd_context.config().as_bytes().to_vec();
         train_cmd_context.client()
-            .start_experiment(&conf_ser)
+            .start_experiment(&training_config)
             .expect("Experiment should be started");
 
         pub fn trigger<B: Backend, T, M: Module<B>, H: TrainCommandHandler<B, T, M>>(handler: H, context: TrainCommandContext<B>) -> TrainResult<M> {
@@ -314,14 +314,6 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
             _ => panic!("Unknown training function: {}", func),
         }
     };
-
-    // let backend = match crate::generation::crate_gen::backend::get_backend_type(main_backend) {
-    //     Ok(backend) => backend,
-    //     Err(err) => {
-    //         print_err!("{}", err);
-    //         std::process::exit(1);
-    //     }
-    // };
 
     let backend_types =
         crate::generation::crate_gen::backend::generate_backend_typedef_stream(main_backend);
@@ -401,6 +393,11 @@ pub fn create_crate(
         "clap".to_string(),
         "*".to_string(),
         vec!["cargo".to_string()],
+    ));
+    generated_crate.add_dependency(Dependency::new(
+        "serde_json".to_string(),
+        "*".to_string(),
+        vec![],
     ));
     find_required_dependencies(vec!["tracel", "burn"])
         .drain(..)
