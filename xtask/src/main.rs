@@ -5,10 +5,9 @@ mod logging;
 mod utils;
 // mod vulnerabilities;
 
-use std::time::Instant;
-use clap::{Parser, Subcommand};
 use crate::{logging::init_logger, utils::time::format_duration};
-
+use clap::{Parser, Subcommand};
+use std::time::Instant;
 
 #[macro_use]
 extern crate log;

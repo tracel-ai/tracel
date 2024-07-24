@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use rand::Rng;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
@@ -125,11 +126,19 @@ impl HttpClient {
 
         let url = format!("{}/projects/{}/experiments", self.base_url, project_id);
 
+        let mut body = HashMap::new();
+        let mut rng = rand::thread_rng();
+        body.insert(
+            "experiment_name",
+            format!("guide-{}", rng.gen_range(0..10000)),
+        );
+
         // Create a new experiment
         let exp_uuid = self
             .http_client
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
+            .json(&body)
             .send()?
             .error_for_status()?
             .json::<CreateExperimentResponseSchema>()?

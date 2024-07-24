@@ -20,6 +20,7 @@ reqwest = { workspace = true, features = ["blocking", "json"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rand = { version = "0.8.5" }
 thiserror = { workspace = true }
 tracing = { version = "0.1.40" }
 tracing-core = { version = "0.1.32" }
