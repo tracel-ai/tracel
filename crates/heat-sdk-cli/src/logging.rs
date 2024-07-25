@@ -53,3 +53,24 @@ macro_rules! print_info {
         $crate::logging::print_info(&format!($($arg)*));
     };
 }
+
+#[cfg(debug_assertions)]
+pub fn print_debug(debug_message: &str) {
+    println!(
+        "[{}] {}: {}",
+        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "debug".green().bold(),
+        debug_message
+    );
+}
+
+#[cfg(not(debug_assertions))]
+pub fn print_debug(_debug_message: &str) {}
+
+#[macro_export]
+macro_rules! print_debug {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        $crate::logging::print_debug(&format!($($arg)*));
+    };
+}

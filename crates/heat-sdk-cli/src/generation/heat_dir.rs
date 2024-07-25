@@ -14,6 +14,7 @@ pub struct HeatDir {
 const HEAT_DIR_NAME: &str = ".heat";
 const HEAT_BIN_DIR_NAME: &str = "bin";
 const HEAT_CRATES_DIR_NAME: &str = "crates";
+const HEAT_ARTIFACTS_DIR_NAME: &str = "artifacts";
 
 impl HeatDir {
     pub fn init(&self, user_crate_dir: &PathBuf) {

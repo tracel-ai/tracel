@@ -10,8 +10,8 @@ default = []
 cli = ["dep:heat-sdk-cli", "heat-sdk-cli-macros/build-cli"]
 
 [dependencies]
-heat-sdk-cli-macros = { path = "../heat-sdk-cli-macros" }
-heat-sdk-cli = { path = "../heat-sdk-cli", optional = true }
+heat-sdk-cli-macros = { path = "../heat-sdk-cli-macros", version = "0.1.0" }
+heat-sdk-cli = { path = "../heat-sdk-cli", version = "0.1.0", optional = true }
 
 burn = { workspace = true, features = ["train"] }
 
