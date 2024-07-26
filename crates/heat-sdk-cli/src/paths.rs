@@ -7,6 +7,41 @@ use std::io::prelude::*;
 use std::iter;
 use std::path::{Component, Path, PathBuf};
 
+/// Returns metadata for a file (follows symlinks).
+///
+/// Equivalent to [`std::fs::metadata`] with better error messages.
+pub fn metadata<P: AsRef<Path>>(path: P) -> Result<Metadata> {
+    let path = path.as_ref();
+    std::fs::metadata(path)
+        .with_context(|| format!("failed to load metadata for path `{}`", path.display()))
+}
+
+/// Reads a file to a string.
+///
+/// Equivalent to [`std::fs::read_to_string`] with better error messages.
+pub fn read(path: &Path) -> Result<String> {
+    match String::from_utf8(read_bytes(path)?) {
+        Ok(s) => Ok(s),
+        Err(_) => anyhow::bail!("path at `{}` was not valid utf-8", path.display()),
+    }
+}
+
+/// Reads a file into a bytes vector.
+///
+/// Equivalent to [`std::fs::read`] with better error messages.
+pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
+    fs::read(path).with_context(|| format!("failed to read `{}`", path.display()))
+}
+
+/// Writes a file to disk.
+///
+/// Equivalent to [`std::fs::write`] with better error messages.
+pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
+    let path = path.as_ref();
+    fs::write(path, contents.as_ref())
+        .with_context(|| format!("failed to write `{}`", path.display()))
+}
+
 /// Normalize a path, removing things like `.` and `..`.
 ///
 /// CAUTION: This does not resolve symlinks (unlike
@@ -93,6 +128,40 @@ pub fn normalize_path_string_sep(path: String) -> String {
     } else {
         path
     }
+}
+
+/// Equivalent to [`write()`], but does not write anything if the file contents
+/// are identical to the given contents.
+pub fn write_if_changed<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
+    (|| -> Result<()> {
+        let contents = contents.as_ref();
+        let mut f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)?;
+        let mut orig = Vec::new();
+        f.read_to_end(&mut orig)?;
+        if orig != contents {
+            f.set_len(0)?;
+            f.seek(io::SeekFrom::Start(0))?;
+            f.write_all(contents)?;
+        }
+        Ok(())
+    })()
+    .with_context(|| format!("failed to write `{}`", path.as_ref().display()))?;
+    Ok(())
+}
+
+/// Equivalent to [`std::fs::create_dir_all`] with better error messages.
+pub fn create_dir_all(p: impl AsRef<Path>) -> Result<()> {
+    _create_dir_all(p.as_ref())
+}
+
+fn _create_dir_all(p: &Path) -> Result<()> {
+    fs::create_dir_all(p)
+        .with_context(|| format!("failed to create directory `{}`", p.display()))?;
+    Ok(())
 }
 
 pub mod pathdiff {

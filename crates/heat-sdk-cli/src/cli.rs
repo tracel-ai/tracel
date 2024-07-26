@@ -188,6 +188,12 @@ fn check_package(root_dir: &Path, metadata: &cargo_metadata::Metadata, package: 
     Ok(())
 }
 
+pub struct Package {
+    pub package: cargo_metadata::Package,
+    pub manifest: util::toml::Manifest,
+    pub manifest_path: PathBuf
+}
+
 fn package() -> anyhow::Result<()> {
     let cmd = cargo_metadata::MetadataCommand::new();
 
@@ -206,14 +212,10 @@ fn package() -> anyhow::Result<()> {
         .find(|pkg| pkg.name == own_pkg_name)
         .cloned().expect("Failed to find own package");
 
-    let workspace_toml = toml::from_str::<cargo_util_schemas::manifest::TomlManifest>(
-        &std::fs::read_to_string(&workspace_toml_path).expect("Failed to read workspace toml"),
-    ).expect("Failed to parse workspace toml");
-
-    let workspace_toml = util::toml::read_manifest(&workspace_toml_path, &workspace_toml, None)?;
+    let workspace_toml = util::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
 
     // pretty print the workspace toml
-    print_debug!("{}", toml::to_string_pretty(&workspace_toml.manifest).unwrap());
+    print_debug!("{}", toml::to_string_pretty(&workspace_toml.resolved_toml).unwrap());
 
     print_info!("{}", "Checking local packages".green().bold());
 
@@ -229,6 +231,7 @@ fn package() -> anyhow::Result<()> {
     let mut dsts = Vec::with_capacity(pkgs.len());
 
     print_info!("{}", "Archiving project".green().bold());
+
     for pkg in &pkgs {
         print_info!("  {} {}", "Packaging".green().bold(), pkg.name);
         let pkg_dir = pkg.manifest_path.parent().unwrap();
@@ -237,7 +240,15 @@ fn package() -> anyhow::Result<()> {
             print_info!("    {}", file.rel_path.display());
         }
 
-        let tarball = create_package(&metadata, pkg, archive_files, &workspace_toml.manifest)?;
+        let resolved_manifest = util::toml::read_manifest(pkg.manifest_path.as_std_path(), Some(&workspace_toml_path))?;
+        print_debug!("{}", toml::to_string_pretty(&resolved_manifest.resolved_toml).unwrap());
+        let loaded_package = Package {
+            package: pkg.clone(),
+            manifest: resolved_manifest,
+            manifest_path: pkg.manifest_path.clone().into_std_path_buf()
+        };
+
+        let tarball = create_package(&metadata, loaded_package, archive_files, &workspace_toml.resolved_toml)?;
         dsts.push(tarball);
     }
 
@@ -348,7 +359,7 @@ fn build_ar_list(
 /// Heavily based on cargo's create_package function
 fn create_package(
     metadata: &cargo_metadata::Metadata,
-    pkg: &cargo_metadata::Package,
+    pkg: Package,
     archive_files: Vec<ArchiveFile>,
     workspace_toml: &cargo_util_schemas::manifest::TomlManifest,
 ) -> anyhow::Result<std::fs::File> {
@@ -356,8 +367,8 @@ fn create_package(
 
     // here cargo would check if dependencies have versions and are safe to deploy
 
-    let pkg_id = cargo_util_schemas::core::PackageIdSpec::parse(&pkg.id.repr).unwrap();
-    let filename = format!("{}-{}.crate", pkg.name, pkg.version.to_string());
+    let pkg_id = cargo_util_schemas::core::PackageIdSpec::parse(&pkg.package.id.repr).unwrap();
+    let filename = format!("{}-{}.crate", pkg.package.name, pkg.package.version.to_string());
     let dir = metadata.target_directory.join("package");
     std::fs::create_dir_all(&dir)?;
 
@@ -366,7 +377,7 @@ fn create_package(
     
     print_info!("Packaging {} files into {}", filecount, filename);
     file.set_len(0)?;
-    let uncompressed_size = tar(metadata, pkg, archive_files, &file, &filename, workspace_toml)?;
+    let uncompressed_size = tar(&pkg, archive_files, &file, &filename, workspace_toml)?;
 
     file.seek(std::io::SeekFrom::Start(0))?;
     let src_path = &dir.join(&tmp);
@@ -399,8 +410,7 @@ fn create_package(
 
 /// Heavily based on cargo's tar function
 fn tar(
-    metadata: &cargo_metadata::Metadata,
-    pkg: &cargo_metadata::Package,
+    pkg: &Package,
     ar_files: Vec<ArchiveFile>,
     dst: &std::fs::File,
     filename: &str,
@@ -414,23 +424,19 @@ fn tar(
 
     let mut ar = tar::Builder::new(encoder);
 
-    let base_name = format!("{}-{}", pkg.name, pkg.version.to_string());
+    let base_name = format!("{}-{}", pkg.package.name, pkg.package.version.to_string());
     let base_path = Path::new(&base_name);
     let included = ar_files
         .iter()
         .map(|ar_file| ar_file.rel_path.clone())
         .collect::<Vec<_>>();
-    let pkg_toml = std::fs::read_to_string(&pkg.manifest_path)?;
-    let pkg_toml = toml::from_str::<cargo_util_schemas::manifest::TomlManifest>(&pkg_toml)?;
 
-    let pkg_toml = util::toml::read_manifest(&pkg.manifest_path.as_std_path(), &pkg_toml, Some(&metadata.workspace_root.as_std_path().join("Cargo.toml")))?.manifest;
+    // print_debug!("{}: {}", pkg.package.name, 
+    // toml::to_string_pretty(&pkg_toml).unwrap());
 
-    print_debug!("{}: {}", pkg.name, 
-    toml::to_string_pretty(&pkg_toml).unwrap());
+    let publish_toml = prepare_toml_for_publish(&pkg.manifest.resolved_toml, workspace_toml, &pkg.manifest_path.parent().unwrap(), &included)?;
 
-    let publish_toml = prepare_for_publish(metadata, pkg, &pkg_toml, &included, workspace_toml)?;
-
-    let mut uncompressed_size = 0;
+    let mut uncompressed_size: u64 = 0;
     for ar_file in ar_files {
         let ArchiveFile {
             rel_path,
@@ -470,26 +476,17 @@ fn tar(
     Ok(uncompressed_size)
 }
 
-pub fn prepare_for_publish(
-    metadata: &cargo_metadata::Metadata,
-    meta_package: &cargo_metadata::Package,
-    pkg_toml: &cargo_util_schemas::manifest::TomlManifest,
-    included: &[PathBuf],
+pub fn prepare_toml_for_publish(
+    me: &cargo_util_schemas::manifest::TomlManifest,
     workspace: &cargo_util_schemas::manifest::TomlManifest,
+    package_root: &Path,
+    included: &[PathBuf],
 ) -> anyhow::Result<cargo_util_schemas::manifest::TomlManifest> {
-    let package_root = meta_package.manifest_path.parent().unwrap().as_std_path();
-
-    let mut package = pkg_toml.package().unwrap().clone();
+    let mut package = me.package().unwrap().clone();
     package.workspace = None;
 
-    if let Some(original_package) = pkg_toml.package() {
-        // package
-        //         .edition
-        //         .as_ref()
-        //         .and_then(|e| e.as_value())
-        //         .map(|e| Edition::from_str(e))
-        //         .unwrap_or(Ok(Edition::Edition2015))
-        //         .map(|e| e.default_resolve_behavior())
+    if let Some(original_package) = me.package() {
+
         // resolve all workspace fields using the workspace 
 
         let edition = match original_package.resolved_edition() {
@@ -572,41 +569,39 @@ pub fn prepare_for_publish(
         }
     }
 
-    let lib = if let Some(lib) = &pkg_toml.lib {
-        print_debug!("preparing target for publish2: {:?}", lib);
-
+    let lib = if let Some(lib) = &me.lib {
         prepare_target_for_publish(&lib, included, "library")?
     } else {
         None
     };
 
-    let bin = prepare_targets_for_publish(pkg_toml.bin.as_ref(), included, "binary")?;
+    let bin = prepare_targets_for_publish(me.bin.as_ref(), included, "binary")?;
 
     let all = |_d: &manifest::TomlDependency| true;
     let resolved_toml = cargo_util_schemas::manifest::TomlManifest {
-        cargo_features: pkg_toml.cargo_features.clone(),
+        cargo_features: me.cargo_features.clone(),
         package: Some(package),
-        project: pkg_toml.project.clone(),
-        profile: pkg_toml.profile.clone(),
+        project: me.project.clone(),
+        profile: me.profile.clone(),
         lib,
         bin,
         // Ignore examples, tests, and benchmarks
         example: None,
         test: None,
         bench: None,
-        dependencies: map_deps(pkg_toml.dependencies.as_ref(), all)?,
+        dependencies: map_deps(me.dependencies.as_ref(), all)?,
         dev_dependencies: None,
         dev_dependencies2: None,
-        build_dependencies: map_deps(pkg_toml.build_dependencies(), all)?,
+        build_dependencies: map_deps(me.build_dependencies(), all)?,
         build_dependencies2: None,
-        features: pkg_toml.features.clone(),
-        target: pkg_toml.target.clone(),
-        replace: pkg_toml.replace.clone(),
-        patch: pkg_toml.patch.clone(),
+        features: me.features.clone(),
+        target: me.target.clone(),
+        replace: me.replace.clone(),
+        patch: me.patch.clone(),
         workspace: None,
-        badges: pkg_toml.badges.clone(),
-        lints: pkg_toml.lints.clone(),
-        _unused_keys: pkg_toml._unused_keys.clone(),
+        badges: me.badges.clone(),
+        lints: me.lints.clone(),
+        _unused_keys: me._unused_keys.clone(),
     };
     
     Ok(resolved_toml)

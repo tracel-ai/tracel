@@ -1,8 +1,9 @@
 
 
 pub mod toml;
-pub mod workspace;
-pub mod version;
-pub mod features;
-pub mod dependency;
-pub mod interning;
+mod workspace;
+mod version;
+mod features;
+mod dependency;
+mod interning;
+mod restricted_names;

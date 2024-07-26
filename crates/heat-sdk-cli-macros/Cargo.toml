@@ -6,7 +6,6 @@ readme.workspace = true
 
 [lib]
 proc-macro = true
-path = "src/lib.rs"
 
 [dependencies]
 quote = { workspace = true }
