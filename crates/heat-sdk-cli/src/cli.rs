@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::io::Seek;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -11,6 +11,8 @@ use crate::commands::time::format_duration;
 use crate::context::HeatCliContext;
 use crate::logging::print_warn;
 use crate::{cli_commands, print_debug, print_err, print_info, print_warn, util};
+
+use heat_sdk::client::{HeatClient, HeatClientConfig, HeatCredentials};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -194,7 +196,19 @@ pub struct Package {
     pub manifest_path: PathBuf
 }
 
+fn create_heat_client(api_key: &str, url: &str, project: &str) -> HeatClient {
+    let creds = HeatCredentials::new(api_key.to_owned());
+    let client_config = HeatClientConfig::builder(creds, project)
+        .with_endpoint(url)
+        .with_num_retries(10)
+        .build();
+    HeatClient::create(client_config)
+        .expect("Should connect to the Heat server and create a client")
+}
+
 fn package() -> anyhow::Result<()> {
+    let client = create_heat_client(&"dcaf7eb9-5acc-47d7-8b93-ca0fbb234096", &"127.0.0.1:9001", &"331a3907-bfd8-45e5-af54-1fee73a3c1b1");
+
     let cmd = cargo_metadata::MetadataCommand::new();
 
     let metadata = cmd.exec().expect("Failed to get cargo metadata");
@@ -253,6 +267,21 @@ fn package() -> anyhow::Result<()> {
     }
 
     // TODO publish to registry once everything is working
+    // vec<crate_name: &str, crate_data: vec<u8>>
+    // let crates_data: Vec<(&str, Vec<u8>)> = vec![
+    //     ("test_crate", "bruh this is a test crate".as_bytes().to_vec()),
+    //     ("test_crate2", "bruh this is a test crate2".as_bytes().to_vec()),
+    // ];
+
+    let mut crates_data = HashMap::new();
+    for dst in dsts {
+        let mut file = dst;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        crates_data.insert("test_crate".to_owned(), data);
+    }
+
+    client.upload_crates(crates_data.into_iter().map(|(name, data)| (name.to_owned(), data)).collect())?;
 
     Ok(())
 }

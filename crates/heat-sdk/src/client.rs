@@ -298,7 +298,24 @@ impl HeatClient {
 
         Ok(())
     }
+    
+    pub fn upload_crates(
+        &self,
+        crates_data: Vec<(String, Vec<u8>)>,
+    ) -> Result<(), HeatSdkError> {
+        let (names,  data): (Vec<String>, Vec<Vec<u8>>) = crates_data.iter().cloned().unzip();
+        let urls = self.http_client.request_code_upload_urls(&self.config.project_id, names)?;
+        
+        // assumes that the urls are returned in the same order as the names
+        for (url, data) in urls.iter().zip(data.iter()) {
+            self.http_client.upload_bytes_to_url(&url.url, data.clone())?;
+        }
+    
+    
+        Ok(())
+    }
 }
+
 
 impl Drop for HeatClient {
     fn drop(&mut self) {

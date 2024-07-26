@@ -5,6 +5,8 @@ version.workspace = true
 readme.workspace = true
 
 [dependencies]
+heat-sdk = { path = "../heat-sdk", version = "0.1.0" }
+
 anyhow = { workspace = true }
 
 clap = { workspace = true, features = ["derive", "cargo"] }

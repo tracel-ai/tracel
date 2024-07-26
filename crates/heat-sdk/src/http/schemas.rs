@@ -25,3 +25,19 @@ pub struct HeatCredentialsSchema {
 pub struct CreateExperimentResponseSchema {
     pub experiment_id: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CodeUploadParamsSchema {
+    pub project_id: String,
+    pub crate_names: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CodeUploadUrl {
+    pub crate_name: String,
+    pub url: String,
+}
+#[derive(Debug, Deserialize)]
+pub struct CodeUploadUrlsSchema {
+    pub urls: Vec<CodeUploadUrl>,
+}

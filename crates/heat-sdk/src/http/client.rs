@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{client::HeatCredentials, error::HeatSdkError, http::schemas::StartExperimentSchema};
 
-use super::schemas::{CreateExperimentResponseSchema, EndExperimentSchema, URLSchema};
+use super::schemas::{CodeUploadParamsSchema, CodeUploadUrl, CodeUploadUrlsSchema, CreateExperimentResponseSchema, EndExperimentSchema, URLSchema};
 
 pub enum EndExperimentStatus {
     Success,
@@ -319,5 +319,30 @@ impl HttpClient {
             ));
         }
         Ok(())
+    }
+    
+    pub fn request_code_upload_urls(
+        &self,
+        project_id: &str,
+        crate_names: Vec<String>,
+    ) -> Result<Vec<CodeUploadUrl>, HeatSdkError> {
+        self.validate_session_cookie()?;
+
+        let url = format!("{}/code/upload", self.base_url);
+
+        let upload_urls = self
+            .http_client
+            .post(url)
+            .header(COOKIE, self.session_cookie.as_ref().unwrap())
+            .json(&CodeUploadParamsSchema {
+                project_id: project_id.to_string(),
+                crate_names,
+            })
+            .send()?
+            .error_for_status()?
+            .json::<CodeUploadUrlsSchema>()
+            .map(|res| res.urls)?;
+
+        Ok(upload_urls)
     }
 }

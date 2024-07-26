@@ -2676,8 +2676,6 @@ name = "heat-sdk"
 version = "0.1.0"
 dependencies = [
  "burn",
- "heat-sdk-cli",
- "heat-sdk-cli-macros",
  "log",
  "reqwest",
  "rmp-serde",
@@ -2703,6 +2701,7 @@ dependencies = [
  "flate2",
  "gensym",
  "gix",
+ "heat-sdk",
  "ignore",
  "inventory",
  "itertools 0.13.0",
@@ -5247,6 +5246,8 @@ name = "tracel"
 version = "0.1.0"
 dependencies = [
  "heat-sdk",
+ "heat-sdk-cli",
+ "heat-sdk-cli-macros",
 ]
 
 [[package]]

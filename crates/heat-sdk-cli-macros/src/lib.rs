@@ -51,9 +51,9 @@ pub(crate) fn generate_flag_register_stream(
         proc_macro2::Span::call_site(),
     );
     quote! {
-        tracel::heat::sdk_cli::register_flag!(
-            tracel::heat::sdk_cli::registry::Flag,
-            tracel::heat::sdk_cli::registry::Flag::new(
+        tracel::heat::cli::register_flag!(
+            tracel::heat::cli::registry::Flag,
+            tracel::heat::cli::registry::Flag::new(
                 module_path!(),
                 stringify!(#fn_name),
                 stringify!(#proc_type_str),
@@ -148,41 +148,7 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #item_sig {
-            tracel::heat::sdk_cli::cli::cli_main();
-        }
-    };
-
-    quote! {
-        #item
-    }
-    .into()
-}
-
-///
-/// Usage example:
-/// ```rust
-/// #[heat_import_extern_crate(crate_name)]
-///
-#[proc_macro_attribute]
-pub fn heat_import_extern_crate(_args: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as ItemFn);
-
-    let item_sig = &item.sig;
-    let item_block = &item.block;
-
-    // cause an error if the function has a body
-    if !item_block.stmts.is_empty() {
-        return Error::new(
-            item_block.span(),
-            "The import_extern_crate function should not have a body",
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    let item = quote! {
-        #item_sig {
-            tracel::heat::sdk_cli::cli::import_extern_crate();
+            tracel::heat::cli::cli::cli_main();
         }
     };
 
