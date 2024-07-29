@@ -53,7 +53,6 @@ pub enum FeatureValue {
     },
 }
 
-
 impl FeatureValue {
     pub fn new(feature: InternedString) -> FeatureValue {
         match feature.split_once('/') {

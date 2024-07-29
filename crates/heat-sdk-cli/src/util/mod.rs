@@ -1,9 +1,7 @@
-
-
-pub mod toml;
-mod workspace;
-mod version;
-mod features;
 mod dependency;
+mod features;
 mod interning;
 mod restricted_names;
+pub mod toml;
+mod version;
+mod workspace;

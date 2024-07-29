@@ -298,24 +298,37 @@ impl HeatClient {
 
         Ok(())
     }
-    
-    pub fn upload_crates(
-        &self,
-        crates_data: Vec<(String, Vec<u8>)>,
-    ) -> Result<(), HeatSdkError> {
-        let (names,  data): (Vec<String>, Vec<Vec<u8>>) = crates_data.iter().cloned().unzip();
-        let urls = self.http_client.request_code_upload_urls(&self.config.project_id, names)?;
-        
+
+    pub fn upload_crates(&self, crates_data: Vec<(String, Vec<u8>)>) -> Result<u32, HeatSdkError> {
+        let (names, data): (Vec<String>, Vec<Vec<u8>>) = crates_data.iter().cloned().unzip();
+        let urls = self
+            .http_client
+            .request_code_upload_urls(&self.config.project_id, names)?;
+
         // assumes that the urls are returned in the same order as the names
-        for (url, data) in urls.iter().zip(data.iter()) {
-            self.http_client.upload_bytes_to_url(&url.url, data.clone())?;
+        for (url, data) in urls.urls.iter().zip(data.iter()) {
+            self.http_client
+                .upload_bytes_to_url(&url.url, data.clone())?;
         }
-    
-    
-        Ok(())
+
+        Ok(urls.project_version)
+    }
+
+    pub fn start_remote_job(
+        &self,
+        project_version: u32,
+        command: String,
+    ) -> Result<(), HeatSdkError> {
+        self.http_client.start_remote_job(
+            self.config
+                .project_id
+                .parse()
+                .expect("Project id should be a valid Uuid"),
+            project_version,
+            command,
+        )
     }
 }
-
 
 impl Drop for HeatClient {
     fn drop(&mut self) {

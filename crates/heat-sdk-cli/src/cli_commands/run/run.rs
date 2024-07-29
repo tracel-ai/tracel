@@ -22,6 +22,6 @@ pub enum RunLocationType {
 pub(crate) fn handle_command(args: RunLocationType, context: HeatCliContext) -> anyhow::Result<()> {
     match args {
         RunLocationType::Local(local_args) => local::handle_command(local_args, context),
-        RunLocationType::Remote(remote_args) => remote::handle_command(remote_args),
+        RunLocationType::Remote(remote_args) => remote::handle_command(remote_args, context),
     }
 }

@@ -1,8 +1,11 @@
 use clap::Parser;
 
-use crate::cli_commands::remote::{
-    inference::{self, RemoteInferenceRunArgs},
-    training::{self, RemoteTrainingRunArgs},
+use crate::{
+    cli_commands::remote::{
+        inference::{self, RemoteInferenceRunArgs},
+        training::{self, RemoteTrainingRunArgs},
+    },
+    context::HeatCliContext,
 };
 
 /// Run a training or inference remotely.
@@ -15,9 +18,14 @@ pub enum RemoteRunSubcommand {
     Inference(RemoteInferenceRunArgs),
 }
 
-pub(crate) fn handle_command(args: RemoteRunSubcommand) -> anyhow::Result<()> {
+pub(crate) fn handle_command(
+    args: RemoteRunSubcommand,
+    context: HeatCliContext,
+) -> anyhow::Result<()> {
     match args {
-        RemoteRunSubcommand::Training(training_args) => training::handle_command(training_args),
+        RemoteRunSubcommand::Training(training_args) => {
+            training::handle_command(training_args, context)
+        }
         RemoteRunSubcommand::Inference(inference_args) => inference::handle_command(inference_args),
     }
 }

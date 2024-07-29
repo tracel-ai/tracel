@@ -1,16 +1,15 @@
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
-
-use cargo_metadata::semver;
-use cargo_util_schemas::manifest::{self, RustVersion};
+use std::path::{Path, PathBuf};
 
 type CargoResult<T> = anyhow::Result<T>;
 
-use anyhow::{bail, anyhow};
+use anyhow::anyhow;
 
-use crate::{paths::{normalize_path, pathdiff::diff_paths}, print_debug};
+use crate::{
+    paths::{normalize_path, pathdiff::diff_paths},
+    print_debug,
+};
 
 use super::toml::InheritableFields;
-
 
 /// Configuration of a workspace in a manifest.
 #[derive(Debug, Clone)]

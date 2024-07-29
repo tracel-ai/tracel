@@ -132,11 +132,19 @@ impl HeatDir {
 
     #[allow(dead_code)]
     pub fn get_crates_dir(&self, user_crate_dir: &Path) -> PathBuf {
-        user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_CRATES_DIR_NAME)
+        user_crate_dir
+            .join(HEAT_DIR_NAME)
+            .join(HEAT_CRATES_DIR_NAME)
     }
 
     pub fn get_bin_dir(&self, user_crate_dir: &Path) -> PathBuf {
         user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_BIN_DIR_NAME)
+    }
+
+    pub fn get_artifacts_dir(&self, user_crate_dir: &Path) -> PathBuf {
+        user_crate_dir
+            .join(HEAT_DIR_NAME)
+            .join(HEAT_ARTIFACTS_DIR_NAME)
     }
 
     pub fn get_crate_target_path(&self, crate_name: &str) -> Option<PathBuf> {

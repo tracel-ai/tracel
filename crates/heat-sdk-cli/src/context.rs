@@ -108,7 +108,7 @@ impl HeatCliContext {
                 .as_ref()
                 .expect("Generated crate name should exist."),
             &self.user_project_name,
-            &self.user_crate_dir.to_str().unwrap(),
+            self.user_crate_dir.to_str().unwrap(),
             vec![&build_cmd_desc.backend.to_string()],
             &build_cmd_desc.backend,
         );
@@ -201,5 +201,9 @@ impl HeatCliContext {
         }
 
         Ok(())
+    }
+
+    pub fn get_artifacts_dir_path(&self) -> PathBuf {
+        self.heat_dir.get_artifacts_dir(&self.user_crate_dir)
     }
 }

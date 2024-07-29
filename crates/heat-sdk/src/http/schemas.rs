@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -39,5 +40,18 @@ pub struct CodeUploadUrl {
 }
 #[derive(Debug, Deserialize)]
 pub struct CodeUploadUrlsSchema {
+    pub project_version: u32,
     pub urls: Vec<CodeUploadUrl>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunnerJobCommand {
+    pub command: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunnerQueueJobParamsSchema {
+    pub project_id: Uuid,
+    pub project_version: u32,
+    pub command: RunnerJobCommand,
 }

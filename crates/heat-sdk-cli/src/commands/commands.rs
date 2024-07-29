@@ -84,7 +84,7 @@ pub(crate) fn execute_run_command(
     context: &HeatCliContext,
 ) -> anyhow::Result<()> {
     print_info!("Running experiment with command: {:?}", run_command);
-    
+
     let mut command = context.make_run_command(&run_command);
 
     let run_status = command.status();
