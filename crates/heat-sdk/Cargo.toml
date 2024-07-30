@@ -8,6 +8,7 @@ readme.workspace = true
 [dependencies]
 burn = { workspace = true, features = ["train"] }
 
+derive-new = { workspace = true }
 log = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "json"] }
 rmp-serde = { workspace = true }

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::schemas::CrateMetadata;
+
 #[derive(Deserialize)]
 pub struct URLSchema {
     pub url: String,
@@ -27,10 +29,10 @@ pub struct CreateExperimentResponseSchema {
     pub experiment_id: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CodeUploadParamsSchema {
-    pub project_id: String,
-    pub crate_names: Vec<String>,
+    pub root_crate_name: String,
+    pub crates: Vec<CrateMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,5 +55,6 @@ pub struct RunnerJobCommand {
 pub struct RunnerQueueJobParamsSchema {
     pub project_id: Uuid,
     pub project_version: u32,
+    pub target_package: String,
     pub command: RunnerJobCommand,
 }

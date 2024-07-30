@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::error::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
+use crate::schemas::{CrateData, CrateMetadata};
 use crate::websocket::WebSocketClient;
 
 /// Credentials to connect to the Heat server
@@ -299,14 +300,24 @@ impl HeatClient {
         Ok(())
     }
 
-    pub fn upload_crates(&self, crates_data: Vec<(String, Vec<u8>)>) -> Result<u32, HeatSdkError> {
-        let (names, data): (Vec<String>, Vec<Vec<u8>>) = crates_data.iter().cloned().unzip();
-        let urls = self
-            .http_client
-            .request_code_upload_urls(&self.config.project_id, names)?;
+    pub fn upload_crates(
+        &self,
+        root_crate_name: &str,
+        crates_data: Vec<CrateData>,
+    ) -> Result<u32, HeatSdkError> {
+        let (data, metadata): (Vec<Vec<u8>>, Vec<CrateMetadata>) = crates_data
+            .into_iter()
+            .map(|data| (data.data, data.metadata))
+            .unzip();
+
+        let urls = self.http_client.publish_project_version_urls(
+            &self.config.project_id,
+            root_crate_name,
+            metadata,
+        )?;
 
         // assumes that the urls are returned in the same order as the names
-        for (url, data) in urls.urls.iter().zip(data.iter()) {
+        for (url, data) in urls.urls.into_iter().zip(data.into_iter()) {
             self.http_client
                 .upload_bytes_to_url(&url.url, data.clone())?;
         }
@@ -317,6 +328,7 @@ impl HeatClient {
     pub fn start_remote_job(
         &self,
         project_version: u32,
+        target_package: String,
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.http_client.start_remote_job(
@@ -325,6 +337,7 @@ impl HeatClient {
                 .parse()
                 .expect("Project id should be a valid Uuid"),
             project_version,
+            target_package,
             command,
         )
     }

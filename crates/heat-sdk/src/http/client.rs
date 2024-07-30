@@ -4,7 +4,10 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{client::HeatCredentials, error::HeatSdkError, http::schemas::StartExperimentSchema};
+use crate::{
+    client::HeatCredentials, error::HeatSdkError, http::schemas::StartExperimentSchema,
+    schemas::CrateMetadata,
+};
 
 use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
@@ -325,22 +328,23 @@ impl HttpClient {
         Ok(())
     }
 
-    pub fn request_code_upload_urls(
+    pub fn publish_project_version_urls(
         &self,
         project_id: &str,
-        crate_names: Vec<String>,
+        root_crate_name: &str,
+        crates_metadata: Vec<CrateMetadata>,
     ) -> Result<CodeUploadUrlsSchema, HeatSdkError> {
         self.validate_session_cookie()?;
 
-        let url = format!("{}/code/upload", self.base_url);
+        let url = format!("{}/projects/{}/code/upload", self.base_url, project_id);
 
         let upload_urls = self
             .http_client
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&CodeUploadParamsSchema {
-                project_id: project_id.to_string(),
-                crate_names,
+                root_crate_name: root_crate_name.to_string(),
+                crates: crates_metadata,
             })
             .send()?
             .error_for_status()?
@@ -353,6 +357,7 @@ impl HttpClient {
         &self,
         project_id: Uuid,
         project_version: u32,
+        target_package: String,
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.validate_session_cookie()?;
@@ -362,6 +367,7 @@ impl HttpClient {
         let body = RunnerQueueJobParamsSchema {
             project_id,
             project_version,
+            target_package,
             command: RunnerJobCommand { command },
         };
 

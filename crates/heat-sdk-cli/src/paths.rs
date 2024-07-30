@@ -97,7 +97,8 @@ pub fn path2bytes(path: &Path) -> Result<&[u8]> {
 pub fn bytes2path(bytes: &[u8]) -> Result<PathBuf> {
     #[cfg(unix)]
     {
-        use std::os::unix::prelude::*;
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
         Ok(PathBuf::from(OsStr::from_bytes(bytes)))
     }
     #[cfg(windows)]

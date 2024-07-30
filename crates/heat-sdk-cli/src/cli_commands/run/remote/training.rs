@@ -1,7 +1,10 @@
 use clap::Parser;
-use heat_sdk::client::{HeatClient, HeatClientConfig, HeatCredentials};
+use heat_sdk::{
+    client::{HeatClient, HeatClientConfig, HeatCredentials},
+    schemas::CrateData,
+};
 
-use crate::{context::HeatCliContext, generation::backend::BackendType};
+use crate::{context::HeatCliContext, generation::backend::BackendType, package::PackagedCrates};
 
 /// Run a training remotely.
 /// Not yet supported.
@@ -59,10 +62,24 @@ pub(crate) fn handle_command(
 ) -> anyhow::Result<()> {
     let heat_client = create_heat_client(&args.key, &args.heat_endpoint, &args.project);
 
-    let project_version = crate::package::package(&heat_client, &context)?;
+    let PackagedCrates {
+        root_package_name,
+        mut crates,
+    } = crate::package::package(&context)?;
+
+    println!("Uploading crates to Heat server...");
+    let mut crates_data: Vec<CrateData> = Vec::new();
+    for dst in crates.drain(..) {
+        let metadata = dst.metadata;
+        let data = std::fs::read(dst.path)?;
+        crates_data.push(CrateData { metadata, data });
+    }
+
+    let project_version = heat_client.upload_crates(&root_package_name, crates_data)?;
 
     heat_client.start_remote_job(
         project_version,
+        root_package_name,
         format!(
             "run local training --functions {} --backends {} --configs {} --project {} --key {}",
             args.functions.join(" "),

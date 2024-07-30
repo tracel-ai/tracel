@@ -1,13 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    io::Seek,
+    io::{Seek, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::Context;
 use cargo_util_schemas::manifest::{self, StringOrBool};
 use colored::Colorize;
-use heat_sdk::client::HeatClient;
+use heat_sdk::schemas::{CrateMetadata, Dep};
 
 use crate::{context::HeatCliContext, print_debug, print_err, print_info, print_warn, util};
 
@@ -181,7 +181,18 @@ pub struct Package {
     pub manifest_path: PathBuf,
 }
 
-pub fn package(heat_client: &HeatClient, context: &HeatCliContext) -> anyhow::Result<u32> {
+pub struct PackagedCrateData {
+    pub name: String,
+    pub path: PathBuf,
+    pub metadata: CrateMetadata,
+}
+
+pub struct PackagedCrates {
+    pub root_package_name: String,
+    pub crates: Vec<PackagedCrateData>,
+}
+
+pub fn package(context: &HeatCliContext) -> anyhow::Result<PackagedCrates> {
     let cmd = cargo_metadata::MetadataCommand::new();
 
     let metadata = cmd.exec().expect("Failed to get cargo metadata");
@@ -259,24 +270,92 @@ pub fn package(heat_client: &HeatClient, context: &HeatCliContext) -> anyhow::Re
             &workspace_toml.resolved_toml,
             context,
         )?;
-        dsts.push(tarball);
+
+        let crate_deps = pkg
+            .dependencies
+            .iter()
+            .filter_map(|dep| {
+                let is_local = dep.path.is_some();
+                Some(Dep::new(
+                    dep.name.clone(),
+                    dep.req.to_string(),
+                    dep.features.clone(),
+                    dep.optional,
+                    dep.uses_default_features,
+                    dep.target.clone().map(|t| t.to_string()),
+                    match dep.kind {
+                        cargo_metadata::DependencyKind::Normal => {
+                            heat_sdk::schemas::DepKind::Normal
+                        }
+                        cargo_metadata::DependencyKind::Development => {
+                            heat_sdk::schemas::DepKind::Dev
+                        }
+                        cargo_metadata::DependencyKind::Build => heat_sdk::schemas::DepKind::Build,
+                        cargo_metadata::DependencyKind::Unknown => {
+                            unimplemented!("Unknown dep kind")
+                        }
+                    },
+                    if is_local {
+                        None
+                        //Some("local".to_string())
+                    } else {
+                        // println!("dep.source: {:?}", dep.source);
+                        // let pkg_id_spec = cargo_util_schemas::core::PackageIdSpec::parse(&dep.source.clone().unwrap()).unwrap();
+                        // let pkg_kind = pkg_id_spec
+                        //     .kind()
+                        //     .unwrap();
+
+                        // let is_git = matches!(pkg_kind, cargo_util_schemas::core::SourceKind::Git(..));
+                        let is_git = dep.source.clone().unwrap().starts_with("git");
+                        if is_git {
+                            return None;
+                        }
+
+                        match &dep.registry {
+                            chose @ Some(..) => chose.clone(),
+                            None => match is_git {
+                                true => None,
+                                false => {
+                                    Some("https://github.com/rust-lang/crates.io-index".to_string())
+                                }
+                            },
+                        }
+                    },
+                    None,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let crate_metadata = CrateMetadata::new(
+            pkg.name.clone(),
+            pkg.version.to_string(),
+            crate_deps,
+            pkg.features.clone(),
+            pkg.authors.clone(),
+            pkg.description.clone(),
+            pkg.documentation.clone(),
+            pkg.homepage.clone(),
+            None,
+            pkg.readme.clone().map(|r| r.to_string()),
+            pkg.keywords.clone(),
+            pkg.categories.clone(),
+            pkg.license.clone(),
+            pkg.license_file.clone().map(|l| l.to_string()),
+            pkg.repository.clone(),
+            BTreeMap::new(),
+            pkg.links.clone(),
+        );
+
+        dsts.push(PackagedCrateData {
+            name: tarball.0,
+            path: tarball.1,
+            metadata: crate_metadata,
+        });
     }
 
-    // TODO publish to registry once everything is working
-    let mut crates_data = HashMap::new();
-    for dst in dsts {
-        let data = std::fs::read(dst.1)?;
-        crates_data.insert(dst.0, data);
-    }
-
-    let project_version = heat_client.upload_crates(
-        crates_data
-            .into_iter()
-            .map(|(name, data)| (name.to_owned(), data))
-            .collect(),
-    )?;
-
-    Ok(project_version)
+    Ok(PackagedCrates {
+        root_package_name: own_pkg_name,
+        crates: dsts,
+    })
 }
 
 /// Heavily based on cargo's prepare_archive function
@@ -661,7 +740,14 @@ fn map_dependency(
         manifest::InheritableDependency::Value(manifest::TomlDependency::Detailed(d)) => {
             let mut d = d.clone();
             // Path dependencies become crates.io deps.
-            d.path.take();
+            // d.path.take();
+            if d.path.take().is_some() {
+                d.registry_index =
+                    Some("file:///home/thierrycd/prog/heat/temp/runner/registry".to_string());
+            }
+            // else {
+            // d.registry = Some(RegistryName::new("crates-io".to_string()).expect("Should be able to create registry name"));
+            // }
             // Same with git dependencies.
             // d.git.take();
             // d.branch.take();
