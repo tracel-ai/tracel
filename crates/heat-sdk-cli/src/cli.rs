@@ -28,7 +28,7 @@ pub enum Commands {
 }
 
 pub fn cli_main() {
-    print_info!("Running CLI.");
+    print_info!("Running CLI bro5.");
     let time_begin = std::time::Instant::now();
     let args = CliArgs::try_parse();
     if args.is_err() {

@@ -157,6 +157,6 @@ pub fn custom_training<B: AutodiffBackend>(
 
 #[heat(training)]
 pub fn nothingburger<B: AutodiffBackend>() -> Result<Model<B>, ()> {
-    println!("Nothingburger");
+    println!("Nothingburger2");
     Err(())
 }

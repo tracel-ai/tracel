@@ -148,13 +148,18 @@ impl HeatDir {
     }
 
     pub fn get_crate_target_path(&self, crate_name: &str) -> Option<PathBuf> {
+        let new_target_dir = std::env::var("HEAT_TARGET_DIR").ok();
+
         match self.crates.get(crate_name)? {
-            FileTree::Directory(name, _) => Some(PathBuf::from(format!(
-                "{}/{}/{}/target",
-                HEAT_DIR_NAME,
-                HEAT_CRATES_DIR_NAME,
-                name.clone()
-            ))),
+            FileTree::Directory(name, _) => match new_target_dir {
+                Some(target_dir) => Some(PathBuf::from(target_dir)),
+                None => Some(PathBuf::from(format!(
+                    "{}/{}/{}/target",
+                    HEAT_DIR_NAME,
+                    HEAT_CRATES_DIR_NAME,
+                    name.clone()
+                ))),
+            },
             _ => None,
         }
     }

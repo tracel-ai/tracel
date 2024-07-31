@@ -100,13 +100,6 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
             .expect("Should be able to strip prefix.");
         let url = url::Url::parse(source).expect("Should be able to parse url.");
 
-        let dep_url = format!(
-            "{}://{}{}",
-            url.scheme(),
-            url.host_str().expect("Should be able to get host"),
-            url.path()
-        );
-
         match source_kind {
             "git" => {
                 let query = url.query();
@@ -123,9 +116,21 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
                     None => QueryType::Branch("master".to_string()),
                 };
 
+                let dep_url = format!(
+                    "{}://{}{}",
+                    url.scheme(),
+                    url.host_str().expect("Should be able to get host"),
+                    url.path()
+                );
+
                 Dependency::new_git(package.name.clone(), version, dep_url, query_type, vec![])
             }
-            "registry" => Dependency::new(package.name.clone(), version, vec![]),
+            "registry" => Dependency::new(
+                package.name.clone(),
+                version,
+                package.registry.clone(),
+                vec![],
+            ),
             _ => {
                 panic!("Error")
             }
@@ -351,6 +356,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         }
 
         fn main() {
+            println!("ENV HOME: {}", std::env::var("CARGO_HOME").expect("CARGO_HOME should be set"));
             let matches = generate_clap().get_matches();
 
             let device = #backend_default_device;
@@ -400,6 +406,7 @@ pub fn create_crate(
     generated_crate.add_dependency(Dependency::new(
         "clap".to_string(),
         "*".to_string(),
+        None,
         vec!["cargo".to_string()],
     ));
     find_required_dependencies(vec!["tracel", "burn"])

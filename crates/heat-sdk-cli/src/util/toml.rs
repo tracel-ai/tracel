@@ -359,8 +359,6 @@ fn resolve_toml(
     warnings: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) -> CargoResult<manifest::TomlManifest> {
-    // print_debug!("resolving toml: {:?}, {:?}, {:?}, {:?}", original_toml, workspace_config, manifest_file, root_workspace_path);
-
     let mut resolved_toml = manifest::TomlManifest {
         cargo_features: original_toml.cargo_features.clone(),
         package: None,

@@ -13,7 +13,7 @@ pub enum QueryType {
 pub enum DependencyKind {
     Path(String),
     Git(String, QueryType),
-    Registry(),
+    Registry(Option<String>),
 }
 
 pub struct Dependency {
@@ -24,11 +24,16 @@ pub struct Dependency {
 }
 
 impl Dependency {
-    pub fn new(name: String, version: String, features: Vec<String>) -> Self {
+    pub fn new(
+        name: String,
+        version: String,
+        registry: Option<String>,
+        features: Vec<String>,
+    ) -> Self {
         Self {
             name,
             version,
-            kind: DependencyKind::Registry(),
+            kind: DependencyKind::Registry(registry),
             features,
         }
     }
@@ -137,7 +142,11 @@ impl ToString for CargoToml {
                     };
                     dep_table["git"] = toml_edit::value(url);
                 }
-                DependencyKind::Registry() => {}
+                DependencyKind::Registry(maybe_reg) => {
+                    if let Some(reg) = maybe_reg {
+                        dep_table["registry-index"] = toml_edit::value(reg);
+                    }
+                }
             }
             dependencies[&dep.name] = dep_table;
         }
@@ -146,7 +155,6 @@ impl ToString for CargoToml {
         cargo_toml["dependencies"] = dependencies;
 
         cargo_toml["workspace"] = toml_edit::table();
-
         cargo_toml.to_string()
     }
 }

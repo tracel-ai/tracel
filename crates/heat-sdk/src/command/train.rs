@@ -40,14 +40,12 @@ trait FromTrainCommandContext<B: Backend> {
 
 impl<B: Backend> FromTrainCommandContext<B> for HeatClient {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
-        println!("Inferred usage of context.client");
         context.client.clone()
     }
 }
 
 impl<B: Backend> FromTrainCommandContext<B> for MultiDevice<B> {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
-        println!("Inferred usage of context.devices");
         MultiDevice(context.devices.clone())
     }
 }
@@ -63,7 +61,6 @@ impl<B: Backend> IntoIterator for MultiDevice<B> {
 
 impl<B: Backend, T: Config> FromTrainCommandContext<B> for T {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
-        println!("Inferred usage of context.config");
         T::load_binary(context.config.as_bytes()).expect("Config should be loaded")
     }
 }

@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
-use cargo_util_schemas::manifest::{self, StringOrBool};
+use cargo_util_schemas::manifest::{self, RegistryName, StringOrBool};
 use colored::Colorize;
 use heat_sdk::schemas::{CrateMetadata, Dep};
 
@@ -297,28 +297,12 @@ pub fn package(context: &HeatCliContext) -> anyhow::Result<PackagedCrates> {
                     },
                     if is_local {
                         None
-                        //Some("local".to_string())
                     } else {
-                        // println!("dep.source: {:?}", dep.source);
-                        // let pkg_id_spec = cargo_util_schemas::core::PackageIdSpec::parse(&dep.source.clone().unwrap()).unwrap();
-                        // let pkg_kind = pkg_id_spec
-                        //     .kind()
-                        //     .unwrap();
-
-                        // let is_git = matches!(pkg_kind, cargo_util_schemas::core::SourceKind::Git(..));
-                        let is_git = dep.source.clone().unwrap().starts_with("git");
-                        if is_git {
-                            return None;
-                        }
-
                         match &dep.registry {
                             chose @ Some(..) => chose.clone(),
-                            None => match is_git {
-                                true => None,
-                                false => {
-                                    Some("https://github.com/rust-lang/crates.io-index".to_string())
-                                }
-                            },
+                            None => {
+                                Some("https://github.com/rust-lang/crates.io-index".to_string())
+                            }
                         }
                     },
                     None,
@@ -526,9 +510,6 @@ fn tar(
         .iter()
         .map(|ar_file| ar_file.rel_path.clone())
         .collect::<Vec<_>>();
-
-    // print_debug!("{}: {}", pkg.package.name,
-    // toml::to_string_pretty(&pkg_toml).unwrap());
 
     let publish_toml = prepare_toml_for_publish(
         &pkg.manifest.resolved_toml,
@@ -742,8 +723,9 @@ fn map_dependency(
             // Path dependencies become crates.io deps.
             // d.path.take();
             if d.path.take().is_some() {
-                d.registry_index =
-                    Some("file:///home/thierrycd/prog/heat/temp/runner/registry".to_string());
+                d.registry=
+                    // Some("file:///home/thierrycd/prog/heat/temp/runner/registry".to_string();
+                    Some(RegistryName::new("local".to_string()).expect("Should be able to create registry name"));
             }
             // else {
             // d.registry = Some(RegistryName::new("crates-io".to_string()).expect("Should be able to create registry name"));
@@ -811,7 +793,6 @@ fn prepare_targets_for_publish(
 
     let mut prepared = Vec::with_capacity(targets.len());
     for target in targets {
-        print_debug!("preparing target for publish: {:?}", target);
         let Some(target) = prepare_target_for_publish(target, included, context)? else {
             continue;
         };
@@ -914,11 +895,6 @@ fn discover_gix_repo(root: &Path) -> anyhow::Result<Option<gix::Repository>> {
     let repo = match gix::ThreadSafeRepository::discover(root) {
         Ok(repo) => repo.to_thread_local(),
         Err(e) => {
-            // tracing::debug!(
-            //     "could not discover git repo at or above {}: {}",
-            //     root.display(),
-            //     e
-            // );
             return Ok(None);
         }
     };

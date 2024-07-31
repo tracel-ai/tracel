@@ -134,6 +134,8 @@ impl HeatCliContext {
             }
         };
 
+        let new_target_dir: Option<String> = std::env::var("HEAT_TARGET_DIR").ok();
+
         let mut build_command = std::process::Command::new("cargo");
         build_command
             .arg("build")
@@ -148,7 +150,16 @@ impl HeatCliContext {
                     .to_str()
                     .unwrap(),
             ])
-            .args(["--message-format", "short"]);
+            .args(["--message-format", "short"])
+            .args([
+                "--config",
+                "patch.crates-io.burn.git='https://github.com/tracel-ai/burn'",
+                "--config",
+                "patch.crates-io.burn.rev='a72a533'",
+            ]);
+        if let Some(target_dir) = new_target_dir {
+            build_command.args(["--target-dir", &target_dir]);
+        }
 
         Ok(build_command)
     }
