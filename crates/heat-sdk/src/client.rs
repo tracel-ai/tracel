@@ -139,7 +139,7 @@ impl HeatClient {
             .create_experiment(&self.config.project_id)?;
         self.http_client.start_experiment(&exp_uuid, config)?;
 
-        println!("Experiment UUID15: {}", exp_uuid);
+        println!("Experiment UUID: {}", exp_uuid);
 
         let ws_endpoint = self.http_client.request_websocket_url(&exp_uuid)?;
 

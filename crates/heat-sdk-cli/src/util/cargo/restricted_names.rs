@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Helpers for validating and checking names like package and crate names.
 
 use std::path::Path;

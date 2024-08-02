@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, fmt};
+#![allow(dead_code)]
+
+use std::fmt;
 
 use serde::ser;
 
@@ -110,5 +112,3 @@ impl fmt::Display for FeatureValue {
         }
     }
 }
-
-pub type FeatureMap = BTreeMap<InternedString, Vec<FeatureValue>>;

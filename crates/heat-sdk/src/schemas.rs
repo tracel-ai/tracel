@@ -10,6 +10,7 @@ pub enum DepKind {
     Normal,
 }
 
+#[allow(unused, clippy::too_many_arguments)]
 #[derive(Debug, Serialize, Deserialize, derive_new::new)]
 pub struct Dep {
     /// Name of the dependency. If the dependency is renamed from the
@@ -38,8 +39,8 @@ pub struct Dep {
     explicit_name_in_toml: Option<String>,
 }
 
+#[allow(unused, clippy::too_many_arguments)]
 #[derive(Debug, Serialize, Deserialize, derive_new::new, Default)]
-#[allow(unused)]
 pub struct CrateMetadata {
     /// The name of the package.
     name: String,

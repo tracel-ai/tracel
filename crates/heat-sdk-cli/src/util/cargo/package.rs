@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    io::{Seek, Write},
+    io::Seek,
     path::{Path, PathBuf},
 };
 
@@ -9,8 +9,8 @@ use cargo_util_schemas::manifest::{self, RegistryName, StringOrBool};
 use colored::Colorize;
 use heat_sdk::schemas::{CrateMetadata, Dep, PackagedCrateData};
 
-use crate::{context::HeatCliContext, print_debug, print_err, print_info, print_warn, util};
-
+use super::paths;
+use crate::{print_err, print_info, print_warn, util};
 use sha2::Digest as _;
 use sha2::Sha256;
 
@@ -60,7 +60,7 @@ fn find_pkg_all_local_dependencies_pkgs(
                 .unwrap();
             if !deps.contains(dep_pkg) {
                 // only collect deps that are local (path)
-                if let Err(e) = check_package(root_dir, metadata, dep_pkg) {
+                if let Err(e) = check_package(root_dir, dep_pkg) {
                     print_err!("Error checking package: {:?}", e);
                     return Err(e);
                 }
@@ -80,47 +80,11 @@ fn find_pkg_all_local_dependencies_pkgs(
     Ok(deps)
 }
 
-fn check_package(
-    root_dir: &Path,
-    metadata: &cargo_metadata::Metadata,
-    package: &cargo_metadata::Package,
-) -> anyhow::Result<()> {
-    use cargo_util_schemas::core::GitReference;
+fn check_package(root_dir: &Path, package: &cargo_metadata::Package) -> anyhow::Result<()> {
     use cargo_util_schemas::core::PackageIdSpec;
     use cargo_util_schemas::core::SourceKind;
 
     let cargo_pkgid = PackageIdSpec::parse(&package.id.repr).unwrap();
-    let str = match cargo_pkgid.kind().unwrap() {
-        SourceKind::Git(git_reference) => match git_reference {
-            GitReference::Branch(branch) => {
-                format!("Git package: {} {}", package.name, branch)
-            }
-            GitReference::Tag(tag) => {
-                format!("Git package: {} {}", package.name, tag)
-            }
-            GitReference::Rev(rev) => {
-                format!("Git package: {} {}", package.name, rev)
-            }
-            GitReference::DefaultBranch => {
-                format!("Git package: {}", package.name)
-            }
-        },
-        SourceKind::LocalRegistry => {
-            format!("Local registry package: {}", package.name)
-        }
-        SourceKind::Path => {
-            format!("Path package: {}", package.name)
-        }
-        SourceKind::Registry => {
-            format!("Registry package: {}", package.name)
-        }
-        SourceKind::SparseRegistry => {
-            format!("Sparse registry package: {}", package.name)
-        }
-        SourceKind::Directory => {
-            format!("Directory package: {}", package.name)
-        }
-    };
 
     print_info!("Checking {}", package.name.bold());
 
@@ -158,21 +122,6 @@ fn check_package(
                 pkg_manifest_dir.display()
             ));
         }
-    } else {
-        // print_info!("{}", str);
-
-        // let url = cargo_pkgid.url().unwrap();
-
-        // let mut ez = curl::easy::Easy::new();
-        // ez.url(url.as_str()).unwrap();
-        // ez.nobody(true).unwrap();
-        // ez.perform().unwrap();
-        // let response_code = ez.response_code().unwrap();
-        // if response_code == 200 {
-        //     // print_info!("Package {} is downloadable", package.name);
-        // } else {
-        //     print_err!("Package {} is not downloadable: {}", package.name.bold(), response_code);
-        // }
     }
 
     Ok(())
@@ -180,12 +129,12 @@ fn check_package(
 
 pub struct Package {
     pub package: cargo_metadata::Package,
-    pub manifest: util::toml::Manifest,
+    pub manifest: util::cargo::toml::Manifest,
     pub manifest_path: PathBuf,
 }
 
 pub fn package(
-    context: &HeatCliContext,
+    artifacts_dir: &Path,
     target_package_name: &str,
 ) -> anyhow::Result<Vec<PackagedCrateData>> {
     let cmd = cargo_metadata::MetadataCommand::new();
@@ -207,13 +156,7 @@ pub fn package(
         .expect("Failed to find own package");
 
     let workspace_toml =
-        util::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
-
-    // pretty print the workspace toml
-    print_debug!(
-        "{}",
-        toml::to_string_pretty(&workspace_toml.resolved_toml).unwrap()
-    );
+        util::cargo::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
 
     print_info!("{}", "Checking local packages".green().bold());
 
@@ -246,12 +189,11 @@ pub fn package(
             print_info!("    {}", file.rel_path.display());
         }
 
-        let resolved_manifest =
-            util::toml::read_manifest(pkg.manifest_path.as_std_path(), Some(&workspace_toml_path))?;
-        print_debug!(
-            "{}",
-            toml::to_string_pretty(&resolved_manifest.resolved_toml).unwrap()
-        );
+        let resolved_manifest = util::cargo::toml::read_manifest(
+            pkg.manifest_path.as_std_path(),
+            Some(&workspace_toml_path),
+        )?;
+
         let loaded_package = Package {
             package: pkg.clone(),
             manifest: resolved_manifest,
@@ -259,19 +201,18 @@ pub fn package(
         };
 
         let tarball = create_package(
-            &metadata,
             loaded_package,
             archive_files,
+            artifacts_dir,
             &workspace_toml.resolved_toml,
-            context,
         )?;
 
         let crate_deps = pkg
             .dependencies
             .iter()
-            .filter_map(|dep| {
+            .map(|dep| {
                 let is_local = dep.path.is_some();
-                Some(Dep::new(
+                Dep::new(
                     dep.name.clone(),
                     dep.req.to_string(),
                     dep.features.clone(),
@@ -301,7 +242,7 @@ pub fn package(
                         }
                     },
                     None,
-                ))
+                )
             })
             .collect::<Vec<_>>();
         let crate_metadata = CrateMetadata::new(
@@ -396,6 +337,7 @@ fn build_ar_list(pkg_dir: &Path, files: Vec<PathBuf>) -> anyhow::Result<Vec<Arch
         print_warn!("Cargo.toml not found in package source");
     }
 
+    // todo : check whether to include lockfile or not
     let pkg_include_lockfile = false;
     if pkg_include_lockfile {
         let rel_str = "Cargo.lock";
@@ -431,20 +373,18 @@ fn build_ar_list(pkg_dir: &Path, files: Vec<PathBuf>) -> anyhow::Result<Vec<Arch
 
 /// Heavily based on cargo's create_package function
 fn create_package(
-    metadata: &cargo_metadata::Metadata,
     pkg: Package,
     archive_files: Vec<ArchiveFile>,
+    artifacts_dir: &Path,
     workspace_toml: &cargo_util_schemas::manifest::TomlManifest,
-    context: &HeatCliContext,
 ) -> anyhow::Result<(String, PathBuf, String)> {
     let filecount = archive_files.len();
 
     // here cargo would check if dependencies have versions and are safe to deploy
 
-    let pkg_id = cargo_util_schemas::core::PackageIdSpec::parse(&pkg.package.id.repr).unwrap();
     let filename = format!("{}-{}.crate", pkg.package.name, pkg.package.version);
-    let dir = context.get_artifacts_dir_path();
-    std::fs::create_dir_all(&dir)?;
+    let dir = artifacts_dir;
+    std::fs::create_dir_all(dir)?;
 
     let tmp = format!(".{}", filename);
     let mut file = std::fs::File::create(dir.join(&tmp))?;
@@ -497,7 +437,7 @@ fn tar(
 ) -> anyhow::Result<u64> {
     let filename = Path::new(filename);
     let encoder = flate2::GzBuilder::new()
-        .filename(crate::paths::path2bytes(filename)?)
+        .filename(paths::path2bytes(filename)?)
         .write(dst, flate2::Compression::best());
 
     let mut ar = tar::Builder::new(encoder);
@@ -590,10 +530,10 @@ pub fn prepare_toml_for_publish(
                 .as_value()
                 .context("license file should have been resolved before `prepare_for_publish()`")?;
             let license_path = Path::new(&license_file);
-            let abs_license_path = crate::paths::normalize_path(&package_root.join(license_path));
+            let abs_license_path = paths::normalize_path(&package_root.join(license_path));
             if let Ok(license_file) = abs_license_path.strip_prefix(package_root) {
                 package.license_file = Some(manifest::InheritableField::Value(
-                    crate::paths::normalize_path_string_sep(
+                    paths::normalize_path_string_sep(
                         license_file
                             .to_str()
                             .ok_or_else(|| anyhow::format_err!("non-UTF8 `package.license-file`"))?
@@ -622,10 +562,10 @@ pub fn prepare_toml_for_publish(
         match readme {
             manifest::StringOrBool::String(readme) => {
                 let readme_path = Path::new(&readme);
-                let abs_readme_path = crate::paths::normalize_path(&package_root.join(readme_path));
+                let abs_readme_path = paths::normalize_path(&package_root.join(readme_path));
                 if let Ok(readme_path) = abs_readme_path.strip_prefix(package_root) {
                     package.readme = Some(manifest::InheritableField::Value(StringOrBool::String(
-                        crate::paths::normalize_path_string_sep(
+                        paths::normalize_path_string_sep(
                             readme_path
                                 .to_str()
                                 .ok_or_else(|| {
@@ -721,9 +661,10 @@ fn map_dependency(
             // Path dependencies become crates.io deps.
             // d.path.take();
             if d.path.take().is_some() {
-                d.registry=
-                    // Some("file:///home/thierrycd/prog/heat/temp/runner/registry".to_string();
-                    Some(RegistryName::new("local".to_string()).expect("Should be able to create registry name"));
+                d.registry = Some(
+                    RegistryName::new("local".to_string())
+                        .expect("Should be able to create registry name"),
+                );
             }
             // else {
             // d.registry = Some(RegistryName::new("crates-io".to_string()).expect("Should be able to create registry name"));
@@ -760,7 +701,7 @@ fn prepare_target_for_publish(
         .path
         .as_ref()
         .unwrap_or_else(|| panic!("previously resolved {:?} path", target));
-    let path = crate::paths::normalize_path(&path.0);
+    let path = paths::normalize_path(&path.0);
     if !included.contains(&path) {
         let name = target.name.as_ref().expect("previously resolved");
         print_warn!(
@@ -774,7 +715,7 @@ fn prepare_target_for_publish(
     }
 
     let mut target = target.clone();
-    let path = crate::paths::normalize_path_sep(path, context)?;
+    let path = paths::normalize_path_sep(path, context)?;
     target.path = Some(manifest::PathValue(path));
 
     Ok(Some(target))
@@ -806,6 +747,8 @@ fn prepare_targets_for_publish(
 
 /// Heavily based on cargo's list_files function
 fn list_files(pkg_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    // todo : handle includes and excludes
+    // for now everything is left empty
     let excludes: Vec<&str> = vec![];
     let includes: Vec<&str> = vec![];
 
@@ -892,7 +835,7 @@ fn list_files(pkg_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
 fn discover_gix_repo(root: &Path) -> anyhow::Result<Option<gix::Repository>> {
     let repo = match gix::ThreadSafeRepository::discover(root) {
         Ok(repo) => repo.to_thread_local(),
-        Err(e) => {
+        Err(..) => {
             return Ok(None);
         }
     };

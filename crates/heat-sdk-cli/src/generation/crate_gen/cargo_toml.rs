@@ -111,50 +111,57 @@ impl Default for CargoToml {
     }
 }
 
-impl ToString for CargoToml {
-    fn to_string(&self) -> String {
-        let mut cargo_toml = toml_edit::DocumentMut::new();
-        let mut package = toml_edit::table();
-        package["edition"] = toml_edit::value(&self.package.edition);
-        package["version"] = toml_edit::value(&self.package.version);
-        package["name"] = toml_edit::value(&self.package.name);
+impl std::fmt::Display for CargoToml {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let formatted = {
+            let mut cargo_toml = toml_edit::DocumentMut::new();
+            let mut package = toml_edit::table();
+            package["edition"] = toml_edit::value(&self.package.edition);
+            package["version"] = toml_edit::value(&self.package.version);
+            package["name"] = toml_edit::value(&self.package.name);
 
-        let mut dependencies = toml_edit::table();
-        for dep in &self.dependencies {
-            let mut dep_table = toml_edit::table();
-            dep_table["version"] = toml_edit::value(&dep.version);
-            if !dep.features.is_empty() {
-                let mut feat_arr = toml_edit::Array::new();
-                for feat in &dep.features {
-                    feat_arr.push(feat);
+            let mut dependencies = toml_edit::table();
+            for dep in &self.dependencies {
+                let mut dep_table = toml_edit::table();
+                dep_table["version"] = toml_edit::value(&dep.version);
+                if !dep.features.is_empty() {
+                    let mut feat_arr = toml_edit::Array::new();
+                    for feat in &dep.features {
+                        feat_arr.push(feat);
+                    }
+                    dep_table["features"] =
+                        toml_edit::Item::Value(toml_edit::Value::Array(feat_arr));
                 }
-                dep_table["features"] = toml_edit::Item::Value(toml_edit::Value::Array(feat_arr));
-            }
-            match &dep.kind {
-                DependencyKind::Path(path) => {
-                    dep_table["path"] = toml_edit::value(path);
-                }
-                DependencyKind::Git(url, query) => {
-                    match query {
-                        QueryType::Branch(branch) => dep_table["branch"] = toml_edit::value(branch),
-                        QueryType::Tag(tag) => dep_table["tag"] = toml_edit::value(tag),
-                        QueryType::Rev(rev) => dep_table["rev"] = toml_edit::value(rev),
-                    };
-                    dep_table["git"] = toml_edit::value(url);
-                }
-                DependencyKind::Registry(maybe_reg) => {
-                    if let Some(reg) = maybe_reg {
-                        dep_table["registry-index"] = toml_edit::value(reg);
+                match &dep.kind {
+                    DependencyKind::Path(path) => {
+                        dep_table["path"] = toml_edit::value(path);
+                    }
+                    DependencyKind::Git(url, query) => {
+                        match query {
+                            QueryType::Branch(branch) => {
+                                dep_table["branch"] = toml_edit::value(branch)
+                            }
+                            QueryType::Tag(tag) => dep_table["tag"] = toml_edit::value(tag),
+                            QueryType::Rev(rev) => dep_table["rev"] = toml_edit::value(rev),
+                        };
+                        dep_table["git"] = toml_edit::value(url);
+                    }
+                    DependencyKind::Registry(maybe_reg) => {
+                        if let Some(reg) = maybe_reg {
+                            dep_table["registry-index"] = toml_edit::value(reg);
+                        }
                     }
                 }
+                dependencies[&dep.name] = dep_table;
             }
-            dependencies[&dep.name] = dep_table;
-        }
 
-        cargo_toml["package"] = package;
-        cargo_toml["dependencies"] = dependencies;
+            cargo_toml["package"] = package;
+            cargo_toml["dependencies"] = dependencies;
 
-        cargo_toml["workspace"] = toml_edit::table();
-        cargo_toml.to_string()
+            cargo_toml["workspace"] = toml_edit::table();
+            cargo_toml.to_string()
+        };
+
+        write!(f, "{}", formatted)
     }
 }

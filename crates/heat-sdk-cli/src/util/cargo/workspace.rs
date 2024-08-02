@@ -1,13 +1,15 @@
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 type CargoResult<T> = anyhow::Result<T>;
 
 use anyhow::anyhow;
 
-use crate::{
-    paths::{normalize_path, pathdiff::diff_paths},
-    print_debug,
-};
+use crate::print_debug;
+use crate::util::cargo::paths;
+
+use super::paths::normalize_path;
 
 use super::toml::InheritableFields;
 
@@ -67,7 +69,7 @@ fn read_root_pointer(member_manifest: &Path, root_link: &str) -> PathBuf {
         .join(root_link)
         .join("Cargo.toml");
     print_debug!("find_root - pointer {}", path.display());
-    crate::paths::normalize_path(&path)
+    paths::normalize_path(&path)
 }
 
 /// Intermediate configuration of a workspace root in a manifest.
@@ -126,45 +128,6 @@ impl WorkspaceRootConfig {
         self.members.is_some()
     }
 
-    // fn members_paths(&self, globs: &[String]) -> CargoResult<Vec<PathBuf>> {
-    //     let mut expanded_list = Vec::new();
-
-    //     for glob in globs {
-    //         let pathbuf = self.root_dir.join(glob);
-    //         let expanded_paths = Self::expand_member_path(&pathbuf)?;
-
-    //         // If glob does not find any valid paths, then put the original
-    //         // path in the expanded list to maintain backwards compatibility.
-    //         if expanded_paths.is_empty() {
-    //             expanded_list.push(pathbuf);
-    //         } else {
-    //             // Some OS can create system support files anywhere.
-    //             // (e.g. macOS creates `.DS_Store` file if you visit a directory using Finder.)
-    //             // Such files can be reported as a member path unexpectedly.
-    //             // Check and filter out non-directory paths to prevent pushing such accidental unwanted path
-    //             // as a member.
-    //             for expanded_path in expanded_paths {
-    //                 if expanded_path.is_dir() {
-    //                     expanded_list.push(expanded_path);
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     Ok(expanded_list)
-    // }
-
-    // fn expand_member_path(path: &Path) -> CargoResult<Vec<PathBuf>> {
-    //     let Some(path) = path.to_str() else {
-    //         return Ok(Vec::new());
-    //     };
-    //     let res = glob(path).with_context(|| format!("could not parse pattern `{}`", &path))?;
-    //     let res = res
-    //         .map(|p| p.with_context(|| format!("unable to match path to pattern `{}`", &path)))
-    //         .collect::<Result<Vec<_>, _>>()?;
-    //     Ok(res)
-    // }
-
     pub fn inheritable(&self) -> &InheritableFields {
         &self.inheritable_fields
     }
@@ -177,7 +140,7 @@ pub fn resolve_relative_path(
     rel_path: &str,
 ) -> CargoResult<String> {
     let joined_path = normalize_path(&old_root.join(rel_path));
-    match diff_paths(joined_path, new_root) {
+    match pathdiff::diff_paths(joined_path, new_root) {
         None => Err(anyhow!(
             "`{}` was defined in {} but could not be resolved with {}",
             label,

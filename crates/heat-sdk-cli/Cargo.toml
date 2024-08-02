@@ -19,7 +19,6 @@ inventory = "0.3"
 once_cell = "1.19"
 paste = "1.0"
 gensym = "0.1.1"
-curl = "0.4.46"
 syn = { workspace = true }
 quote = { workspace = true }
 prettyplease = "0.2.20"
@@ -41,3 +40,4 @@ lazycell = "1.3.0"
 serde-untagged = "0.1.6"
 serde_ignored = "0.1.1"
 sha2 = "0.10"
+pathdiff = "0.2.1"

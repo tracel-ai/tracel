@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{fmt, str::FromStr};
 
 use cargo_metadata::semver;
@@ -126,15 +128,6 @@ impl Edition {
         }
     }
 
-    // /// Updates the given [`ProcessBuilder`] to include the appropriate flags
-    // /// for setting the edition.
-    // pub(crate) fn cmd_edition_arg(&self, cmd: &mut ProcessBuilder) {
-    //     cmd.arg(format!("--edition={}", self));
-    //     if !self.is_stable() {
-    //         cmd.arg("-Z").arg("unstable-options");
-    //     }
-    // }
-
     /// Whether or not this edition supports the `rust_*_compatibility` lint.
     ///
     /// Ideally this would not be necessary, but editions may not have any
@@ -162,16 +155,6 @@ impl Edition {
             Edition2024 => false,
         }
     }
-
-    // pub(crate) fn default_resolve_behavior(&self) -> ResolveBehavior {
-    //     if *self >= Edition::Edition2024 {
-    //         ResolveBehavior::V3
-    //     } else if *self >= Edition::Edition2021 {
-    //         ResolveBehavior::V2
-    //     } else {
-    //         ResolveBehavior::V1
-    //     }
-    // }
 }
 
 impl fmt::Display for Edition {

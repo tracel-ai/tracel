@@ -8,8 +8,4 @@ mod logging;
 mod context;
 mod generation;
 
-mod paths;
-
 mod util;
-
-mod package;

@@ -59,9 +59,11 @@ pub(crate) fn handle_command(
 ) -> anyhow::Result<()> {
     let heat_client = create_heat_client(&args.key, &args.heat_endpoint, &args.project);
 
-    let crates = crate::package::package(&context, context.package_name())?;
+    let crates = crate::util::cargo::package::package(
+        &context.get_artifacts_dir_path(),
+        context.package_name(),
+    )?;
 
-    println!("Uploading crates to Heat server...");
     let project_version = heat_client.upload_new_project_version(context.package_name(), crates)?;
 
     heat_client.start_remote_job(

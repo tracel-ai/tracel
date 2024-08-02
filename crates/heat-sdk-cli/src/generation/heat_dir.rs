@@ -17,7 +17,7 @@ const HEAT_CRATES_DIR_NAME: &str = "crates";
 const HEAT_ARTIFACTS_DIR_NAME: &str = "artifacts";
 
 impl HeatDir {
-    pub fn init(&self, user_crate_dir: &PathBuf) {
+    pub fn init(&self, user_crate_dir: &Path) {
         std::fs::create_dir_all(user_crate_dir.join(HEAT_DIR_NAME))
             .expect("Should be able to create heat dir.");
         std::fs::write(user_crate_dir.join(HEAT_DIR_NAME).join(".gitignore"), "*")
@@ -176,7 +176,7 @@ impl HeatDir {
         let bin_dir_path = Path::new(&bin_dir_path);
         std::fs::create_dir_all(bin_dir_path).expect("Should be able to create bin dir.");
 
-        for (_name, item) in &self.binaries {
+        for item in self.binaries.values() {
             item.write_to(bin_dir_path)
                 .expect("Should be able to write binary to file.");
         }
@@ -194,7 +194,7 @@ impl HeatDir {
         let crates_dir_path = Path::new(&crates_dir_path);
         std::fs::create_dir_all(crates_dir_path).expect("Should be able to create crates dir.");
 
-        for (_name, item) in &self.crates {
+        for item in self.crates.values() {
             item.write_to(crates_dir_path)
                 .expect("Should be able to write crate to file.");
         }
