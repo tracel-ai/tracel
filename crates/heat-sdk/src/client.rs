@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 
@@ -7,7 +8,7 @@ use serde::Serialize;
 use crate::error::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
-use crate::schemas::{CrateData, CrateMetadata};
+use crate::schemas::{CrateVersionMetadata, PackagedCrateData};
 use crate::websocket::WebSocketClient;
 
 /// Credentials to connect to the Heat server
@@ -138,7 +139,7 @@ impl HeatClient {
             .create_experiment(&self.config.project_id)?;
         self.http_client.start_experiment(&exp_uuid, config)?;
 
-        println!("Experiment UUID10: {}", exp_uuid);
+        println!("Experiment UUID15: {}", exp_uuid);
 
         let ws_endpoint = self.http_client.request_websocket_url(&exp_uuid)?;
 
@@ -300,14 +301,22 @@ impl HeatClient {
         Ok(())
     }
 
-    pub fn upload_crates(
+    pub fn upload_new_project_version(
         &self,
         root_crate_name: &str,
-        crates_data: Vec<CrateData>,
+        crates_data: Vec<PackagedCrateData>,
     ) -> Result<u32, HeatSdkError> {
-        let (data, metadata): (Vec<Vec<u8>>, Vec<CrateMetadata>) = crates_data
+        let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
             .into_iter()
-            .map(|data| (data.data, data.metadata))
+            .map(|krate| {
+                (
+                    (krate.name, krate.path),
+                    CrateVersionMetadata {
+                        checksum: krate.checksum,
+                        metadata: krate.metadata,
+                    },
+                )
+            })
             .unzip();
 
         let urls = self.http_client.publish_project_version_urls(
@@ -317,9 +326,23 @@ impl HeatClient {
         )?;
 
         // assumes that the urls are returned in the same order as the names
-        for (url, data) in urls.urls.into_iter().zip(data.into_iter()) {
-            self.http_client
-                .upload_bytes_to_url(&url.url, data.clone())?;
+        for (crate_name, file_path) in data.into_iter() {
+            let url = urls
+                .urls
+                .get(&crate_name)
+                .ok_or(HeatSdkError::ClientError(format!(
+                    "No URL found for crate {}",
+                    crate_name
+                )))?;
+
+            let data = std::fs::read(file_path).map_err(|e| {
+                HeatSdkError::ClientError(format!(
+                    "Failed to read crate data for {}: {}",
+                    crate_name, e
+                ))
+            })?;
+
+            self.http_client.upload_bytes_to_url(url, data)?;
         }
 
         Ok(urls.project_version)

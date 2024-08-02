@@ -117,7 +117,6 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-#[cfg(feature = "build-cli")]
 #[proc_macro_attribute]
 pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);

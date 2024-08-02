@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -95,4 +95,17 @@ pub struct CrateMetadata {
 pub struct CrateData {
     pub metadata: CrateMetadata,
     pub data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CrateVersionMetadata {
+    pub checksum: String,
+    pub metadata: CrateMetadata,
+}
+
+pub struct PackagedCrateData {
+    pub name: String,
+    pub path: PathBuf,
+    pub checksum: String,
+    pub metadata: CrateMetadata,
 }

@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::schemas::CrateMetadata;
+use crate::schemas::CrateVersionMetadata;
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -32,18 +34,13 @@ pub struct CreateExperimentResponseSchema {
 #[derive(Debug, Serialize)]
 pub struct CodeUploadParamsSchema {
     pub root_crate_name: String,
-    pub crates: Vec<CrateMetadata>,
+    pub crates: Vec<CrateVersionMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CodeUploadUrl {
-    pub crate_name: String,
-    pub url: String,
-}
-#[derive(Debug, Deserialize)]
 pub struct CodeUploadUrlsSchema {
     pub project_version: u32,
-    pub urls: Vec<CodeUploadUrl>,
+    pub urls: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -7,9 +7,12 @@ use std::{
 use anyhow::Context;
 use cargo_util_schemas::manifest::{self, RegistryName, StringOrBool};
 use colored::Colorize;
-use heat_sdk::schemas::{CrateMetadata, Dep};
+use heat_sdk::schemas::{CrateMetadata, Dep, PackagedCrateData};
 
 use crate::{context::HeatCliContext, print_debug, print_err, print_info, print_warn, util};
+
+use sha2::Digest as _;
+use sha2::Sha256;
 
 struct ArchiveFile {
     rel_path: std::path::PathBuf,
@@ -181,23 +184,15 @@ pub struct Package {
     pub manifest_path: PathBuf,
 }
 
-pub struct PackagedCrateData {
-    pub name: String,
-    pub path: PathBuf,
-    pub metadata: CrateMetadata,
-}
-
-pub struct PackagedCrates {
-    pub root_package_name: String,
-    pub crates: Vec<PackagedCrateData>,
-}
-
-pub fn package(context: &HeatCliContext) -> anyhow::Result<PackagedCrates> {
+pub fn package(
+    context: &HeatCliContext,
+    target_package_name: &str,
+) -> anyhow::Result<Vec<PackagedCrateData>> {
     let cmd = cargo_metadata::MetadataCommand::new();
 
     let metadata = cmd.exec().expect("Failed to get cargo metadata");
 
-    let own_pkg_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
+    let own_pkg_name = target_package_name.to_string();
     let root_dir = metadata
         .workspace_root
         .canonicalize()
@@ -332,14 +327,12 @@ pub fn package(context: &HeatCliContext) -> anyhow::Result<PackagedCrates> {
         dsts.push(PackagedCrateData {
             name: tarball.0,
             path: tarball.1,
+            checksum: tarball.2,
             metadata: crate_metadata,
         });
     }
 
-    Ok(PackagedCrates {
-        root_package_name: own_pkg_name,
-        crates: dsts,
-    })
+    Ok(dsts)
 }
 
 /// Heavily based on cargo's prepare_archive function
@@ -443,7 +436,7 @@ fn create_package(
     archive_files: Vec<ArchiveFile>,
     workspace_toml: &cargo_util_schemas::manifest::TomlManifest,
     context: &HeatCliContext,
-) -> anyhow::Result<(String, PathBuf)> {
+) -> anyhow::Result<(String, PathBuf, String)> {
     let filecount = archive_files.len();
 
     // here cargo would check if dependencies have versions and are safe to deploy
@@ -484,9 +477,14 @@ fn create_package(
         filecount, uncompressed.0, uncompressed.1, compressed.0, compressed.1,
     );
 
+    let checksum = {
+        let data = std::fs::read(dst_path)?;
+        format!("{:x}", Sha256::digest(data))
+    };
+
     print_info!("{} {}", "Packaged".green().bold(), message);
 
-    Ok((filename, dst_path.into()))
+    Ok((filename, dst_path.into(), checksum))
 }
 
 /// Heavily based on cargo's tar function

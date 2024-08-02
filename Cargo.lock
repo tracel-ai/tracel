@@ -2780,6 +2780,7 @@ dependencies = [
  "serde-untagged",
  "serde_ignored",
  "serde_json",
+ "sha2",
  "strum",
  "syn 2.0.72",
  "syn-serde",

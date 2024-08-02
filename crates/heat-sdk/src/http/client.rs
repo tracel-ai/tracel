@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     client::HeatCredentials, error::HeatSdkError, http::schemas::StartExperimentSchema,
-    schemas::CrateMetadata,
+    schemas::CrateVersionMetadata,
 };
 
 use super::schemas::{
@@ -332,7 +332,7 @@ impl HttpClient {
         &self,
         project_id: &str,
         root_crate_name: &str,
-        crates_metadata: Vec<CrateMetadata>,
+        crates_metadata: Vec<CrateVersionMetadata>,
     ) -> Result<CodeUploadUrlsSchema, HeatSdkError> {
         self.validate_session_cookie()?;
 

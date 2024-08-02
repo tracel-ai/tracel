@@ -1,9 +1,6 @@
-use crate::{context::HeatCliContext, package::PackagedCrates};
+use crate::context::HeatCliContext;
 use clap::Parser;
-use heat_sdk::{
-    client::{HeatClient, HeatClientConfig, HeatCredentials},
-    schemas::CrateData,
-};
+use heat_sdk::client::{HeatClient, HeatClientConfig, HeatCredentials};
 
 #[derive(Parser, Debug)]
 pub struct PackageArgs {
@@ -47,19 +44,9 @@ fn create_heat_client(api_key: &str, url: &str, project: &str) -> HeatClient {
 pub(crate) fn handle_command(args: PackageArgs, context: HeatCliContext) -> anyhow::Result<()> {
     let heat_client = create_heat_client(&args.key, &args.heat_endpoint, &args.project);
 
-    let PackagedCrates {
-        root_package_name,
-        mut crates,
-    } = crate::package::package(&context)?;
+    let crates = crate::package::package(&context, context.package_name())?;
 
-    let mut crates_data: Vec<CrateData> = Vec::new();
-    for dst in crates.drain(..) {
-        let metadata = dst.metadata;
-        let data = std::fs::read(dst.path)?;
-        crates_data.push(CrateData { metadata, data });
-    }
-
-    heat_client.upload_crates(&root_package_name, crates_data)?;
+    heat_client.upload_new_project_version(context.package_name(), crates)?;
 
     Ok(())
 }

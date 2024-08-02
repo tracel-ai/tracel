@@ -34,6 +34,10 @@ impl HeatCliContext {
         self
     }
 
+    pub fn package_name(&self) -> &str {
+        self.user_project_name.as_str()
+    }
+
     fn get_generated_crate_path(&self) -> PathBuf {
         let crate_name = self
             .generated_crate_name
@@ -151,6 +155,7 @@ impl HeatCliContext {
                     .unwrap(),
             ])
             .args(["--message-format", "short"])
+            // todo: remove once correct burn version is published
             .args([
                 "--config",
                 "patch.crates-io.burn.git='https://github.com/tracel-ai/burn'",
