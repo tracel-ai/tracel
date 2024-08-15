@@ -1,4 +1,6 @@
-use crate::{errors::sdk::HeatSdkError, http::HttpClient, websocket::WebSocketClient};
+use crate::{
+    error::HeatSdkError, http::HttpClient, schemas::ExperimentPath, websocket::WebSocketClient,
+};
 use std::sync::mpsc;
 
 use super::{thread::ExperimentWSHandler, WsMessage};
@@ -7,7 +9,7 @@ use super::{thread::ExperimentWSHandler, WsMessage};
 pub struct TempLogStore {
     logs: Vec<String>,
     http_client: HttpClient,
-    exp_id: String,
+    experiment_path: ExperimentPath,
     bytes: usize,
 }
 
@@ -15,11 +17,11 @@ impl TempLogStore {
     // 100 MiB
     const BYTE_LIMIT: usize = 100 * 1024 * 1024;
 
-    pub fn new(http_client: HttpClient, exp_id: String) -> TempLogStore {
+    pub fn new(http_client: HttpClient, experiment_path: ExperimentPath) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
             http_client,
-            exp_id,
+            experiment_path,
             bytes: 0,
         }
     }
@@ -37,7 +39,11 @@ impl TempLogStore {
 
     pub fn flush(&mut self) -> Result<(), HeatSdkError> {
         if !self.logs.is_empty() {
-            let logs_upload_url = self.http_client.request_logs_upload_url(&self.exp_id)?;
+            let logs_upload_url = self.http_client.request_logs_upload_url(
+                self.experiment_path.owner_name(),
+                self.experiment_path.project_name(),
+                self.experiment_path.experiment_num(),
+            )?;
             self.http_client
                 .upload_bytes_to_url(&logs_upload_url, self.logs.join("").into_bytes())?;
 
@@ -51,24 +57,28 @@ impl TempLogStore {
 
 #[derive(Debug)]
 pub struct Experiment {
-    id: String,
+    experiment_path: ExperimentPath,
     handler: Option<ExperimentWSHandler>,
 }
 
 impl Experiment {
-    pub fn new(id: String, ws_client: WebSocketClient, log_store: TempLogStore) -> Experiment {
+    pub fn new(
+        experiment_path: ExperimentPath,
+        ws_client: WebSocketClient,
+        log_store: TempLogStore,
+    ) -> Experiment {
         assert!(ws_client.state().is_open());
 
         let handler = ExperimentWSHandler::new(ws_client, log_store);
 
         Experiment {
-            id,
+            experiment_path,
             handler: Some(handler),
         }
     }
 
-    pub fn id(&self) -> &String {
-        &self.id
+    pub fn experiment_path(&self) -> &ExperimentPath {
+        &self.experiment_path
     }
 
     pub fn get_ws_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {

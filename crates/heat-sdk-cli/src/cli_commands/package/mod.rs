@@ -1,6 +1,9 @@
 use crate::context::HeatCliContext;
 use clap::Parser;
-use heat_sdk::client::{HeatClient, HeatClientConfig, HeatCredentials};
+use heat_sdk::{
+    client::{HeatClient, HeatClientConfig, HeatCredentials},
+    schemas::ProjectPath,
+};
 
 #[derive(Parser, Debug)]
 pub struct PackageArgs {
@@ -12,7 +15,7 @@ pub struct PackageArgs {
         required = true,
         help = "<required> The Heat project ID."
     )]
-    project: String,
+    project_path: String,
     /// The Heat API key
     #[clap(
         short = 'k',
@@ -31,18 +34,21 @@ pub struct PackageArgs {
     pub heat_endpoint: String,
 }
 
-fn create_heat_client(api_key: &str, url: &str, project: &str) -> HeatClient {
+fn create_heat_client(api_key: &str, url: &str, project_path: &str) -> HeatClient {
     let creds = HeatCredentials::new(api_key.to_owned());
-    let client_config = HeatClientConfig::builder(creds, project)
-        .with_endpoint(url)
-        .with_num_retries(10)
-        .build();
+    let client_config = HeatClientConfig::builder(
+        creds,
+        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
+    )
+    .with_endpoint(url)
+    .with_num_retries(10)
+    .build();
     HeatClient::create(client_config)
         .expect("Should connect to the Heat server and create a client")
 }
 
 pub(crate) fn handle_command(args: PackageArgs, context: HeatCliContext) -> anyhow::Result<()> {
-    let heat_client = create_heat_client(&args.key, &args.heat_endpoint, &args.project);
+    let heat_client = create_heat_client(&args.key, &args.heat_endpoint, &args.project_path);
 
     let crates = crate::util::cargo::package::package(
         &context.get_artifacts_dir_path(),

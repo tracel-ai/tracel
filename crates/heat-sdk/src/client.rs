@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
-use crate::schemas::{CrateVersionMetadata, PackagedCrateData};
+use crate::schemas::{CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath};
 use crate::websocket::WebSocketClient;
 
 /// Credentials to connect to the Heat server
@@ -39,13 +39,13 @@ pub struct HeatClientConfig {
     /// The number of retries to attempt when connecting to the Heat API.
     pub num_retries: u8,
     /// The project ID to create the experiment in.
-    pub project_id: String,
+    pub project_path: ProjectPath,
 }
 
 impl HeatClientConfig {
     /// Create a new [HeatClientConfigBuilder] with the given API key.
-    pub fn builder(creds: HeatCredentials, project_id: &str) -> HeatClientConfigBuilder {
-        HeatClientConfigBuilder::new(creds, project_id)
+    pub fn builder(creds: HeatCredentials, project_path: ProjectPath) -> HeatClientConfigBuilder {
+        HeatClientConfigBuilder::new(creds, project_path)
     }
 }
 
@@ -55,13 +55,16 @@ pub struct HeatClientConfigBuilder {
 }
 
 impl HeatClientConfigBuilder {
-    pub(crate) fn new(creds: HeatCredentials, project_id: &str) -> HeatClientConfigBuilder {
+    pub(crate) fn new(
+        creds: HeatCredentials,
+        project_path: ProjectPath,
+    ) -> HeatClientConfigBuilder {
         HeatClientConfigBuilder {
             config: HeatClientConfig {
                 endpoint: "http://127.0.0.1:9001".into(),
                 credentials: creds,
                 num_retries: 3,
-                project_id: project_id.into(),
+                project_path,
             },
         }
     }
@@ -134,21 +137,46 @@ impl HeatClient {
 
     /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
     pub fn start_experiment(&mut self, config: &impl Serialize) -> Result<(), HeatSdkError> {
-        let exp_uuid = self
-            .http_client
-            .create_experiment(&self.config.project_id)?;
-        self.http_client.start_experiment(&exp_uuid, config)?;
+        let experiment = self.http_client.create_experiment(
+            self.config.project_path.owner_name(),
+            self.config.project_path.project_name(),
+        )?;
 
-        println!("Experiment UUID: {}", exp_uuid);
+        let experiment_path = ExperimentPath::try_from(format!(
+            "{}/{}",
+            self.config.project_path, experiment.experiment_num
+        ))
+        .map_err(HeatSdkError::ClientError)?;
 
-        let ws_endpoint = self.http_client.request_websocket_url(&exp_uuid)?;
+        self.http_client.start_experiment(
+            self.config.project_path.owner_name(),
+            &experiment.project_name,
+            experiment.experiment_num,
+            config,
+        )?;
+
+        println!("Experiment num: {}", experiment.experiment_num);
+
+        let ws_endpoint = self.http_client.format_websocket_url(
+            self.config.project_path.owner_name(),
+            &experiment.project_name,
+            experiment.experiment_num,
+        );
 
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint, self.http_client.get_session_cookie().unwrap())?;
 
-        let exp_log_store = TempLogStore::new(self.http_client.clone(), exp_uuid.clone());
+        let exp_log_store = TempLogStore::new(self.http_client.clone(), experiment_path);
 
-        let experiment = Experiment::new(exp_uuid, ws_client, exp_log_store);
+        let experiment = Experiment::new(
+            ExperimentPath::try_from(format!(
+                "{}/{}",
+                self.config.project_path, experiment.experiment_num
+            ))
+            .map_err(HeatSdkError::ClientError)?,
+            ws_client,
+            exp_log_store,
+        );
         let mut exp_guard = self
             .active_experiment
             .write()
@@ -183,16 +211,18 @@ impl HeatClient {
             .active_experiment
             .read()
             .expect("Should be able to lock active_experiment as read.");
-
-        let exp_uuid = active_experiment
+        let experiment_path = active_experiment
             .as_ref()
             .expect("Experiment should exist.")
-            .id()
+            .experiment_path()
             .clone();
 
-        let url = self
-            .http_client
-            .request_checkpoint_save_url(&exp_uuid, path)?;
+        let url = self.http_client.request_checkpoint_save_url(
+            experiment_path.owner_name(),
+            experiment_path.project_name(),
+            experiment_path.experiment_num(),
+            path,
+        )?;
 
         let time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -216,16 +246,18 @@ impl HeatClient {
             .active_experiment
             .read()
             .expect("Should be able to lock active_experiment as read.");
-
-        let exp_uuid = active_experiment
+        let experiment_path = active_experiment
             .as_ref()
             .expect("Experiment should exist.")
-            .id()
+            .experiment_path()
             .clone();
 
-        let url = self
-            .http_client
-            .request_checkpoint_load_url(&exp_uuid, path)?;
+        let url = self.http_client.request_checkpoint_load_url(
+            experiment_path.owner_name(),
+            experiment_path.project_name(),
+            experiment_path.experiment_num(),
+            path,
+        )?;
         let response = self.http_client.download_bytes_from_url(&url)?;
 
         Ok(response)
@@ -244,15 +276,17 @@ impl HeatClient {
             ));
         }
 
-        let experiment_id = active_experiment
+        let experiment_path = active_experiment
             .as_ref()
             .expect("Experiment should exist.")
-            .id()
+            .experiment_path()
             .clone();
 
-        let url = self
-            .http_client
-            .request_final_model_save_url(&experiment_id)?;
+        let url = self.http_client.request_final_model_save_url(
+            experiment_path.owner_name(),
+            experiment_path.project_name(),
+            experiment_path.experiment_num(),
+        )?;
         self.http_client.upload_bytes_to_url(&url, data)?;
 
         Ok(())
@@ -293,13 +327,18 @@ impl HeatClient {
             .write()
             .expect("Should be able to lock active_experiment as write.");
         let mut experiment = active_experiment.take().expect("Experiment should exist.");
+        let experiment_path = experiment.experiment_path().clone();
 
         // Stop the websocket handling thread
         experiment.stop();
 
         // End the experiment in the backend
-        self.http_client
-            .end_experiment(experiment.id(), end_status)?;
+        self.http_client.end_experiment(
+            experiment_path.owner_name(),
+            experiment_path.project_name(),
+            experiment_path.experiment_num(),
+            end_status,
+        )?;
 
         Ok(())
     }
@@ -323,7 +362,8 @@ impl HeatClient {
             .unzip();
 
         let urls = self.http_client.publish_project_version_urls(
-            &self.config.project_id,
+            self.config.project_path.owner_name(),
+            self.config.project_path.project_name(),
             root_crate_name,
             metadata,
         )?;
@@ -358,10 +398,8 @@ impl HeatClient {
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.http_client.start_remote_job(
-            self.config
-                .project_id
-                .parse()
-                .expect("Project id should be a valid Uuid"),
+            self.config.project_path.owner_name(),
+            self.config.project_path.project_name(),
             project_version,
             target_package,
             command,
