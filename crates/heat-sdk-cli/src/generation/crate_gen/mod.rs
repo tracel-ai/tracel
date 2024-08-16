@@ -254,7 +254,6 @@ fn generate_training_function(
 
         let mut train_cmd_context = TrainCommandContext::new(client, vec![device], training_config_str);
 
-        let conf_ser = train_cmd_context.config().as_bytes().to_vec();
         train_cmd_context.client()
             .start_experiment(&training_config)
             .expect("Experiment should be started");

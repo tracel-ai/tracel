@@ -38,7 +38,7 @@ pub struct CreateExperimentResponseSchema {
 
 #[derive(Debug, Serialize)]
 pub struct CodeUploadParamsSchema {
-    pub root_crate_name: String,
+    pub target_package_name: String,
     pub crates: Vec<CrateVersionMetadata>,
 }
 
@@ -58,6 +58,5 @@ pub struct RunnerQueueJobParamsSchema {
     pub owner_name: String,
     pub project_name: String,
     pub project_version: u32,
-    pub target_package: String,
     pub command: RunnerJobCommand,
 }

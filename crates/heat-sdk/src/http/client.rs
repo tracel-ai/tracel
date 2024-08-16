@@ -1,5 +1,3 @@
-
-use rand::Rng;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use reqwest::Url;
 use serde::Serialize;
@@ -379,7 +377,7 @@ impl HttpClient {
         &self,
         owner_name: &str,
         project_name: &str,
-        root_crate_name: &str,
+        target_package_name: &str,
         crates_metadata: Vec<CrateVersionMetadata>,
     ) -> Result<CodeUploadUrlsSchema, HeatSdkError> {
         self.validate_session_cookie()?;
@@ -394,7 +392,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&CodeUploadParamsSchema {
-                root_crate_name: root_crate_name.to_string(),
+                target_package_name: target_package_name.to_string(),
                 crates: crates_metadata,
             })
             .send()?
@@ -409,18 +407,19 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         project_version: u32,
-        target_package: String,
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.validate_session_cookie()?;
 
-        let url = format!("{}/runner/queue", self.base_url);
+        let url = format!(
+            "{}/projects/{}/{}/jobs/queue",
+            self.base_url, owner_name, project_name
+        );
 
         let body = RunnerQueueJobParamsSchema {
             owner_name: owner_name.to_string(),
             project_name: project_name.to_string(),
             project_version,
-            target_package,
             command: RunnerJobCommand { command },
         };
 

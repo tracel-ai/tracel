@@ -345,7 +345,7 @@ impl HeatClient {
 
     pub fn upload_new_project_version(
         &self,
-        root_crate_name: &str,
+        target_package_name: &str,
         crates_data: Vec<PackagedCrateData>,
     ) -> Result<u32, HeatSdkError> {
         let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
@@ -364,7 +364,7 @@ impl HeatClient {
         let urls = self.http_client.publish_project_version_urls(
             self.config.project_path.owner_name(),
             self.config.project_path.project_name(),
-            root_crate_name,
+            target_package_name,
             metadata,
         )?;
 
@@ -394,14 +394,12 @@ impl HeatClient {
     pub fn start_remote_job(
         &self,
         project_version: u32,
-        target_package: String,
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.http_client.start_remote_job(
             self.config.project_path.owner_name(),
             self.config.project_path.project_name(),
             project_version,
-            target_package,
             command,
         )
     }

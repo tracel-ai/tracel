@@ -74,7 +74,6 @@ pub(crate) fn handle_command(
 
     heat_client.start_remote_job(
         project_version,
-        context.package_name().to_string(),
         format!(
             "run local training --functions {} --backends {} --configs {} --project {} --key {}",
             args.functions.join(" "),
