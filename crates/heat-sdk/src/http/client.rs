@@ -4,7 +4,9 @@ use rand::Rng;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
-use crate::{client::HeatCredentials, error::HeatSdkError, http::schemas::StartExperimentSchema};
+use crate::{
+    client::HeatCredentials, errors::sdk::HeatSdkError, http::schemas::StartExperimentSchema,
+};
 
 use super::schemas::{CreateExperimentResponseSchema, EndExperimentSchema, URLSchema};
 

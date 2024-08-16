@@ -1,4 +1,4 @@
-use crate::{error::HeatSdkError, http::HttpClient, websocket::WebSocketClient};
+use crate::{errors::sdk::HeatSdkError, http::HttpClient, websocket::WebSocketClient};
 use std::sync::mpsc;
 
 use super::{thread::ExperimentWSHandler, WsMessage};

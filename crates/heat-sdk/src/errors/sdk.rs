@@ -12,6 +12,8 @@ pub enum HeatSdkError {
     ClientError(String),
     #[error("Websocket Error: {0}")]
     WebSocketError(String),
+    #[error("Macro Error: {0}")]
+    MacroError(String),
     #[error("Unknown Error: {0}")]
     UnknownError(String),
 }

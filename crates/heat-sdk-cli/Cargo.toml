@@ -1,0 +1,26 @@
+[package]
+name = "heat-sdk-cli"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+
+clap = { workspace = true, features = ["derive", "cargo"] }
+colored = { workspace = true }
+strum = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+inventory = "0.3"
+once_cell = "1.19"
+paste = "1.0"
+gensym = "0.1.1"
+syn = { workspace = true }
+quote = { workspace = true }
+prettyplease = "0.2.20"
+toml_edit = "0.22.15"
+proc-macro2 = { workspace = true }
+syn-serde = { version = "0.3.0", features = ["json"] }
+url = "2.5.2"

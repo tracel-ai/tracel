@@ -1,10 +1,10 @@
-use std::sync::Arc;
-use std::sync::{mpsc, Mutex};
+use std::sync::mpsc;
+use std::sync::{Arc, RwLock};
 
 use burn::tensor::backend::Backend;
 use serde::Serialize;
 
-use crate::error::HeatSdkError;
+use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::websocket::WebSocketClient;
@@ -87,7 +87,7 @@ impl HeatClientConfigBuilder {
 pub struct HeatClient {
     config: HeatClientConfig,
     http_client: HttpClient,
-    active_experiment: Option<Arc<Mutex<Experiment>>>,
+    active_experiment: Arc<RwLock<Option<Experiment>>>,
 }
 
 /// Type alias for the HeatClient for simplicity
@@ -100,7 +100,7 @@ impl HeatClient {
         HeatClient {
             config,
             http_client,
-            active_experiment: None,
+            active_experiment: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -146,21 +146,29 @@ impl HeatClient {
 
         let exp_log_store = TempLogStore::new(self.http_client.clone(), exp_uuid.clone());
 
-        let experiment = Arc::new(Mutex::new(Experiment::new(
-            exp_uuid,
-            ws_client,
-            exp_log_store,
-        )));
-        self.active_experiment = Some(experiment);
+        let experiment = Experiment::new(exp_uuid, ws_client, exp_log_store);
+        let mut exp_guard = self
+            .active_experiment
+            .write()
+            .expect("Should be able to lock active_experiment as write.");
+        exp_guard.replace(experiment);
 
         Ok(())
     }
 
     /// Get the sender for the active experiment's WebSocket connection.
     pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
-        let experiment = self.active_experiment.as_ref().unwrap();
-        let experiment = experiment.lock().unwrap();
-        experiment.get_ws_sender()
+        let active_experiment = self
+            .active_experiment
+            .read()
+            .expect("Should be able to lock active_experiment as read.");
+        if let Some(w) = active_experiment.as_ref() {
+            w.get_ws_sender()
+        } else {
+            Err(HeatSdkError::ClientError(
+                "No active experiment to get sender.".to_string(),
+            ))
+        }
     }
 
     /// Save checkpoint data to the Heat API.
@@ -169,12 +177,13 @@ impl HeatClient {
         path: &str,
         checkpoint: Vec<u8>,
     ) -> Result<(), HeatSdkError> {
-        let exp_uuid = self
+        let active_experiment = self
             .active_experiment
+            .read()
+            .expect("Should be able to lock active_experiment as read.");
+        let exp_uuid = active_experiment
             .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
+            .expect("Experiment should exist.")
             .id()
             .clone();
 
@@ -200,12 +209,13 @@ impl HeatClient {
 
     /// Load checkpoint data from the Heat API
     pub(crate) fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSdkError> {
-        let exp_uuid = self
+        let active_experiment = self
             .active_experiment
+            .read()
+            .expect("Should be able to lock active_experiment as read.");
+        let exp_uuid = active_experiment
             .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
+            .expect("Experiment should exist.")
             .id()
             .clone();
 
@@ -219,17 +229,19 @@ impl HeatClient {
 
     /// Save the final model to the Heat backend.
     pub(crate) fn save_final_model(&self, data: Vec<u8>) -> Result<(), HeatSdkError> {
-        if self.active_experiment.is_none() {
+        let active_experiment = self
+            .active_experiment
+            .read()
+            .expect("Should be able to lock active_experiment as read.");
+        if active_experiment.is_none() {
             return Err(HeatSdkError::ClientError(
                 "No active experiment to upload final model.".to_string(),
             ));
         }
 
-        let experiment_id = self
-            .active_experiment
+        let experiment_id = active_experiment
             .as_ref()
-            .unwrap()
-            .lock()?
+            .expect("Experiment should exist.")
             .id()
             .clone();
 
@@ -271,8 +283,11 @@ impl HeatClient {
         &mut self,
         end_status: EndExperimentStatus,
     ) -> Result<(), HeatSdkError> {
-        let experiment: Arc<Mutex<Experiment>> = self.active_experiment.take().unwrap();
-        let mut experiment = experiment.lock()?;
+        let mut active_experiment = self
+            .active_experiment
+            .write()
+            .expect("Should be able to lock active_experiment as write.");
+        let mut experiment = active_experiment.take().expect("Experiment should exist.");
 
         // Stop the websocket handling thread
         experiment.stop();
@@ -288,11 +303,19 @@ impl HeatClient {
 impl Drop for HeatClient {
     fn drop(&mut self) {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
-        if let Some(exp_arc) = &self.active_experiment {
-            if Arc::strong_count(exp_arc) == 1 {
-                self.end_experiment_internal(EndExperimentStatus::Success)
-                    .expect("Should be able to end the experiment after dropping the last client.");
+        if Arc::strong_count(&self.active_experiment) == 1 {
+            {
+                let active_experiment = self
+                    .active_experiment
+                    .read()
+                    .expect("Should be able to lock active_experiment as read.");
+                if active_experiment.is_none() {
+                    return;
+                }
             }
+
+            self.end_experiment_internal(EndExperimentStatus::Success)
+                .expect("Should be able to end the experiment after dropping the last client.");
         }
     }
 }

@@ -1,0 +1,9 @@
+[package]
+edition.workspace = true
+name = "guide-cli"
+publish = false
+version.workspace = true
+
+[dependencies]
+burn = { workspace = true, features = ["vision", "train"] }
+tracel = { path = "../../crates/tracel", features = ["heat-sdk", "heat-sdk-cli"] }
