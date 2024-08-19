@@ -65,58 +65,58 @@ impl<B: Backend, T: Config> FromTrainCommandContext<B> for T {
     }
 }
 
-pub type TrainResult<M> = Result<M, ()>;
-
-pub trait TrainCommandHandler<B: Backend, T, M: Module<B>> {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M>;
+pub trait TrainCommandHandler<B: Backend, T, M: Module<B>, E: Into<Box<dyn std::error::Error>>> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E>;
 }
 
-impl<F, M, B> TrainCommandHandler<B, (), M> for F
+impl<F, M, B, E: Into<Box<dyn std::error::Error>>> TrainCommandHandler<B, (), M, E> for F
 where
-    F: Fn() -> TrainResult<M>,
+    F: Fn() -> Result<M, E>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, _context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, _context: TrainCommandContext<B>) -> Result<M, E> {
         (self)()
     }
 }
 
-impl<F, T, M, B> TrainCommandHandler<B, (T,), M> for F
+impl<F, T, M, B, E: Into<Box<dyn std::error::Error>>> TrainCommandHandler<B, (T,), M, E> for F
 where
-    F: Fn(T) -> TrainResult<M>,
+    F: Fn(T) -> Result<M, E>,
     T: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E> {
         (self)(T::from_context(&context))
     }
 }
 
-impl<F, T1, T2, M, B> TrainCommandHandler<B, (T1, T2), M> for F
+impl<F, T1, T2, M, B, E: Into<Box<dyn std::error::Error>>> TrainCommandHandler<B, (T1, T2), M, E>
+    for F
 where
-    F: Fn(T1, T2) -> TrainResult<M>,
+    F: Fn(T1, T2) -> Result<M, E>,
     T1: FromTrainCommandContext<B>,
     T2: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E> {
         (self)(T1::from_context(&context), T2::from_context(&context))
     }
 }
 
-impl<F, T1, T2, T3, M, B> TrainCommandHandler<B, (T1, T2, T3), M> for F
+impl<F, T1, T2, T3, M, B, E: Into<Box<dyn std::error::Error>>>
+    TrainCommandHandler<B, (T1, T2, T3), M, E> for F
 where
-    F: Fn(T1, T2, T3) -> TrainResult<M>,
+    F: Fn(T1, T2, T3) -> Result<M, E>,
     T1: FromTrainCommandContext<B>,
     T2: FromTrainCommandContext<B>,
     T3: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E> {
         (self)(
             T1::from_context(&context),
             T2::from_context(&context),

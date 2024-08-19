@@ -90,7 +90,6 @@ pub struct HeatClient {
     config: HeatClientConfig,
     http_client: HttpClient,
     active_experiment: Arc<RwLock<Option<Experiment>>>,
-    active_experiment: Arc<RwLock<Option<Experiment>>>,
 }
 
 /// Type alias for the HeatClient for simplicity
@@ -103,7 +102,6 @@ impl HeatClient {
         HeatClient {
             config,
             http_client,
-            active_experiment: Arc::new(RwLock::new(None)),
             active_experiment: Arc::new(RwLock::new(None)),
         }
     }
@@ -156,29 +154,12 @@ impl HeatClient {
             .write()
             .expect("Should be able to lock active_experiment as write.");
         exp_guard.replace(experiment);
-        let experiment = Experiment::new(exp_uuid, ws_client, exp_log_store);
-        let mut exp_guard = self
-            .active_experiment
-            .write()
-            .expect("Should be able to lock active_experiment as write.");
-        exp_guard.replace(experiment);
 
         Ok(())
     }
 
     /// Get the sender for the active experiment's WebSocket connection.
     pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-        if let Some(w) = active_experiment.as_ref() {
-            w.get_ws_sender()
-        } else {
-            Err(HeatSdkError::ClientError(
-                "No active experiment to get sender.".to_string(),
-            ))
-        }
         let active_experiment = self
             .active_experiment
             .read()
@@ -199,16 +180,12 @@ impl HeatClient {
         checkpoint: Vec<u8>,
     ) -> Result<(), HeatSdkError> {
         let active_experiment = self
-        let active_experiment = self
             .active_experiment
             .read()
             .expect("Should be able to lock active_experiment as read.");
-        let exp_uuid = active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
+
         let exp_uuid = active_experiment
             .as_ref()
-            .expect("Experiment should exist.")
             .expect("Experiment should exist.")
             .id()
             .clone();
@@ -236,16 +213,12 @@ impl HeatClient {
     /// Load checkpoint data from the Heat API
     pub(crate) fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, HeatSdkError> {
         let active_experiment = self
-        let active_experiment = self
             .active_experiment
             .read()
             .expect("Should be able to lock active_experiment as read.");
-        let exp_uuid = active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
+
         let exp_uuid = active_experiment
             .as_ref()
-            .expect("Experiment should exist.")
             .expect("Experiment should exist.")
             .id()
             .clone();
@@ -264,11 +237,7 @@ impl HeatClient {
             .active_experiment
             .read()
             .expect("Should be able to lock active_experiment as read.");
-        if active_experiment.is_none() {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
+
         if active_experiment.is_none() {
             return Err(HeatSdkError::ClientError(
                 "No active experiment to upload final model.".to_string(),
@@ -276,9 +245,7 @@ impl HeatClient {
         }
 
         let experiment_id = active_experiment
-        let experiment_id = active_experiment
             .as_ref()
-            .expect("Experiment should exist.")
             .expect("Experiment should exist.")
             .id()
             .clone();
@@ -321,11 +288,6 @@ impl HeatClient {
         &mut self,
         end_status: EndExperimentStatus,
     ) -> Result<(), HeatSdkError> {
-        let mut active_experiment = self
-            .active_experiment
-            .write()
-            .expect("Should be able to lock active_experiment as write.");
-        let mut experiment = active_experiment.take().expect("Experiment should exist.");
         let mut active_experiment = self
             .active_experiment
             .write()
@@ -410,19 +372,6 @@ impl HeatClient {
 impl Drop for HeatClient {
     fn drop(&mut self) {
         // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
-        if Arc::strong_count(&self.active_experiment) == 1 {
-            {
-                let active_experiment = self
-                    .active_experiment
-                    .read()
-                    .expect("Should be able to lock active_experiment as read.");
-                if active_experiment.is_none() {
-                    return;
-                }
-            }
-
-            self.end_experiment_internal(EndExperimentStatus::Success)
-                .expect("Should be able to end the experiment after dropping the last client.");
         if Arc::strong_count(&self.active_experiment) == 1 {
             {
                 let active_experiment = self

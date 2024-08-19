@@ -6,7 +6,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
-    client::HeatCredentials, error::HeatSdkError, http::schemas::StartExperimentSchema,
+    client::HeatCredentials, errors::sdk::HeatSdkError, http::schemas::StartExperimentSchema,
     schemas::CrateVersionMetadata,
 };
 

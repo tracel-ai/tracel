@@ -6,18 +6,18 @@ version.workspace = true
 readme.workspace = true
 
 [features]
-default = []
-cli = ["dep:heat-sdk-cli", "heat-sdk-cli-macros/build-cli"]
 
 [dependencies]
 burn = { workspace = true, features = ["train"] }
 
 derive-new = { workspace = true }
 log = { workspace = true }
+rand = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "json"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+strum = { workspace = true }
 thiserror = { workspace = true }
 tracing = { version = "0.1.40" }
 tracing-core = { version = "0.1.32" }

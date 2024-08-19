@@ -246,7 +246,6 @@ fn generate_clap_cli() -> proc_macro2::TokenStream {
 
 fn generate_training_function(
     train_func_match: &proc_macro2::TokenStream,
-    autodiff_backend: &proc_macro2::Ident,
 ) -> proc_macro2::TokenStream {
     quote! {
         let client = create_heat_client(&key, &heat_endpoint, &project);
@@ -259,24 +258,14 @@ fn generate_training_function(
             .start_experiment(&conf_ser)
             .expect("Experiment should be started");
 
-        pub fn trigger<B: Backend, T, M: Module<B>, H: TrainCommandHandler<B, T, M>>(handler: H, context: TrainCommandContext<B>) -> TrainResult<M> {
-            handler.call(context)
-        }
-
-        let res = #train_func_match;
-
-        match res {
-            Ok(model) => {
-                train_cmd_context.client()
-                .end_experiment_with_model::<#autodiff_backend, burn::record::HalfPrecisionSettings>(model.clone())
-                .expect("Experiment should end successfully");
-            }
-            Err(_) => {
-                train_cmd_context.client()
-                .end_experiment_with_error("Error during training".to_string())
-                .expect("Experiment should end successfully");
+        pub fn trigger<B: Backend, T, M: Module<B>, E: Into<Box<dyn std::error::Error>>, H: TrainCommandHandler<B, T, M, E>>(handler: H, context: TrainCommandContext<B>) -> Result<M, Box<dyn std::error::Error>> {
+            match handler.call(context) {
+                Ok(model) => Ok(model),
+                Err(e) => Err(e.into()),
             }
         }
+
+        #train_func_match;
     }
 }
 
@@ -289,13 +278,18 @@ fn generate_proc_call(
         .expect("Failed to parse path.");
 
     quote! {
-        let res = trigger(#syn_func_path, train_cmd_context.clone());
-        res
+        trigger(#syn_func_path, train_cmd_context.clone())
     }
 }
 
 fn generate_main_rs(main_backend: &BackendType) -> String {
     let flags = crate::registry::get_flags();
+
+    let backend_types =
+        crate::generation::crate_gen::backend::generate_backend_typedef_stream(main_backend);
+    let (_backend_type_name, autodiff_backend_type_name) =
+        crate::generation::crate_gen::backend::get_backend_type_names();
+    let backend_default_device = main_backend.default_device_stream();
 
     let train_match_arms: Vec<proc_macro2::TokenStream> = flags
         .iter()
@@ -309,7 +303,18 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
 
             quote! {
                  #fn_name => {
-                    #proc_call
+                    match #proc_call {
+                        Ok(model) => {
+                            train_cmd_context.client()
+                            .end_experiment_with_model::<#autodiff_backend_type_name, burn::record::HalfPrecisionSettings>(model.clone())
+                            .expect("Experiment should end successfully");
+                        }
+                        Err(e) => {
+                            train_cmd_context.client()
+                            .end_experiment_with_error(e.to_string())
+                            .expect("Experiment should end successfully");
+                        }
+                    }
                 }
             }
         })
@@ -322,23 +327,8 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         }
     };
 
-    // let backend = match crate::generation::crate_gen::backend::get_backend_type(main_backend) {
-    //     Ok(backend) => backend,
-    //     Err(err) => {
-    //         print_err!("{}", err);
-    //         std::process::exit(1);
-    //     }
-    // };
-
-    let backend_types =
-        crate::generation::crate_gen::backend::generate_backend_typedef_stream(main_backend);
-    let (_backend_type_name, autodiff_backend_type_name) =
-        crate::generation::crate_gen::backend::get_backend_type_names();
-    let backend_default_device = main_backend.default_device_stream();
-
     let clap_cli = generate_clap_cli();
-    let generated_training =
-        generate_training_function(&train_func_match, &autodiff_backend_type_name);
+    let generated_training = generate_training_function(&train_func_match);
 
     let bin_content: proc_macro2::TokenStream = quote! {
         #backend_types
