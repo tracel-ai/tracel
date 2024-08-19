@@ -1,5 +1,6 @@
 use crate::{
-    error::HeatSdkError, http::HttpClient, schemas::ExperimentPath, websocket::WebSocketClient,
+    errors::sdk::HeatSdkError, http::HttpClient, schemas::ExperimentPath,
+    websocket::WebSocketClient,
 };
 use std::sync::mpsc;
 

@@ -25,6 +25,7 @@ pub struct HeatCredentialsSchema {
     pub api_key: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct CreateExperimentResponseSchema {
     pub experiment_num: i32,

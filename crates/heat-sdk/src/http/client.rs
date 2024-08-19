@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::{
     client::HeatCredentials,
-    error::HeatSdkError,
+    errors::sdk::HeatSdkError,
     http::schemas::StartExperimentSchema,
     schemas::{CrateVersionMetadata, Experiment},
 };
@@ -146,7 +146,6 @@ impl HttpClient {
             .post(url)
             .json(&serde_json::json!({}))
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .json(&body)
             .send()?
             .error_for_status()?
             .json::<CreateExperimentResponseSchema>()?;
