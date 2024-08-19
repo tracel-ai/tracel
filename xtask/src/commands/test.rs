@@ -1,10 +1,13 @@
 use std::process::Command;
 
-use anyhow::{Ok, Result, anyhow};
+use anyhow::{anyhow, Ok, Result};
 use clap::{Args, Subcommand};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-use crate::{endgroup, group, utils::workspace::{get_workspace_members, WorkspaceMember, WorkspaceMemberType}};
+use crate::{
+    endgroup, group,
+    utils::workspace::{get_workspace_members, WorkspaceMember, WorkspaceMemberType},
+};
 
 use super::Target;
 
@@ -41,16 +44,14 @@ pub(crate) fn handle_command(args: TestCmdArgs) -> anyhow::Result<()> {
         TestCommand::Integration => run_integration(&args.target),
         TestCommand::Documentation => run_documentation(&args.target),
         TestCommand::Guide => run_guide(),
-        TestCommand::All => {
-            TestCommand::iter()
-                .filter(|c| *c != TestCommand::All)
-                .try_for_each(|c| handle_command(
-                    TestCmdArgs {
-                        command: c,
-                        target: args.target.clone()
-                    },
-                ))
-        },
+        TestCommand::All => TestCommand::iter()
+            .filter(|c| *c != TestCommand::All)
+            .try_for_each(|c| {
+                handle_command(TestCmdArgs {
+                    command: c,
+                    target: args.target.clone(),
+                })
+            }),
     }
 }
 
@@ -58,7 +59,17 @@ pub(crate) fn run_guide() -> Result<()> {
     group!("Guide Test");
     info!("Command line: cargo run --release --bin guide -- --key \"...\" --project \"...\"");
     let status = Command::new("cargo")
-        .args(["run", "--release", "--bin", "guide", "--", "--key", API_KEY, "--project", PROJECT_UUID])
+        .args([
+            "run",
+            "--release",
+            "--bin",
+            "guide",
+            "--",
+            "--key",
+            API_KEY,
+            "--project",
+            PROJECT_UUID,
+        ])
         .status()
         .map_err(|e| anyhow!("Failed to execute guide example: {}", e))?;
     if !status.success() {
@@ -80,12 +91,12 @@ pub(crate) fn run_unit(target: &Target) -> Result<()> {
             for member in members {
                 run_unit_test(&member)?;
             }
-        },
+        }
         Target::All => {
             Target::iter()
                 .filter(|t| *t != Target::All)
                 .try_for_each(|t| run_unit(&t))?;
-        },
+        }
     }
     Ok(())
 }
@@ -116,12 +127,12 @@ pub(crate) fn run_documentation(target: &Target) -> Result<()> {
             for member in members {
                 run_doc_test(&member)?;
             }
-        },
+        }
         Target::All => {
             Target::iter()
                 .filter(|t| *t != Target::All)
                 .try_for_each(|t| run_documentation(&t))?;
-        },
+        }
     }
     Ok(())
 }
@@ -134,7 +145,10 @@ fn run_doc_test(member: &WorkspaceMember) -> Result<(), anyhow::Error> {
         .status()
         .map_err(|e| anyhow!("Failed to execute documentation test: {}", e))?;
     if !status.success() {
-        return Err(anyhow!("Failed to execute documentation test for {}", &member.name));
+        return Err(anyhow!(
+            "Failed to execute documentation test for {}",
+            &member.name
+        ));
     }
     endgroup!();
     Ok(())
@@ -152,19 +166,22 @@ pub(crate) fn run_integration(target: &Target) -> anyhow::Result<()> {
             for member in members {
                 run_integration_test(&member)?;
             }
-        },
+        }
         Target::All => {
             Target::iter()
                 .filter(|t| *t != Target::All)
                 .try_for_each(|t| run_integration(&t))?;
-        },
+        }
     }
     Ok(())
 }
 
 fn run_integration_test(member: &WorkspaceMember) -> Result<()> {
     group!("Integration Tests: {}", &member.name);
-    info!("Command line: cargo test --test \"test_*\" -p {}", &member.name);
+    info!(
+        "Command line: cargo test --test \"test_*\" -p {}",
+        &member.name
+    );
     let output = Command::new("cargo")
         .args(["test", "--test", "test_*", "-p", &member.name])
         .output()
@@ -173,11 +190,18 @@ fn run_integration_test(member: &WorkspaceMember) -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("no test target matches pattern") {
-            warn!("No tests found matching the pattern `test_*` for {}", &member.name);
+            warn!(
+                "No tests found matching the pattern `test_*` for {}",
+                &member.name
+            );
             endgroup!();
             return Ok(());
         }
-        return Err(anyhow!("Failed to execute integration test for {}: {}", &member.name, stderr));
+        return Err(anyhow!(
+            "Failed to execute integration test for {}: {}",
+            &member.name,
+            stderr
+        ));
     }
     endgroup!();
     Ok(())

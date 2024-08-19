@@ -5,6 +5,10 @@ edition.workspace = true
 version.workspace = true
 readme.workspace = true
 
+[features]
+default = []
+cli = ["dep:heat-sdk-cli", "heat-sdk-cli-macros/build-cli"]
+
 [dependencies]
 burn = { workspace = true, features = ["train"] }
 

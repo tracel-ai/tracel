@@ -37,13 +37,22 @@ pub fn cargo_command_with_path<P: AsRef<Path>>(
 }
 
 /// Run a cargo command
-pub fn run_cargo(command: &str, params: Params, envs: HashMap<&str, &str>, error: &str) -> anyhow::Result<()> {
+pub fn run_cargo(
+    command: &str,
+    params: Params,
+    envs: HashMap<&str, &str>,
+    error: &str,
+) -> anyhow::Result<()> {
     let mut cargo = cargo_command(command, params.clone(), envs);
     run_process_command(&mut cargo, error)
 }
 
 /// Ensure that a cargo crate is installed
-pub fn ensure_cargo_crate_is_installed(crate_name: &str, features: Option<&str>, locked: bool) -> anyhow::Result<()> {
+pub fn ensure_cargo_crate_is_installed(
+    crate_name: &str,
+    features: Option<&str>,
+    locked: bool,
+) -> anyhow::Result<()> {
     if !is_cargo_crate_installed(crate_name) {
         group!("Cargo: install crate '{}'", crate_name);
         let mut args = vec![crate_name];
