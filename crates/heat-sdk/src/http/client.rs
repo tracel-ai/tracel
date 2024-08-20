@@ -11,7 +11,7 @@ use crate::{
 
 use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
-    EndExperimentSchema, RunnerJobCommand, RunnerQueueJobParamsSchema, URLSchema,
+    EndExperimentSchema, RunnerQueueJobParamsSchema, URLSchema,
 };
 
 pub enum EndExperimentStatus {
@@ -403,6 +403,7 @@ impl HttpClient {
 
     pub fn start_remote_job(
         &self,
+        runner_group_name: &str,
         owner_name: &str,
         project_name: &str,
         project_version: u32,
@@ -416,10 +417,9 @@ impl HttpClient {
         );
 
         let body = RunnerQueueJobParamsSchema {
-            owner_name: owner_name.to_string(),
-            project_name: project_name.to_string(),
+            runner_group_name: runner_group_name.to_string(),
             project_version,
-            command: RunnerJobCommand { command },
+            command
         };
 
         self.http_client

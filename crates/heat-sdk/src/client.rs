@@ -393,10 +393,12 @@ impl HeatClient {
 
     pub fn start_remote_job(
         &self,
+        runner_group_name: String,
         project_version: u32,
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.http_client.start_remote_job(
+            &runner_group_name,
             self.config.project_path.owner_name(),
             self.config.project_path.project_name(),
             project_version,

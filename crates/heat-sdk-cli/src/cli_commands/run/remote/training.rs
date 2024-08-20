@@ -44,6 +44,14 @@ pub struct RemoteTrainingRunArgs {
         default_value = "http://127.0.0.1:9001"
     )]
     pub heat_endpoint: String,
+    /// The runner group name
+    #[clap(
+        short = 'r',
+        long = "runner",
+        help = "The runner group name.",
+        required = true,
+    )]
+    pub runner: String,
 }
 
 fn create_heat_client(api_key: &str, url: &str, project_path: &str) -> HeatClient {
@@ -73,6 +81,7 @@ pub(crate) fn handle_command(
     let project_version = heat_client.upload_new_project_version(context.package_name(), crates)?;
 
     heat_client.start_remote_job(
+        args.runner,
         project_version,
         format!(
             "run local training --functions {} --backends {} --configs {} --project {} --key {}",

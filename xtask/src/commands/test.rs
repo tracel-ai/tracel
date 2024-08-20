@@ -11,7 +11,7 @@ use crate::{
 
 use super::Target;
 
-const PROJECT_UUID: &str = "331a3907-bfd8-45e5-af54-1fee73a3c1b1";
+const PROJECT_PATH: &str = "test/Default-Project";
 const API_KEY: &str = "dcaf7eb9-5acc-47d7-8b93-ca0fbb234096";
 
 #[derive(Args)]
@@ -68,7 +68,7 @@ pub(crate) fn run_guide() -> Result<()> {
             "--key",
             API_KEY,
             "--project",
-            PROJECT_UUID,
+            PROJECT_PATH,
         ])
         .status()
         .map_err(|e| anyhow!("Failed to execute guide example: {}", e))?;
