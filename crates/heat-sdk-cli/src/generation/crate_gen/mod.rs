@@ -250,12 +250,12 @@ fn generate_training_function(
     quote! {
         let client = create_heat_client(&key, &heat_endpoint, &project);
         let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
+        let training_config: serde_json::Value = serde_json::from_str(&training_config_str).expect("Config should be deserialized");
 
         let mut train_cmd_context = TrainCommandContext::new(client, vec![device], training_config_str);
 
-        let conf_ser = train_cmd_context.config().as_bytes().to_vec();
         train_cmd_context.client()
-            .start_experiment(&conf_ser)
+            .start_experiment(&training_config)
             .expect("Experiment should be started");
 
         pub fn trigger<B: Backend, T, M: Module<B>, E: Into<Box<dyn std::error::Error>>, H: TrainCommandHandler<B, T, M, E>>(handler: H, context: TrainCommandContext<B>) -> Result<M, Box<dyn std::error::Error>> {
@@ -339,7 +339,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
 
         fn create_heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
             let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
-            let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
+            let client_config = tracel::heat::client::HeatClientConfig::builder(creds, tracel::heat::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
                 .with_endpoint(url)
                 .with_num_retries(10)
                 .build();
@@ -399,6 +399,12 @@ pub fn create_crate(
         "*".to_string(),
         None,
         vec!["cargo".to_string()],
+    ));
+    generated_crate.add_dependency(Dependency::new(
+        "serde_json".to_string(),
+        "*".to_string(),
+        None,
+        vec![],
     ));
     find_required_dependencies(vec!["tracel", "burn"])
         .drain(..)

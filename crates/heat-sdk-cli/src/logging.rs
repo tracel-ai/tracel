@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use colored::{Colorize, CustomColor};
 
 pub const BURN_ORANGE: CustomColor = CustomColor {

@@ -24,3 +24,5 @@ tracing-core = { version = "0.1.32" }
 tracing-subscriber = { version = "0.3.18" }
 tungstenite = { version = "0.21.0" }
 uuid = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }

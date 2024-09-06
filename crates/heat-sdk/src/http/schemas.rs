@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use crate::schemas::CrateVersionMetadata;
+use crate::schemas::{CrateVersionMetadata, HeatCodeMetadata};
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -26,14 +25,22 @@ pub struct HeatCredentialsSchema {
     pub api_key: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct CreateExperimentResponseSchema {
-    pub experiment_id: String,
+    pub experiment_num: i32,
+    pub project_name: String,
+    pub status: String,
+    pub description: String,
+    pub config: serde_json::Value,
+    pub created_by: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CodeUploadParamsSchema {
-    pub root_crate_name: String,
+    pub target_package_name: String,
+    pub heat_metadata: HeatCodeMetadata,
     pub crates: Vec<CrateVersionMetadata>,
 }
 
@@ -43,15 +50,9 @@ pub struct CodeUploadUrlsSchema {
     pub urls: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct RunnerJobCommand {
-    pub command: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct RunnerQueueJobParamsSchema {
-    pub project_id: Uuid,
+    pub runner_group_name: String,
     pub project_version: u32,
-    pub target_package: String,
-    pub command: RunnerJobCommand,
+    pub command: String,
 }

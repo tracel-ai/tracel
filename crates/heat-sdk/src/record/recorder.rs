@@ -67,18 +67,23 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
         item: I,
         mut file: Self::RecordArgs,
     ) -> Result<Self::RecordOutput, RecorderError> {
-        file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
-        let path = file
-            .to_str()
-            .expect("file should be a valid string.")
-            .to_string();
         let serialized_bytes =
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
         match self.checkpointer {
             RecorderStrategy::Checkpoint => {
+                file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
+                let file_name = file
+                    .file_name()
+                    .ok_or(RecorderError::Unknown(
+                        "File name should be present".to_string(),
+                    ))?
+                    .to_str()
+                    .ok_or(RecorderError::Unknown(
+                        "File name should be a valid string".to_string(),
+                    ))?;
                 self.client
-                    .save_checkpoint_data(&path, serialized_bytes.clone())
+                    .save_checkpoint_data(file_name, serialized_bytes.clone())
                     .map_err(|err| RecorderError::Unknown(err.to_string()))?;
             }
             RecorderStrategy::Final => {
@@ -92,17 +97,22 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
     }
 
     fn load_item<I: DeserializeOwned>(&self, mut file: Self::LoadArgs) -> Result<I, RecorderError> {
-        file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
-        let path = file
-            .to_str()
-            .expect("file should be a valid string.")
-            .to_string();
-
         let data = match self.checkpointer {
-            RecorderStrategy::Checkpoint => self
-                .client
-                .load_checkpoint_data(&path)
-                .map_err(|err| RecorderError::Unknown(err.to_string()))?,
+            RecorderStrategy::Checkpoint => {
+                file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
+                let file_name = file
+                    .file_name()
+                    .ok_or(RecorderError::Unknown(
+                        "File name should be present".to_string(),
+                    ))?
+                    .to_str()
+                    .ok_or(RecorderError::Unknown(
+                        "File name should be a valid string".to_string(),
+                    ))?;
+                self.client
+                    .load_checkpoint_data(file_name)
+                    .map_err(|err| RecorderError::Unknown(err.to_string()))?
+            }
             RecorderStrategy::Final => {
                 unimplemented!("Final model loading is not implemented yet.")
             }
