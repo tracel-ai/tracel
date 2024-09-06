@@ -106,6 +106,19 @@ pub struct CrateVersionMetadata {
     pub metadata: CrateMetadata,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegisteredHeatFunction {
+    pub mod_path: String,
+    pub fn_name: String,
+    pub proc_type: String,
+    pub code: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HeatCodeMetadata {
+    pub functions: Vec<RegisteredHeatFunction>,
+}
+
 pub struct PackagedCrateData {
     pub name: String,
     pub path: PathBuf,

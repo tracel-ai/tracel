@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
-use crate::schemas::{CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath};
+use crate::schemas::{CrateVersionMetadata, ExperimentPath, HeatCodeMetadata, PackagedCrateData, ProjectPath};
 use crate::websocket::WebSocketClient;
 
 /// Credentials to connect to the Heat server
@@ -346,6 +346,7 @@ impl HeatClient {
     pub fn upload_new_project_version(
         &self,
         target_package_name: &str,
+        heat_metadata: HeatCodeMetadata,
         crates_data: Vec<PackagedCrateData>,
     ) -> Result<u32, HeatSdkError> {
         let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
@@ -365,6 +366,7 @@ impl HeatClient {
             self.config.project_path.owner_name(),
             self.config.project_path.project_name(),
             target_package_name,
+            heat_metadata,
             metadata,
         )?;
 

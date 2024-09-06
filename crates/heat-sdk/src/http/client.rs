@@ -2,6 +2,7 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 use reqwest::Url;
 use serde::Serialize;
 
+use crate::schemas::HeatCodeMetadata;
 use crate::{
     client::HeatCredentials,
     errors::sdk::HeatSdkError,
@@ -377,6 +378,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         target_package_name: &str,
+        heat_metadata: HeatCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
     ) -> Result<CodeUploadUrlsSchema, HeatSdkError> {
         self.validate_session_cookie()?;
@@ -392,6 +394,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&CodeUploadParamsSchema {
                 target_package_name: target_package_name.to_string(),
+                heat_metadata,
                 crates: crates_metadata,
             })
             .send()?
