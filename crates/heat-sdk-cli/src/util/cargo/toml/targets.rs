@@ -29,6 +29,7 @@ const DEFAULT_TEST_DIR_NAME: &str = "tests";
 const DEFAULT_BENCH_DIR_NAME: &str = "benches";
 const DEFAULT_EXAMPLE_DIR_NAME: &str = "examples";
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L127
 pub fn resolve_lib(
     original_lib: Option<&TomlLibTarget>,
     package_root: &Path,
@@ -78,6 +79,7 @@ pub fn resolve_lib(
     Ok(Some(lib))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L231
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_bins(
     toml_bins: Option<&Vec<TomlBinTarget>>,
@@ -145,6 +147,7 @@ pub fn resolve_bins(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L333
 fn legacy_bin_path(package_root: &Path, name: &str, has_lib: bool) -> Option<PathBuf> {
     if !has_lib {
         let rel_path = Path::new("src").join(format!("{}.rs", name));
@@ -166,6 +169,7 @@ fn legacy_bin_path(package_root: &Path, name: &str, has_lib: bool) -> Option<Pat
     None
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L355
 pub fn resolve_examples(
     toml_examples: Option<&Vec<TomlExampleTarget>>,
     package_root: &Path,
@@ -192,6 +196,7 @@ pub fn resolve_examples(
     Ok(targets)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L412
 pub fn resolve_tests(
     toml_tests: Option<&Vec<TomlTestTarget>>,
     package_root: &Path,
@@ -218,6 +223,7 @@ pub fn resolve_tests(
     Ok(targets)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L462
 pub fn resolve_benches(
     toml_benches: Option<&Vec<TomlBenchTarget>>,
     package_root: &Path,
@@ -261,6 +267,7 @@ pub fn resolve_benches(
     Ok(targets)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L735
 fn is_resolved(toml_targets: Option<&Vec<TomlTarget>>, autodiscover: Option<bool>) -> bool {
     if autodiscover != Some(false) {
         return false;
@@ -274,6 +281,7 @@ fn is_resolved(toml_targets: Option<&Vec<TomlTarget>>, autodiscover: Option<bool
         .all(|t| t.name.is_some() && t.path.is_some())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L564
 #[allow(clippy::too_many_arguments)]
 fn resolve_targets(
     target_kind_human: &str,
@@ -302,6 +310,7 @@ fn resolve_targets(
     )
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L529
 #[allow(clippy::too_many_arguments)]
 fn resolve_targets_with_legacy_path(
     target_kind_human: &str,
@@ -372,6 +381,7 @@ fn resolve_targets_with_legacy_path(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L638
 fn inferred_lib(package_root: &Path) -> Option<PathBuf> {
     let lib = Path::new("src").join("lib.rs");
     if package_root.join(&lib).exists() {
@@ -381,6 +391,7 @@ fn inferred_lib(package_root: &Path) -> Option<PathBuf> {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L647
 fn inferred_bins(package_root: &Path, package_name: &str) -> Vec<(String, PathBuf)> {
     let main = "src/main.rs";
     let mut result = Vec::new();
@@ -394,6 +405,7 @@ fn inferred_bins(package_root: &Path, package_name: &str) -> Vec<(String, PathBu
     result
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L660
 fn infer_from_directory(package_root: &Path, relpath: &Path) -> Vec<(String, PathBuf)> {
     let directory = package_root.join(relpath);
     let entries = match fs::read_dir(directory) {
@@ -408,6 +420,7 @@ fn infer_from_directory(package_root: &Path, relpath: &Path) -> Vec<(String, Pat
         .collect()
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L674
 fn infer_any(package_root: &Path, entry: &DirEntry) -> Option<(String, PathBuf)> {
     if entry.file_type().map_or(false, |t| t.is_dir()) {
         infer_subdirectory(package_root, entry)
@@ -418,6 +431,7 @@ fn infer_any(package_root: &Path, entry: &DirEntry) -> Option<(String, PathBuf)>
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L684
 fn infer_file(package_root: &Path, entry: &DirEntry) -> Option<(String, PathBuf)> {
     let path = entry.path();
     let stem = path.file_stem()?.to_str()?.to_owned();
@@ -428,6 +442,7 @@ fn infer_file(package_root: &Path, entry: &DirEntry) -> Option<(String, PathBuf)
     Some((stem, path))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L694
 fn infer_subdirectory(package_root: &Path, entry: &DirEntry) -> Option<(String, PathBuf)> {
     let path = entry.path();
     let main = path.join("main.rs");
@@ -447,6 +462,7 @@ fn is_not_dotfile(entry: &DirEntry) -> bool {
     entry.file_name().to_str().map(|s| s.starts_with('.')) == Some(false)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L713
 #[allow(clippy::too_many_arguments)]
 fn toml_targets_and_inferred(
     toml_targets: Option<&Vec<TomlTarget>>,
@@ -544,6 +560,7 @@ https://github.com/rust-lang/cargo/issues/5330",
     toml_targets
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L809
 fn inferred_to_toml_targets(inferred: &[(String, PathBuf)]) -> Vec<TomlTarget> {
     inferred
         .iter()
@@ -555,6 +572,8 @@ fn inferred_to_toml_targets(inferred: &[(String, PathBuf)]) -> Vec<TomlTarget> {
         .collect()
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L873
+///
 /// Build an error message for a target path that cannot be determined either
 /// by auto-discovery or specifying.
 ///
@@ -639,6 +658,7 @@ or specify {kind}.path if you want to use a non-default path.",
     )
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L946
 fn target_path(
     target: &TomlTarget,
     inferred: &[(String, PathBuf)],
@@ -694,8 +714,9 @@ Cargo doesn't know which to use because multiple target files found at `{}` and 
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1003
+///
 /// Returns the path to the build script if one exists for this crate.
-#[allow(unused)]
 pub fn resolve_build(build: Option<&StringOrBool>, package_root: &Path) -> Option<StringOrBool> {
     const BUILD_RS: &str = "build.rs";
     match build {
@@ -715,6 +736,7 @@ pub fn resolve_build(build: Option<&StringOrBool>, package_root: &Path) -> Optio
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1022
 fn name_or_panic(target: &TomlTarget) -> &str {
     target
         .name
@@ -722,6 +744,7 @@ fn name_or_panic(target: &TomlTarget) -> &str {
         .unwrap_or_else(|| panic!("target name is required"))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1029
 fn validate_lib_name(target: &TomlTarget, warnings: &mut Vec<String>) -> CargoResult<()> {
     validate_target_name(target, "library", "lib", warnings)?;
     let name = name_or_panic(target);
@@ -732,6 +755,7 @@ fn validate_lib_name(target: &TomlTarget, warnings: &mut Vec<String>) -> CargoRe
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1039
 fn validate_bin_name(bin: &TomlTarget, warnings: &mut Vec<String>) -> CargoResult<()> {
     validate_target_name(bin, "binary", "bin", warnings)?;
     let name = name_or_panic(bin).to_owned();
@@ -745,6 +769,7 @@ fn validate_bin_name(bin: &TomlTarget, warnings: &mut Vec<String>) -> CargoResul
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1052
 fn validate_target_name(
     target: &TomlTarget,
     target_kind_human: &str,
@@ -774,6 +799,7 @@ fn validate_target_name(
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1081
 fn validate_bin_proc_macro(
     target: &TomlTarget,
     edition: Edition,
@@ -793,6 +819,7 @@ fn validate_bin_proc_macro(
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1100
 fn validate_proc_macro(
     target: &TomlTarget,
     kind: &str,
@@ -810,6 +837,7 @@ fn validate_proc_macro(
     )
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1117
 fn validate_bin_crate_types(
     target: &TomlTarget,
     edition: Edition,
@@ -832,6 +860,7 @@ fn validate_bin_crate_types(
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L1139
 fn validate_crate_types(
     target: &TomlTarget,
     kind: &str,

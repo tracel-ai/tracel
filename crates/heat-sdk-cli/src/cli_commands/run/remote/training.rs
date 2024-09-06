@@ -50,7 +50,7 @@ pub struct RemoteTrainingRunArgs {
         short = 'r',
         long = "runner",
         help = "The runner group name.",
-        required = true,
+        required = true
     )]
     pub runner: String,
 }
@@ -84,8 +84,10 @@ pub(crate) fn handle_command(
     let mut registered_functions = Vec::<RegisteredHeatFunction>::new();
     for flag in flags {
         // function token stream to readable string
-        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream).expect("Should be able to parse token stream.");
-        let syn_tree: syn::File = syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
+        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream)
+            .expect("Should be able to parse token stream.");
+        let syn_tree: syn::File =
+            syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
         let code_str = prettyplease::unparse(&syn_tree);
         registered_functions.push(RegisteredHeatFunction {
             mod_path: flag.mod_path.to_string(),
@@ -99,7 +101,8 @@ pub(crate) fn handle_command(
         functions: registered_functions,
     };
 
-    let project_version = heat_client.upload_new_project_version(context.package_name(), heat_metadata, crates)?;
+    let project_version =
+        heat_client.upload_new_project_version(context.package_name(), heat_metadata, crates)?;
 
     heat_client.start_remote_job(
         args.runner,

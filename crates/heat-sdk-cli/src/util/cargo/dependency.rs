@@ -6,6 +6,7 @@ use serde::ser;
 
 use super::interning::InternedString;
 
+/// From cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/dependency.rs#L102
 #[derive(PartialEq, Eq, Hash, Ord, PartialOrd, Clone, Debug, Copy)]
 pub enum DepKind {
     Normal,
@@ -13,6 +14,7 @@ pub enum DepKind {
     Build,
 }
 
+/// From cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/dependency.rs#L108
 impl DepKind {
     pub fn kind_table(&self) -> &'static str {
         match self {
@@ -23,6 +25,7 @@ impl DepKind {
     }
 }
 
+//From cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/dependency.rs#L118
 impl ser::Serialize for DepKind {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
@@ -37,6 +40,8 @@ impl ser::Serialize for DepKind {
     }
 }
 
+/// From cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/summary.rs#L355
+///
 /// FeatureValue represents the types of dependencies a feature can have.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub enum FeatureValue {
@@ -55,6 +60,7 @@ pub enum FeatureValue {
     },
 }
 
+/// From cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/summary.rs#L371
 impl FeatureValue {
     pub fn new(feature: InternedString) -> FeatureValue {
         match feature.split_once('/') {
@@ -95,6 +101,7 @@ impl FeatureValue {
     }
 }
 
+/// From cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/summary.rs#L411
 impl fmt::Display for FeatureValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::FeatureValue::*;

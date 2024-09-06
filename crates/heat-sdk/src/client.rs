@@ -8,7 +8,9 @@ use serde::Serialize;
 use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::{EndExperimentStatus, HttpClient};
-use crate::schemas::{CrateVersionMetadata, ExperimentPath, HeatCodeMetadata, PackagedCrateData, ProjectPath};
+use crate::schemas::{
+    CrateVersionMetadata, ExperimentPath, HeatCodeMetadata, PackagedCrateData, ProjectPath,
+};
 use crate::websocket::WebSocketClient;
 
 /// Credentials to connect to the Heat server

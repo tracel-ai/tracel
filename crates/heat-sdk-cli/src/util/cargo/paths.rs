@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/crates/cargo-util/src/paths.rs#L160
+///
 /// Reads a file to a string.
 ///
 /// Equivalent to [`std::fs::read_to_string`] with better error messages.
@@ -12,6 +14,8 @@ pub fn read(path: &Path) -> Result<String> {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/crates/cargo-util/src/paths.rs#L170
+///
 /// Reads a file into a bytes vector.
 ///
 /// Equivalent to [`std::fs::read`] with better error messages.
@@ -19,6 +23,8 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).with_context(|| format!("failed to read `{}`", path.display()))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/crates/cargo-util/src/paths.rs#L84
+///
 /// Normalize a path, removing things like `.` and `..`.
 ///
 /// CAUTION: This does not resolve symlinks (unlike
@@ -54,6 +60,8 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     ret
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/crates/cargo-util/src/paths.rs#L375
+///
 /// Converts a path to UTF-8 bytes.
 pub fn path2bytes(path: &Path) -> Result<&[u8]> {
     #[cfg(unix)]
@@ -73,6 +81,7 @@ pub fn path2bytes(path: &Path) -> Result<&[u8]> {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2950
 pub fn normalize_path_sep(path: PathBuf, context: &str) -> anyhow::Result<PathBuf> {
     let path = path
         .into_os_string()
@@ -82,6 +91,7 @@ pub fn normalize_path_sep(path: PathBuf, context: &str) -> anyhow::Result<PathBu
     Ok(path.into())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2959
 pub fn normalize_path_string_sep(path: String) -> String {
     if std::path::MAIN_SEPARATOR != '/' {
         path.replace(std::path::MAIN_SEPARATOR, "/")

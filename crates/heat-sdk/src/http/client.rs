@@ -422,7 +422,7 @@ impl HttpClient {
         let body = RunnerQueueJobParamsSchema {
             runner_group_name: runner_group_name.to_string(),
             project_version,
-            command
+            command,
         };
 
         self.http_client

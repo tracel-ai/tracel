@@ -61,8 +61,10 @@ pub(crate) fn handle_command(args: PackageArgs, context: HeatCliContext) -> anyh
     let mut registered_functions = Vec::<RegisteredHeatFunction>::new();
     for flag in flags {
         // function token stream to readable string
-        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream).expect("Should be able to parse token stream.");
-        let syn_tree: syn::File = syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
+        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream)
+            .expect("Should be able to parse token stream.");
+        let syn_tree: syn::File =
+            syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
         let code_str = prettyplease::unparse(&syn_tree);
         registered_functions.push(RegisteredHeatFunction {
             mod_path: flag.mod_path.to_string(),

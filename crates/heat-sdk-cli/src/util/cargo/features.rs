@@ -1,10 +1,12 @@
-#![allow(dead_code)]
+#![allow(unused)]
 
 use std::{fmt, str::FromStr};
 
 use cargo_metadata::semver;
 use serde::{Deserialize, Serialize};
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/features.rs#L186
+///
 /// The edition of the compiler ([RFC 2052])
 ///
 /// The following sections will guide you how to add and stabilize an edition.
@@ -61,6 +63,8 @@ pub enum Edition {
     Edition2024,
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/features.rs#L198
+/// Some unused impls were removed.
 impl Edition {
     /// The latest edition that is unstable.
     ///
@@ -157,6 +161,7 @@ impl Edition {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/features.rs#L313
 impl fmt::Display for Edition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
@@ -168,6 +173,7 @@ impl fmt::Display for Edition {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/features.rs#L324
 impl FromStr for Edition {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, anyhow::Error> {

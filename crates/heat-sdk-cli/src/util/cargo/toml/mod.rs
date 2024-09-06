@@ -9,13 +9,13 @@ use std::{
 use lazycell::LazyCell;
 
 use cargo_metadata::semver;
-use cargo_util_schemas::manifest::{self, RustVersion, StringOrBool};
+use cargo_util_schemas::manifest::{self, RegistryName, RustVersion, StringOrBool};
 
 type CargoResult<T> = anyhow::Result<T>;
 
 use anyhow::{bail, Context};
 
-use crate::print_info;
+use crate::{print_info, print_warn};
 
 use super::{
     dependency::{DepKind, FeatureValue},
@@ -25,12 +25,16 @@ use super::{
     workspace::{resolve_relative_path, WorkspaceConfig, WorkspaceRootConfig},
 };
 
+/// Based on Cargo's Manifest struct: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/manifest.rs#L62
+/// Only small parts of the struct are needed so this is a simplified version of Cargo's Manifest struct.
 pub struct Manifest {
     pub _original_toml: manifest::TomlManifest,
     pub resolved_toml: manifest::TomlManifest,
     pub workspace: WorkspaceConfig,
 }
 
+/// Based this Cargo function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L146
+/// The function normally does some things if the manifest is embedded, but we won't consider that for now.
 fn read_toml_string(path: &Path) -> CargoResult<String> {
     let contents = paths::read(path)?;
 
@@ -45,6 +49,7 @@ fn read_toml_string(path: &Path) -> CargoResult<String> {
     Ok(contents)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L163
 fn deserialize_toml(
     document: &toml_edit::ImDocument<String>,
 ) -> Result<manifest::TomlManifest, toml_edit::de::Error> {
@@ -59,6 +64,7 @@ fn deserialize_toml(
     Ok(document)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L177
 fn stringify(dst: &mut String, path: &serde_ignored::Path<'_>) {
     use serde_ignored::Path;
 
@@ -84,10 +90,18 @@ fn stringify(dst: &mut String, path: &serde_ignored::Path<'_>) {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L158
 fn parse_document(contents: &str) -> Result<toml_edit::ImDocument<String>, toml_edit::de::Error> {
     toml_edit::ImDocument::parse(contents.to_owned()).map_err(Into::into)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L58
+/// This function was modified to:
+///  - Add context to the error messages
+///  - It does not take a global context anymore and instead takes a path to the manifest file
+///  - Ignore manifest features
+///
+///
 /// Loads a `Cargo.toml` from a file on disk.
 ///
 /// This could result in a real or virtual manifest being returned.
@@ -96,11 +110,7 @@ fn parse_document(contents: &str) -> Result<toml_edit::ImDocument<String>, toml_
 /// within the manifest. For virtual manifests, these paths can only
 /// come from patched or replaced dependencies. These paths are not
 /// canonicalized.
-pub fn read_manifest(
-    path: &Path,
-    // source_id: PackageId,
-    root_workspace_path: Option<&Path>,
-) -> CargoResult<Manifest> {
+pub fn read_manifest(path: &Path, root_workspace_path: Option<&Path>) -> CargoResult<Manifest> {
     let mut warnings = Default::default();
     let mut errors = Default::default();
 
@@ -111,15 +121,7 @@ pub fn read_manifest(
     let original_toml = deserialize_toml(&document)
         .with_context(|| format!("Manifest error: failed to deserialize `{}`", path.display()))?;
 
-    // let empty = Vec::new();
-    // let cargo_features = original_toml.cargo_features.as_ref().unwrap_or(&empty);
     let workspace_config = to_workspace_config(&original_toml, path)?;
-    // if let WorkspaceConfig::Root(ws_root_config) = &workspace_config {
-    //     let package_root = path.parent().unwrap();
-    //     gctx.ws_roots
-    //         .borrow_mut()
-    //         .insert(package_root.to_owned(), ws_root_config.clone());
-    // }
     let resolved_toml = resolve_toml(
         &original_toml,
         &workspace_config,
@@ -145,6 +147,8 @@ pub fn read_manifest(
     })
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L972
+/// The error context message was slightly modified and the function generics do not have an unused 'a lifetime anymore.
 fn field_inherit_with<T>(
     field: manifest::InheritableField<T>,
     label: &str,
@@ -157,8 +161,11 @@ fn field_inherit_with<T>(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L679
 const DEFAULT_README_FILES: [&str; 3] = ["README.md", "README.txt", "README"];
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L683
+///
 /// Checks if a file with any of the default README file names exists in the package root.
 /// If so, returns a `String` representing that name.
 fn default_readme_from_package_root(package_root: &Path) -> Option<String> {
@@ -171,6 +178,8 @@ fn default_readme_from_package_root(package_root: &Path) -> Option<String> {
     None
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L665
+///
 /// Returns the name of the README file for a [`manifest::TomlPackage`].
 fn resolve_package_readme(
     package_root: &Path,
@@ -186,25 +195,8 @@ fn resolve_package_readme(
     }
 }
 
-pub fn resolve_build(build: Option<&StringOrBool>, package_root: &Path) -> Option<StringOrBool> {
-    const BUILD_RS: &str = "build.rs";
-    match build {
-        None => {
-            // If there is a `build.rs` file next to the `Cargo.toml`, assume it is
-            // a build script.
-            let build_rs = package_root.join(BUILD_RS);
-            if build_rs.is_file() {
-                Some(StringOrBool::String(BUILD_RS.to_owned()))
-            } else {
-                Some(StringOrBool::Bool(false))
-            }
-        }
-        // Explicitly no build script.
-        Some(StringOrBool::Bool(false)) | Some(StringOrBool::String(_)) => build.cloned(),
-        Some(StringOrBool::Bool(true)) => Some(StringOrBool::String(BUILD_RS.to_owned())),
-    }
-}
-
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L523
+/// Removed features handling.
 fn resolve_package_toml<'a>(
     original_package: &manifest::TomlPackage,
     package_root: &Path,
@@ -236,7 +228,7 @@ fn resolve_package_toml<'a>(
             .map(|value| field_inherit_with(value, "authors", || inherit()?.authors()))
             .transpose()?
             .map(manifest::InheritableField::Value),
-        build: resolve_build(original_package.build.as_ref(), package_root),
+        build: targets::resolve_build(original_package.build.as_ref(), package_root),
         metabuild: original_package.metabuild.clone(),
         default_target: original_package.default_target.clone(),
         forced_target: original_package.forced_target.clone(),
@@ -338,14 +330,17 @@ fn resolve_package_toml<'a>(
         _invalid_cargo_features: Default::default(),
     };
 
-    // if resolved_package.resolver.as_deref() == Some("3") {
-    //     features.require(Feature::edition2024())?;
-    // }
-
     Ok(Box::new(resolved_package))
 }
 
-/// See [`Manifest::resolved_toml`] for more details
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L266
+///
+/// The [`TomlManifest`] with all fields expanded
+///
+/// This is the intersection of what fields need resolving for cargo-publish that also are
+/// useful for the operation of cargo, including
+/// - workspace inheritance
+/// - target discovery
 fn resolve_toml(
     original_toml: &manifest::TomlManifest,
     workspace_config: &WorkspaceConfig,
@@ -582,6 +577,7 @@ fn resolve_toml(
     Ok(resolved_toml)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L694
 fn resolve_features(
     original_features: Option<&BTreeMap<manifest::FeatureName, Vec<String>>>,
 ) -> CargoResult<Option<BTreeMap<manifest::FeatureName, Vec<String>>>> {
@@ -592,6 +588,7 @@ fn resolve_features(
     Ok(Some(resolved_features))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L728
 fn resolve_dependencies<'a>(
     edition: Edition,
     orig_deps: Option<&BTreeMap<manifest::PackageName, manifest::InheritableDependency>>,
@@ -646,6 +643,8 @@ fn resolve_dependencies<'a>(
     Ok(Some(deps))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2532
+///
 /// Warn about paths that have been deprecated and may conflict.
 fn deprecated_underscore<T>(
     old: &Option<T>,
@@ -671,6 +670,7 @@ fn deprecated_underscore<T>(
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L987
 fn lints_inherit_with(
     lints: manifest::InheritableLints,
     get_ws_inheritable: impl FnOnce() -> CargoResult<manifest::TomlLints>,
@@ -687,6 +687,7 @@ fn lints_inherit_with(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L1003
 fn dependency_inherit_with<'a>(
     dependency: manifest::InheritableDependency,
     name: &str,
@@ -707,6 +708,7 @@ fn dependency_inherit_with<'a>(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L1023
 fn inner_dependency_inherit_with<'a>(
     pkg_dep: manifest::TomlInheritedDependency,
     name: &str,
@@ -772,6 +774,7 @@ fn inner_dependency_inherit_with<'a>(
     Ok(manifest::TomlDependency::Detailed(merged_dep))
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L1088
 fn deprecated_ws_default_features(
     label: &str,
     ws_def_feat: Option<bool>,
@@ -795,6 +798,7 @@ fn deprecated_ws_default_features(
     Ok(())
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L812
 fn load_inheritable_fields(
     resolved_path: &Path,
     workspace_config: &WorkspaceConfig,
@@ -832,6 +836,7 @@ fn load_inheritable_fields(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L839
 fn inheritable_from_path(
     workspace_path: PathBuf,
     root_workspace_path: Option<&Path>,
@@ -870,6 +875,7 @@ fn inheritable_from_path(
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L202
 fn to_workspace_config(
     original_toml: &manifest::TomlManifest,
     manifest_file: &Path,
@@ -909,6 +915,7 @@ fn to_workspace_config(
     Ok(workspace_config)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L242
 fn to_workspace_root_config(
     resolved_toml: &manifest::TomlWorkspace,
     manifest_file: &Path,
@@ -931,6 +938,7 @@ fn to_workspace_root_config(
     )
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L869
 /// Defines simple getter methods for inheritable fields.
 macro_rules! package_field_getter {
     ( $(($key:literal, $field:ident -> $ret:ty),)* ) => (
@@ -946,6 +954,7 @@ macro_rules! package_field_getter {
     )
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L884
 /// A group of fields that are inheritable by members of the workspace
 #[derive(Clone, Debug, Default)]
 pub struct InheritableFields {
@@ -957,6 +966,7 @@ pub struct InheritableFields {
     _ws_root: PathBuf,
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L894-L895
 impl InheritableFields {
     package_field_getter! {
         // Please keep this list lexicographically ordered.
@@ -1033,4 +1043,263 @@ impl InheritableFields {
     fn ws_root(&self) -> &PathBuf {
         &self._ws_root
     }
+}
+
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2846
+fn map_deps(
+    deps: Option<&BTreeMap<manifest::PackageName, manifest::InheritableDependency>>,
+    filter: impl Fn(&manifest::TomlDependency) -> bool,
+) -> anyhow::Result<Option<BTreeMap<manifest::PackageName, manifest::InheritableDependency>>> {
+    let Some(deps) = deps else {
+        return Ok(None);
+    };
+    let deps = deps
+        .iter()
+        .filter(|(_k, v)| {
+            if let manifest::InheritableDependency::Value(def) = v {
+                filter(def)
+            } else {
+                false
+            }
+        })
+        .map(|(k, v)| Ok((k.clone(), map_dependency(v)?)))
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    Ok(Some(deps))
+}
+
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2868
+fn map_dependency(
+    dep: &manifest::InheritableDependency,
+) -> anyhow::Result<manifest::InheritableDependency> {
+    let dep = match dep {
+        manifest::InheritableDependency::Value(manifest::TomlDependency::Detailed(d)) => {
+            let mut d = d.clone();
+            // Path dependencies become crates.io deps.
+            // d.path.take();
+            if d.path.take().is_some() {
+                d.registry = Some(
+                    RegistryName::new("local".to_string())
+                        .expect("Should be able to create registry name"),
+                );
+            }
+            // else {
+            // d.registry = Some(RegistryName::new("crates-io".to_string()).expect("Should be able to create registry name"));
+            // }
+            // Same with git dependencies.
+            // d.git.take();
+            // d.branch.take();
+            // d.tag.take();
+            // d.rev.take();
+            // registry specifications are elaborated to the index URL
+            // if let Some(registry) = d.registry.take() {
+            //     d.registry_index = Some(get_registry_index(&registry)?.to_string());
+            // }
+            Ok(d)
+        }
+        manifest::InheritableDependency::Value(manifest::TomlDependency::Simple(s)) => {
+            Ok(manifest::TomlDetailedDependency {
+                version: Some(s.clone()),
+                ..Default::default()
+            })
+        }
+        _ => unreachable!(),
+    };
+    dep.map(manifest::TomlDependency::Detailed)
+        .map(manifest::InheritableDependency::Value)
+}
+
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2926
+fn prepare_target_for_publish(
+    target: &manifest::TomlTarget,
+    included: &[PathBuf],
+    context: &str,
+) -> anyhow::Result<Option<manifest::TomlTarget>> {
+    let path = target
+        .path
+        .as_ref()
+        .unwrap_or_else(|| panic!("previously resolved {:?} path", target));
+    let path = paths::normalize_path(&path.0);
+    if !included.contains(&path) {
+        let name = target.name.as_ref().expect("previously resolved");
+        print_warn!(
+            "{}",
+            format!(
+                "ignoring {context} `{name}` as `{}` is not included in the published package",
+                path.display()
+            )
+        );
+        return Ok(None);
+    }
+
+    let mut target = target.clone();
+    let path = paths::normalize_path_sep(path, context)?;
+    target.path = Some(manifest::PathValue(path));
+
+    Ok(Some(target))
+}
+
+pub fn prepare_targets_for_publish(
+    targets: Option<&Vec<manifest::TomlTarget>>,
+    included: &[PathBuf],
+    context: &str,
+) -> anyhow::Result<Option<Vec<manifest::TomlTarget>>> {
+    let Some(targets) = targets else {
+        return Ok(None);
+    };
+
+    let mut prepared = Vec::with_capacity(targets.len());
+    for target in targets {
+        let Some(target) = prepare_target_for_publish(target, included, context)? else {
+            continue;
+        };
+        prepared.push(target);
+    }
+
+    if prepared.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(prepared))
+    }
+}
+
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L2613
+/// Prepares the manifest for publishing.
+/// - Path and git components of dependency specifications are removed.
+/// - License path is updated to point within the package.
+pub fn prepare_toml_for_publish(
+    me: &cargo_util_schemas::manifest::TomlManifest,
+    workspace: &cargo_util_schemas::manifest::TomlManifest,
+    package_root: &Path,
+    included: &[PathBuf],
+) -> anyhow::Result<cargo_util_schemas::manifest::TomlManifest> {
+    let mut package = me.package().unwrap().clone();
+    package.workspace = None;
+
+    if let Some(original_package) = me.package() {
+        // resolve all workspace fields using the workspace
+
+        let edition = match original_package.resolved_edition() {
+            Ok(maybe_edition) => maybe_edition.cloned().unwrap_or_else(|| "2015".to_string()),
+            // Edition inherited from workspace
+            Err(..) => match &workspace
+                .workspace
+                .as_ref()
+                .unwrap()
+                .package
+                .as_ref()
+                .unwrap()
+                .edition
+            {
+                Some(edition) => edition.clone(),
+                _ => "2015".to_string(),
+            },
+        };
+        package.edition = Some(cargo_util_schemas::manifest::InheritableField::Value(
+            edition,
+        ));
+
+        if let Some(license_file) = &package.license_file {
+            let license_file = license_file
+                .as_value()
+                .context("license file should have been resolved before `prepare_for_publish()`")?;
+            let license_path = Path::new(&license_file);
+            let abs_license_path = paths::normalize_path(&package_root.join(license_path));
+            if let Ok(license_file) = abs_license_path.strip_prefix(package_root) {
+                package.license_file = Some(manifest::InheritableField::Value(
+                    paths::normalize_path_string_sep(
+                        license_file
+                            .to_str()
+                            .ok_or_else(|| anyhow::format_err!("non-UTF8 `package.license-file`"))?
+                            .to_owned(),
+                    ),
+                ));
+            } else {
+                // This path points outside of the package root. `cargo package`
+                // will copy it into the root, so adjust the path to this location.
+                package.license_file = Some(manifest::InheritableField::Value(
+                    license_path
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(readme) = &package.readme {
+        let readme = readme
+            .as_value()
+            .context("readme should have been resolved before `prepare_for_publish()`")?;
+        match readme {
+            manifest::StringOrBool::String(readme) => {
+                let readme_path = Path::new(&readme);
+                let abs_readme_path = paths::normalize_path(&package_root.join(readme_path));
+                if let Ok(readme_path) = abs_readme_path.strip_prefix(package_root) {
+                    package.readme = Some(manifest::InheritableField::Value(StringOrBool::String(
+                        paths::normalize_path_string_sep(
+                            readme_path
+                                .to_str()
+                                .ok_or_else(|| {
+                                    anyhow::format_err!("non-UTF8 `package.license-file`")
+                                })?
+                                .to_owned(),
+                        ),
+                    )));
+                } else {
+                    // This path points outside of the package root. `cargo package`
+                    // will copy it into the root, so adjust the path to this location.
+                    package.readme = Some(manifest::InheritableField::Value(
+                        manifest::StringOrBool::String(
+                            readme_path
+                                .file_name()
+                                .unwrap()
+                                .to_str()
+                                .unwrap()
+                                .to_string(),
+                        ),
+                    ));
+                }
+            }
+            manifest::StringOrBool::Bool(_) => {}
+        }
+    }
+
+    let lib = if let Some(lib) = &me.lib {
+        prepare_target_for_publish(lib, included, "library")?
+    } else {
+        None
+    };
+
+    let bin = prepare_targets_for_publish(me.bin.as_ref(), included, "binary")?;
+
+    let all = |_d: &manifest::TomlDependency| true;
+    let resolved_toml = cargo_util_schemas::manifest::TomlManifest {
+        cargo_features: me.cargo_features.clone(),
+        package: Some(package),
+        project: me.project.clone(),
+        profile: me.profile.clone(),
+        lib,
+        bin,
+        // Ignore examples, tests, and benchmarks
+        example: None,
+        test: None,
+        bench: None,
+        dependencies: map_deps(me.dependencies.as_ref(), all)?,
+        dev_dependencies: None,
+        dev_dependencies2: None,
+        build_dependencies: map_deps(me.build_dependencies(), all)?,
+        build_dependencies2: None,
+        features: me.features.clone(),
+        target: me.target.clone(),
+        replace: me.replace.clone(),
+        patch: me.patch.clone(),
+        workspace: None,
+        badges: me.badges.clone(),
+        lints: me.lints.clone(),
+        _unused_keys: me._unused_keys.clone(),
+    };
+
+    Ok(resolved_toml)
 }

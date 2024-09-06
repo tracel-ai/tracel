@@ -13,6 +13,8 @@ use super::paths::normalize_path;
 
 use super::toml::InheritableFields;
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L133
+///
 /// Configuration of a workspace in a manifest.
 #[derive(Debug, Clone)]
 pub enum WorkspaceConfig {
@@ -25,6 +27,9 @@ pub enum WorkspaceConfig {
     Member { root: Option<String> },
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L143
+///
+/// Only modification is the debug print macro from cargo {debug!} to here {print_debug!}.
 impl WorkspaceConfig {
     pub fn inheritable(&self) -> Option<&InheritableFields> {
         match self {
@@ -62,6 +67,9 @@ impl WorkspaceConfig {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L1938
+///
+/// The only modification is the debug print macro from cargo {debug!} to here {print_debug!}.
 fn read_root_pointer(member_manifest: &Path, root_link: &str) -> PathBuf {
     let path = member_manifest
         .parent()
@@ -72,6 +80,8 @@ fn read_root_pointer(member_manifest: &Path, root_link: &str) -> PathBuf {
     paths::normalize_path(&path)
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L185
+///
 /// Intermediate configuration of a workspace root in a manifest.
 ///
 /// Knows the Workspace Root path, as well as `members` and `exclude` lists of path patterns, which
@@ -86,6 +96,7 @@ pub struct WorkspaceRootConfig {
     custom_metadata: Option<toml::Value>,
 }
 
+/// From Cargo (with a few functions removed): https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L1776
 impl WorkspaceRootConfig {
     /// Creates a new Intermediate Workspace Root configuration.
     pub fn new(
@@ -133,6 +144,7 @@ impl WorkspaceRootConfig {
     }
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L1863
 pub fn resolve_relative_path(
     label: &str,
     old_root: &Path,

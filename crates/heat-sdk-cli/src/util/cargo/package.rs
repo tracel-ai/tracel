@@ -4,8 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Context;
-use cargo_util_schemas::manifest::{self, RegistryName, StringOrBool};
 use colored::Colorize;
 use heat_sdk::schemas::{CrateMetadata, Dep, PackagedCrateData};
 
@@ -14,17 +12,22 @@ use crate::{print_err, print_info, print_warn, util};
 use sha2::Digest as _;
 use sha2::Sha256;
 
+/// Based on the struct ArchiveFile from Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L48
+/// rel_str member was removed
 struct ArchiveFile {
     rel_path: std::path::PathBuf,
     contents: FileContents,
 }
 
+/// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L58
 enum FileContents {
     /// Absolute path to a file on disk
     OnDisk(PathBuf),
     Generated(GeneratedFile),
 }
 
+/// Based on the enum GeneratedFile from Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L65
+/// VcsInfo variant was removed
 enum GeneratedFile {
     /// Generates `Cargo.toml` by rewriting the original.
     Manifest,
@@ -276,7 +279,9 @@ pub fn package(
     Ok(dsts)
 }
 
-/// Heavily based on cargo's prepare_archive function
+/// Heavily based on cargo's prepare_archive function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L220
+///
+/// /// Performs pre-archiving checks and builds a list of files to archive.
 fn prepare_archive(root: &Path) -> anyhow::Result<Vec<ArchiveFile>> {
     // here cargo would verify the package metadata
 
@@ -289,7 +294,9 @@ fn prepare_archive(root: &Path) -> anyhow::Result<Vec<ArchiveFile>> {
     Ok(archive_files)
 }
 
-/// Heavily based on cargo's build_ar_list function
+/// Heavily based on cargo's build_ar_list function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L248
+///
+/// Builds list of files to archive
 fn build_ar_list(pkg_dir: &Path, files: Vec<PathBuf>) -> anyhow::Result<Vec<ArchiveFile>> {
     const ORIGINAL_MANIFEST_FILENAME: &str = "Cargo.toml.orig";
 
@@ -371,7 +378,9 @@ fn build_ar_list(pkg_dir: &Path, files: Vec<PathBuf>) -> anyhow::Result<Vec<Arch
     Ok(result)
 }
 
-/// Heavily based on cargo's create_package function
+/// Heavily based on cargo's create_package function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L114
+///
+/// Builds a tarball and places it in the output directory.
 fn create_package(
     pkg: Package,
     archive_files: Vec<ArchiveFile>,
@@ -427,7 +436,11 @@ fn create_package(
     Ok((filename, dst_path.into(), checksum))
 }
 
-/// Heavily based on cargo's tar function
+/// Heavily based on cargo's tar function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L712
+///
+/// Compresses and packages a list of [`ArchiveFile`]s and writes into the given file.
+///
+/// Returns the uncompressed size of the contents of the new archive file.
 fn tar(
     pkg: &Package,
     ar_files: Vec<ArchiveFile>,
@@ -449,7 +462,7 @@ fn tar(
         .map(|ar_file| ar_file.rel_path.clone())
         .collect::<Vec<_>>();
 
-    let publish_toml = prepare_toml_for_publish(
+    let publish_toml = super::toml::prepare_toml_for_publish(
         &pkg.manifest.resolved_toml,
         workspace_toml,
         pkg.manifest_path.parent().unwrap(),
@@ -493,259 +506,7 @@ fn tar(
     Ok(uncompressed_size)
 }
 
-pub fn prepare_toml_for_publish(
-    me: &cargo_util_schemas::manifest::TomlManifest,
-    workspace: &cargo_util_schemas::manifest::TomlManifest,
-    package_root: &Path,
-    included: &[PathBuf],
-) -> anyhow::Result<cargo_util_schemas::manifest::TomlManifest> {
-    let mut package = me.package().unwrap().clone();
-    package.workspace = None;
-
-    if let Some(original_package) = me.package() {
-        // resolve all workspace fields using the workspace
-
-        let edition = match original_package.resolved_edition() {
-            Ok(maybe_edition) => maybe_edition.cloned().unwrap_or_else(|| "2015".to_string()),
-            // Edition inherited from workspace
-            Err(..) => match &workspace
-                .workspace
-                .as_ref()
-                .unwrap()
-                .package
-                .as_ref()
-                .unwrap()
-                .edition
-            {
-                Some(edition) => edition.clone(),
-                _ => "2015".to_string(),
-            },
-        };
-        package.edition = Some(cargo_util_schemas::manifest::InheritableField::Value(
-            edition,
-        ));
-
-        if let Some(license_file) = &package.license_file {
-            let license_file = license_file
-                .as_value()
-                .context("license file should have been resolved before `prepare_for_publish()`")?;
-            let license_path = Path::new(&license_file);
-            let abs_license_path = paths::normalize_path(&package_root.join(license_path));
-            if let Ok(license_file) = abs_license_path.strip_prefix(package_root) {
-                package.license_file = Some(manifest::InheritableField::Value(
-                    paths::normalize_path_string_sep(
-                        license_file
-                            .to_str()
-                            .ok_or_else(|| anyhow::format_err!("non-UTF8 `package.license-file`"))?
-                            .to_owned(),
-                    ),
-                ));
-            } else {
-                // This path points outside of the package root. `cargo package`
-                // will copy it into the root, so adjust the path to this location.
-                package.license_file = Some(manifest::InheritableField::Value(
-                    license_path
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .to_string(),
-                ));
-            }
-        }
-    }
-
-    if let Some(readme) = &package.readme {
-        let readme = readme
-            .as_value()
-            .context("readme should have been resolved before `prepare_for_publish()`")?;
-        match readme {
-            manifest::StringOrBool::String(readme) => {
-                let readme_path = Path::new(&readme);
-                let abs_readme_path = paths::normalize_path(&package_root.join(readme_path));
-                if let Ok(readme_path) = abs_readme_path.strip_prefix(package_root) {
-                    package.readme = Some(manifest::InheritableField::Value(StringOrBool::String(
-                        paths::normalize_path_string_sep(
-                            readme_path
-                                .to_str()
-                                .ok_or_else(|| {
-                                    anyhow::format_err!("non-UTF8 `package.license-file`")
-                                })?
-                                .to_owned(),
-                        ),
-                    )));
-                } else {
-                    // This path points outside of the package root. `cargo package`
-                    // will copy it into the root, so adjust the path to this location.
-                    package.readme = Some(manifest::InheritableField::Value(
-                        manifest::StringOrBool::String(
-                            readme_path
-                                .file_name()
-                                .unwrap()
-                                .to_str()
-                                .unwrap()
-                                .to_string(),
-                        ),
-                    ));
-                }
-            }
-            manifest::StringOrBool::Bool(_) => {}
-        }
-    }
-
-    let lib = if let Some(lib) = &me.lib {
-        prepare_target_for_publish(lib, included, "library")?
-    } else {
-        None
-    };
-
-    let bin = prepare_targets_for_publish(me.bin.as_ref(), included, "binary")?;
-
-    let all = |_d: &manifest::TomlDependency| true;
-    let resolved_toml = cargo_util_schemas::manifest::TomlManifest {
-        cargo_features: me.cargo_features.clone(),
-        package: Some(package),
-        project: me.project.clone(),
-        profile: me.profile.clone(),
-        lib,
-        bin,
-        // Ignore examples, tests, and benchmarks
-        example: None,
-        test: None,
-        bench: None,
-        dependencies: map_deps(me.dependencies.as_ref(), all)?,
-        dev_dependencies: None,
-        dev_dependencies2: None,
-        build_dependencies: map_deps(me.build_dependencies(), all)?,
-        build_dependencies2: None,
-        features: me.features.clone(),
-        target: me.target.clone(),
-        replace: me.replace.clone(),
-        patch: me.patch.clone(),
-        workspace: None,
-        badges: me.badges.clone(),
-        lints: me.lints.clone(),
-        _unused_keys: me._unused_keys.clone(),
-    };
-
-    Ok(resolved_toml)
-}
-
-fn map_deps(
-    deps: Option<&BTreeMap<manifest::PackageName, manifest::InheritableDependency>>,
-    filter: impl Fn(&manifest::TomlDependency) -> bool,
-) -> anyhow::Result<Option<BTreeMap<manifest::PackageName, manifest::InheritableDependency>>> {
-    let Some(deps) = deps else {
-        return Ok(None);
-    };
-    let deps = deps
-        .iter()
-        .filter(|(_k, v)| {
-            if let manifest::InheritableDependency::Value(def) = v {
-                filter(def)
-            } else {
-                false
-            }
-        })
-        .map(|(k, v)| Ok((k.clone(), map_dependency(v)?)))
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-    Ok(Some(deps))
-}
-
-fn map_dependency(
-    dep: &manifest::InheritableDependency,
-) -> anyhow::Result<manifest::InheritableDependency> {
-    let dep = match dep {
-        manifest::InheritableDependency::Value(manifest::TomlDependency::Detailed(d)) => {
-            let mut d = d.clone();
-            // Path dependencies become crates.io deps.
-            // d.path.take();
-            if d.path.take().is_some() {
-                d.registry = Some(
-                    RegistryName::new("local".to_string())
-                        .expect("Should be able to create registry name"),
-                );
-            }
-            // else {
-            // d.registry = Some(RegistryName::new("crates-io".to_string()).expect("Should be able to create registry name"));
-            // }
-            // Same with git dependencies.
-            // d.git.take();
-            // d.branch.take();
-            // d.tag.take();
-            // d.rev.take();
-            // registry specifications are elaborated to the index URL
-            // if let Some(registry) = d.registry.take() {
-            //     d.registry_index = Some(get_registry_index(&registry)?.to_string());
-            // }
-            Ok(d)
-        }
-        manifest::InheritableDependency::Value(manifest::TomlDependency::Simple(s)) => {
-            Ok(manifest::TomlDetailedDependency {
-                version: Some(s.clone()),
-                ..Default::default()
-            })
-        }
-        _ => unreachable!(),
-    };
-    dep.map(manifest::TomlDependency::Detailed)
-        .map(manifest::InheritableDependency::Value)
-}
-
-fn prepare_target_for_publish(
-    target: &manifest::TomlTarget,
-    included: &[PathBuf],
-    context: &str,
-) -> anyhow::Result<Option<manifest::TomlTarget>> {
-    let path = target
-        .path
-        .as_ref()
-        .unwrap_or_else(|| panic!("previously resolved {:?} path", target));
-    let path = paths::normalize_path(&path.0);
-    if !included.contains(&path) {
-        let name = target.name.as_ref().expect("previously resolved");
-        print_warn!(
-            "{}",
-            format!(
-                "ignoring {context} `{name}` as `{}` is not included in the published package",
-                path.display()
-            )
-        );
-        return Ok(None);
-    }
-
-    let mut target = target.clone();
-    let path = paths::normalize_path_sep(path, context)?;
-    target.path = Some(manifest::PathValue(path));
-
-    Ok(Some(target))
-}
-
-fn prepare_targets_for_publish(
-    targets: Option<&Vec<manifest::TomlTarget>>,
-    included: &[PathBuf],
-    context: &str,
-) -> anyhow::Result<Option<Vec<manifest::TomlTarget>>> {
-    let Some(targets) = targets else {
-        return Ok(None);
-    };
-
-    let mut prepared = Vec::with_capacity(targets.len());
-    for target in targets {
-        let Some(target) = prepare_target_for_publish(target, included, context)? else {
-            continue;
-        };
-        prepared.push(target);
-    }
-
-    if prepared.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(prepared))
-    }
-}
-
-/// Heavily based on cargo's list_files function
+/// Heavily based on Cargo's _list_files function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/sources/path.rs#L458
 fn list_files(pkg_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     // todo : handle includes and excludes
     // for now everything is left empty
@@ -827,7 +588,7 @@ fn list_files(pkg_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(ret)
 }
 
-/// Taken from cargo's list_files_walk function
+/// Taken from cargo's list_files_walk function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/sources/path.rs#L531
 ///
 /// Returns [`Some(gix::Repository)`](gix::Repository) if the discovered repository
 /// (searched upwards from `root`) contains a tracked `<root>/Cargo.toml`.
@@ -893,7 +654,7 @@ fn discover_gix_repo(root: &Path) -> anyhow::Result<Option<gix::Repository>> {
     Ok(None)
 }
 
-/// Taken from cargo's list_files_walk function
+/// Based on Cargo's list_files_gix function: https://github.com/rust-lang/cargo/blob/c1fa840a85eca53818895901a53fae34247448b2/src/cargo/sources/path.rs#L579
 ///
 /// Lists files relevant to building this package inside this source by
 /// traversing the git working tree, while avoiding ignored files.
@@ -1030,7 +791,7 @@ fn list_files_gix(
     Ok(files)
 }
 
-/// Heavily based on cargo's list_files_walk function
+/// Taken from Cargo's list_files_walk function: https://github.com/rust-lang/cargo/blob/c1fa840a85eca53818895901a53fae34247448b2/src/cargo/sources/path.rs#L714
 ///
 /// Lists files relevant to building this package inside this source by
 /// walking the filesystem from the package root path.

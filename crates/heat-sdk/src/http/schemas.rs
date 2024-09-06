@@ -50,9 +50,11 @@ pub struct CodeUploadUrlsSchema {
     pub urls: HashMap<String, String>,
 }
 
+type RunnerJobCommand = String;
+
 #[derive(Debug, Serialize)]
 pub struct RunnerQueueJobParamsSchema {
     pub runner_group_name: String,
     pub project_version: u32,
-    pub command: String,
+    pub command: RunnerJobCommand,
 }

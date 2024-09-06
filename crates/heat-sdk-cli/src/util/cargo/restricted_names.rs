@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+#![allow(unused)]
+// This file is copied 1 for 1 from Cargo's source code.
+// The original file can be found at:
+// https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/restricted_names.rs
 
 //! Helpers for validating and checking names like package and crate names.
 
