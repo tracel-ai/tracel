@@ -6,24 +6,23 @@ version.workspace = true
 readme.workspace = true
 
 [features]
-default = []
-cli = ["dep:heat-sdk-cli", "heat-sdk-cli-macros/build-cli"]
 
 [dependencies]
-heat-sdk-cli-macros = { path = "../heat-sdk-cli-macros" }
-heat-sdk-cli = { path = "../heat-sdk-cli", optional = true }
-
 burn = { workspace = true, features = ["train"] }
 
+derive-new = { workspace = true }
 log = { workspace = true }
+rand = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "json"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 strum = { workspace = true }
-rand = { version = "0.8.5" }
 thiserror = { workspace = true }
 tracing = { version = "0.1.40" }
 tracing-core = { version = "0.1.32" }
 tracing-subscriber = { version = "0.3.18" }
 tungstenite = { version = "0.21.0" }
+uuid = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }

@@ -1,6 +1,6 @@
 use burn::{config::Config, module::Module, tensor::backend::Backend};
 
-use crate::{client::HeatClient, errors::training::TrainingError};
+use crate::client::HeatClient;
 
 #[derive(Debug, Clone)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
@@ -40,14 +40,12 @@ trait FromTrainCommandContext<B: Backend> {
 
 impl<B: Backend> FromTrainCommandContext<B> for HeatClient {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
-        println!("Inferred usage of context.client");
         context.client.clone()
     }
 }
 
 impl<B: Backend> FromTrainCommandContext<B> for MultiDevice<B> {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
-        println!("Inferred usage of context.devices");
         MultiDevice(context.devices.clone())
     }
 }
@@ -63,63 +61,62 @@ impl<B: Backend> IntoIterator for MultiDevice<B> {
 
 impl<B: Backend, T: Config> FromTrainCommandContext<B> for T {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
-        println!("Inferred usage of context.config");
         T::load_binary(context.config.as_bytes()).expect("Config should be loaded")
     }
 }
 
-pub type TrainResult<M> = Result<M, TrainingError>;
-
-pub trait TrainCommandHandler<B: Backend, T, M: Module<B>> {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M>;
+pub trait TrainCommandHandler<B: Backend, T, M: Module<B>, E: Into<Box<dyn std::error::Error>>> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E>;
 }
 
-impl<F, M, B> TrainCommandHandler<B, (), M> for F
+impl<F, M, B, E: Into<Box<dyn std::error::Error>>> TrainCommandHandler<B, (), M, E> for F
 where
-    F: Fn() -> TrainResult<M>,
+    F: Fn() -> Result<M, E>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, _context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, _context: TrainCommandContext<B>) -> Result<M, E> {
         (self)()
     }
 }
 
-impl<F, T, M, B> TrainCommandHandler<B, (T,), M> for F
+impl<F, T, M, B, E: Into<Box<dyn std::error::Error>>> TrainCommandHandler<B, (T,), M, E> for F
 where
-    F: Fn(T) -> TrainResult<M>,
+    F: Fn(T) -> Result<M, E>,
     T: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E> {
         (self)(T::from_context(&context))
     }
 }
 
-impl<F, T1, T2, M, B> TrainCommandHandler<B, (T1, T2), M> for F
+impl<F, T1, T2, M, B, E: Into<Box<dyn std::error::Error>>> TrainCommandHandler<B, (T1, T2), M, E>
+    for F
 where
-    F: Fn(T1, T2) -> TrainResult<M>,
+    F: Fn(T1, T2) -> Result<M, E>,
     T1: FromTrainCommandContext<B>,
     T2: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E> {
         (self)(T1::from_context(&context), T2::from_context(&context))
     }
 }
 
-impl<F, T1, T2, T3, M, B> TrainCommandHandler<B, (T1, T2, T3), M> for F
+impl<F, T1, T2, T3, M, B, E: Into<Box<dyn std::error::Error>>>
+    TrainCommandHandler<B, (T1, T2, T3), M, E> for F
 where
-    F: Fn(T1, T2, T3) -> TrainResult<M>,
+    F: Fn(T1, T2, T3) -> Result<M, E>,
     T1: FromTrainCommandContext<B>,
     T2: FromTrainCommandContext<B>,
     T3: FromTrainCommandContext<B>,
     M: Module<B>,
     B: Backend,
 {
-    fn call(self, context: TrainCommandContext<B>) -> TrainResult<M> {
+    fn call(self, context: TrainCommandContext<B>) -> Result<M, E> {
         (self)(
             T1::from_context(&context),
             T2::from_context(&context),

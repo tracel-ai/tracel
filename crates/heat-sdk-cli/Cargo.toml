@@ -5,6 +5,8 @@ version.workspace = true
 readme.workspace = true
 
 [dependencies]
+heat-sdk = { path = "../heat-sdk", version = "0.1.0" }
+
 anyhow = { workspace = true }
 
 clap = { workspace = true, features = ["derive", "cargo"] }
@@ -21,6 +23,21 @@ syn = { workspace = true }
 quote = { workspace = true }
 prettyplease = "0.2.20"
 toml_edit = "0.22.15"
+toml = "0.8.16"
 proc-macro2 = { workspace = true }
 syn-serde = { version = "0.3.0", features = ["json"] }
 url = "2.5.2"
+cargo_metadata = "0.18"
+cargo-util-schemas = "0.4.0"
+flate2 = { version = "1.0.30", default-features = false, features = ["zlib"] }
+tar = { version = "0.4.40", default-features = false }
+walkdir = "2"
+ignore = "0.4.22"
+gix = { version = "0.64.0", default-features = false, features = ["dirwalk"]}
+unicase = "2.7.0"
+itertools = "0.13.0"
+lazycell = "1.3.0"
+serde-untagged = "0.1.6"
+serde_ignored = "0.1.1"
+sha2 = "0.10"
+pathdiff = "0.2.1"

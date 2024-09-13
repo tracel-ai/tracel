@@ -17,6 +17,8 @@ pub enum Commands {
     /// {local|remote} : Run a training or inference locally or trigger a remote run.
     #[command(subcommand)]
     Run(cli_commands::run::RunLocationType),
+
+    Package(cli_commands::package::PackageArgs),
     // todo
     // Ls(),
     // todo
@@ -26,7 +28,7 @@ pub enum Commands {
 }
 
 pub fn cli_main() {
-    print_info!("Running CLI.");
+    print_info!("Running CLI");
     let time_begin = std::time::Instant::now();
     let args = CliArgs::try_parse();
     if args.is_err() {
@@ -41,6 +43,9 @@ pub fn cli_main() {
 
     let cli_res = match args.unwrap().command {
         Commands::Run(run_args) => cli_commands::run::handle_command(run_args, context),
+        Commands::Package(package_args) => {
+            cli_commands::package::handle_command(package_args, context)
+        }
     };
 
     match cli_res {

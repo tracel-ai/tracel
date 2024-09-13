@@ -54,10 +54,14 @@ struct Args {
 
 fn heat_client(api_key: &str, url: &str, project: &str) -> HeatClient {
     let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
-    let client_config = tracel::heat::client::HeatClientConfig::builder(creds, project)
-        .with_endpoint(url)
-        .with_num_retries(10)
-        .build();
+    let client_config = tracel::heat::client::HeatClientConfig::builder(
+        creds,
+        tracel::heat::schemas::ProjectPath::try_from(project.to_string())
+            .expect("Project path should be valid."),
+    )
+    .with_endpoint(url)
+    .with_num_retries(10)
+    .build();
     tracel::heat::client::HeatClient::create(client_config)
         .expect("Should connect to the Heat server and create a client")
 }

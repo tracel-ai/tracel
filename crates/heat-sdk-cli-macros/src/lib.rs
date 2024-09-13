@@ -51,9 +51,9 @@ pub(crate) fn generate_flag_register_stream(
         proc_macro2::Span::call_site(),
     );
     quote! {
-        tracel::heat::sdk_cli::register_flag!(
-            tracel::heat::sdk_cli::registry::Flag,
-            tracel::heat::sdk_cli::registry::Flag::new(
+        tracel::heat::cli::register_flag!(
+            tracel::heat::cli::registry::Flag,
+            tracel::heat::cli::registry::Flag::new(
                 module_path!(),
                 stringify!(#fn_name),
                 stringify!(#proc_type_str),
@@ -117,7 +117,6 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-#[cfg(feature = "build-cli")]
 #[proc_macro_attribute]
 pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
@@ -148,7 +147,7 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #item_sig {
-            tracel::heat::sdk_cli::cli::cli_main();
+            tracel::heat::cli::cli::cli_main();
         }
     };
 

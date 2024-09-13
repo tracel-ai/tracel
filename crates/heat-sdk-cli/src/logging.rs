@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use colored::{Colorize, CustomColor};
 
 pub const BURN_ORANGE: CustomColor = CustomColor {
@@ -22,7 +24,6 @@ macro_rules! print_err {
     };
 }
 
-#[allow(dead_code)]
 pub fn print_warn(warn_message: &str) {
     println!(
         "[{}] {}: {}",
@@ -52,5 +53,26 @@ pub fn print_info(info_message: &str) {
 macro_rules! print_info {
     ($($arg:tt)*) => {
         $crate::logging::print_info(&format!($($arg)*));
+    };
+}
+
+#[cfg(debug_assertions)]
+pub fn print_debug(debug_message: &str) {
+    println!(
+        "[{}] {}: {}",
+        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "debug".green().bold(),
+        debug_message
+    );
+}
+
+#[cfg(not(debug_assertions))]
+pub fn print_debug(_debug_message: &str) {}
+
+#[macro_export]
+macro_rules! print_debug {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        $crate::logging::print_debug(&format!($($arg)*));
     };
 }

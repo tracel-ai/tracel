@@ -14,6 +14,7 @@ pub struct HeatDir {
 const HEAT_DIR_NAME: &str = ".heat";
 const HEAT_BIN_DIR_NAME: &str = "bin";
 const HEAT_CRATES_DIR_NAME: &str = "crates";
+const HEAT_ARTIFACTS_DIR_NAME: &str = "artifacts";
 
 impl HeatDir {
     pub fn init(&self, user_crate_dir: &Path) {
@@ -140,14 +141,25 @@ impl HeatDir {
         user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_BIN_DIR_NAME)
     }
 
+    pub fn get_artifacts_dir(&self, user_crate_dir: &Path) -> PathBuf {
+        user_crate_dir
+            .join(HEAT_DIR_NAME)
+            .join(HEAT_ARTIFACTS_DIR_NAME)
+    }
+
     pub fn get_crate_target_path(&self, crate_name: &str) -> Option<PathBuf> {
+        let new_target_dir = std::env::var("HEAT_TARGET_DIR").ok();
+
         match self.crates.get(crate_name)? {
-            FileTree::Directory(name, _) => Some(PathBuf::from(format!(
-                "{}/{}/{}/target",
-                HEAT_DIR_NAME,
-                HEAT_CRATES_DIR_NAME,
-                name.clone()
-            ))),
+            FileTree::Directory(name, _) => match new_target_dir {
+                Some(target_dir) => Some(PathBuf::from(target_dir)),
+                None => Some(PathBuf::from(format!(
+                    "{}/{}/{}/target",
+                    HEAT_DIR_NAME,
+                    HEAT_CRATES_DIR_NAME,
+                    name.clone()
+                ))),
+            },
             _ => None,
         }
     }

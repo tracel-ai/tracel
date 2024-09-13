@@ -34,6 +34,10 @@ impl HeatCliContext {
         self
     }
 
+    pub fn package_name(&self) -> &str {
+        self.user_project_name.as_str()
+    }
+
     fn get_generated_crate_path(&self) -> PathBuf {
         let crate_name = self
             .generated_crate_name
@@ -134,6 +138,8 @@ impl HeatCliContext {
             }
         };
 
+        let new_target_dir: Option<String> = std::env::var("HEAT_TARGET_DIR").ok();
+
         let mut build_command = std::process::Command::new("cargo");
         build_command
             .arg("build")
@@ -148,7 +154,17 @@ impl HeatCliContext {
                     .to_str()
                     .unwrap(),
             ])
-            .args(["--message-format", "short"]);
+            .args(["--message-format", "short"])
+            // todo: remove once correct burn version is published
+            .args([
+                "--config",
+                "patch.crates-io.burn.git='https://github.com/tracel-ai/burn'",
+                "--config",
+                "patch.crates-io.burn.rev='a72a533'",
+            ]);
+        if let Some(target_dir) = new_target_dir {
+            build_command.args(["--target-dir", &target_dir]);
+        }
 
         Ok(build_command)
     }
@@ -201,5 +217,9 @@ impl HeatCliContext {
         }
 
         Ok(())
+    }
+
+    pub fn get_artifacts_dir_path(&self) -> PathBuf {
+        self.heat_dir.get_artifacts_dir(&self.user_crate_dir)
     }
 }

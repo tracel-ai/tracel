@@ -17,7 +17,10 @@ use burn::{
     },
 };
 use tracel::heat::{
-    client::HeatClient, command::MultiDevice, errors::training::TrainingError, macros::heat,
+    client::HeatClient,
+    command::MultiDevice,
+    errors::{sdk::HeatSdkError, training::TrainingError},
+    macros::heat,
 };
 
 impl<B: Backend> Model<B> {
@@ -145,16 +148,19 @@ pub fn training2<B: AutodiffBackend>(
     config: TrainingConfig,
     MultiDevice(devices): MultiDevice<B>,
     mut client: HeatClient,
-) -> Result<Model<B>, TrainingError> {
-    train::<B>(&mut client, "/tmp/guide2", config, devices[0].clone())
+) -> Result<Model<B>, String> {
+    let _ = train::<B>(&mut client, "/tmp/guide2", config, devices[0].clone());
+    Err("Training error".into())
 }
 
 #[heat(training)]
 pub fn custom_training<B: AutodiffBackend>(
     MultiDevice(devices): MultiDevice<B>,
-) -> Result<Model<B>, TrainingError> {
+) -> Result<Model<B>, HeatSdkError> {
     println!("Custom training: {:?}", devices);
-    Err(().into())
+    Err(HeatSdkError::UnknownError(
+        "Custom training error".to_string(),
+    ))
 }
 
 #[heat(training)]
