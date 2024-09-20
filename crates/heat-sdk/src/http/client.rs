@@ -2,10 +2,10 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 use reqwest::Url;
 use serde::Serialize;
 
+use crate::http::error::HeatHttpError;
 use crate::schemas::HeatCodeMetadata;
 use crate::{
     client::HeatCredentials,
-    errors::sdk::HeatSdkError,
     http::schemas::StartExperimentSchema,
     schemas::{CrateVersionMetadata, Experiment},
 };
@@ -20,16 +20,25 @@ pub enum EndExperimentStatus {
     Fail(String),
 }
 
-impl From<reqwest::Error> for HeatSdkError {
+impl From<reqwest::Error> for HeatHttpError {
     fn from(error: reqwest::Error) -> Self {
         match error.status() {
-            Some(status) => match status {
-                reqwest::StatusCode::REQUEST_TIMEOUT => {
-                    HeatSdkError::ServerTimeoutError(error.to_string())
-                }
-                _ => HeatSdkError::ServerError(status.to_string()),
-            },
-            None => HeatSdkError::ServerError(error.to_string()),
+            Some(status) => HeatHttpError::HttpError(status, error.to_string()),
+            None => HeatHttpError::UnknownError(error.to_string()),
+        }
+    }
+}
+
+trait ResponseExt {
+    fn map_to_heat_err(self) -> Result<reqwest::blocking::Response, HeatHttpError>;
+}
+
+impl ResponseExt for reqwest::blocking::Response {
+    fn map_to_heat_err(self) -> Result<reqwest::blocking::Response, HeatHttpError> {
+        if self.status().is_success() {
+            Ok(self)
+        } else {
+            Err(HeatHttpError::HttpError(self.status(), self.text()?))
         }
     }
 }
@@ -66,9 +75,9 @@ impl HttpClient {
 
     /// Check if the Heat server is reachable.
     #[allow(dead_code)]
-    pub fn health_check(&self) -> Result<(), HeatSdkError> {
+    pub fn health_check(&self) -> Result<(), HeatHttpError> {
         let url = format!("{}/health", self.base_url);
-        self.http_client.get(url).send()?.error_for_status()?;
+        self.http_client.get(url).send()?.map_to_heat_err()?;
         Ok(())
     }
 
@@ -78,7 +87,7 @@ impl HttpClient {
     }
 
     /// Log in to the Heat server with the given credentials.
-    pub fn login(&mut self, credentials: &HeatCredentials) -> Result<(), HeatSdkError> {
+    pub fn login(&mut self, credentials: &HeatCredentials) -> Result<(), HeatHttpError> {
         let url = format!("{}/login/api-key", self.base_url);
         let res = self
             .http_client
@@ -86,22 +95,22 @@ impl HttpClient {
             .form::<HeatCredentials>(credentials)
             .send()?;
 
+        let status = res.status();
+
         // store session cookie
-        if res.status().is_success() {
+        if status.is_success() {
             let cookie_header = res.headers().get(SET_COOKIE);
             if let Some(cookie) = cookie_header {
                 let cookie_str = cookie
                     .to_str()
-                    .expect("Session cookie should be convert to str");
+                    .expect("Session cookie should be able to convert to str");
                 self.session_cookie = Some(cookie_str.to_string());
             } else {
-                return Err(HeatSdkError::ClientError(
-                    "Cannot connect to Heat server, bad session ID.".to_string(),
-                ));
+                return Err(HeatHttpError::BadSessionId);
             }
         } else {
             let error_message: String = format!("Cannot connect to Heat server({:?})", res.text()?);
-            return Err(HeatSdkError::ClientError(error_message));
+            return Err(HeatHttpError::HttpError(status, error_message));
         }
 
         Ok(())
@@ -133,7 +142,7 @@ impl HttpClient {
         &self,
         owner_name: &str,
         project_name: &str,
-    ) -> Result<Experiment, HeatSdkError> {
+    ) -> Result<Experiment, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = format!(
@@ -148,7 +157,7 @@ impl HttpClient {
             .json(&serde_json::json!({}))
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .error_for_status()?
+            .map_to_heat_err()?
             .json::<CreateExperimentResponseSchema>()?;
 
         let experiment = Experiment {
@@ -173,7 +182,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         config: &impl Serialize,
-    ) -> Result<(), HeatSdkError> {
+    ) -> Result<(), HeatHttpError> {
         self.validate_session_cookie()?;
 
         let json = StartExperimentSchema {
@@ -189,7 +198,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&json)
             .send()?
-            .error_for_status()?;
+            .map_to_heat_err()?;
 
         Ok(())
     }
@@ -203,7 +212,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         end_status: EndExperimentStatus,
-    ) -> Result<(), HeatSdkError> {
+    ) -> Result<(), HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = format!(
@@ -221,7 +230,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&end_status)
             .send()?
-            .error_for_status()?;
+            .map_to_heat_err()?;
 
         Ok(())
     }
@@ -235,7 +244,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
-    ) -> Result<String, HeatSdkError> {
+    ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url: String = format!(
@@ -248,7 +257,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .error_for_status()?
+            .map_to_heat_err()?
             .json::<URLSchema>()
             .map(|res| res.url)?;
 
@@ -264,7 +273,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
-    ) -> Result<String, HeatSdkError> {
+    ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url: String = format!(
@@ -277,7 +286,7 @@ impl HttpClient {
             .get(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .error_for_status()?
+            .map_to_heat_err()?
             .json::<URLSchema>()
             .map(|res| res.url)?;
 
@@ -292,7 +301,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<String, HeatSdkError> {
+    ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = format!(
@@ -305,7 +314,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .error_for_status()?
+            .map_to_heat_err()?
             .json::<URLSchema>()?
             .url;
 
@@ -320,7 +329,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<String, HeatSdkError> {
+    ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = format!(
@@ -333,7 +342,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .error_for_status()?
+            .map_to_heat_err()?
             .json::<URLSchema>()?
             .url;
 
@@ -341,34 +350,32 @@ impl HttpClient {
     }
 
     /// Generic method to upload bytes to the given URL.
-    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), HeatSdkError> {
+    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), HeatHttpError> {
         self.http_client
             .put(url)
             .body(bytes)
             .send()?
-            .error_for_status()?;
+            .map_to_heat_err()?;
 
         Ok(())
     }
 
     /// Generic method to download bytes from the given URL.
-    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, HeatSdkError> {
+    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, HeatHttpError> {
         let data = self
             .http_client
             .get(url)
             .send()?
-            .error_for_status()?
+            .map_to_heat_err()?
             .bytes()?
             .to_vec();
 
         Ok(data)
     }
 
-    fn validate_session_cookie(&self) -> Result<(), HeatSdkError> {
+    fn validate_session_cookie(&self) -> Result<(), HeatHttpError> {
         if self.session_cookie.is_none() {
-            return Err(HeatSdkError::ClientError(
-                "Cannot connect to Heat server, no session ID.".to_string(),
-            ));
+            return Err(HeatHttpError::BadSessionId);
         }
         Ok(())
     }
@@ -380,7 +387,7 @@ impl HttpClient {
         target_package_name: &str,
         heat_metadata: HeatCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
-    ) -> Result<CodeUploadUrlsSchema, HeatSdkError> {
+    ) -> Result<CodeUploadUrlsSchema, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = format!(
@@ -388,7 +395,7 @@ impl HttpClient {
             self.base_url, owner_name, project_name
         );
 
-        let upload_urls = self
+        let response = self
             .http_client
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
@@ -398,9 +405,9 @@ impl HttpClient {
                 crates: crates_metadata,
             })
             .send()?
-            .error_for_status()?
-            .json::<CodeUploadUrlsSchema>()?;
+            .map_to_heat_err()?;
 
+        let upload_urls = response.json::<CodeUploadUrlsSchema>()?;
         Ok(upload_urls)
     }
 
@@ -411,7 +418,7 @@ impl HttpClient {
         project_name: &str,
         project_version: u32,
         command: String,
-    ) -> Result<(), HeatSdkError> {
+    ) -> Result<(), HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = format!(
@@ -430,7 +437,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&body)
             .send()?
-            .error_for_status()?;
+            .map_to_heat_err()?;
 
         Ok(())
     }

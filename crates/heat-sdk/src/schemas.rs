@@ -4,6 +4,8 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::errors::sdk::HeatSdkError;
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DepKind {
@@ -163,11 +165,11 @@ impl ProjectPath {
 }
 
 impl TryFrom<String> for ProjectPath {
-    type Error = String;
+    type Error = HeatSdkError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         if !ProjectPath::validate_path(&path) {
-            return Err(format!("Invalid project path: {}", path));
+            return Err(HeatSdkError::InvalidProjectPath(path));
         }
 
         let parts: Vec<&str> = path.split('/').collect();
@@ -227,18 +229,18 @@ impl ExperimentPath {
 }
 
 impl TryFrom<String> for ExperimentPath {
-    type Error = String;
+    type Error = HeatSdkError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         if !ExperimentPath::validate_path(&path) {
-            return Err(format!("Invalid experiment path: {}", path));
+            return Err(HeatSdkError::InvalidExperimentPath(path));
         }
 
         let parts: Vec<&str> = path.split('/').collect();
         let project_path = ProjectPath::try_from(parts[0..2].join("/"))?;
         let experiment_num = parts[2]
             .parse::<i32>()
-            .map_err(|e| format!("Failed to parse experiment number: {}", e))?;
+            .map_err(|_| HeatSdkError::InvalidExperimentNumber(parts[2].to_string()))?;
 
         Ok(ExperimentPath {
             project_path,
