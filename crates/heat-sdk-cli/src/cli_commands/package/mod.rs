@@ -29,7 +29,7 @@ pub struct PackageArgs {
     #[clap(
         short = 'e',
         long = "endpoint",
-        help = "The Heat API enpoint.",
+        help = "The Heat API endpoint.",
         default_value = "http://127.0.0.1:9001"
     )]
     pub heat_endpoint: String,

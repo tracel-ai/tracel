@@ -129,11 +129,11 @@ pub(crate) fn handle_command(
 
     match res {
         Ok(()) => {
-            print_info!("All experiments have run succesfully!.");
+            print_info!("All experiments have run successfully!.");
         }
         Err(e) => {
             return Err(anyhow::anyhow!(format!(
-                "An error has occured while running experiments: {}",
+                "An error has occurred while running experiments: {}",
                 e
             )));
         }
