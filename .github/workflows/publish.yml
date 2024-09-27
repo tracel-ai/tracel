@@ -1,0 +1,41 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  heat-sdk:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: heat-sdk
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  heat-sdk-cli-macros:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: heat-sdk-cli-macros
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  heat-sdk-cli:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: heat-sdk-cli
+    needs:
+      - heat-sdk-cli-macros
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  tracel:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: tracel
+    needs:
+      - heat-sdk
+      - heat-sdk-cli-macros
+      - heat-sdk-cli
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
