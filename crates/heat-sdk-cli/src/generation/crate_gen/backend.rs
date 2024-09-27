@@ -27,7 +27,7 @@ impl BackendType {
             }
             BackendType::Ndarray => {
                 quote! {
-                    burn::backend::ndarray::NdArrayDevice::default()
+                    burn::backend::ndarray::AndArrayDevice::default()
                 }
             }
         }
@@ -42,7 +42,7 @@ impl BackendType {
                 quote! {burn::backend::libtorch::LibTorch<f32>}
             }
             BackendType::Ndarray => {
-                quote! {burn::backend::ndarray::NdArray<f32>}
+                quote! {burn::backend::ndarray::AndArray<f32>}
             }
         }
     }
