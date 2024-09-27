@@ -3217,7 +3217,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -5298,8 +5298,7 @@ dependencies = [
 [[package]]
 name = "tracel-xtask"
 version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fabbb1dfc79ef5c077fe4228f623b48f91bb7d7a6197c4cb5de05f5eec30842"
+source = "git+https://github.com/tracel-ai/xtask?rev=e23ec642be6748128e3c0f0b783a9291cc801e20#e23ec642be6748128e3c0f0b783a9291cc801e20"
 dependencies = [
  "anyhow",
  "clap",
@@ -5317,8 +5316,7 @@ dependencies = [
 [[package]]
 name = "tracel-xtask-macros"
 version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccbf1b9a397363ab9d55bddc3c5c32da7952b3376dcb3b2c0bcdddf72eae9239"
+source = "git+https://github.com/tracel-ai/xtask?rev=e23ec642be6748128e3c0f0b783a9291cc801e20#e23ec642be6748128e3c0f0b783a9291cc801e20"
 dependencies = [
  "proc-macro2",
  "quote",
