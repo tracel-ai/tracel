@@ -1,12 +1,16 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::Duration;
 
 use burn::tensor::backend::Backend;
+use reqwest::StatusCode;
 use serde::Serialize;
 
 use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
+use crate::http::error::HeatHttpError;
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::schemas::{
     CrateVersionMetadata, ExperimentPath, HeatCodeMetadata, PackagedCrateData, ProjectPath,
@@ -40,6 +44,8 @@ pub struct HeatClientConfig {
     pub credentials: HeatCredentials,
     /// The number of retries to attempt when connecting to the Heat API.
     pub num_retries: u8,
+    /// The interval to wait between retries in seconds.
+    pub retry_interval: u64,
     /// The project ID to create the experiment in.
     pub project_path: ProjectPath,
 }
@@ -66,6 +72,7 @@ impl HeatClientConfigBuilder {
                 endpoint: "http://127.0.0.1:9001".into(),
                 credentials: creds,
                 num_retries: 3,
+                retry_interval: 3,
                 project_path,
             },
         }
@@ -80,6 +87,12 @@ impl HeatClientConfigBuilder {
     /// Set the number of retries to attempt when connecting to the Heat API
     pub fn with_num_retries(mut self, num_retries: u8) -> HeatClientConfigBuilder {
         self.config.num_retries = num_retries;
+        self
+    }
+
+    /// Set the interval to wait between retries in seconds
+    pub fn with_retry_interval(mut self, retry_interval: u64) -> HeatClientConfigBuilder {
+        self.config.retry_interval = retry_interval;
         self
     }
 
@@ -126,10 +139,29 @@ impl HeatClient {
             match client.connect() {
                 Ok(_) => break,
                 Err(e) => {
+                    println!("Failed to connect to the server: {}", e);
+
                     if i == client.config.num_retries {
-                        return Err(HeatSdkError::ServerTimeoutError(e.to_string()));
+                        return Err(HeatSdkError::CreateClientError(
+                            "Server timeout".to_string(),
+                        ));
                     }
-                    println!("Failed to connect to the server. Retrying...");
+
+                    if let HeatSdkError::HttpError(HeatHttpError::HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        msg,
+                    )) = e
+                    {
+                        println!("Invalid API key. Please check your API key and try again.");
+                        return Err(HeatSdkError::CreateClientError(format!(
+                            "Invalid API key: {msg}"
+                        )));
+                    }
+                    println!(
+                        "Failed to connect to the server. Retrying in {} seconds...",
+                        client.config.retry_interval
+                    );
+                    thread::sleep(Duration::from_secs(client.config.retry_interval));
                 }
             }
         }
@@ -139,23 +171,27 @@ impl HeatClient {
 
     /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
     pub fn start_experiment(&mut self, config: &impl Serialize) -> Result<(), HeatSdkError> {
-        let experiment = self.http_client.create_experiment(
-            self.config.project_path.owner_name(),
-            self.config.project_path.project_name(),
-        )?;
+        let experiment = self
+            .http_client
+            .create_experiment(
+                self.config.project_path.owner_name(),
+                self.config.project_path.project_name(),
+            )
+            .map_err(HeatSdkError::HttpError)?;
 
         let experiment_path = ExperimentPath::try_from(format!(
             "{}/{}",
             self.config.project_path, experiment.experiment_num
-        ))
-        .map_err(HeatSdkError::ClientError)?;
+        ))?;
 
-        self.http_client.start_experiment(
-            self.config.project_path.owner_name(),
-            &experiment.project_name,
-            experiment.experiment_num,
-            config,
-        )?;
+        self.http_client
+            .start_experiment(
+                self.config.project_path.owner_name(),
+                &experiment.project_name,
+                experiment.experiment_num,
+                config,
+            )
+            .map_err(HeatSdkError::HttpError)?;
 
         println!("Experiment num: {}", experiment.experiment_num);
 
@@ -168,17 +204,9 @@ impl HeatClient {
         let mut ws_client = WebSocketClient::new();
         ws_client.connect(ws_endpoint, self.http_client.get_session_cookie().unwrap())?;
 
-        let exp_log_store = TempLogStore::new(self.http_client.clone(), experiment_path);
+        let exp_log_store = TempLogStore::new(self.http_client.clone(), experiment_path.clone());
 
-        let experiment = Experiment::new(
-            ExperimentPath::try_from(format!(
-                "{}/{}",
-                self.config.project_path, experiment.experiment_num
-            ))
-            .map_err(HeatSdkError::ClientError)?,
-            ws_client,
-            exp_log_store,
-        );
+        let experiment = Experiment::new(experiment_path, ws_client, exp_log_store);
         let mut exp_guard = self
             .active_experiment
             .write()
@@ -189,7 +217,7 @@ impl HeatClient {
     }
 
     /// Get the sender for the active experiment's WebSocket connection.
-    pub fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
+    pub(crate) fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
         let active_experiment = self
             .active_experiment
             .read()
@@ -197,7 +225,7 @@ impl HeatClient {
         if let Some(w) = active_experiment.as_ref() {
             w.get_ws_sender()
         } else {
-            Err(HeatSdkError::ClientError(
+            Err(HeatSdkError::UnknownError(
                 "No active experiment to get sender.".to_string(),
             ))
         }
@@ -228,14 +256,14 @@ impl HeatClient {
 
         let time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("Should be able to get time.")
             .as_millis();
 
         self.http_client.upload_bytes_to_url(&url, checkpoint)?;
 
         let time_end = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("Should be able to get time.")
             .as_millis();
 
         log::info!("Time to upload checkpoint: {}", time_end - time);
@@ -273,7 +301,7 @@ impl HeatClient {
             .expect("Should be able to lock active_experiment as read.");
 
         if active_experiment.is_none() {
-            return Err(HeatSdkError::ClientError(
+            return Err(HeatSdkError::UnknownError(
                 "No active experiment to upload final model.".to_string(),
             ));
         }
@@ -307,7 +335,7 @@ impl HeatClient {
         let recorder = crate::record::RemoteRecorder::<S>::final_model(self.clone());
         let res = model.save_file("", &recorder);
         if let Err(e) = res {
-            return Err(HeatSdkError::ClientError(e.to_string()));
+            return Err(HeatSdkError::StopExperimentError(e.to_string()));
         }
 
         self.end_experiment_internal(EndExperimentStatus::Success)
@@ -372,19 +400,18 @@ impl HeatClient {
             metadata,
         )?;
 
-        // assumes that the urls are returned in the same order as the names
         for (crate_name, file_path) in data.into_iter() {
             let url = urls
                 .urls
                 .get(&crate_name)
-                .ok_or(HeatSdkError::ClientError(format!(
+                .ok_or(HeatSdkError::UnknownError(format!(
                     "No URL found for crate {}",
                     crate_name
                 )))?;
 
             let data = std::fs::read(file_path).map_err(|e| {
-                HeatSdkError::ClientError(format!(
-                    "Failed to read crate data for {}: {}",
+                HeatSdkError::FileReadError(format!(
+                    "Could not read crate data for crate {}: {}",
                     crate_name, e
                 ))
             })?;
@@ -407,7 +434,9 @@ impl HeatClient {
             self.config.project_path.project_name(),
             project_version,
             command,
-        )
+        )?;
+
+        Ok(())
     }
 }
 

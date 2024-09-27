@@ -4,6 +4,7 @@ use burn::train::logger::MetricLogger;
 use burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::client::HeatClientState;
+use crate::errors::sdk::HeatSdkError;
 use crate::experiment::{Split, WsMessage};
 
 /// The remote metric logger, used to send metric logs to Heat.
@@ -17,19 +18,23 @@ impl RemoteMetricLogger {
     /// Create a new instance of the remote metric logger for `Training` with the given [HeatClientState].
     pub fn new_train(client: HeatClientState) -> Self {
         Self::new(client, Split::Train)
+            .expect("RemoteMetricLogger should be created successfully for training split")
     }
 
     /// Create a new instance of the remote metric logger for `Validation` with the given [HeatClientState].
     pub fn new_validation(client: HeatClientState) -> Self {
         Self::new(client, Split::Val)
+            .expect("RemoteMetricLogger should be created successfully for validation split")
     }
 
-    fn new(client: HeatClientState, split: Split) -> Self {
-        Self {
-            sender: client.get_experiment_sender().unwrap(),
+    fn new(client: HeatClientState, split: Split) -> Result<Self, HeatSdkError> {
+        Ok(Self {
+            sender: client
+                .get_experiment_sender()
+                .map_err(|e| HeatSdkError::CreateRemoteMetricLoggerError(e.to_string()))?,
             epoch: 1,
             split,
-        }
+        })
     }
 }
 

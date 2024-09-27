@@ -82,12 +82,12 @@ impl Experiment {
         &self.experiment_path
     }
 
-    pub fn get_ws_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
+    pub(crate) fn get_ws_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
         if let Some(handler) = &self.handler {
             Ok(handler.get_sender())
         } else {
-            Err(HeatSdkError::ClientError(
-                "Experiment handling thread not started".to_string(),
+            Err(HeatSdkError::UnknownError(
+                "Experiment not started yet".to_string(),
             ))
         }
     }
