@@ -1,8 +1,15 @@
 [package]
-name = "heat-sdk-cli-macros"
+authors = ["Tracel Technologies Inc."]
+categories = ["command-line-interface", "command-line-utilities", "development-tools"]
+description = "Macros for Tracel Heat SDK CLI."
+keywords = ["tracel", "heat", "burn", "macros"]
 edition.workspace = true
-version.workspace = true
+license.workspace = true
+name = "heat-sdk-cli-macros"
 readme.workspace = true
+repository = "https://github.com/tracel-ai/tracel/tree/main/crates/head-sdk-cli-macros"
+version.workspace = true
+rust-version = "1.79"
 
 [lib]
 proc-macro = true

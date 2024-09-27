@@ -1,9 +1,15 @@
 [package]
-name = "tracel"
-repository = "https://github.com/tracel-ai/tracel"
+authors = ["Tracel Technologies Inc."]
+categories = ["development-tools"]
+description = "Tracel SDK."
+keywords = ["tracel", "heat", "burn", "sdk"]
 edition.workspace = true
-version.workspace = true
+license.workspace = true
+name = "tracel"
 readme.workspace = true
+repository = "https://github.com/tracel-ai/tracel/tree/main/crates/tracel"
+version.workspace = true
+rust-version = "1.79"
 
 [features]
 default = ["heat-sdk"]
