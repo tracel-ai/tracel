@@ -42,7 +42,7 @@ pub struct RemoteTrainingRunArgs {
         short = 'e',
         long = "endpoint",
         help = "The Heat API endpoint.",
-        default_value = "http://127.0.0.1:9001"
+        default_value = "https://heat.tracel.ai/api"
     )]
     pub heat_endpoint: String,
     /// The runner group name
