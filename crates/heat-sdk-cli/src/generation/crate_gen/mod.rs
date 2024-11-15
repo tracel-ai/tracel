@@ -348,7 +348,6 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         }
 
         fn main() {
-            env_logger::init();
             let matches = generate_clap().get_matches();
 
             let device = #backend_default_device;
@@ -403,13 +402,6 @@ pub fn create_crate(
     ));
     generated_crate.add_dependency(Dependency::new(
         "serde_json".to_string(),
-        "*".to_string(),
-        None,
-        vec![],
-    ));
-    // add env_logger
-    generated_crate.add_dependency(Dependency::new(
-        "env_logger".to_string(),
         "*".to_string(),
         None,
         vec![],
