@@ -127,10 +127,10 @@ impl HttpClient {
             .base_url
             .parse()
             .expect("Should be able to parse base url");
-        url.set_scheme("ws")
+        url.set_scheme("wss")
             .expect("Should be able to set ws scheme");
         format!(
-            "{}projects/{}/{}/experiments/{}/ws",
+            "{}/projects/{}/{}/experiments/{}/ws",
             url, owner_name, project_name, exp_num
         )
     }
