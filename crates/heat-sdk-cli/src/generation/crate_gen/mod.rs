@@ -236,7 +236,7 @@ fn generate_clap_cli() -> proc_macro2::TokenStream {
                     .short('e')
                     .long("heat-endpoint")
                     .help("The Heat endpoint")
-                    .default_value("http://127.0.0.1:9001"),
+                    .default_value("https://heat.tracel.ai/api"),
             ]);
 
             command
@@ -348,6 +348,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         }
 
         fn main() {
+            env_logger::init();
             let matches = generate_clap().get_matches();
 
             let device = #backend_default_device;
@@ -402,6 +403,13 @@ pub fn create_crate(
     ));
     generated_crate.add_dependency(Dependency::new(
         "serde_json".to_string(),
+        "*".to_string(),
+        None,
+        vec![],
+    ));
+    // add env_logger
+    generated_crate.add_dependency(Dependency::new(
+        "env_logger".to_string(),
         "*".to_string(),
         None,
         vec![],
