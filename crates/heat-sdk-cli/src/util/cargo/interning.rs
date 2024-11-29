@@ -66,7 +66,7 @@ impl PartialEq<str> for InternedString {
     }
 }
 
-impl<'a> PartialEq<&'a str> for InternedString {
+impl PartialEq<&str> for InternedString {
     fn eq(&self, other: &&str) -> bool {
         **self == **other
     }

@@ -33,7 +33,7 @@ struct RemoteWriterMaker {
     client: HeatClientState,
 }
 
-impl<'a> MakeWriter<'a> for RemoteWriterMaker {
+impl MakeWriter<'_> for RemoteWriterMaker {
     type Writer = RemoteWriter;
 
     fn make_writer(&self) -> Self::Writer {
