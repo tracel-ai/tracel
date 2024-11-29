@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::commands::time::format_duration;
+use crate::config::Config;
 use crate::context::HeatCliContext;
 use crate::{cli_commands, print_err, print_info};
 
@@ -27,7 +28,7 @@ pub enum Commands {
     // Logout,
 }
 
-pub fn cli_main() {
+pub fn cli_main(config: Config) {
     print_info!("Running CLI");
     let time_begin = std::time::Instant::now();
     let args = CliArgs::try_parse();
@@ -36,10 +37,7 @@ pub fn cli_main() {
         std::process::exit(1);
     }
 
-    let user_project_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
-    let user_crate_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-
-    let context = HeatCliContext::new(user_project_name, user_crate_dir.into()).init();
+    let context = HeatCliContext::new(&config).init();
 
     let cli_res = match args.unwrap().command {
         Commands::Run(run_args) => cli_commands::run::handle_command(run_args, context),

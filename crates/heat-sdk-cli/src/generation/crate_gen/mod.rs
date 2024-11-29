@@ -236,7 +236,12 @@ fn generate_clap_cli() -> proc_macro2::TokenStream {
                     .short('e')
                     .long("heat-endpoint")
                     .help("The Heat endpoint")
-                    .default_value("https://heat.tracel.ai/api"),
+                    .required(true),
+                clap::Arg::new("wss")
+                    .short('w')
+                    .long("wss")
+                    .help("Whether to use WSS")
+                    .required(true),
             ]);
 
             command
@@ -248,7 +253,6 @@ fn generate_training_function(
     train_func_match: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {
-        let client = create_heat_client(&key, &heat_endpoint, &project);
         let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
         let training_config: serde_json::Value = serde_json::from_str(&training_config_str).expect("Config should be deserialized");
 
@@ -337,10 +341,11 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         use tracel::heat::command::train::*;
         use burn::prelude::*;
 
-        fn create_heat_client(api_key: &str, url: &str, project: &str) -> tracel::heat::client::HeatClient {
+        fn create_heat_client(api_key: &str, url: &str, project: &str, wss: bool) -> tracel::heat::client::HeatClient {
             let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
             let client_config = tracel::heat::client::HeatClientConfig::builder(creds, tracel::heat::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
                 .with_endpoint(url)
+                .with_wss(wss)
                 .with_num_retries(10)
                 .build();
             tracel::heat::client::HeatClient::create(client_config)
@@ -352,12 +357,16 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
 
             let device = #backend_default_device;
 
+            let key = matches.get_one::<String>("key").expect("key should be set.");
+            let heat_endpoint = matches.get_one::<String>("heat-endpoint").expect("heat-endpoint should be set.");
+            let project = matches.get_one::<String>("project").expect("project should be set.");
+            let wss = matches.get_one::<String>("wss").expect("wss should be set.").parse::<bool>().expect("wss should be a boolean.");
+
+            let client = create_heat_client(&key, &heat_endpoint, &project, wss);
+
             if let Some(train_matches) = matches.subcommand_matches("train") {
                 let func = train_matches.get_one::<String>("func").expect("func should be set.");
                 let config_path = train_matches.get_one::<String>("config").expect("config should be set.");
-                let project = matches.get_one::<String>("project").expect("project should be set.");
-                let key = matches.get_one::<String>("key").expect("key should be set.");
-                let heat_endpoint = matches.get_one::<String>("heat-endpoint").expect("heat-endpoint should be set.");
 
                 #generated_training
             }
