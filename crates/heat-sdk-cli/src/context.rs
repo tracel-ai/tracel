@@ -1,5 +1,6 @@
 use crate::{
     commands::{BuildCommand, RunCommand, RunParams},
+    config::Config,
     generation::{FileTree, GeneratedCrate, HeatDir},
     print_info,
 };
@@ -11,10 +12,17 @@ pub struct HeatCliContext {
     generated_crate_name: Option<String>,
     build_profile: String,
     heat_dir: HeatDir,
+    api_endpoint: url::Url,
+    wss: bool,
 }
 
 impl HeatCliContext {
-    pub fn new(user_project_name: String, user_crate_dir: PathBuf) -> Self {
+    pub fn new(config: &Config) -> Self {
+        let user_project_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
+        let user_crate_dir: PathBuf = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR not set")
+            .into();
+
         let heat_dir = match HeatDir::try_from_path(&user_crate_dir) {
             Ok(heat_dir) => heat_dir,
             Err(_) => HeatDir::new(),
@@ -26,6 +34,11 @@ impl HeatCliContext {
             generated_crate_name: None,
             build_profile: "release".to_string(),
             heat_dir,
+            api_endpoint: config
+                .api_endpoint
+                .parse::<url::Url>()
+                .expect("API endpoint should be valid"),
+            wss: config.wss,
         }
     }
 
@@ -36,6 +49,14 @@ impl HeatCliContext {
 
     pub fn package_name(&self) -> &str {
         self.user_project_name.as_str()
+    }
+
+    pub fn get_api_endpoint(&self) -> &url::Url {
+        &self.api_endpoint
+    }
+
+    pub fn get_wss(&self) -> bool {
+        self.wss
     }
 
     fn get_generated_crate_path(&self) -> PathBuf {
@@ -100,6 +121,8 @@ impl HeatCliContext {
                     .env("HEAT_PROJECT_DIR", &self.user_crate_dir)
                     .args(["--project", project])
                     .args(["--key", key])
+                    .args(["--heat-endpoint", self.get_api_endpoint().as_str()])
+                    .args(["--wss", self.get_wss().to_string().as_str()])
                     .args(["train", function, config_path]);
                 command
             }
