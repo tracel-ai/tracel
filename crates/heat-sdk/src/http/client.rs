@@ -410,10 +410,15 @@ impl HttpClient {
         let upload_urls = response.json::<CodeUploadUrlsSchema>()?;
         Ok(upload_urls)
     }
-    
-    pub(crate) fn check_project_version_exists(&self, owner_name: &str, project_name: &str, project_version: u32) -> Result<bool, HeatHttpError> {
+
+    pub(crate) fn check_project_version_exists(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        project_version: u32,
+    ) -> Result<bool, HeatHttpError> {
         self.validate_session_cookie()?;
-        
+
         let url = self.join(&format!(
             "projects/{}/{}/code/{}",
             owner_name, project_name, project_version
@@ -428,7 +433,10 @@ impl HttpClient {
         match response.status() {
             reqwest::StatusCode::OK => Ok(true),
             reqwest::StatusCode::NOT_FOUND => Ok(false),
-            _ => Err(HeatHttpError::HttpError(response.status(), response.text()?)),
+            _ => Err(HeatHttpError::HttpError(
+                response.status(),
+                response.text()?,
+            )),
         }
     }
 

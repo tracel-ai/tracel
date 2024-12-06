@@ -435,7 +435,7 @@ impl HeatClient {
 
         Ok(urls.project_version)
     }
-    
+
     /// Checks whether a certain project version exists
     pub fn check_project_version_exists(&self, project_version: u32) -> Result<bool, HeatSdkError> {
         let exists = self.http_client.check_project_version_exists(

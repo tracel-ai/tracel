@@ -28,6 +28,13 @@ pub struct PackageArgs {
 }
 
 pub(crate) fn handle_command(args: PackageArgs, context: HeatCliContext) -> anyhow::Result<()> {
+    // check current commit hash
+    // let commit = repo.head()?.peel_to_commit_in_place()?.id();
+    let repo = gix::discover(".")?;
+    if repo.is_dirty()? {
+        anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
+    }
+
     let heat_client = create_heat_client(
         &args.key,
         context.get_api_endpoint().as_str(),
