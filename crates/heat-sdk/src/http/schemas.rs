@@ -42,11 +42,12 @@ pub struct CodeUploadParamsSchema {
     pub target_package_name: String,
     pub heat_metadata: HeatCodeMetadata,
     pub crates: Vec<CrateVersionMetadata>,
+    pub version: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CodeUploadUrlsSchema {
-    pub project_version: u32,
+    pub project_version: String,
     pub urls: HashMap<String, String>,
 }
 
@@ -55,6 +56,6 @@ type RunnerJobCommand = String;
 #[derive(Debug, Serialize)]
 pub struct RunnerQueueJobParamsSchema {
     pub runner_group_name: String,
-    pub project_version: u32,
+    pub project_version: String,
     pub command: RunnerJobCommand,
 }

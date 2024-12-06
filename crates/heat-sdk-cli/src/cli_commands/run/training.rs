@@ -69,14 +69,14 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
         &args.project_path,
     );
 
-    let project_version = args.project_version.unwrap().parse::<u32>()?;
-    if !heat_client.check_project_version_exists(project_version)? {
+    let project_version = args.project_version.unwrap();
+    if !heat_client.check_project_version_exists(&project_version)? {
         return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version));
     }
 
     heat_client.start_remote_job(
         args.runner.unwrap(),
-        project_version,
+        &project_version,
         format!(
             "run training --functions {} --backends {} --configs {} --project {} --key {}",
             args.functions.join(" "),
