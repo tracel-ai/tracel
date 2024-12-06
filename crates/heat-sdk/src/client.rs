@@ -435,6 +435,17 @@ impl HeatClient {
 
         Ok(urls.project_version)
     }
+    
+    /// Checks whether a certain project version exists
+    pub fn check_project_version_exists(&self, project_version: u32) -> Result<bool, HeatSdkError> {
+        let exists = self.http_client.check_project_version_exists(
+            self.config.project_path.owner_name(),
+            self.config.project_path.project_name(),
+            project_version,
+        )?;
+
+        Ok(exists)
+    }
 
     pub fn start_remote_job(
         &self,

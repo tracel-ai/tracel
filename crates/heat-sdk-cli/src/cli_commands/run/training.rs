@@ -2,10 +2,10 @@ use clap::Parser;
 use colored::Colorize;
 use heat_sdk::{
     client::{HeatClient, HeatClientConfig, HeatCredentials},
-    schemas::{HeatCodeMetadata, ProjectPath, RegisteredHeatFunction},
+    schemas::ProjectPath,
 };
-use quote::ToTokens;
 
+use crate::registry::Flag;
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
     context::HeatCliContext,
@@ -17,13 +17,16 @@ use crate::{
 #[derive(Parser, Debug)]
 pub struct TrainingRunArgs {
     /// The training functions to run
-    #[clap(short = 'f', long="functions", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> The training functions to run. Annotate a training function with #[heat(training)] to register it.")]
+    #[clap(short = 'f', long="functions", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> The training functions to run. Annotate a training function with #[heat(training)] to register it."
+    )]
     functions: Vec<String>,
     /// Backend to use
-    #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> Backends to use for training.")]
+    #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> Backends to use for training."
+    )]
     backends: Vec<BackendType>,
     /// Config files paths
-    #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> Config files paths.")]
+    #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> Config files paths."
+    )]
     configs: Vec<String>,
     /// The Heat project ID
     // todo: support project name and creating a project if it doesn't exist
@@ -42,29 +45,19 @@ pub struct TrainingRunArgs {
         help = "<required> The Heat API key."
     )]
     key: String,
+    /// Project version
+    #[clap(short = 't', long = "version", help = "The project version.")]
+    project_version: Option<String>,
     /// The runner group name
     #[clap(short = 'r', long = "runner", help = "The runner group name.")]
     runner: Option<String>,
 }
 
-fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> HeatClient {
-    let creds = HeatCredentials::new(api_key.to_owned());
-    let client_config = HeatClientConfig::builder(
-        creds,
-        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
-    )
-    .with_endpoint(url)
-    .with_wss(wss)
-    .with_num_retries(10)
-    .build();
-    HeatClient::create(client_config)
-        .expect("Should connect to the Heat server and create a client")
-}
-
 pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
-    match args.runner {
-        Some(_) => remote_run(args, context),
-        None => local_run(args, context),
+    match (&args.runner, &args.project_version) {
+        (Some(_), Some(_)) => remote_run(args, context),
+        (None, None) => local_run(args, context),
+        _ => Err(anyhow::anyhow!("Both runner and project version must be specified for remote run and none for local run.")),
     }
 }
 
@@ -76,41 +69,16 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
         &args.project_path,
     );
 
-    let crates = crate::util::cargo::package::package(
-        &context.get_artifacts_dir_path(),
-        context.package_name(),
-    )?;
-
-    let flags = crate::registry::get_flags();
-
-    let mut registered_functions = Vec::<RegisteredHeatFunction>::new();
-    for flag in flags {
-        // function token stream to readable string
-        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream)
-            .expect("Should be able to parse token stream.");
-        let syn_tree: syn::File =
-            syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
-        let code_str = prettyplease::unparse(&syn_tree);
-        registered_functions.push(RegisteredHeatFunction {
-            mod_path: flag.mod_path.to_string(),
-            fn_name: flag.fn_name.to_string(),
-            proc_type: flag.proc_type.to_string(),
-            code: code_str,
-        });
+    let project_version = args.project_version.unwrap().parse::<u32>()?;
+    if !heat_client.check_project_version_exists(project_version)? {
+        return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version));
     }
-
-    let heat_metadata = HeatCodeMetadata {
-        functions: registered_functions,
-    };
-
-    let project_version =
-        heat_client.upload_new_project_version(context.package_name(), heat_metadata, crates)?;
 
     heat_client.start_remote_job(
         args.runner.unwrap(),
         project_version,
         format!(
-            "run local training --functions {} --backends {} --configs {} --project {} --key {}",
+            "run training --functions {} --backends {} --configs {} --project {} --key {}",
             args.functions.join(" "),
             args.backends
                 .into_iter()
@@ -127,48 +95,11 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
 }
 
 fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Result<()> {
-    // print all functions that are registered as training functions
     let flags = crate::registry::get_flags();
-    let training_functions = flags
-        .iter()
-        .filter(|flag| flag.proc_type == "training")
-        .map(|flag| {
-            format!(
-                "  {} {}::{}",
-                "-".custom_color(BURN_ORANGE),
-                flag.mod_path.bold(),
-                flag.fn_name.bold()
-            )
-        })
-        .collect::<Vec<String>>();
-    print_info!("Registered training functions:");
-    for function in training_functions {
-        print_info!("{}", function);
-    }
+    print_available_training_functions(&flags);
 
-    // Check that all passed functions exist
-    let flags = crate::registry::get_flags();
     for function in &args.functions {
-        let function_flags = flags
-            .iter()
-            .filter(|flag| flag.fn_name == function)
-            .collect::<Vec<&crate::registry::Flag>>();
-        if function_flags.is_empty() {
-            return Err(anyhow::anyhow!(format!("Function `{}` is not registered as a training function. Annotate a training function with #[heat(training)] to register it.", function)));
-        } else if function_flags.len() > 1 {
-            let function_strings = function_flags
-                .iter()
-                .map(|flag| {
-                    format!(
-                        "  {} {}::{}",
-                        "-".custom_color(BURN_ORANGE),
-                        flag.mod_path.bold(),
-                        flag.fn_name.bold()
-                    )
-                })
-                .collect::<Vec<String>>();
-            return Err(anyhow::anyhow!(format!("Function `{}` is registered multiple times. Please write the entire module path of the desired function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings.join("\n"))));
-        }
+        check_function_registered(function, &flags)?;
     }
 
     let mut commands_to_run: Vec<(BuildCommand, RunCommand)> = Vec::new();
@@ -214,4 +145,55 @@ fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Resu
     }
 
     Ok(())
+}
+
+fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> HeatClient {
+    let creds = HeatCredentials::new(api_key.to_owned());
+    let client_config = HeatClientConfig::builder(
+        creds,
+        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
+    )
+    .with_endpoint(url)
+    .with_wss(wss)
+    .with_num_retries(10)
+    .build();
+    HeatClient::create(client_config)
+        .expect("Should connect to the Heat server and create a client")
+}
+
+fn print_available_training_functions(flags: &Vec<Flag>) {
+    for function in flags.iter().filter(|flag| flag.proc_type == "training") {
+        print_info!("{}", format_function_flag(function));
+    }
+}
+
+fn check_function_registered(function: &str, flags: &Vec<Flag>) -> anyhow::Result<()> {
+    let function_flags: Vec<&Flag> = flags
+        .iter()
+        .filter(|flag| flag.fn_name == function)
+        .collect();
+
+    match function_flags.len() {
+        0 => Err(anyhow::anyhow!(format!("Function `{}` is not registered as a training function. Annotate a training function with #[heat(training)] to register it.", function))),
+        1 => Ok(()),
+        _ => {
+            let function_strings: String = function_flags
+                .iter()
+                .map(|flag| format_function_flag(flag))
+                .collect::<Vec<String>>()
+                .join("\n");
+
+
+            Err(anyhow::anyhow!(format!("Function `{}` is registered multiple times. Please write the entire module path of the desired function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings)))
+        }
+    }
+}
+
+fn format_function_flag(flag: &Flag) -> String {
+    format!(
+        "  {} {}::{}",
+        "-".custom_color(BURN_ORANGE),
+        flag.mod_path.bold(),
+        flag.fn_name.bold()
+    )
 }

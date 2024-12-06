@@ -9,7 +9,7 @@ pub struct InferenceRunArgs {}
 
 pub(crate) fn handle_command(
     _args: InferenceRunArgs,
-    context: HeatCliContext,
+    _context: HeatCliContext,
 ) -> anyhow::Result<()> {
     todo!("Local inference is not yet supported")
 }
