@@ -6,6 +6,7 @@ use heat_sdk::{
 };
 
 use crate::registry::Flag;
+use crate::util::git::{CheckoutGuard, GitRepo};
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
     context::HeatCliContext,
@@ -56,6 +57,7 @@ pub struct TrainingRunArgs {
 pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
+        (None, Some(_)) => checkout_local_run(args, context),
         (None, None) => local_run(args, context),
         _ => Err(anyhow::anyhow!("Both runner and project version must be specified for remote run and none for local run.")),
     }
@@ -92,6 +94,20 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
     )?;
 
     Ok(())
+}
+
+fn checkout_local_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
+    let repo = GitRepo::discover()?.if_not_dirty()?;
+    let checkout_guard = if !repo.is_at_commit(args.project_version.as_ref().unwrap())? {
+        repo.checkout_commit(args.project_version.as_ref().unwrap())?
+    } else {
+        CheckoutGuard::new(None)
+    };
+
+    let run_res = local_run(args, context)?;
+
+    drop(checkout_guard);
+    Ok(run_res)
 }
 
 fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Result<()> {

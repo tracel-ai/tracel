@@ -23,10 +23,7 @@ impl HeatCliContext {
             .expect("CARGO_MANIFEST_DIR not set")
             .into();
 
-        let heat_dir = match HeatDir::try_from_path(&user_crate_dir) {
-            Ok(heat_dir) => heat_dir,
-            Err(_) => HeatDir::new(),
-        };
+        let heat_dir = HeatDir::try_from_path(&user_crate_dir).unwrap_or_else(|_| HeatDir::new());
 
         Self {
             user_project_name,
