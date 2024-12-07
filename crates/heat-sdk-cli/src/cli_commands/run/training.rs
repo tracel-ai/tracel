@@ -97,7 +97,7 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
 }
 
 fn checkout_local_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
-    let repo = GitRepo::discover()?.if_not_dirty()?;
+    let repo = GitRepo::new()?.if_not_dirty()?;
     let checkout_guard = if !repo.is_at_commit(args.project_version.as_ref().unwrap())? {
         repo.checkout_commit(args.project_version.as_ref().unwrap())?
     } else {
