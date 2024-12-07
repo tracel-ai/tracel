@@ -6,7 +6,7 @@ use heat_sdk::{
 };
 
 use crate::registry::Flag;
-use crate::util::git::{CheckoutGuard, GitRepo};
+use crate::util::git::{DefaultGitRepo, GitRepo};
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
     context::HeatCliContext,
@@ -97,11 +97,12 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
 }
 
 fn checkout_local_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
-    let repo = GitRepo::new()?.if_not_dirty()?;
-    let checkout_guard = if !repo.is_at_commit(args.project_version.as_ref().unwrap())? {
-        repo.checkout_commit(args.project_version.as_ref().unwrap())?
+    let repo = DefaultGitRepo::new()?.if_not_dirty()?;
+    let ver = args.project_version.as_deref().unwrap();
+    let checkout_guard = if !repo.is_at_commit(ver)? {
+        Some(repo.checkout_commit(ver)?)
     } else {
-        CheckoutGuard::new(None)
+        None
     };
 
     let run_res = local_run(args, context)?;
