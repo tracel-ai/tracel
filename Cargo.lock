@@ -2878,7 +2878,7 @@ dependencies = [
  "log",
  "reqwest",
  "serde",
- "tracel 0.1.0",
+ "tracel",
 ]
 
 [[package]]
@@ -2886,15 +2886,7 @@ name = "guide-cli"
 version = "0.1.0"
 dependencies = [
  "burn",
- "tracel 0.1.0",
-]
-
-[[package]]
-name = "guide-cli-2"
-version = "0.1.0"
-dependencies = [
- "burn",
- "tracel 0.1.0 (git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs)",
+ "tracel",
 ]
 
 [[package]]
@@ -3010,30 +3002,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "heat-sdk"
-version = "0.1.0"
-source = "git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs#080ec130395fcb333339211abc7b8570e9bd0dc3"
-dependencies = [
- "burn",
- "derive-new",
- "log",
- "once_cell",
- "rand",
- "regex",
- "reqwest",
- "rmp-serde",
- "serde",
- "serde_json",
- "strum",
- "thiserror 1.0.69",
- "tracing",
- "tracing-core",
- "tracing-subscriber",
- "tungstenite",
- "uuid",
-]
-
-[[package]]
 name = "heat-sdk-cli"
 version = "0.1.0"
 dependencies = [
@@ -3045,46 +3013,7 @@ dependencies = [
  "flate2",
  "gensym",
  "gix",
- "heat-sdk 0.1.0",
- "ignore",
- "inventory",
- "lazycell",
- "once_cell",
- "paste",
- "pathdiff",
- "prettyplease",
- "proc-macro2",
- "quote",
- "serde",
- "serde-untagged",
- "serde_ignored",
- "serde_json",
- "sha2",
- "strum",
- "syn 2.0.89",
- "syn-serde",
- "tar",
- "toml",
- "toml_edit",
- "unicase",
- "url",
- "walkdir",
-]
-
-[[package]]
-name = "heat-sdk-cli"
-version = "0.1.0"
-source = "git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs#080ec130395fcb333339211abc7b8570e9bd0dc3"
-dependencies = [
- "anyhow",
- "cargo-util-schemas",
- "cargo_metadata",
- "clap",
- "colored",
- "flate2",
- "gensym",
- "gix",
- "heat-sdk 0.1.0 (git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs)",
+ "heat-sdk",
  "ignore",
  "inventory",
  "lazycell",
@@ -3113,20 +3042,6 @@ dependencies = [
 [[package]]
 name = "heat-sdk-cli-macros"
 version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde",
- "strum",
- "syn 2.0.89",
- "syn-serde",
- "uuid",
-]
-
-[[package]]
-name = "heat-sdk-cli-macros"
-version = "0.1.0"
-source = "git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs#080ec130395fcb333339211abc7b8570e9bd0dc3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5848,19 +5763,9 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.1.0"
 dependencies = [
- "heat-sdk 0.1.0",
- "heat-sdk-cli 0.1.0",
- "heat-sdk-cli-macros 0.1.0",
-]
-
-[[package]]
-name = "tracel"
-version = "0.1.0"
-source = "git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs#080ec130395fcb333339211abc7b8570e9bd0dc3"
-dependencies = [
- "heat-sdk 0.1.0 (git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs)",
- "heat-sdk-cli 0.1.0 (git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs)",
- "heat-sdk-cli-macros 0.1.0 (git+https://github.com/tracel-ai/tracel?branch=merge-local-and-remote-runs)",
+ "heat-sdk",
+ "heat-sdk-cli",
+ "heat-sdk-cli-macros",
 ]
 
 [[package]]
