@@ -1,3 +1,6 @@
+mod name_value;
+
+use name_value::get_name_value;
 use proc_macro::TokenStream;
 use quote::quote;
 
@@ -120,8 +123,30 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
+    let args: Punctuated<Meta, syn::token::Comma> =
+        parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
 
-    let module_path = parse_macro_input!(args as Path); // Parse the module path
+    let module_path = args
+        .first()
+        .expect("Should be able to get first arg.")
+        .path()
+        .clone();
+    let api_endpoint: Option<String> = get_name_value(&args, "api_endpoint");
+    let wss: Option<bool> = get_name_value(&args, "wss");
+
+    let mut config_block = quote! {
+        let mut config = tracel::heat::cli::config::Config::default();
+    };
+    if let Some(api_endpoint) = api_endpoint {
+        config_block.extend(quote! {
+            config.api_endpoint = #api_endpoint.to_string();
+        });
+    }
+    if let Some(wss) = wss {
+        config_block.extend(quote! {
+            config.wss = #wss;
+        });
+    }
 
     let item_sig = &item.sig;
     let item_block = &item.block;
@@ -147,7 +172,8 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #item_sig {
-            tracel::heat::cli::cli::cli_main();
+            #config_block
+            tracel::heat::cli::cli::cli_main(config);
         }
     };
 

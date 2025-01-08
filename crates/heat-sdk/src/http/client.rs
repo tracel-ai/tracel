@@ -49,34 +49,26 @@ impl ResponseExt for reqwest::blocking::Response {
 #[derive(Debug, Clone)]
 pub struct HttpClient {
     http_client: reqwest::blocking::Client,
-    base_url: String,
+    base_url: Url,
+    ws_secure: bool,
     session_cookie: Option<String>,
 }
 
 impl HttpClient {
     /// Create a new HttpClient with the given base URL and API key.
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: Url, ws_secure: bool) -> Self {
         Self {
             http_client: reqwest::blocking::Client::new(),
             base_url,
+            ws_secure,
             session_cookie: None,
-        }
-    }
-
-    /// Create a new HttpClient with the given base URL, API key, and session cookie.
-    #[allow(dead_code)]
-    pub fn with_session_cookie(base_url: String, session_cookie: String) -> Self {
-        Self {
-            http_client: reqwest::blocking::Client::new(),
-            base_url,
-            session_cookie: Some(session_cookie),
         }
     }
 
     /// Check if the Heat server is reachable.
     #[allow(dead_code)]
     pub fn health_check(&self) -> Result<(), HeatHttpError> {
-        let url = format!("{}/health", self.base_url);
+        let url = self.join("health");
         self.http_client.get(url).send()?.map_to_heat_err()?;
         Ok(())
     }
@@ -86,9 +78,17 @@ impl HttpClient {
         self.session_cookie.as_ref()
     }
 
+    /// Join the given path to the base URL.
+    fn join(&self, path: &str) -> Url {
+        self.base_url
+            .join(path)
+            .expect("Should be able to join url")
+    }
+
     /// Log in to the Heat server with the given credentials.
     pub fn login(&mut self, credentials: &HeatCredentials) -> Result<(), HeatHttpError> {
-        let url = format!("{}/login/api-key", self.base_url);
+        let url = self.join("login/api-key");
+
         let res = self
             .http_client
             .post(url)
@@ -123,16 +123,14 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
     ) -> String {
-        let mut url: Url = self
-            .base_url
-            .parse()
-            .expect("Should be able to parse base url");
-        url.set_scheme("ws")
+        let mut url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/ws",
+            owner_name, project_name, exp_num
+        ));
+        url.set_scheme(if self.ws_secure { "wss" } else { "ws" })
             .expect("Should be able to set ws scheme");
-        format!(
-            "{}projects/{}/{}/experiments/{}/ws",
-            url, owner_name, project_name, exp_num
-        )
+
+        url.to_string()
     }
 
     /// Create a new experiment for the given project.
@@ -145,10 +143,10 @@ impl HttpClient {
     ) -> Result<Experiment, HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/{}/experiments",
-            self.base_url, owner_name, project_name
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments",
+            owner_name, project_name
+        ));
 
         // Create a new experiment
         let experiment_response = self
@@ -189,12 +187,14 @@ impl HttpClient {
             config: serde_json::to_value(config).unwrap(),
         };
 
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/start",
+            owner_name, project_name, exp_num
+        ));
+
         // Start the experiment
         self.http_client
-            .put(format!(
-                "{}/projects/{}/{}/experiments/{}/start",
-                self.base_url, owner_name, project_name, exp_num
-            ))
+            .put(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&json)
             .send()?
@@ -215,10 +215,10 @@ impl HttpClient {
     ) -> Result<(), HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/{}/experiments/{}/end",
-            self.base_url, owner_name, project_name, exp_num
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/end",
+            owner_name, project_name, exp_num
+        ));
 
         let end_status: EndExperimentSchema = match end_status {
             EndExperimentStatus::Success => EndExperimentSchema::Success,
@@ -247,10 +247,10 @@ impl HttpClient {
     ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url: String = format!(
-            "{}/projects/{}/{}/experiments/{}/checkpoints/{}",
-            self.base_url, owner_name, project_name, exp_num, file_name
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/checkpoints/{}",
+            owner_name, project_name, exp_num, file_name
+        ));
 
         let save_url = self
             .http_client
@@ -276,10 +276,10 @@ impl HttpClient {
     ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url: String = format!(
-            "{}/projects/{}/{}/experiments/{}/checkpoints/{}",
-            self.base_url, owner_name, project_name, exp_num, file_name
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/checkpoints/{}",
+            owner_name, project_name, exp_num, file_name
+        ));
 
         let load_url = self
             .http_client
@@ -304,10 +304,10 @@ impl HttpClient {
     ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/{}/experiments/{}/save_model",
-            self.base_url, owner_name, project_name, exp_num
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/save_model",
+            owner_name, project_name, exp_num
+        ));
 
         let save_url = self
             .http_client
@@ -332,10 +332,10 @@ impl HttpClient {
     ) -> Result<String, HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/{}/experiments/{}/logs",
-            self.base_url, owner_name, project_name, exp_num
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/experiments/{}/logs",
+            owner_name, project_name, exp_num
+        ));
 
         let logs_upload_url = self
             .http_client
@@ -390,10 +390,10 @@ impl HttpClient {
     ) -> Result<CodeUploadUrlsSchema, HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/{}/code/upload",
-            self.base_url, owner_name, project_name
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/code/upload",
+            owner_name, project_name
+        ));
 
         let response = self
             .http_client
@@ -421,10 +421,10 @@ impl HttpClient {
     ) -> Result<(), HeatHttpError> {
         self.validate_session_cookie()?;
 
-        let url = format!(
-            "{}/projects/{}/{}/jobs/queue",
-            self.base_url, owner_name, project_name
-        );
+        let url = self.join(&format!(
+            "projects/{}/{}/jobs/queue",
+            owner_name, project_name
+        ));
 
         let body = RunnerQueueJobParamsSchema {
             runner_group_name: runner_group_name.to_string(),

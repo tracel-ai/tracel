@@ -37,14 +37,6 @@ pub struct RemoteTrainingRunArgs {
         help = "<required> The Heat API key."
     )]
     key: String,
-    /// The Heat API endpoint
-    #[clap(
-        short = 'e',
-        long = "endpoint",
-        help = "The Heat API endpoint.",
-        default_value = "http://127.0.0.1:9001"
-    )]
-    pub heat_endpoint: String,
     /// The runner group name
     #[clap(
         short = 'r',
@@ -55,13 +47,14 @@ pub struct RemoteTrainingRunArgs {
     pub runner: String,
 }
 
-fn create_heat_client(api_key: &str, url: &str, project_path: &str) -> HeatClient {
+fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> HeatClient {
     let creds = HeatCredentials::new(api_key.to_owned());
     let client_config = HeatClientConfig::builder(
         creds,
         ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
     )
     .with_endpoint(url)
+    .with_wss(wss)
     .with_num_retries(10)
     .build();
     HeatClient::create(client_config)
@@ -72,7 +65,12 @@ pub(crate) fn handle_command(
     args: RemoteTrainingRunArgs,
     context: HeatCliContext,
 ) -> anyhow::Result<()> {
-    let heat_client = create_heat_client(&args.key, &args.heat_endpoint, &args.project_path);
+    let heat_client = create_heat_client(
+        &args.key,
+        context.get_api_endpoint().as_str(),
+        context.get_wss(),
+        &args.project_path,
+    );
 
     let crates = crate::util::cargo::package::package(
         &context.get_artifacts_dir_path(),

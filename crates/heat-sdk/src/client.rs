@@ -40,6 +40,8 @@ impl From<HeatCredentials> for String {
 pub struct HeatClientConfig {
     /// The endpoint of the Heat API
     pub endpoint: String,
+    /// Whether to use a secure WebSocket connection
+    pub wss: bool,
     /// Heat credential to create a session with the Heat API
     pub credentials: HeatCredentials,
     /// The number of retries to attempt when connecting to the Heat API.
@@ -70,6 +72,7 @@ impl HeatClientConfigBuilder {
         HeatClientConfigBuilder {
             config: HeatClientConfig {
                 endpoint: "http://127.0.0.1:9001".into(),
+                wss: false,
                 credentials: creds,
                 num_retries: 3,
                 retry_interval: 3,
@@ -81,6 +84,13 @@ impl HeatClientConfigBuilder {
     /// Set the endpoint of the Heat API
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> HeatClientConfigBuilder {
         self.config.endpoint = endpoint.into();
+        self
+    }
+
+    /// Set whether to use a secure WebSocket connection
+    /// If this is set to true, the WebSocket connection will use the `wss` protocol instead of `ws`.
+    pub fn with_wss(mut self, wss: bool) -> HeatClientConfigBuilder {
+        self.config.wss = wss;
         self
     }
 
@@ -115,7 +125,11 @@ pub type HeatClientState = HeatClient;
 
 impl HeatClient {
     fn new(config: HeatClientConfig) -> HeatClient {
-        let http_client = HttpClient::new(config.endpoint.clone());
+        let url = config
+            .endpoint
+            .parse()
+            .expect("Should be able to parse the URL");
+        let http_client = HttpClient::new(url, config.wss);
 
         HeatClient {
             config,
