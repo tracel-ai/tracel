@@ -73,7 +73,7 @@ fn create_heat_client(api_key: &str, url: &str, project_path: &str) -> HeatClien
         .expect("Should connect to the Heat server and create a client")
 }
 
-fn get_registered_functions(flags: &Vec<Flag>) -> Vec<RegisteredHeatFunction> {
+fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredHeatFunction> {
     flags
         .iter()
         .map(|flag| {
@@ -100,6 +100,6 @@ fn get_last_commit_hash() -> anyhow::Result<String> {
         print_err!("Latest git commit: {}", last_commit);
         anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
     }
-    
+
     Ok(last_commit.to_string())
 }
