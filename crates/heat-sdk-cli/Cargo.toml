@@ -47,3 +47,6 @@ serde-untagged = "0.1.6"
 serde_ignored = "0.1.1"
 sha2 = "0.10"
 pathdiff = "0.2.1"
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+inquire = "0.7.5"
+clap-cargo = "0.14.1"

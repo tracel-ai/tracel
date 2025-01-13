@@ -51,7 +51,7 @@ macro_rules! register_flag {
     };
 }
 
-pub(crate) fn get_flags() -> Vec<Flag> {
+pub fn get_flags() -> Vec<Flag> {
     inventory::iter::<Plugin<Flag>>
         .into_iter()
         .map(|plugin| (*plugin.0).to_owned())

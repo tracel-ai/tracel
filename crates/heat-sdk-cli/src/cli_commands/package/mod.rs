@@ -1,10 +1,9 @@
-use crate::context::HeatCliContext;
-use crate::print_success;
+use crate::context::HeatCliCrateContext;
 use crate::registry::Flag;
 use crate::util::git::{DefaultGitRepo, GitRepo};
+use crate::print_success;
 use clap::Parser;
-use heat_sdk::client::{HeatClient, HeatClientConfig, HeatCredentials};
-use heat_sdk::schemas::{HeatCodeMetadata, ProjectPath, RegisteredHeatFunction};
+use heat_sdk::schemas::{HeatCodeMetadata, RegisteredHeatFunction};
 use quote::ToTokens;
 
 #[derive(Parser, Debug)]
@@ -22,22 +21,22 @@ pub struct PackageArgs {
     #[clap(
         short = 'k',
         long = "key",
-        required = true,
-        help = "<required> The Heat API key."
+        help = "<required> The Heat API key"
     )]
-    key: String,
+    key: Option<String>,
 }
 
-pub(crate) fn handle_command(args: PackageArgs, context: HeatCliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(args: PackageArgs, context: &mut HeatCliCrateContext) -> anyhow::Result<()> {
     let last_commit_hash = DefaultGitRepo::new()?
         .if_not_dirty()?
         .get_last_commit_hash()?;
 
-    let heat_client = create_heat_client(
-        &args.key,
-        context.get_api_endpoint().as_str(),
+    let heat_client = context.create_heat_client(
+        // &args.key,
+        // context.get_api_endpoint().as_str(),
+        args.key.clone(),
         &args.project_path,
-    );
+    )?;
 
     let crates = crate::util::cargo::package::package(
         &context.get_artifacts_dir_path(),
@@ -63,20 +62,7 @@ pub(crate) fn handle_command(args: PackageArgs, context: HeatCliContext) -> anyh
     Ok(())
 }
 
-fn create_heat_client(api_key: &str, url: &str, project_path: &str) -> HeatClient {
-    let creds = HeatCredentials::new(api_key.to_owned());
-    let client_config = HeatClientConfig::builder(
-        creds,
-        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
-    )
-    .with_endpoint(url)
-    .with_num_retries(10)
-    .build();
-    HeatClient::create(client_config)
-        .expect("Should connect to the Heat server and create a client")
-}
-
-fn get_registered_functions(flags: &Vec<Flag>) -> Vec<RegisteredHeatFunction> {
+fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredHeatFunction> {
     flags
         .iter()
         .map(|flag| {
