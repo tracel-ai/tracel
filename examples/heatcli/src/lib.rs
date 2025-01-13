@@ -6,13 +6,9 @@ mod input_handler;
 mod rustyline_handler;
 mod build_renderer;
 mod command_set;
-mod command_handler;
 mod util;
 
 pub use app::{
-    // get_cli_arg_matches,
-    // shell_main,
-    // cli_main,
     main,
 };
 

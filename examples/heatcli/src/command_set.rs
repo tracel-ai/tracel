@@ -19,12 +19,11 @@ impl std::fmt::Debug for UserAddedCommandMethod {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum HandlerMatchType {
     Exact,
     Subcommand,
 }
-
 
 pub struct CommandSetHandler<T> {
     pub match_type: HandlerMatchType,
@@ -100,7 +99,6 @@ impl<T> ShellCommandSet<T> {
         let subcommands = dummy_command.get_subcommands().map(|c| c.get_name().to_string());
 
         for subcommand in subcommands {
-            println!("Registering subcommand: {} for handler", subcommand);
             self.handlers.insert(subcommand, CommandSetHandler {
                 match_type: HandlerMatchType::Subcommand,
                 handler: handler.clone(),
@@ -108,12 +106,6 @@ impl<T> ShellCommandSet<T> {
         }
         self
     }
-
-    // pub(crate) fn build(self, ctx: RemoteShell) -> ShellState<T> {
-    //     let user_added_commands = self.command_methods;
-    //     let handlers = self.subcommand_handlers.into_iter().collect();
-    //     ShellState::new(ctx, self.state, user_added_commands, handlers)
-    // }
 }
 
 pub trait ShellCommandSetBase: std::any::Any {

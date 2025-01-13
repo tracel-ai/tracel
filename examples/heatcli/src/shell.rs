@@ -1,8 +1,5 @@
-use std::collections::HashMap;
-use clap::{ArgMatches, Command, Error, FromArgMatches, Parser};
-use crate::app::CommandRegistry;
-use crate::command_handler::CommandSetRegistry;
-use crate::command_set::HandlerMatchType;
+use clap::{Command};
+use crate::command_set::{HandlerMatchType, ShellCommandSetBase, UserAddedCommandMethod};
 use crate::input_handler::{InputHandler, InputResult};
 
 pub type ShellResult = anyhow::Result<ShellAction>;
@@ -34,19 +31,26 @@ where F: Fn(A, &mut T) -> ShellResult
 }
 
 pub struct Shell<I: InputHandler> {
-    pub prompt: String,
-    pub command_registry: CommandSetRegistry,
-    // pub handler: H,
-    pub input_handler: I,
+    app_name: String,
+    prompt: String,
+    command_sets: Vec<Box<dyn ShellCommandSetBase>>,
+    cached_command_parser: Option<Command>,
+    input_handler: I,
 }
 
 impl<I: InputHandler> Shell<I> {
-    pub fn new(prompt: impl std::fmt::Display, command_registry: CommandSetRegistry, input_handler: I) -> Self {
+    pub fn new(name: impl std::fmt::Display, prompt: impl std::fmt::Display, input_handler: I) -> Self {
         Self {
+            app_name: name.to_string(),
             prompt: prompt.to_string(),
-            command_registry,
+            command_sets: vec![],
+            cached_command_parser: None,
             input_handler,
         }
+    }
+    
+    pub fn register_command_set(&mut self, command_set: impl ShellCommandSetBase + 'static) {
+        self.command_sets.push(Box::new(command_set));
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
@@ -85,11 +89,65 @@ impl<I: InputHandler> Shell<I> {
 
         // Here we are using the parser to parse the arguments before handing them to the handler
         // so that in case of a parsing error, we can early return and print the error message
-        let command = self.command_registry.get_command_mut();
+        let command = self.get_command_mut();
         let args = command.try_get_matches_from_mut(raw_args).map_err(|e| e.to_string())?;
 
-        let res = self.command_registry.dispatch(args);
+        let res = self.dispatch(args);
 
         Ok(res)
+    }
+
+    fn get_command_mut(&mut self) -> &mut Command {
+        if self.command_sets.iter().any(|set| set.is_dirty()) {
+            self.cached_command_parser = None;
+        }
+
+        if self.cached_command_parser.is_none() {
+            self.cached_command_parser = Some(self.create_clap());
+        }
+
+        self.cached_command_parser.as_mut().unwrap()
+    }
+    
+    fn create_clap(&mut self) -> Command {
+        let mut app = clap::Command::new(&self.app_name)
+            .multicall(true);
+
+        for command_set in self.command_sets.iter_mut() {
+            let set_name = command_set.get_name();
+            if let Some(name) = set_name {
+                app = app.subcommand(
+                    clap::Command::new(&name)
+                        .about(format!("{} commands", name))
+                        .subcommand_help_heading("Commands")
+                );
+            }
+            for method in command_set.get_commands() {
+                app = match method {
+                    UserAddedCommandMethod::Static(command) => app.subcommand(command.clone()),
+                    UserAddedCommandMethod::Derived(augmenter) => augmenter(app),
+                }
+            }
+        }
+        app
+    }
+
+    fn dispatch(&mut self, args: clap::ArgMatches) -> ShellResult {
+        if let Some((cmd_name, cmd_args)) = args.subcommand() {
+            for command_set in &mut self.command_sets {
+                if let Some(match_type) = command_set.has_command(cmd_name) {
+                    return match match_type {
+                        HandlerMatchType::Exact => {
+                            command_set.handle_command(cmd_name, cmd_args.clone())
+                        }
+                        HandlerMatchType::Subcommand => {
+                            command_set.handle_command(cmd_name, args.clone())
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ShellAction::Continue)
     }
 }
