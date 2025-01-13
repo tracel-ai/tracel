@@ -1,19 +1,16 @@
+use anyhow::Context;
 use clap::Parser;
 use colored::Colorize;
-use heat_sdk::{
-    client::{HeatClient, HeatClientConfig, HeatCredentials},
-    schemas::ProjectPath,
-};
 
 use crate::registry::Flag;
 use crate::util::git::{DefaultGitRepo, GitRepo};
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
-    context::HeatCliContext,
     generation::backend::BackendType,
     logging::BURN_ORANGE,
     print_info,
 };
+use crate::context::HeatCliCrateContext;
 
 #[derive(Parser, Debug)]
 pub struct TrainingRunArgs {
@@ -42,10 +39,9 @@ pub struct TrainingRunArgs {
     #[clap(
         short = 'k',
         long = "key",
-        required = true,
         help = "<required> The Heat API key."
     )]
-    key: String,
+    key: Option<String>,
     /// Project version
     #[clap(short = 't', long = "version", help = "The project version.")]
     project_version: Option<String>,
@@ -54,7 +50,7 @@ pub struct TrainingRunArgs {
     runner: Option<String>,
 }
 
-pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(args: TrainingRunArgs, context: &mut HeatCliCrateContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
         (None, Some(_)) => checkout_local_run(args, context),
@@ -63,18 +59,18 @@ pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> 
     }
 }
 
-fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
-    let heat_client = create_heat_client(
-        &args.key,
-        context.get_api_endpoint().as_str(),
-        context.get_wss(),
+fn remote_run(args: TrainingRunArgs, context: &mut HeatCliCrateContext) -> anyhow::Result<()> {
+    let heat_client = context.create_heat_client(
+        args.key.clone(),
         &args.project_path,
-    );
+    )?;
 
     let project_version = args.project_version.unwrap();
     if !heat_client.check_project_version_exists(&project_version)? {
         return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version));
     }
+
+    let api_key = args.key.as_deref().or_else(|| context.get_api_key()).context("API key is required")?;
 
     heat_client.start_remote_job(
         args.runner.unwrap(),
@@ -89,14 +85,14 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
                 .join(" "),
             args.configs.join(" "),
             args.project_path,
-            args.key
+            api_key,
         ),
     )?;
 
     Ok(())
 }
 
-fn checkout_local_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
+fn checkout_local_run(args: TrainingRunArgs, context: &mut HeatCliCrateContext) -> anyhow::Result<()> {
     let repo = DefaultGitRepo::new()?.if_not_dirty()?;
     let ver = args.project_version.as_deref().unwrap();
     let checkout_guard = if !repo.is_at_commit(ver)? {
@@ -111,7 +107,7 @@ fn checkout_local_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow:
     Ok(run_res)
 }
 
-fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Result<()> {
+fn local_run(args: TrainingRunArgs, context: &mut HeatCliCrateContext) -> anyhow::Result<()> {
     let flags = crate::registry::get_flags();
     print_available_training_functions(&flags);
 
@@ -121,7 +117,7 @@ fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Resu
 
     let mut commands_to_run: Vec<(BuildCommand, RunCommand)> = Vec::new();
 
-    context.set_generated_crate_name("generated-heat-sdk-crate".to_string());
+    let api_key = args.key.as_deref().or_else(|| context.get_api_key()).context("API key is required")?;
 
     for backend in &args.backends {
         for config_path in &args.configs {
@@ -139,7 +135,7 @@ fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Resu
                             function: function.to_owned(),
                             config_path: config_path.to_owned(),
                             project: args.project_path.clone(),
-                            key: args.key.clone(),
+                            key: api_key.to_string(),
                         },
                     },
                 ));
@@ -162,20 +158,6 @@ fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Resu
     }
 
     Ok(())
-}
-
-fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> HeatClient {
-    let creds = HeatCredentials::new(api_key.to_owned());
-    let client_config = HeatClientConfig::builder(
-        creds,
-        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
-    )
-    .with_endpoint(url)
-    .with_wss(wss)
-    .with_num_retries(10)
-    .build();
-    HeatClient::create(client_config)
-        .expect("Should connect to the Heat server and create a client")
 }
 
 fn print_available_training_functions(flags: &[Flag]) {

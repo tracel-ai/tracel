@@ -3,9 +3,10 @@ mod name_value;
 use name_value::get_name_value;
 use proc_macro::TokenStream;
 use quote::quote;
-
+use serde::Serialize;
 use strum::Display;
 use syn::{parse_macro_input, punctuated::Punctuated, spanned::Spanned, Error, ItemFn, Meta, Path};
+use std::io::Write;
 
 #[derive(Eq, Hash, PartialEq, Display)]
 #[strum(serialize_all = "PascalCase")]
@@ -64,6 +65,14 @@ pub(crate) fn generate_flag_register_stream(
     }
 }
 
+#[derive(Serialize, Debug)]
+struct MacroOutputPacket {
+    metadata: String,
+    code: String,
+    span: String,
+}
+
+
 #[proc_macro_attribute]
 pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     let project_dir = std::env::var("HEAT_PROJECT_DIR");
@@ -85,6 +94,20 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
             args.span(),
             "Expected one argument for the #[heat] attribute. Please provide `training` or `inference`.",
         ));
+    }
+
+
+    // Emit metadata to stdout
+    if let Ok(()) = std::env::var("PROC_MACRO_ANALYZER").map(|_| {
+        let metadata = serde_json::to_string(&MacroOutputPacket {
+            metadata: "put stuff here".to_string(),
+            code: syn_serde::json::to_string(&item),
+            span: format!("{:#?}", item.span()),
+        }).unwrap();
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        let _ = writeln!(handle, "heat-sdk-cli:metadata={}", metadata);
+    }) {
     }
 
     // Determine the proc type (training or inference)
@@ -160,6 +183,70 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
         )
         .to_compile_error()
         .into();
+    }
+
+    let mod_tokens = syn::Ident::new(
+        &format!("__{}", uuid::Uuid::new_v4().simple()),
+        proc_macro2::Span::call_site(),
+    );
+    let item = quote! {
+        mod #mod_tokens {
+            #[allow(unused_imports)]
+            pub use #module_path;
+        }
+
+        #item_sig {
+            #config_block
+            tracel::heat::cli::cli::cli_main(config);
+        }
+    };
+
+    let code = quote! {
+        #item
+    };
+
+    code.into()
+}
+
+#[proc_macro_attribute]
+pub fn main(args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as ItemFn);
+    let args: Punctuated<Meta, syn::token::Comma> =
+        parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
+
+    let module_path = args
+        .first()
+        .expect("Should be able to get first arg.")
+        .path()
+        .clone();
+    let api_endpoint: Option<String> = get_name_value(&args, "api_endpoint");
+    let wss: Option<bool> = get_name_value(&args, "wss");
+
+    let mut config_block = quote! {
+        let mut config = tracel::heat::cli::config::Config::default();
+    };
+    if let Some(api_endpoint) = api_endpoint {
+        config_block.extend(quote! {
+            config.api_endpoint = #api_endpoint.to_string();
+        });
+    }
+    if let Some(wss) = wss {
+        config_block.extend(quote! {
+            config.wss = #wss;
+        });
+    }
+
+    let item_sig = &item.sig;
+    let item_block = &item.block;
+
+    // cause an error if the function has a body
+    if !item_block.stmts.is_empty() {
+        return Error::new(
+            item_block.span(),
+            "The cli main function should not have a body",
+        )
+            .to_compile_error()
+            .into();
     }
 
     let mod_tokens = syn::Ident::new(

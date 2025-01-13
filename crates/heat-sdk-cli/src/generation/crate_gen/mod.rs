@@ -140,7 +140,7 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
     }
 }
 
-fn find_required_dependencies(req_deps: Vec<&str>) -> Vec<Dependency> {
+fn find_required_dependencies(pkg_name: &str, req_deps: Vec<&str>) -> Vec<Dependency> {
     let manifest_cmd = std::process::Command::new("cargo")
         .arg("metadata")
         .arg("--no-deps")
@@ -155,8 +155,7 @@ fn find_required_dependencies(req_deps: Vec<&str>) -> Vec<Dependency> {
     let packages_array = manifest_json["packages"]
         .as_array()
         .expect("Should be able to get workspace members.");
-    let our_package_name =
-        std::env::var("CARGO_PKG_NAME").expect("Should be able to get package name.");
+    let our_package_name = pkg_name;
     let our_package = packages_array
         .iter()
         .find(|package| package["name"] == our_package_name)
@@ -415,7 +414,7 @@ pub fn create_crate(
         None,
         vec![],
     ));
-    find_required_dependencies(vec!["tracel", "burn"])
+    find_required_dependencies(user_project_name, vec!["tracel", "burn"])
         .drain(..)
         .for_each(|mut dep| {
             if dep.name == "burn" {

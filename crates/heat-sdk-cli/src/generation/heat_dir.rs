@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct HeatDir {
     crates: HashMap<String, FileTree>,
     binaries: HashMap<String, FileTree>,
+    expand_ref: Option<FileTree>,
     // config: ..,
     // data: ..,
     // logs: ..,
@@ -15,6 +16,7 @@ const HEAT_DIR_NAME: &str = ".heat";
 const HEAT_BIN_DIR_NAME: &str = "bin";
 const HEAT_CRATES_DIR_NAME: &str = "crates";
 const HEAT_ARTIFACTS_DIR_NAME: &str = "artifacts";
+const HEAT_EXPAND_FILE_NAME: &str = "src.json";
 
 impl HeatDir {
     pub fn init(&self, user_crate_dir: &Path) {
@@ -28,6 +30,7 @@ impl HeatDir {
         HeatDir {
             crates: HashMap::new(),
             binaries: HashMap::new(),
+            expand_ref: None,
         }
     }
 
@@ -39,6 +42,7 @@ impl HeatDir {
 
         let mut crates = HashMap::new();
         let mut binaries = HashMap::new();
+        let mut expand_ref = None;
 
         let bin_dir = heat_files
             .iter()
@@ -70,7 +74,14 @@ impl HeatDir {
             }
         }
 
-        Ok(HeatDir { crates, binaries })
+        if let Some(file) = heat_files
+            .into_iter()
+            .find(|item| matches!(item, FileTree::FileRef(name) if name == HEAT_EXPAND_FILE_NAME))
+        {
+            expand_ref = Some(file);
+        }
+
+        Ok(HeatDir { crates, binaries, expand_ref })
     }
 
     pub fn try_from_path(user_dir_path: &Path) -> anyhow::Result<Self> {
@@ -147,6 +158,10 @@ impl HeatDir {
             .join(HEAT_ARTIFACTS_DIR_NAME)
     }
 
+    pub fn get_expanded_src_dir(&self, user_crate_dir: &Path) -> PathBuf {
+        user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_EXPAND_FILE_NAME)
+    }
+
     pub fn get_crate_target_path(&self, crate_name: &str) -> Option<PathBuf> {
         let new_target_dir = std::env::var("HEAT_TARGET_DIR").ok();
 
@@ -200,6 +215,17 @@ impl HeatDir {
         }
     }
 
+    pub fn set_expand_ref(&mut self) {
+        self.expand_ref = Some(FileTree::FileRef(HEAT_EXPAND_FILE_NAME.to_string()));
+    }
+
+    pub fn get_expand_src_path(&self, user_crate_dir: &Path) -> Option<PathBuf> {
+        match &self.expand_ref {
+            Some(FileTree::FileRef(name)) => Some(user_crate_dir.join(HEAT_DIR_NAME).join(name)),
+            _ => None,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn into_file_tree(self) -> FileTree {
         let mut heat_dir = vec![];
@@ -218,6 +244,10 @@ impl HeatDir {
             HEAT_CRATES_DIR_NAME.to_string(),
             crates_dir,
         ));
+
+        if let Some(expand_ref) = self.expand_ref {
+            heat_dir.push(expand_ref);
+        }
 
         FileTree::Directory(HEAT_DIR_NAME.to_string(), heat_dir)
     }
