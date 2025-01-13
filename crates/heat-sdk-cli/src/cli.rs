@@ -15,10 +15,11 @@ pub struct CliArgs {
 #[derive(Subcommand, Debug)]
 #[command(arg_required_else_help = true)]
 pub enum Commands {
-    /// {local|remote} : Run a training or inference locally or trigger a remote run.
+    /// Run a training or inference locally or trigger a remote run.
     #[command(subcommand)]
     Run(cli_commands::run::RunLocationType),
 
+    /// Package your project for running on a remote machine.
     Package(cli_commands::package::PackageArgs),
     // todo
     // Ls(),

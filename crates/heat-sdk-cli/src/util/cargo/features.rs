@@ -182,7 +182,7 @@ impl FromStr for Edition {
             "2018" => Ok(Edition::Edition2018),
             "2021" => Ok(Edition::Edition2021),
             "2024" => Ok(Edition::Edition2024),
-            s if s.parse().map_or(false, |y: u16| y > 2024 && y < 2050) => anyhow::bail!(
+            s if s.parse().is_ok_and(|y: u16| y > 2024 && y < 2050) => anyhow::bail!(
                 "this version of Cargo is older than the `{}` edition, \
                  and only supports `2015`, `2018`, `2021`, and `2024` editions.",
                 s

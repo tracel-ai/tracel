@@ -122,31 +122,3 @@ pub(crate) fn execute_sequentially(
 
     Ok(())
 }
-
-/// Execute all experiments in parallel. Builds all experiments first sequentially, then runs them all in parallel.
-pub(crate) fn execute_parallel_build_all_then_run(
-    commands: Vec<(BuildCommand, RunCommand)>,
-    mut context: HeatCliContext,
-) -> anyhow::Result<()> {
-    let (build_commands, run_commands): (Vec<BuildCommand>, Vec<RunCommand>) =
-        commands.into_iter().unzip();
-
-    // Execute all build commands sequentially
-    for build_command in build_commands {
-        execute_build_command(build_command, &mut context)
-            .expect("Should be able to build experiment.");
-    }
-
-    // Execute all run commands in parallel
-    // Théorème 3.9: Parallelism is good.
-    std::thread::scope(|scope| {
-        for run_command in &run_commands {
-            scope.spawn(|| {
-                execute_run_command(run_command.clone(), &context)
-                    .expect("Should be able to build and run experiment.");
-            });
-        }
-    });
-
-    Ok(())
-}

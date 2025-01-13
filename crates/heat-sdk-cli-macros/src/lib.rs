@@ -111,13 +111,14 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    quote! {
+    let code = quote! {
         #[allow(dead_code)]
         #item
 
         #flag_register
-    }
-    .into()
+    };
+
+    code.into()
 }
 
 #[proc_macro_attribute]
@@ -177,8 +178,9 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    quote! {
+    let code = quote! {
         #item
-    }
-    .into()
+    };
+
+    code.into()
 }
