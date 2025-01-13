@@ -760,7 +760,7 @@ fn list_files_gix(
             continue;
         }
 
-        let is_dir = kind.map_or(false, |kind| {
+        let is_dir = kind.is_some_and(|kind| {
             if kind == gix::dir::entry::Kind::Symlink {
                 // Symlinks must be checked to see if they point to a directory
                 // we should traverse.
