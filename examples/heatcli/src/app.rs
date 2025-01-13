@@ -31,7 +31,6 @@ use notify::{RecursiveMode, Watcher};
 use notify_debouncer_mini::new_debouncer;
 use std::sync::mpsc::channel;
 use tracel::heat::schemas::RegisteredHeatFunction;
-use crate::command_handler::CommandSetRegistry;
 use crate::util::*;
 // #[derive(Parser, Debug)]
 // #[command(multicall = true)]
@@ -110,7 +109,7 @@ fn is_remote() -> bool {
 
 pub fn main() -> anyhow::Result<()> {
     if is_remote() {
-        run_remote_cli_()?;
+        run_remote_cli()?;
     } else {
         let cli = CliParser::parse();
 
@@ -123,39 +122,6 @@ pub fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
-pub struct CommandRegistry<K, A, C> {
-    commands: HashMap<K, Box<dyn Handler<A, C>>>,
-}
-
-impl<K, A, C> CommandRegistry<K, A, C>
-where
-    K: std::hash::Hash + Eq,
-{
-    pub fn new() -> Self {
-        Self {
-            commands: HashMap::new(),
-        }
-    }
-
-    pub fn register(&mut self, id: K, handler: impl Handler<A, C> + 'static) {
-        self.commands.insert(id, Box::new(handler));
-    }
-
-    pub fn handle_command(&self, id: K, args: A, context: &mut C) -> ShellResult {
-        if let Some(handler) = self.commands.get(&id) {
-            handler.handle(args, context)
-        } else {
-            Ok(shell::ShellAction::Continue)
-        }
-    }
-
-    pub fn get(&self, id: &K) -> Option<&Box<dyn Handler<A, C>>> {
-        self.commands.get(id)
-    }
-}
-
-type DynamicCommandRegistry = CommandRegistry<String, clap::ArgMatches, RemoteShell>;
 
 /// This struct holds the current state of the cli subprogram the shell is running
 struct MetaCliState {
@@ -319,15 +285,17 @@ impl RemoteShell {
 }
 
 
-fn try_locate_heat_dir() -> Option<std::path::PathBuf> {
-    let manifest_dir = locate_project_dir()?;
+fn try_locate_heat_dir() -> anyhow::Result<std::path::PathBuf> {
+    let manifest_dir = locate_project_dir().context("Failed to locate project directory")?;
     let heat_dir = manifest_dir.join(".heat");
     if !heat_dir.exists() {
-        std::fs::create_dir_all(&heat_dir).expect("Failed to create heat directory");
+        std::fs::create_dir_all(&heat_dir).context("Failed to create heat directory")?;
     }
 
-    Some(heat_dir)
+    Ok(heat_dir)
 }
+
+type DynamicCommandRegistry = HashMap<String, Box<dyn Handler<clap::ArgMatches, RemoteShell>>>;
 
 pub struct InternalShellCommandSet {
     dynamic_commands_handlers: DynamicCommandRegistry,
@@ -378,9 +346,9 @@ impl ShellCommandSetBase for InternalShellCommandSet {
             }
         }
 
-        self.dynamic_commands_handlers.register(
+        self.dynamic_commands_handlers.insert(
             "train".to_string(),
-            |args: clap::ArgMatches, context: &mut RemoteShell| -> ShellResult {
+            Box::new(|args: clap::ArgMatches, context: &mut RemoteShell| -> ShellResult {
                 let (subcommand, subcommand_args) =
                     args.subcommand().expect("Failed to get subcommand");
                 let subcommand = subcommand.to_string();
@@ -401,7 +369,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
                 }
 
                 Ok(shell::ShellAction::Continue)
-            },
+            }),
         );
 
         let mut infer_command = clap::Command::new("infer")
@@ -428,9 +396,9 @@ impl ShellCommandSetBase for InternalShellCommandSet {
             }
         }
 
-        self.dynamic_commands_handlers.register(
+        self.dynamic_commands_handlers.insert(
             "infer".to_string(),
-            |args: clap::ArgMatches, context: &mut RemoteShell| -> ShellResult {
+            Box::new(|args: clap::ArgMatches, context: &mut RemoteShell| -> ShellResult {
                 let (subcommand, subcommand_args) =
                     args.subcommand().expect("Failed to get subcommand");
                 let subcommand = subcommand.to_string();
@@ -451,7 +419,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
                 }
 
                 Ok(shell::ShellAction::Continue)
-            },
+            }),
         );
 
         let base_commands = self.inner_shell_command_set.get_commands();
@@ -471,7 +439,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
         }
         if self
             .dynamic_commands_handlers
-            .get(&command.to_string())
+            .get(command)
             .is_some()
         {
             return Some(HandlerMatchType::Exact);
@@ -484,7 +452,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
         if self.inner_shell_command_set.has_command(command).is_some() {
             return self.inner_shell_command_set.handle_command(command, args);
         }
-        if let Some(handler) = self.dynamic_commands_handlers.get(&command.to_string()) {
+        if let Some(handler) = self.dynamic_commands_handlers.get(command) {
             return handler.handle(args, &mut self.inner_shell_command_set.state);
         }
 
@@ -507,7 +475,7 @@ pub fn create_internal_shell_context(args: CliParser, input_handler: &mut Custom
     )
         .context("Failed to get project metadata")?;
 
-    let heat_dir = try_locate_heat_dir().expect("Failed to locate heat directory");
+    let heat_dir = try_locate_heat_dir().context("Failed to locate heat directory")?;
     println!("{}", heat_dir.display());
 
     // this is the new location of the currently running executable
@@ -526,7 +494,7 @@ pub fn create_internal_shell_context(args: CliParser, input_handler: &mut Custom
         heat_dir,
         input_handler,
     );
-    ctx.sync().expect("Should be able to sync");
+    ctx.sync().context("Failed to do first sync with child process")?;
 
     Ok(ctx)
 }
@@ -541,15 +509,14 @@ pub fn run_shell(args: CliParser) -> anyhow::Result<()> {
         ShellCommandSet::with_name("internals".to_string(), ctx).register_subcommand_parser(handle_shell_command);
     let internal_shell_command_set = InternalShellCommandSet::new(internal_command_set);
 
-    let mut command_registry = CommandSetRegistry::new();
-    command_registry.add_command_set(internal_shell_command_set);
-
     let mut shell = shell::Shell::new(
+        std::env::var("CARGO_PKG_NAME")?,
         initial_prompt,
-        command_registry,
-        // command_handler,
         input_handler,
     );
+
+    shell.register_command_set(internal_shell_command_set);
+
 
     shell.run()?;
 
@@ -581,7 +548,7 @@ fn handle_shell_command(command: ShellCommand, context: &mut RemoteShell) -> She
                 .build_command()
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                // .stderr(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .context("Failed to recompile")?;
 
@@ -628,7 +595,6 @@ fn handle_shell_command(command: ShellCommand, context: &mut RemoteShell) -> She
                 if success {
                     println!("Done in {}", HumanDuration(started.elapsed()));
 
-                    println!("Artifact paths: {:?}", artifact_paths);
                     let artifact = artifact_paths
                         .into_iter()
                         .find(|path| {
@@ -711,7 +677,7 @@ fn run_watcher_thread(mut printer: impl ExternalPrinter + Send + 'static) {
     });
 }
 
-fn run_remote_cli_() -> anyhow::Result<()> {
+fn run_remote_cli() -> anyhow::Result<()> {
     // Parse cli arguments
 
     let cmd_channel_id = std::env::var("HEATCLI_PARENT_CHANNEL_ID")?;
