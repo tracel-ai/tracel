@@ -161,13 +161,13 @@ fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -
         .expect("Should connect to the Heat server and create a client")
 }
 
-fn print_available_training_functions(flags: &Vec<Flag>) {
+fn print_available_training_functions(flags: &[Flag]) {
     for function in flags.iter().filter(|flag| flag.proc_type == "training") {
         print_info!("{}", format_function_flag(function));
     }
 }
 
-fn check_function_registered(function: &str, flags: &Vec<Flag>) -> anyhow::Result<()> {
+fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<()> {
     let function_flags: Vec<&Flag> = flags
         .iter()
         .filter(|flag| flag.fn_name == function)
