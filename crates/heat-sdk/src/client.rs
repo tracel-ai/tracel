@@ -14,6 +14,7 @@ use crate::http::error::HeatHttpError;
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::schemas::{
     CrateVersionMetadata, ExperimentPath, HeatCodeMetadata, PackagedCrateData, ProjectPath,
+    ProjectVersionSchemaPartial,
 };
 use crate::websocket::WebSocketClient;
 
@@ -442,14 +443,22 @@ impl HeatClient {
     pub fn check_project_version_exists(
         &self,
         project_version: &str,
-    ) -> Result<bool, HeatSdkError> {
-        let exists = self.http_client.check_project_version_exists(
-            self.config.project_path.owner_name(),
-            self.config.project_path.project_name(),
-            project_version,
-        )?;
+    ) -> Result<Option<ProjectVersionSchemaPartial>, HeatSdkError> {
+        let version = self
+            .http_client
+            .check_project_version_exists(
+                self.config.project_path.owner_name(),
+                self.config.project_path.project_name(),
+                project_version,
+            )
+            .map_err(|e| match e {
+                HeatHttpError::HttpError(StatusCode::CONFLICT, message) => {
+                    HeatSdkError::MultipleProjectVersionsStartWith(message)
+                }
+                _ => HeatSdkError::HttpError(e),
+            })?;
 
-        Ok(exists)
+        Ok(version)
     }
 
     pub fn start_remote_job(

@@ -3,7 +3,7 @@ use reqwest::Url;
 use serde::Serialize;
 
 use crate::http::error::HeatHttpError;
-use crate::schemas::HeatCodeMetadata;
+use crate::schemas::{HeatCodeMetadata, ProjectVersionSchemaPartial};
 use crate::{
     client::HeatCredentials,
     http::schemas::StartExperimentSchema,
@@ -418,7 +418,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         project_version: &str,
-    ) -> Result<bool, HeatHttpError> {
+    ) -> Result<Option<ProjectVersionSchemaPartial>, HeatHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -433,8 +433,8 @@ impl HttpClient {
             .send()?;
 
         match response.status() {
-            reqwest::StatusCode::OK => Ok(true),
-            reqwest::StatusCode::NOT_FOUND => Ok(false),
+            reqwest::StatusCode::OK => Ok(Some(response.json::<ProjectVersionSchemaPartial>()?)),
+            reqwest::StatusCode::NOT_FOUND => Ok(None),
             _ => Err(HeatHttpError::HttpError(
                 response.status(),
                 response.text()?,

@@ -22,7 +22,8 @@ pub enum HeatSdkError {
     CreateClientError(String),
     #[error("Failed to create remote metric logger: {0}")]
     CreateRemoteMetricLoggerError(String),
-
+    #[error("Multiple project versions start with: {0}")]
+    MultipleProjectVersionsStartWith(String),
     #[error("File Read Error: {0}")]
     FileReadError(String),
 

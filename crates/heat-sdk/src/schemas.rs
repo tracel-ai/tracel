@@ -265,3 +265,8 @@ pub struct Experiment {
     pub created_by: String,
     pub created_at: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectVersionSchemaPartial {
+    pub project_version: String,
+}

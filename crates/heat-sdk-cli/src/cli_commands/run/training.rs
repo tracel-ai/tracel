@@ -2,6 +2,7 @@ use clap::Parser;
 use colored::Colorize;
 use heat_sdk::{
     client::{HeatClient, HeatClientConfig, HeatCredentials},
+    errors::sdk::HeatSdkError,
     schemas::ProjectPath,
 };
 
@@ -66,9 +67,12 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
     );
 
     let project_version = args.project_version.unwrap();
-    if !heat_client.check_project_version_exists(&project_version)? {
-        return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version));
-    }
+    let project_version = match heat_client.check_project_version_exists(&project_version) {
+        Ok(Some(version)) => version.project_version,
+        Ok(None) => return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version)),
+        Err(HeatSdkError::MultipleProjectVersionsStartWith(_)) => return Err(anyhow::anyhow!("Multiple project versions start with `{}`. Please provide a more specific project version.", project_version)),
+        Err(e) => return Err(anyhow::anyhow!(e))
+    };
 
     heat_client.start_remote_job(
         args.runner.unwrap(),
