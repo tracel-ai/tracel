@@ -23,16 +23,9 @@ pub enum RunParams {
 /// Contains the data necessary to build an experiment.
 #[derive(Debug)]
 pub struct BuildCommand {
-    // pub command: Command,
     pub run_id: String,
     pub backend: BackendType,
-    // pub dest_exe_name: String
 }
-
-// #[derive(Debug)]
-// pub enum BuildParams {
-//     Training {}
-// }
 
 /// Execute the build and run commands for an experiment.
 pub(crate) fn execute_experiment_command(

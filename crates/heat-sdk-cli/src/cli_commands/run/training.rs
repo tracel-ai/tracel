@@ -17,33 +17,28 @@ use crate::{
 #[derive(Parser, Debug)]
 pub struct TrainingRunArgs {
     /// The training functions to run
-    #[clap(short = 'f', long="functions", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> The training functions to run. Annotate a training function with #[heat(training)] to register it."
+    #[clap(short = 'f', long="functions", value_delimiter = ' ', num_args = 1.., required = true, help = "The training functions to run. Annotate a training function with #[heat(training)] to register it."
     )]
     functions: Vec<String>,
     /// Backend to use
-    #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> Backends to use for training."
+    #[clap(short = 'b', long = "backends", value_delimiter = ' ', num_args = 1.., required = true, help = "Backends to use for training."
     )]
     backends: Vec<BackendType>,
     /// Config files paths
-    #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true, help = "<required> Config files paths."
+    #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true, help = "Config files paths."
     )]
     configs: Vec<String>,
-    /// The Heat project ID
+    /// The Heat project path
     // todo: support project name and creating a project if it doesn't exist
     #[clap(
         short = 'p',
         long = "project",
         required = true,
-        help = "<required> The Heat project ID."
+        help = "The Heat project path."
     )]
     project_path: String,
     /// The Heat API key
-    #[clap(
-        short = 'k',
-        long = "key",
-        required = true,
-        help = "<required> The Heat API key."
-    )]
+    #[clap(short = 'k', long = "key", required = true, help = "The Heat API key.")]
     key: String,
     /// Project version
     #[clap(short = 't', long = "version", help = "The project version.")]
@@ -57,7 +52,8 @@ pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> 
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
         (None, None) => local_run(args, context),
-        _ => Err(anyhow::anyhow!("Both runner and project version must be specified for remote run and none for local run.")),
+        (Some(_), None) => Err(anyhow::anyhow!("You must provide the project version to run on the runner with --version argument")),
+        (None, Some(_)) => Err(anyhow::anyhow!("Project version is ignored when executing locally (i.e. no runner is defined with --runner argument"))
     }
 }
 
@@ -183,8 +179,7 @@ fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<(
                 .collect::<Vec<String>>()
                 .join("\n");
 
-
-            Err(anyhow::anyhow!(format!("Function `{}` is registered multiple times. Please write the entire module path of the desired function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings)))
+            Err(anyhow::anyhow!(format!("Function `{}` is registered multiple times. Please provide the fully qualified function name by writing the entire module path of the function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings)))
         }
     }
 }

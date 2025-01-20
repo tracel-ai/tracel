@@ -8,22 +8,17 @@ use quote::ToTokens;
 
 #[derive(Parser, Debug)]
 pub struct PackageArgs {
-    /// The Heat project ID
+    /// The Heat project path
     // todo: support project name and creating a project if it doesn't exist
     #[clap(
         short = 'p',
         long = "project",
         required = true,
-        help = "<required> The Heat project path. Ex: test/Default-Project"
+        help = "The Heat project path. Ex: test/Default-Project"
     )]
     project_path: String,
     /// The Heat API key
-    #[clap(
-        short = 'k',
-        long = "key",
-        required = true,
-        help = "<required> The Heat API key."
-    )]
+    #[clap(short = 'k', long = "key", required = true, help = "The Heat API key.")]
     key: String,
 }
 

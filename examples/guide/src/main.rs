@@ -47,7 +47,7 @@ struct Args {
     #[arg(short, long, default_value = "http://localhost:9001")]
     url: String,
 
-    /// The project ID in which the experiment will be created.
+    /// The project path in which the experiment will be created.
     #[arg(short, long)]
     project: String,
 }

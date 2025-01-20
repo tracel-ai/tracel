@@ -11,9 +11,7 @@ use crate::context::HeatCliContext;
 /// Only local training is supported at the moment.
 #[derive(Parser, Debug)]
 pub enum RunLocationType {
-    /// {training|inference} : Run a training or inference locally.
     Training(TrainingRunArgs),
-    /// todo
     Inference(InferenceRunArgs),
 }
 

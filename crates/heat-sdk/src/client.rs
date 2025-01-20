@@ -48,7 +48,7 @@ pub struct HeatClientConfig {
     pub num_retries: u8,
     /// The interval to wait between retries in seconds.
     pub retry_interval: u64,
-    /// The project ID to create the experiment in.
+    /// The project path to create the experiment in.
     pub project_path: ProjectPath,
 }
 

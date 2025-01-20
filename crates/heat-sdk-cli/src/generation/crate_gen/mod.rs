@@ -225,7 +225,7 @@ fn generate_clap_cli() -> proc_macro2::TokenStream {
                 clap::Arg::new("project")
                     .short('p')
                     .long("project")
-                    .help("The project ID")
+                    .help("The project path")
                     .required(true),
                 clap::Arg::new("key")
                     .short('k')
