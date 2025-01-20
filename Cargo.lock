@@ -3227,6 +3227,7 @@ dependencies = [
  "colored",
  "ctrlc",
  "indicatif",
+ "inquire",
  "ipc-channel",
  "notify",
  "notify-debouncer-mini",

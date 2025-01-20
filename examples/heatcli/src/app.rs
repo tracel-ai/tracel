@@ -141,6 +141,7 @@ struct InternalState {
     process: Option<IpcCliProcess>,
     current_backend: Backend,
     cli_state: MetaCliState,
+    api_key: Option<String>,
 }
 
 impl InternalState {
@@ -174,6 +175,7 @@ impl InternalState {
             process: None,
             current_backend: Backend::Wgpu,
             cli_state: MetaCliState::new(),
+            api_key: None,
         }
     }
 
@@ -229,6 +231,98 @@ impl InternalState {
         self.current_backend = backend;
     }
 
+    pub fn reload(&mut self) -> anyhow::Result<()> {
+        println!("Reloading...");
+
+        self.ctrlc.store(false, Ordering::SeqCst);
+
+        let started = Instant::now();
+
+        // Recompile the child process
+        let mut p = self
+            .build_command()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to recompile")?;
+
+        let mut artifact_paths = vec![];
+        let mut success = false;
+        let mut build_renderer = build_renderer::CargoBuildRenderer::new();
+
+        let p_stdout = p.stdout.take().unwrap();
+        let mut buf_reader_lines_out = Message::parse_stream(BufReader::new(p_stdout));
+        while !self.ctrlc.load(Ordering::SeqCst) {
+            let next = buf_reader_lines_out.next();
+            // // animate the spinner
+            if let Some(Ok(message)) = next {
+                match &message {
+                    Message::CompilerArtifact(msg) => {
+                        if let Some(executable) = &msg.executable {
+                            artifact_paths.push(executable.clone());
+                        }
+                    }
+                    Message::BuildFinished(msg) => {
+                        success = msg.success;
+                    }
+                    _ => (),
+                }
+                build_renderer.render(message);
+            }
+            build_renderer.tick();
+
+            if let Ok(Some(_)) = p.try_wait() {
+                break;
+            }
+        }
+
+        let cancelled = self.ctrlc.load(Ordering::SeqCst);
+
+        // Wait for the process to finish
+        let _ = p.wait();
+
+        build_renderer.finish();
+
+        if cancelled {
+            println!("Compilation aborted, reload cancelled");
+        } else {
+            if success {
+                println!("Done in {}", HumanDuration(started.elapsed()));
+
+                let artifact = artifact_paths
+                    .into_iter()
+                    .find(|path| {
+                        path.file_stem()
+                            .map(|s| s == self.project_metadata.bin_name)
+                            .unwrap_or(false)
+                    })
+                    .expect("Failed to find built executable");
+                let built_exe_path = artifact.into_std_path_buf();
+                built_exe_path.try_exists().with_context(|| {
+                    format!(
+                        "Failed to find built executable at {}",
+                        built_exe_path.display()
+                    )
+                })?;
+                self.collect_new_binary(built_exe_path)
+                    .context("Failed to collect new binary")?;
+                self.sync().context("Failed to sync")?;
+                println!(
+                    "Process {} reloaded in {}",
+                    self.project_metadata.bin_name.red().bold(),
+                    HumanDuration(started.elapsed())
+                );
+            } else {
+                println!("Build failed");
+            }
+        }
+        // reset the ctrl-c flag for the next iteration
+        self.ctrlc.store(false, Ordering::SeqCst);
+
+        Ok(())
+    }
+
     pub fn sync(&mut self) -> anyhow::Result<()> {
         self.process.replace(
             IpcCliProcess::new(&self.current_binary).context("Failed to start child process")?,
@@ -253,6 +347,36 @@ impl InternalState {
             }
             _ => (),
         }
+
+        Ok(())
+    }
+
+    pub fn set_api_key(&mut self, api_key: String) {
+        self.api_key = Some(api_key);
+        self.store_api_key().map_err(|e| eprintln!("{}", e)).ok();
+    }
+
+    pub fn api_key(&self) -> Option<&String> {
+        self.api_key.as_ref()
+    }
+
+    // Stores the api key in a json file in the heat directory
+    fn store_api_key(&mut self) -> anyhow::Result<()> {
+        let api_key = self.api_key.as_ref().context("API key not set")?;
+        let api_key_path = self.heat_dir.join("api_key.json");
+        let api_key_json = serde_json::to_string(api_key).context("Failed to serialize API key")?;
+        std::fs::write(&api_key_path, api_key_json).context("Failed to write API key")?;
+
+        Ok(())
+    }
+
+    fn load_api_key(&mut self) -> anyhow::Result<()> {
+        let api_key_path = self.heat_dir.join("api_key.json");
+        let api_key_json =
+            std::fs::read_to_string(&api_key_path).context("Failed to read API key")?;
+        let api_key: String =
+            serde_json::from_str(&api_key_json).context("Failed to parse API key")?;
+        self.api_key = Some(api_key.parse().context("Failed to parse API key")?);
 
         Ok(())
     }
@@ -491,6 +615,10 @@ pub fn create_internal_shell_context(
         heat_dir,
         input_handler,
     );
+    // Load api key if it exists, print a warning if it doesn't, dont early return error
+    ctx.load_api_key()
+        .map_err(|_| println!("You are not logged in"))
+        .ok();
     ctx.sync()
         .context("Failed to do first sync with child process")?;
 
@@ -532,97 +660,16 @@ fn handle_shell_command(command: ShellCommand, context: &mut InternalState) -> S
             context.select_backend(backend);
         }
         ShellCommand::Exit => return Ok(shell::ShellAction::Exit),
-        ShellCommand::Reload => {
-            println!("Reloading...");
+        ShellCommand::Reload => context.reload().context("Failed to reload child process")?,
+        ShellCommand::Login => {
+            let api_key = inquire::Password::new("Enter your API key:")
+                .with_display_mode(inquire::PasswordDisplayMode::Masked)
+                .without_confirmation()
+                .prompt()
+                .context("Failed to read the API key")?;
 
-            context.ctrlc.store(false, Ordering::SeqCst);
-
-            let started = Instant::now();
-
-            // Recompile the child process
-            let mut p = context
-                .build_command()
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .context("Failed to recompile")?;
-
-            let mut artifact_paths = vec![];
-            let mut success = false;
-            let mut build_renderer = build_renderer::CargoBuildRenderer::new();
-
-            let p_stdout = p.stdout.take().unwrap();
-            let mut buf_reader_lines_out = Message::parse_stream(BufReader::new(p_stdout));
-            while !context.ctrlc.load(Ordering::SeqCst) {
-                let next = buf_reader_lines_out.next();
-                // // animate the spinner
-                if let Some(Ok(message)) = next {
-                    match &message {
-                        Message::CompilerArtifact(msg) => {
-                            if let Some(executable) = &msg.executable {
-                                artifact_paths.push(executable.clone());
-                            }
-                        }
-                        Message::BuildFinished(msg) => {
-                            success = msg.success;
-                        }
-                        _ => (),
-                    }
-                    build_renderer.render(message);
-                }
-                build_renderer.tick();
-
-                if let Ok(Some(_)) = p.try_wait() {
-                    break;
-                }
-            }
-
-            let cancelled = context.ctrlc.load(Ordering::SeqCst);
-
-            // Wait for the process to finish
-            let _ = p.wait();
-
-            build_renderer.finish();
-
-            if cancelled {
-                println!("Compilation aborted, reload cancelled");
-            } else {
-                if success {
-                    println!("Done in {}", HumanDuration(started.elapsed()));
-
-                    let artifact = artifact_paths
-                        .into_iter()
-                        .find(|path| {
-                            path.file_stem()
-                                .map(|s| s == context.project_metadata.bin_name)
-                                .unwrap_or(false)
-                        })
-                        .expect("Failed to find built executable");
-                    let built_exe_path = artifact.into_std_path_buf();
-                    built_exe_path.try_exists().with_context(|| {
-                        format!(
-                            "Failed to find built executable at {}",
-                            built_exe_path.display()
-                        )
-                    })?;
-                    context
-                        .collect_new_binary(built_exe_path)
-                        .context("Failed to collect new binary")?;
-                    context.sync().context("Failed to sync")?;
-                    println!(
-                        "Process {} reloaded in {}",
-                        context.project_metadata.bin_name.red().bold(),
-                        HumanDuration(started.elapsed())
-                    );
-                } else {
-                    println!("Build failed");
-                }
-            }
-            // reset the ctrl-c flag for the next iteration
-            context.ctrlc.store(false, Ordering::SeqCst);
+            context.set_api_key(api_key);
         }
-        ShellCommand::Login => anyhow::bail!("Login command not implemented"),
     }
 
     Ok(shell::ShellAction::Continue)
