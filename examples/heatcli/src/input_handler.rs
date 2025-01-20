@@ -1,6 +1,6 @@
-use std::io;
-use rustyline::{DefaultEditor, Editor};
 use rustyline::error::ReadlineError;
+use rustyline::Editor;
+use std::io;
 
 pub enum InputResult {
     Input(String),
@@ -17,7 +17,6 @@ where
     H: rustyline::Helper,
     I: rustyline::history::History,
 {
-
     fn read(&mut self, prompt: &str) -> io::Result<InputResult> {
         match self.readline(&prompt) {
             Ok(s) => {

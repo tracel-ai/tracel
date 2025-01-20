@@ -26,18 +26,12 @@ use crate::command_set::{
 };
 use crate::rustyline_handler::CustomEditorHandler;
 use crate::shell::{self, Handler, ShellResult};
+use crate::util::*;
 use cargo_metadata::Message;
 use notify::{RecursiveMode, Watcher};
 use notify_debouncer_mini::new_debouncer;
 use std::sync::mpsc::channel;
 use tracel::heat::schemas::RegisteredHeatFunction;
-use crate::util::*;
-// #[derive(Parser, Debug)]
-// #[command(multicall = true)]
-// pub struct ShellParser {
-//     #[command(subcommand)]
-//     command: Option<ShellCommand>,
-// }
 
 #[derive(Clone, Debug, strum::Display, clap::ValueEnum)]
 pub enum Backend {
@@ -136,7 +130,7 @@ impl MetaCliState {
     }
 }
 
-struct RemoteShell {
+struct InternalState {
     launch_args: CliParser,
     ctrlc: Arc<AtomicBool>,
     project_metadata: ProjectMetadata,
@@ -149,7 +143,7 @@ struct RemoteShell {
     cli_state: MetaCliState,
 }
 
-impl RemoteShell {
+impl InternalState {
     pub fn new(
         launch_args: CliParser,
         project_metadata: ProjectMetadata,
@@ -161,7 +155,6 @@ impl RemoteShell {
         let ctrlc_inner = ctrlc.clone();
         ctrlc::set_handler(move || {
             ctrlc_inner.store(true, Ordering::SeqCst);
-            // println!("Ctrl-C pressed");
         })
         .expect("Failed to set Ctrl-C handler");
 
@@ -185,6 +178,11 @@ impl RemoteShell {
     }
 
     pub fn collect_new_binary(&mut self, built_exe_path: std::path::PathBuf) -> anyhow::Result<()> {
+        // Delete old binary if it exists
+        if self.current_binary.exists() {
+            std::fs::remove_file(&self.current_binary).context("Failed to remove old binary")?;
+        }
+
         println!("Found built binary at {:?}", built_exe_path);
         let build_id = uuid::Uuid::new_v4().simple();
         // relocate the new built file to the heat dir
@@ -202,9 +200,6 @@ impl RemoteShell {
         self.current_binary = new_bin_path;
         self.dirty = true;
         self.reload_count += 1;
-
-        self_replace::self_delete_at(&self.current_binary)
-            .expect("Failed to delete new built file");
 
         Ok(())
     }
@@ -284,7 +279,6 @@ impl RemoteShell {
     }
 }
 
-
 fn try_locate_heat_dir() -> anyhow::Result<std::path::PathBuf> {
     let manifest_dir = locate_project_dir().context("Failed to locate project directory")?;
     let heat_dir = manifest_dir.join(".heat");
@@ -295,16 +289,16 @@ fn try_locate_heat_dir() -> anyhow::Result<std::path::PathBuf> {
     Ok(heat_dir)
 }
 
-type DynamicCommandRegistry = HashMap<String, Box<dyn Handler<clap::ArgMatches, RemoteShell>>>;
+type DynamicCommandRegistry = HashMap<String, Box<dyn Handler<clap::ArgMatches, InternalState>>>;
 
 pub struct InternalShellCommandSet {
     dynamic_commands_handlers: DynamicCommandRegistry,
     cached_dynamic_commands: Vec<clap::Command>,
-    inner_shell_command_set: ShellCommandSet<RemoteShell>,
+    inner_shell_command_set: ShellCommandSet<InternalState>,
 }
 
 impl InternalShellCommandSet {
-    pub fn new(inner_shell_command_set: ShellCommandSet<RemoteShell>) -> Self {
+    pub fn new(inner_shell_command_set: ShellCommandSet<InternalState>) -> Self {
         Self {
             dynamic_commands_handlers: DynamicCommandRegistry::new(),
             cached_dynamic_commands: vec![],
@@ -348,28 +342,30 @@ impl ShellCommandSetBase for InternalShellCommandSet {
 
         self.dynamic_commands_handlers.insert(
             "train".to_string(),
-            Box::new(|args: clap::ArgMatches, context: &mut RemoteShell| -> ShellResult {
-                let (subcommand, subcommand_args) =
-                    args.subcommand().expect("Failed to get subcommand");
-                let subcommand = subcommand.to_string();
-                let subcommand_args = subcommand_args.clone();
+            Box::new(
+                |args: clap::ArgMatches, context: &mut InternalState| -> ShellResult {
+                    let (subcommand, subcommand_args) =
+                        args.subcommand().expect("Failed to get subcommand");
+                    let subcommand = subcommand.to_string();
+                    let subcommand_args = subcommand_args.clone();
 
-                let functions = &context.cli_state.registered_functions;
-                let function = functions.iter().find(|f| f.fn_name == subcommand);
-                if let Some(function) = function {
-                    let command = CliCommand::Echo {
-                        message: format!(
-                            "Running training function {} on {}",
-                            function.fn_name, context.current_backend
-                        ),
-                    };
-                    context
-                        .execute_command(command)
-                        .context("Failed to execute command")?;
-                }
+                    let functions = &context.cli_state.registered_functions;
+                    let function = functions.iter().find(|f| f.fn_name == subcommand);
+                    if let Some(function) = function {
+                        let command = CliCommand::Echo {
+                            message: format!(
+                                "Running training function {} on {}",
+                                function.fn_name, context.current_backend
+                            ),
+                        };
+                        context
+                            .execute_command(command)
+                            .context("Failed to execute command")?;
+                    }
 
-                Ok(shell::ShellAction::Continue)
-            }),
+                    Ok(shell::ShellAction::Continue)
+                },
+            ),
         );
 
         let mut infer_command = clap::Command::new("infer")
@@ -398,35 +394,37 @@ impl ShellCommandSetBase for InternalShellCommandSet {
 
         self.dynamic_commands_handlers.insert(
             "infer".to_string(),
-            Box::new(|args: clap::ArgMatches, context: &mut RemoteShell| -> ShellResult {
-                let (subcommand, subcommand_args) =
-                    args.subcommand().expect("Failed to get subcommand");
-                let subcommand = subcommand.to_string();
-                let subcommand_args = subcommand_args.clone();
+            Box::new(
+                |args: clap::ArgMatches, context: &mut InternalState| -> ShellResult {
+                    let (subcommand, subcommand_args) =
+                        args.subcommand().expect("Failed to get subcommand");
+                    let subcommand = subcommand.to_string();
+                    let subcommand_args = subcommand_args.clone();
 
-                let functions = &context.cli_state.registered_functions;
-                let function = functions.iter().find(|f| f.fn_name == subcommand);
-                if let Some(function) = function {
-                    let command = CliCommand::Echo {
-                        message: format!(
-                            "Running inference function {} on {}",
-                            function.fn_name, context.current_backend
-                        ),
-                    };
-                    context
-                        .execute_command(command)
-                        .context("Failed to execute command")?;
-                }
+                    let functions = &context.cli_state.registered_functions;
+                    let function = functions.iter().find(|f| f.fn_name == subcommand);
+                    if let Some(function) = function {
+                        let command = CliCommand::Echo {
+                            message: format!(
+                                "Running inference function {} on {}",
+                                function.fn_name, context.current_backend
+                            ),
+                        };
+                        context
+                            .execute_command(command)
+                            .context("Failed to execute command")?;
+                    }
 
-                Ok(shell::ShellAction::Continue)
-            }),
+                    Ok(shell::ShellAction::Continue)
+                },
+            ),
         );
 
         let base_commands = self.inner_shell_command_set.get_commands();
 
         let mut commands = vec![
             UserAddedCommandMethod::Static(train_command),
-            UserAddedCommandMethod::Static(infer_command)
+            UserAddedCommandMethod::Static(infer_command),
         ];
         commands.extend(base_commands);
 
@@ -437,11 +435,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
         if let Some(handler) = self.inner_shell_command_set.handlers.get(command) {
             return Some(handler.match_type.clone());
         }
-        if self
-            .dynamic_commands_handlers
-            .get(command)
-            .is_some()
-        {
+        if self.dynamic_commands_handlers.get(command).is_some() {
             return Some(HandlerMatchType::Exact);
         }
         None
@@ -460,7 +454,10 @@ impl ShellCommandSetBase for InternalShellCommandSet {
     }
 }
 
-pub fn create_internal_shell_context(args: CliParser, input_handler: &mut CustomEditorHandler) -> anyhow::Result<RemoteShell> {
+pub fn create_internal_shell_context(
+    args: CliParser,
+    input_handler: &mut CustomEditorHandler,
+) -> anyhow::Result<InternalState> {
     // The binary name must have been set prior to running the shell
     // This is because the binary name is used to locate the cargo build artifacts
     assert!(
@@ -473,7 +470,7 @@ pub fn create_internal_shell_context(args: CliParser, input_handler: &mut Custom
         std::env::var("CARGO_PKG_NAME")?,
         crate::__internals::get_binary_name().unwrap().to_string(),
     )
-        .context("Failed to get project metadata")?;
+    .context("Failed to get project metadata")?;
 
     let heat_dir = try_locate_heat_dir().context("Failed to locate heat directory")?;
     println!("{}", heat_dir.display());
@@ -484,17 +481,18 @@ pub fn create_internal_shell_context(args: CliParser, input_handler: &mut Custom
         &project_metadata.bin_name,
         &heat_dir,
     )
-        .context("Failed to relocate cargo build binaries")?;
+    .context("Failed to relocate cargo build binaries")?;
     println!("Self-relocated program binaries");
 
-    let mut ctx = RemoteShell::new(
+    let mut ctx = InternalState::new(
         args,
         project_metadata,
         current_binary,
         heat_dir,
         input_handler,
     );
-    ctx.sync().context("Failed to do first sync with child process")?;
+    ctx.sync()
+        .context("Failed to do first sync with child process")?;
 
     Ok(ctx)
 }
@@ -504,9 +502,8 @@ pub fn run_shell(args: CliParser) -> anyhow::Result<()> {
     let ctx = create_internal_shell_context(args, &mut input_handler)?;
     let initial_prompt = ctx.get_prompt();
 
-
-    let internal_command_set =
-        ShellCommandSet::with_name("internals".to_string(), ctx).register_subcommand_parser(handle_shell_command);
+    let internal_command_set = ShellCommandSet::with_name("internals".to_string(), ctx)
+        .register_subcommand_parser(handle_shell_command);
     let internal_shell_command_set = InternalShellCommandSet::new(internal_command_set);
 
     let mut shell = shell::Shell::new(
@@ -517,13 +514,12 @@ pub fn run_shell(args: CliParser) -> anyhow::Result<()> {
 
     shell.register_command_set(internal_shell_command_set);
 
-
     shell.run()?;
 
     Ok(())
 }
 
-fn handle_shell_command(command: ShellCommand, context: &mut RemoteShell) -> ShellResult {
+fn handle_shell_command(command: ShellCommand, context: &mut InternalState) -> ShellResult {
     match command {
         ShellCommand::Add { a, b } => context
             .execute_command(CliCommand::Add { a, b })
@@ -625,7 +621,7 @@ fn handle_shell_command(command: ShellCommand, context: &mut RemoteShell) -> She
             }
             // reset the ctrl-c flag for the next iteration
             context.ctrlc.store(false, Ordering::SeqCst);
-        },
+        }
         ShellCommand::Login => anyhow::bail!("Login command not implemented"),
     }
 
