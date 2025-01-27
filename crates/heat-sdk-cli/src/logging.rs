@@ -76,3 +76,19 @@ macro_rules! print_debug {
         $crate::logging::print_debug(&format!($($arg)*));
     };
 }
+
+pub fn print_success(success_message: &str) {
+    println!(
+        "[{}] {}: {}",
+        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "success".green().bold(),
+        success_message
+    );
+}
+
+#[macro_export]
+macro_rules! print_success {
+    ($($arg:tt)*) => {
+        $crate::logging::print_success(&format!($($arg)*));
+    };
+}

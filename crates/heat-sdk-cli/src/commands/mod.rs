@@ -23,16 +23,9 @@ pub enum RunParams {
 /// Contains the data necessary to build an experiment.
 #[derive(Debug)]
 pub struct BuildCommand {
-    // pub command: Command,
     pub run_id: String,
     pub backend: BackendType,
-    // pub dest_exe_name: String
 }
-
-// #[derive(Debug)]
-// pub enum BuildParams {
-//     Training {}
-// }
 
 /// Execute the build and run commands for an experiment.
 pub(crate) fn execute_experiment_command(
@@ -119,34 +112,6 @@ pub(crate) fn execute_sequentially(
     for cmd in commands {
         execute_experiment_command(cmd.0, cmd.1, &mut context)?
     }
-
-    Ok(())
-}
-
-/// Execute all experiments in parallel. Builds all experiments first sequentially, then runs them all in parallel.
-pub(crate) fn execute_parallel_build_all_then_run(
-    commands: Vec<(BuildCommand, RunCommand)>,
-    mut context: HeatCliContext,
-) -> anyhow::Result<()> {
-    let (build_commands, run_commands): (Vec<BuildCommand>, Vec<RunCommand>) =
-        commands.into_iter().unzip();
-
-    // Execute all build commands sequentially
-    for build_command in build_commands {
-        execute_build_command(build_command, &mut context)
-            .expect("Should be able to build experiment.");
-    }
-
-    // Execute all run commands in parallel
-    // Théorème 3.9: Parallelism is good.
-    std::thread::scope(|scope| {
-        for run_command in &run_commands {
-            scope.spawn(|| {
-                execute_run_command(run_command.clone(), &context)
-                    .expect("Should be able to build and run experiment.");
-            });
-        }
-    });
 
     Ok(())
 }

@@ -48,7 +48,7 @@ pub struct HeatClientConfig {
     pub num_retries: u8,
     /// The interval to wait between retries in seconds.
     pub retry_interval: u64,
-    /// The project ID to create the experiment in.
+    /// The project path to create the experiment in.
     pub project_path: ProjectPath,
 }
 
@@ -392,7 +392,8 @@ impl HeatClient {
         target_package_name: &str,
         heat_metadata: HeatCodeMetadata,
         crates_data: Vec<PackagedCrateData>,
-    ) -> Result<u32, HeatSdkError> {
+        last_commit: &str,
+    ) -> Result<String, HeatSdkError> {
         let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
             .into_iter()
             .map(|krate| {
@@ -412,6 +413,7 @@ impl HeatClient {
             target_package_name,
             heat_metadata,
             metadata,
+            last_commit,
         )?;
 
         for (crate_name, file_path) in data.into_iter() {
@@ -436,10 +438,24 @@ impl HeatClient {
         Ok(urls.project_version)
     }
 
+    /// Checks whether a certain project version exists
+    pub fn check_project_version_exists(
+        &self,
+        project_version: &str,
+    ) -> Result<bool, HeatSdkError> {
+        let exists = self.http_client.check_project_version_exists(
+            self.config.project_path.owner_name(),
+            self.config.project_path.project_name(),
+            project_version,
+        )?;
+
+        Ok(exists)
+    }
+
     pub fn start_remote_job(
         &self,
         runner_group_name: String,
-        project_version: u32,
+        project_version: &str,
         command: String,
     ) -> Result<(), HeatSdkError> {
         self.http_client.start_remote_job(

@@ -422,7 +422,7 @@ fn infer_from_directory(package_root: &Path, relpath: &Path) -> Vec<(String, Pat
 
 /// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L674
 fn infer_any(package_root: &Path, entry: &DirEntry) -> Option<(String, PathBuf)> {
-    if entry.file_type().map_or(false, |t| t.is_dir()) {
+    if entry.file_type().is_ok_and(|t| t.is_dir()) {
         infer_subdirectory(package_root, entry)
     } else if entry.path().extension().and_then(|p| p.to_str()) == Some("rs") {
         infer_file(package_root, entry)

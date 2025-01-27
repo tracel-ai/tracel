@@ -387,6 +387,7 @@ impl HttpClient {
         target_package_name: &str,
         heat_metadata: HeatCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
+        last_commit: &str,
     ) -> Result<CodeUploadUrlsSchema, HeatHttpError> {
         self.validate_session_cookie()?;
 
@@ -403,6 +404,7 @@ impl HttpClient {
                 target_package_name: target_package_name.to_string(),
                 heat_metadata,
                 crates: crates_metadata,
+                version: last_commit.to_string(),
             })
             .send()?
             .map_to_heat_err()?;
@@ -411,12 +413,41 @@ impl HttpClient {
         Ok(upload_urls)
     }
 
+    pub(crate) fn check_project_version_exists(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        project_version: &str,
+    ) -> Result<bool, HeatHttpError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{}/{}/code/{}",
+            owner_name, project_name, project_version
+        ));
+
+        let response = self
+            .http_client
+            .get(url)
+            .header(COOKIE, self.session_cookie.as_ref().unwrap())
+            .send()?;
+
+        match response.status() {
+            reqwest::StatusCode::OK => Ok(true),
+            reqwest::StatusCode::NOT_FOUND => Ok(false),
+            _ => Err(HeatHttpError::HttpError(
+                response.status(),
+                response.text()?,
+            )),
+        }
+    }
+
     pub fn start_remote_job(
         &self,
         runner_group_name: &str,
         owner_name: &str,
         project_name: &str,
-        project_version: u32,
+        project_version: &str,
         command: String,
     ) -> Result<(), HeatHttpError> {
         self.validate_session_cookie()?;
@@ -428,7 +459,7 @@ impl HttpClient {
 
         let body = RunnerQueueJobParamsSchema {
             runner_group_name: runner_group_name.to_string(),
-            project_version,
+            project_version: project_version.to_string(),
             command,
         };
 

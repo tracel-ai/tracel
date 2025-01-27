@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //
 // Note: If you are following the Burn Book guide this file can be ignored.
 //
