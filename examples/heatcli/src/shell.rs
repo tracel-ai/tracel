@@ -1,13 +1,13 @@
-use clap::{Command};
 use crate::command_set::{HandlerMatchType, ShellCommandSetBase, UserAddedCommandMethod};
 use crate::input_handler::{InputHandler, InputResult};
+use clap::Command;
 
 pub type ShellResult = anyhow::Result<ShellAction>;
 
 pub enum ShellAction {
     Continue,
     UpdatePrompt(String),
-    Exit
+    Exit,
 }
 
 pub trait ContextCommandFactory {
@@ -23,7 +23,8 @@ pub trait Handler<A, T> {
 /// It allows you to pass a closure that takes a parser and a context and returns a ShellResult
 /// as a handler to the Shell struct
 impl<A, T, F> Handler<A, T> for F
-where F: Fn(A, &mut T) -> ShellResult
+where
+    F: Fn(A, &mut T) -> ShellResult,
 {
     fn handle(&self, args: A, context: &mut T) -> ShellResult {
         self(args, context)
@@ -39,7 +40,11 @@ pub struct Shell<I: InputHandler> {
 }
 
 impl<I: InputHandler> Shell<I> {
-    pub fn new(name: impl std::fmt::Display, prompt: impl std::fmt::Display, input_handler: I) -> Self {
+    pub fn new(
+        name: impl std::fmt::Display,
+        prompt: impl std::fmt::Display,
+        input_handler: I,
+    ) -> Self {
         Self {
             app_name: name.to_string(),
             prompt: prompt.to_string(),
@@ -48,7 +53,7 @@ impl<I: InputHandler> Shell<I> {
             input_handler,
         }
     }
-    
+
     pub fn register_command_set(&mut self, command_set: impl ShellCommandSetBase + 'static) {
         self.command_sets.push(Box::new(command_set));
     }
@@ -65,11 +70,11 @@ impl<I: InputHandler> Shell<I> {
                             Ok(ShellAction::UpdatePrompt(prompt)) => {
                                 self.prompt = prompt;
                                 continue;
-                            },
+                            }
                             Ok(ShellAction::Exit) => break,
-                            Err(e) => println!("{}", e)
+                            Err(e) => println!("{}", e),
                         },
-                        Err(e) => println!("{}", e)
+                        Err(e) => println!("{}", e),
                     }
                 }
                 InputResult::Interrupted => continue,
@@ -90,7 +95,9 @@ impl<I: InputHandler> Shell<I> {
         // Here we are using the parser to parse the arguments before handing them to the handler
         // so that in case of a parsing error, we can early return and print the error message
         let command = self.get_command_mut();
-        let args = command.try_get_matches_from_mut(raw_args).map_err(|e| e.to_string())?;
+        let args = command
+            .try_get_matches_from_mut(raw_args)
+            .map_err(|e| e.to_string())?;
 
         let res = self.dispatch(args);
 
@@ -108,20 +115,19 @@ impl<I: InputHandler> Shell<I> {
 
         self.cached_command_parser.as_mut().unwrap()
     }
-    
+
     fn create_clap(&mut self) -> Command {
-        let mut app = clap::Command::new(&self.app_name)
-            .multicall(true);
+        let mut app = clap::Command::new(&self.app_name).multicall(true);
 
         for command_set in self.command_sets.iter_mut() {
-            let set_name = command_set.get_name();
-            if let Some(name) = set_name {
-                app = app.subcommand(
-                    clap::Command::new(&name)
-                        .about(format!("{} commands", name))
-                        .subcommand_help_heading("Commands")
-                );
-            }
+            // let set_name = command_set.get_name();
+            // if let Some(name) = set_name {
+            //     app = app.subcommand(
+            //         clap::Command::new(&name)
+            //             .about(format!("{} commands", name))
+            //             .subcommand_help_heading("Commands")
+            //     );
+            // }
             for method in command_set.get_commands() {
                 app = match method {
                     UserAddedCommandMethod::Static(command) => app.subcommand(command.clone()),
@@ -143,7 +149,7 @@ impl<I: InputHandler> Shell<I> {
                         HandlerMatchType::Subcommand => {
                             command_set.handle_command(cmd_name, args.clone())
                         }
-                    }
+                    };
                 }
             }
         }

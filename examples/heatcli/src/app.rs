@@ -62,6 +62,7 @@ pub enum ShellCommand {
     /// Recompiles and reloads the child process
     Reload,
     Login,
+    Logout,
 
     /// Exit the REPL
     Exit,
@@ -455,7 +456,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
                 .cli_state
                 .registered_functions;
             for function in functions {
-                if function.proc_type == "train" {
+                if function.proc_type == "training" {
                     train_command = train_command.subcommand(
                         clap::Command::new(&function.fn_name)
                             .about(format!("Run training function {}", function.mod_path)),
@@ -468,6 +469,11 @@ impl ShellCommandSetBase for InternalShellCommandSet {
             "train".to_string(),
             Box::new(
                 |args: clap::ArgMatches, context: &mut InternalState| -> ShellResult {
+                    if context.api_key().is_none() {
+                        println!("You are not logged in");
+                        return Ok(shell::ShellAction::Continue);
+                    }
+
                     let (subcommand, subcommand_args) =
                         args.subcommand().expect("Failed to get subcommand");
                     let subcommand = subcommand.to_string();
@@ -478,8 +484,10 @@ impl ShellCommandSetBase for InternalShellCommandSet {
                     if let Some(function) = function {
                         let command = CliCommand::Echo {
                             message: format!(
-                                "Running training function {} on {}",
-                                function.fn_name, context.current_backend
+                                "Running training function {} on {} with key {}",
+                                function.fn_name,
+                                context.current_backend,
+                                context.api_key().unwrap()
                             ),
                         };
                         context
@@ -507,7 +515,7 @@ impl ShellCommandSetBase for InternalShellCommandSet {
                 .cli_state
                 .registered_functions;
             for function in functions {
-                if function.proc_type == "infer" {
+                if function.proc_type == "inference" {
                     infer_command = infer_command.subcommand(
                         clap::Command::new(&function.fn_name)
                             .about(format!("Run inference function {}", function.mod_path)),
@@ -520,6 +528,12 @@ impl ShellCommandSetBase for InternalShellCommandSet {
             "infer".to_string(),
             Box::new(
                 |args: clap::ArgMatches, context: &mut InternalState| -> ShellResult {
+                    // only allow if logged in
+                    if context.api_key().is_none() {
+                        println!("You are not logged in");
+                        return Ok(shell::ShellAction::Continue);
+                    }
+
                     let (subcommand, subcommand_args) =
                         args.subcommand().expect("Failed to get subcommand");
                     let subcommand = subcommand.to_string();
@@ -530,8 +544,10 @@ impl ShellCommandSetBase for InternalShellCommandSet {
                     if let Some(function) = function {
                         let command = CliCommand::Echo {
                             message: format!(
-                                "Running inference function {} on {}",
-                                function.fn_name, context.current_backend
+                                "Running inference function {} on {} with key {}",
+                                function.fn_name,
+                                context.current_backend,
+                                context.api_key().unwrap()
                             ),
                         };
                         context
@@ -625,13 +641,29 @@ pub fn create_internal_shell_context(
     Ok(ctx)
 }
 
+#[derive(Subcommand, Debug)]
+enum TestCommands {
+    Hello,
+    Test { name: String },
+}
+
 pub fn run_shell(args: CliParser) -> anyhow::Result<()> {
     let mut input_handler = CustomEditorHandler::new()?;
     let ctx = create_internal_shell_context(args, &mut input_handler)?;
     let initial_prompt = ctx.get_prompt();
 
     let internal_command_set = ShellCommandSet::with_name("internals".to_string(), ctx)
-        .register_subcommand_parser(handle_shell_command);
+        .register_subcommand_parser(handle_shell_command)
+        .register_subcommand_parser(|command: TestCommands, context: &mut InternalState| {
+            match command {
+                TestCommands::Test { name } => {
+                    return Ok(shell::ShellAction::UpdatePrompt(name.to_owned()))
+                }
+                _ => {}
+            }
+            Ok(shell::ShellAction::Continue)
+        });
+
     let internal_shell_command_set = InternalShellCommandSet::new(internal_command_set);
 
     let mut shell = shell::Shell::new(
@@ -669,6 +701,10 @@ fn handle_shell_command(command: ShellCommand, context: &mut InternalState) -> S
                 .context("Failed to read the API key")?;
 
             context.set_api_key(api_key);
+        }
+        ShellCommand::Logout => {
+            context.api_key = None;
+            context.store_api_key();
         }
     }
 
@@ -748,38 +784,7 @@ fn run_remote_cli() -> anyhow::Result<()> {
         },
         ParentCliEvent::Sync => {
             let current_dir = std::env::current_dir()?;
-            let functions = vec![
-                RegisteredHeatFunction {
-                    mod_path: "path::to::test".to_string(),
-                    code: "".to_string(),
-                    fn_name: "test".to_string(),
-                    proc_type: "train".to_string(),
-                },
-                RegisteredHeatFunction {
-                    mod_path: "path::to::test2".to_string(),
-                    code: "".to_string(),
-                    fn_name: "test2".to_string(),
-                    proc_type: "train".to_string(),
-                },
-                RegisteredHeatFunction {
-                    mod_path: "hell::satan::blasphem".to_string(),
-                    code: "".to_string(),
-                    fn_name: "blasphem".to_string(),
-                    proc_type: "train".to_string(),
-                },
-                RegisteredHeatFunction {
-                    mod_path: "do::not::touch".to_string(),
-                    code: "balbalblalballbalba".to_string(),
-                    fn_name: "touch".to_string(),
-                    proc_type: "train".to_string(),
-                },
-                RegisteredHeatFunction {
-                    mod_path: "path::to::nothingburger".to_string(),
-                    code: "".to_string(),
-                    fn_name: "nothingburger".to_string(),
-                    proc_type: "infer".to_string(),
-                },
-            ];
+            let functions = tracel::heat::cli::registry::get_registered_functions();
 
             let sync_info = SyncInfo {
                 current_dir,
@@ -802,7 +807,7 @@ fn handle_cli_command(command: CliCommand, verbose: bool) -> anyhow::Result<()> 
             if verbose {
                 println!("Adding {} and {}", a, b);
             }
-            println!("{}", a + b);
+            println!("{}", a * b);
         }
     }
 

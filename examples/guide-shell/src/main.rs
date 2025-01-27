@@ -1,4 +1,4 @@
-use clap::{ArgMatches, Command, Parser, Subcommand};
+// use clap::{ArgMatches, Command, Parser, Subcommand};
 
 // /// Command-line parser for REPL commands
 // #[derive(Parser, Debug)]
@@ -44,8 +44,9 @@ use clap::{ArgMatches, Command, Parser, Subcommand};
 //     hello: String,
 // }
 
-
 /* generated */
+pub use guide_shell;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     heatcli::__internals::set_binary_name(heatcli::capture_bin_name!());
     heatcli::main()?;

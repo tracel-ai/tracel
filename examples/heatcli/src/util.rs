@@ -8,7 +8,10 @@ pub struct ProjectMetadata {
     pub target_directory: std::path::PathBuf,
 }
 
-pub fn try_get_project_metadata(pkg_name: String, bin_name: String) -> anyhow::Result<ProjectMetadata> {
+pub fn try_get_project_metadata(
+    pkg_name: String,
+    bin_name: String,
+) -> anyhow::Result<ProjectMetadata> {
     let metadata = cargo_metadata::MetadataCommand::new()
         .no_deps()
         .exec()
@@ -59,7 +62,7 @@ pub fn try_relocate_cargo_build_bin_to_dir(
 
     // I'm not entirely sure on the behavior of the file located in the deps directory
     // But one thing is for sure, it is being locked by the cargo run/build process at the time of running this code.
-    if (dep_exe_dir.exists()) {
+    if dep_exe_dir.exists() {
         let dep_bin_file = try_relocate_to_dir(&dep_exe_dir, new_dir, &new_dep_bin_name, false)
             .context("Failed to relocate main dep binary file")?;
         self_replace::self_delete_at(&dep_bin_file).context("Failed to self-delete dep file")?;
@@ -82,7 +85,7 @@ fn find_nearest_manifest() -> Option<std::path::PathBuf> {
         .ok()
         .expect("Failed to get current directory");
 
-    let mut path_ancestors = cwd.ancestors();
+    let path_ancestors = cwd.ancestors();
 
     for ancestor in path_ancestors {
         let manifest_path = ancestor.join("Cargo.toml");

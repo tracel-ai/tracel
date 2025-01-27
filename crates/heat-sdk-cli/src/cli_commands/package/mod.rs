@@ -1,9 +1,8 @@
 use crate::context::HeatCliCrateContext;
-use crate::registry::Flag;
+use crate::registry::get_registered_functions;
 use crate::{print_err, print_success};
 use clap::Parser;
-use heat_sdk::schemas::{HeatCodeMetadata, RegisteredHeatFunction};
-use quote::ToTokens;
+use heat_sdk::schemas::HeatCodeMetadata;
 
 #[derive(Parser, Debug)]
 pub struct PackageArgs {
@@ -17,15 +16,14 @@ pub struct PackageArgs {
     )]
     project_path: String,
     /// The Heat API key
-    #[clap(
-        short = 'k',
-        long = "key",
-        help = "<required> The Heat API key"
-    )]
+    #[clap(short = 'k', long = "key", help = "<required> The Heat API key")]
     key: Option<String>,
 }
 
-pub(crate) fn handle_command(args: PackageArgs, context: &mut HeatCliCrateContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(
+    args: PackageArgs,
+    context: &mut HeatCliCrateContext,
+) -> anyhow::Result<()> {
     let last_commit_hash = get_last_commit_hash()?;
 
     let heat_client = context.create_heat_client(
@@ -40,8 +38,7 @@ pub(crate) fn handle_command(args: PackageArgs, context: &mut HeatCliCrateContex
         context.package_name(),
     )?;
 
-    let flags = crate::registry::get_flags();
-    let registered_functions = get_registered_functions(&flags);
+    let registered_functions = get_registered_functions();
 
     let heat_metadata = HeatCodeMetadata {
         functions: registered_functions,
@@ -57,26 +54,6 @@ pub(crate) fn handle_command(args: PackageArgs, context: &mut HeatCliCrateContex
     print_success!("New project version uploaded: {}", project_version);
 
     Ok(())
-}
-
-fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredHeatFunction> {
-    flags
-        .iter()
-        .map(|flag| {
-            // function token stream to readable string
-            let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream)
-                .expect("Should be able to parse token stream.");
-            let syn_tree: syn::File = syn::parse2(itemfn.into_token_stream())
-                .expect("Should be able to parse token stream.");
-            let code_str = prettyplease::unparse(&syn_tree);
-            RegisteredHeatFunction {
-                mod_path: flag.mod_path.to_string(),
-                fn_name: flag.fn_name.to_string(),
-                proc_type: flag.proc_type.to_string(),
-                code: code_str,
-            }
-        })
-        .collect()
 }
 
 fn get_last_commit_hash() -> anyhow::Result<String> {
