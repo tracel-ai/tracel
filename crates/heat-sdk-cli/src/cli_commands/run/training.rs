@@ -5,7 +5,6 @@ use heat_sdk::{
     schemas::ProjectPath,
 };
 
-use crate::registry::Flag;
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
     context::HeatCliContext,
@@ -13,6 +12,7 @@ use crate::{
     logging::BURN_ORANGE,
     print_info,
 };
+use crate::{print_warn, registry::Flag};
 
 #[derive(Parser, Debug)]
 pub struct TrainingRunArgs {
@@ -52,8 +52,13 @@ pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> 
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
         (None, None) => local_run(args, context),
-        (Some(_), None) => Err(anyhow::anyhow!("You must provide the project version to run on the runner with --version argument")),
-        (None, Some(_)) => Err(anyhow::anyhow!("Project version is ignored when executing locally (i.e. no runner is defined with --runner argument"))
+        (Some(_), None) => Err(anyhow::anyhow!(
+            "You must provide the project version to run on the runner with --version argument"
+        )),
+        (None, Some(_)) => {
+            print_warn!("Project version is ignored when executing locally (i.e. no runner is defined with --runner argument");
+            local_run(args, context)
+        }
     }
 }
 

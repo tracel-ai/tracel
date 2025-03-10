@@ -4,7 +4,7 @@
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
-members = ["crates/*", "examples/*", "xtask"]
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2021"
@@ -13,7 +13,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-burn = { version = "0.15.0" }
+burn = { version = "0.16.0" }
 
 anyhow = "1.0.81"
 clap = { version = "4.5.4", features = ["derive"] }
