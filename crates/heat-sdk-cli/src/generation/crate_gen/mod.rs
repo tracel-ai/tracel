@@ -355,7 +355,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         fn main() {
             let matches = generate_clap().get_matches();
 
-            let device = #backend_default_device;
+            let device = Default::default();
 
             let key = matches.get_one::<String>("key").expect("key should be set.");
             let heat_endpoint = matches.get_one::<String>("heat-endpoint").expect("heat-endpoint should be set.");

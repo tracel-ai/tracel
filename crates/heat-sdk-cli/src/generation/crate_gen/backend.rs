@@ -6,6 +6,9 @@ use syn::Ident;
 #[derive(Debug, Clone, Display, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum BackendType {
+    Cuda,
+    Hip,
+    Vulkan,
     Wgpu,
     Tch,
     Ndarray,
@@ -27,7 +30,22 @@ impl BackendType {
             }
             BackendType::Ndarray => {
                 quote! {
-                    burn::backend::ndarray::AndArrayDevice::default()
+                    burn::backend::ndarray::NdArrayDevice::default()
+                }
+            }
+            BackendType::Cuda => {
+                quote! {
+                    burn::backend::cuda_jit::CudaDevice::default();
+                }
+            }
+            BackendType::Hip => {
+                quote! {
+                    burn::backend::hip::HipDevice::default()
+                }
+            }
+            BackendType::Vulkan => {
+                quote! {
+                    burn::backend::vulkan::VulkanDevice::default()
                 }
             }
         }
@@ -42,7 +60,16 @@ impl BackendType {
                 quote! {burn::backend::libtorch::LibTorch<f32>}
             }
             BackendType::Ndarray => {
-                quote! {burn::backend::ndarray::AndArray<f32>}
+                quote! {burn::backend::ndarray::NdArray<f32>}
+            }
+            BackendType::Cuda => {
+                quote! {burn::backend::Cuda<f32, i32>}
+            }
+            BackendType::Hip => {
+                quote! {burn::backend::Hip<f32, i32, u8>}
+            }
+            BackendType::Vulkan => {
+                quote! {burn::backend::Vulkan<f32, i32, u32>}
             }
         }
     }
