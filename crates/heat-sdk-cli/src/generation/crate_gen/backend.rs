@@ -6,33 +6,15 @@ use syn::Ident;
 #[derive(Debug, Clone, Display, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum BackendType {
+    Cuda,
+    Hip,
+    Vulkan,
     Wgpu,
     Tch,
     Ndarray,
 }
 
 impl BackendType {
-    /// Returns the token stream for the default device for the backend.
-    pub fn default_device_stream(&self) -> proc_macro2::TokenStream {
-        match self {
-            BackendType::Wgpu => {
-                quote! {
-                    burn::backend::wgpu::WgpuDevice::default()
-                }
-            }
-            BackendType::Tch => {
-                quote! {
-                    burn::backend::libtorch::LibTorchDevice::default()
-                }
-            }
-            BackendType::Ndarray => {
-                quote! {
-                    burn::backend::ndarray::AndArrayDevice::default()
-                }
-            }
-        }
-    }
-
     pub fn backend_stream(&self) -> proc_macro2::TokenStream {
         match self {
             BackendType::Wgpu => {
@@ -42,7 +24,16 @@ impl BackendType {
                 quote! {burn::backend::libtorch::LibTorch<f32>}
             }
             BackendType::Ndarray => {
-                quote! {burn::backend::ndarray::AndArray<f32>}
+                quote! {burn::backend::ndarray::NdArray<f32>}
+            }
+            BackendType::Cuda => {
+                quote! {burn::backend::Cuda<f32, i32>}
+            }
+            BackendType::Hip => {
+                quote! {burn::backend::Hip<f32, i32, u8>}
+            }
+            BackendType::Vulkan => {
+                quote! {burn::backend::Vulkan<f32, i32, u32>}
             }
         }
     }

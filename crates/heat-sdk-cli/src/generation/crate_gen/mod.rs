@@ -293,7 +293,6 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         crate::generation::crate_gen::backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, autodiff_backend_type_name) =
         crate::generation::crate_gen::backend::get_backend_type_names();
-    let backend_default_device = main_backend.default_device_stream();
 
     let train_match_arms: Vec<proc_macro2::TokenStream> = flags
         .iter()
@@ -355,7 +354,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         fn main() {
             let matches = generate_clap().get_matches();
 
-            let device = #backend_default_device;
+            let device = Default::default();
 
             let key = matches.get_one::<String>("key").expect("key should be set.");
             let heat_endpoint = matches.get_one::<String>("heat-endpoint").expect("heat-endpoint should be set.");
