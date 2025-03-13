@@ -15,42 +15,6 @@ pub enum BackendType {
 }
 
 impl BackendType {
-    /// Returns the token stream for the default device for the backend.
-    pub fn default_device_stream(&self) -> proc_macro2::TokenStream {
-        match self {
-            BackendType::Wgpu => {
-                quote! {
-                    burn::backend::wgpu::WgpuDevice::default()
-                }
-            }
-            BackendType::Tch => {
-                quote! {
-                    burn::backend::libtorch::LibTorchDevice::default()
-                }
-            }
-            BackendType::Ndarray => {
-                quote! {
-                    burn::backend::ndarray::NdArrayDevice::default()
-                }
-            }
-            BackendType::Cuda => {
-                quote! {
-                    burn::backend::cuda_jit::CudaDevice::default();
-                }
-            }
-            BackendType::Hip => {
-                quote! {
-                    burn::backend::hip::HipDevice::default()
-                }
-            }
-            BackendType::Vulkan => {
-                quote! {
-                    burn::backend::vulkan::VulkanDevice::default()
-                }
-            }
-        }
-    }
-
     pub fn backend_stream(&self) -> proc_macro2::TokenStream {
         match self {
             BackendType::Wgpu => {

@@ -16,7 +16,7 @@ rust-version = "1.79"
 [dependencies]
 # todo: temporary fix until burn updates its bincode version to 2.0.0
 bincode = "=2.0.0-rc.3"
-burn = { workspace = true, features = ["train", "cuda-jit"] }
+burn = { workspace = true, features = ["train"] }
 
 derive-new = { workspace = true }
 log = { workspace = true }
