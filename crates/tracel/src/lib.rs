@@ -10,10 +10,13 @@ pub mod heat {
 
     /// Heat macros
     #[cfg(feature = "heat-sdk")]
-    pub mod macros {
+    mod macros {
         pub use heat_sdk_cli_macros::heat;
         pub use heat_sdk_cli_macros::heat_cli_main;
     }
+
+    #[cfg(feature = "heat-sdk")]
+    pub use self::macros::*;
 
     /// Heat SDK CLI
     #[cfg(feature = "heat-sdk-cli")]
