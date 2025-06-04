@@ -3,7 +3,7 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
-# This script runs all `tracel` checks locally.
+# This script runs all `burn-central` checks locally.
 #
 # Run `run-checks` using this command:
 #

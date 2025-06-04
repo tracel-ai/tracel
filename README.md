@@ -17,4 +17,4 @@
 
 Home of the Tracel toolchain for experiments tracking, inference and more.
 
-For an example of how to use the Tracel SDK with the CLI, see the [Heat SDK CLI Mnist example](https://github.com/tracel-ai/mnist-heat).
+For an example of how to use Burn Central with the CLI, see the [Burn Central CLI Mnist example](https://github.com/tracel-ai/mnist-heat).
