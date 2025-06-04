@@ -1,0 +1,17 @@
+[package]
+edition = "2021"
+name = "mnist-heat"
+publish = false
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+
+[dependencies]
+# todo: temporary fix until burn updates its bincode version to 2.0.0
+bincode = "=2.0.0-rc.3"
+
+tracel = { path = "../../crates/tracel", features = [
+    "heat-sdk",
+    "heat-sdk-cli",
+] }
+burn = { version = "0.16.0", features = ["vision", "train", "wgpu", "ndarray"] }
