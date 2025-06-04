@@ -385,7 +385,11 @@ fn resolve_toml(
     };
 
     if let Some(original_package) = original_toml.package() {
-        let package_name = original_package.name.as_ref().expect("package name is always set").as_str();
+        let package_name = original_package
+            .name
+            .as_ref()
+            .expect("package name is always set")
+            .as_str();
 
         let resolved_package = resolve_package_toml(original_package, package_root, &inherit)?;
         let edition = resolved_package

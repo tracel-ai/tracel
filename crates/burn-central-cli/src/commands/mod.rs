@@ -1,6 +1,8 @@
 pub mod time;
 
-use crate::{context::BurnCentralCliContext, generation::crate_gen::backend::BackendType, print_info};
+use crate::{
+    context::BurnCentralCliContext, generation::crate_gen::backend::BackendType, print_info,
+};
 
 /// Contains the data necessary to run an experiment.
 #[derive(Debug, Clone)]

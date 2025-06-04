@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::schemas::{CrateVersionMetadata, BurnCentralCodeMetadata};
+use crate::schemas::{BurnCentralCodeMetadata, CrateVersionMetadata};
 
 #[derive(Deserialize)]
 pub struct URLSchema {

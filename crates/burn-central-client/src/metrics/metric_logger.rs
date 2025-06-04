@@ -29,9 +29,9 @@ impl RemoteMetricLogger {
 
     fn new(client: BurnCentralClientState, split: Split) -> Result<Self, BurnCentralClientError> {
         Ok(Self {
-            sender: client
-                .get_experiment_sender()
-                .map_err(|e| BurnCentralClientError::CreateRemoteMetricLoggerError(e.to_string()))?,
+            sender: client.get_experiment_sender().map_err(|e| {
+                BurnCentralClientError::CreateRemoteMetricLoggerError(e.to_string())
+            })?,
             epoch: 1,
             split,
         })

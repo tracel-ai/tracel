@@ -1,9 +1,9 @@
-use clap::Parser;
-use colored::Colorize;
 use burn_central_client::{
     client::{BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials},
     schemas::ProjectPath,
 };
+use clap::Parser;
+use colored::Colorize;
 
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
@@ -38,7 +38,12 @@ pub struct TrainingRunArgs {
     )]
     project_path: String,
     /// The Burn Central API key
-    #[clap(short = 'k', long = "key", required = true, help = "The Burn Central API key.")]
+    #[clap(
+        short = 'k',
+        long = "key",
+        required = true,
+        help = "The Burn Central API key."
+    )]
     key: String,
     /// Project version
     #[clap(short = 't', long = "version", help = "The project version.")]
@@ -48,7 +53,10 @@ pub struct TrainingRunArgs {
     runner: Option<String>,
 }
 
-pub(crate) fn handle_command(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(
+    args: TrainingRunArgs,
+    context: BurnCentralCliContext,
+) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
         (None, None) => local_run(args, context),

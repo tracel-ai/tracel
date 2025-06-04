@@ -15,7 +15,10 @@ pub enum RunLocationType {
     Inference(InferenceRunArgs),
 }
 
-pub(crate) fn handle_command(args: RunLocationType, context: BurnCentralCliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(
+    args: RunLocationType,
+    context: BurnCentralCliContext,
+) -> anyhow::Result<()> {
     match args {
         RunLocationType::Training(training_args) => {
             training::handle_command(training_args, context)

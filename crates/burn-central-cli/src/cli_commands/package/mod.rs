@@ -1,9 +1,11 @@
 use crate::context::BurnCentralCliContext;
 use crate::registry::Flag;
 use crate::{print_err, print_success};
-use clap::Parser;
-use burn_central_client::client::{BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials};
+use burn_central_client::client::{
+    BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
+};
 use burn_central_client::schemas::{BurnCentralCodeMetadata, ProjectPath, RegisteredFunction};
+use clap::Parser;
 use quote::ToTokens;
 
 #[derive(Parser, Debug)]
@@ -18,11 +20,19 @@ pub struct PackageArgs {
     )]
     project_path: String,
     /// The Burn Central API key
-    #[clap(short = 'k', long = "key", required = true, help = "The Burn Central API key.")]
+    #[clap(
+        short = 'k',
+        long = "key",
+        required = true,
+        help = "The Burn Central API key."
+    )]
     key: String,
 }
 
-pub(crate) fn handle_command(args: PackageArgs, context: BurnCentralCliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(
+    args: PackageArgs,
+    context: BurnCentralCliContext,
+) -> anyhow::Result<()> {
     let last_commit_hash = get_last_commit_hash()?;
 
     let client = create_client(

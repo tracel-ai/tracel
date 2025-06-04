@@ -13,7 +13,7 @@ use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::error::BurnCentralHttpError;
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::schemas::{
-    CrateVersionMetadata, ExperimentPath, BurnCentralCodeMetadata, PackagedCrateData, ProjectPath,
+    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
 };
 use crate::websocket::WebSocketClient;
 
@@ -54,7 +54,10 @@ pub struct BurnCentralClientConfig {
 
 impl BurnCentralClientConfig {
     /// Create a new [BurnCentralClientConfigBuilder] with the given API key.
-    pub fn builder(creds: BurnCentralCredentials, project_path: ProjectPath) -> BurnCentralClientConfigBuilder {
+    pub fn builder(
+        creds: BurnCentralCredentials,
+        project_path: ProjectPath,
+    ) -> BurnCentralClientConfigBuilder {
         BurnCentralClientConfigBuilder::new(creds, project_path)
     }
 }
@@ -145,7 +148,9 @@ impl BurnCentralClient {
     }
 
     /// Create a new BurnCentralClient with the given configuration.
-    pub fn create(config: BurnCentralClientConfig) -> Result<BurnCentralClientState, BurnCentralClientError> {
+    pub fn create(
+        config: BurnCentralClientConfig,
+    ) -> Result<BurnCentralClientState, BurnCentralClientError> {
         let mut client = BurnCentralClient::new(config);
 
         // Try to connect to the api, if it fails, return an error
@@ -184,7 +189,10 @@ impl BurnCentralClient {
     }
 
     /// Start a new experiment. This will create a new experiment on the Burn Central backend and start it.
-    pub fn start_experiment(&mut self, config: &impl Serialize) -> Result<(), BurnCentralClientError> {
+    pub fn start_experiment(
+        &mut self,
+        config: &impl Serialize,
+    ) -> Result<(), BurnCentralClientError> {
         let experiment = self
             .http_client
             .create_experiment(
@@ -231,7 +239,9 @@ impl BurnCentralClient {
     }
 
     /// Get the sender for the active experiment's WebSocket connection.
-    pub(crate) fn get_experiment_sender(&self) -> Result<mpsc::Sender<WsMessage>, BurnCentralClientError> {
+    pub(crate) fn get_experiment_sender(
+        &self,
+    ) -> Result<mpsc::Sender<WsMessage>, BurnCentralClientError> {
         let active_experiment = self
             .active_experiment
             .read()
@@ -285,7 +295,10 @@ impl BurnCentralClient {
     }
 
     /// Load checkpoint data from the Burn Central API
-    pub(crate) fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, BurnCentralClientError> {
+    pub(crate) fn load_checkpoint_data(
+        &self,
+        path: &str,
+    ) -> Result<Vec<u8>, BurnCentralClientError> {
         let active_experiment = self
             .active_experiment
             .read()
@@ -358,7 +371,10 @@ impl BurnCentralClient {
     /// End the active experiment with an error reason.
     /// This will close the WebSocket connection and upload the logs to the Burn Central backend.
     /// No model will be uploaded.
-    pub fn end_experiment_with_error(&mut self, error_reason: String) -> Result<(), BurnCentralClientError> {
+    pub fn end_experiment_with_error(
+        &mut self,
+        error_reason: String,
+    ) -> Result<(), BurnCentralClientError> {
         self.end_experiment_internal(EndExperimentStatus::Fail(error_reason))
     }
 

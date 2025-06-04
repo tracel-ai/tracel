@@ -69,7 +69,10 @@ impl HttpClient {
     #[allow(dead_code)]
     pub fn health_check(&self) -> Result<(), BurnCentralHttpError> {
         let url = self.join("health");
-        self.http_client.get(url).send()?.map_to_burn_central_err()?;
+        self.http_client
+            .get(url)
+            .send()?
+            .map_to_burn_central_err()?;
         Ok(())
     }
 
@@ -86,7 +89,10 @@ impl HttpClient {
     }
 
     /// Log in to the Burn Central server with the given credentials.
-    pub fn login(&mut self, credentials: &BurnCentralCredentials) -> Result<(), BurnCentralHttpError> {
+    pub fn login(
+        &mut self,
+        credentials: &BurnCentralCredentials,
+    ) -> Result<(), BurnCentralHttpError> {
         let url = self.join("login/api-key");
 
         let res = self
@@ -109,7 +115,8 @@ impl HttpClient {
                 return Err(BurnCentralHttpError::BadSessionId);
             }
         } else {
-            let error_message: String = format!("Cannot connect to Burn Central server({:?})", res.text()?);
+            let error_message: String =
+                format!("Cannot connect to Burn Central server({:?})", res.text()?);
             return Err(BurnCentralHttpError::HttpError(status, error_message));
         }
 
@@ -350,7 +357,11 @@ impl HttpClient {
     }
 
     /// Generic method to upload bytes to the given URL.
-    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), BurnCentralHttpError> {
+    pub fn upload_bytes_to_url(
+        &self,
+        url: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), BurnCentralHttpError> {
         self.http_client
             .put(url)
             .body(bytes)

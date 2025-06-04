@@ -1,7 +1,7 @@
 use crate::{
     commands::{BuildCommand, RunCommand, RunParams},
     config::Config,
-    generation::{FileTree, GeneratedCrate, BurnDir},
+    generation::{BurnDir, FileTree, GeneratedCrate},
     print_info,
 };
 use std::path::PathBuf;

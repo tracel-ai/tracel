@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use colored::Colorize;
 use burn_central_client::schemas::{CrateMetadata, Dep, PackagedCrateData};
+use colored::Colorize;
 
 use super::paths;
 use crate::{print_err, print_info, print_warn, util};
@@ -229,7 +229,9 @@ pub fn package(
                         cargo_metadata::DependencyKind::Development => {
                             burn_central_client::schemas::DepKind::Dev
                         }
-                        cargo_metadata::DependencyKind::Build => burn_central_client::schemas::DepKind::Build,
+                        cargo_metadata::DependencyKind::Build => {
+                            burn_central_client::schemas::DepKind::Build
+                        }
                         cargo_metadata::DependencyKind::Unknown => {
                             unimplemented!("Unknown dep kind")
                         }
