@@ -1,2 +1,2 @@
-pub mod sdk;
+pub mod client;
 pub mod training;

@@ -1,9 +1,9 @@
 use thiserror::Error;
 
-use crate::{http::error::HeatHttpError, websocket::WebSocketError};
+use crate::{http::error::BurnCentralHttpError, websocket::WebSocketError};
 
 #[derive(Error, Debug)]
-pub enum HeatSdkError {
+pub enum BurnCentralClientError {
     #[error("Invalid experiment number: {0}")]
     InvalidExperimentNumber(String),
     #[error("Invalid experiment path: {0}")]
@@ -27,26 +27,26 @@ pub enum HeatSdkError {
     FileReadError(String),
 
     #[error("HTTP Error: {0}")]
-    HttpError(HeatHttpError),
+    HttpError(BurnCentralHttpError),
 
     #[error("Unknown Error: {0}")]
     UnknownError(String),
 }
 
-impl<T> From<std::sync::PoisonError<std::sync::MutexGuard<'_, T>>> for HeatSdkError {
+impl<T> From<std::sync::PoisonError<std::sync::MutexGuard<'_, T>>> for BurnCentralClientError {
     fn from(error: std::sync::PoisonError<std::sync::MutexGuard<'_, T>>) -> Self {
-        HeatSdkError::UnknownError(error.to_string())
+        BurnCentralClientError::UnknownError(error.to_string())
     }
 }
 
-impl From<WebSocketError> for HeatSdkError {
+impl From<WebSocketError> for BurnCentralClientError {
     fn from(error: WebSocketError) -> Self {
-        HeatSdkError::WebSocketError(error.to_string())
+        BurnCentralClientError::WebSocketError(error.to_string())
     }
 }
 
-impl From<HeatHttpError> for HeatSdkError {
-    fn from(error: HeatHttpError) -> Self {
-        HeatSdkError::HttpError(error)
+impl From<BurnCentralHttpError> for BurnCentralClientError {
+    fn from(error: BurnCentralHttpError) -> Self {
+        BurnCentralClientError::HttpError(error)
     }
 }

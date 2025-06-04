@@ -2,7 +2,7 @@
 authors = ["Tracel Technologies Inc."]
 categories = ["command-line-interface", "command-line-utilities", "development-tools"]
 description = "Burn Central CLI."
-keywords = ["tracel", "heat", "burn", "sdk", "cli"]
+keywords = ["tracel", "burn-central", "burn", "sdk", "cli"]
 edition.workspace = true
 license.workspace = true
 name = "burn-central-cli"

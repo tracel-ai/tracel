@@ -1,19 +1,19 @@
 use burn::{config::Config, module::Module, tensor::backend::Backend};
 
-use crate::client::HeatClient;
+use crate::client::BurnCentralClient;
 
 #[derive(Debug, Clone)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 
 #[derive(Debug, Clone)]
 pub struct TrainCommandContext<B: Backend> {
-    client: HeatClient,
+    client: BurnCentralClient,
     devices: Vec<B::Device>,
     config: String,
 }
 
 impl<B: Backend> TrainCommandContext<B> {
-    pub fn new(client: HeatClient, devices: Vec<B::Device>, config: String) -> Self {
+    pub fn new(client: BurnCentralClient, devices: Vec<B::Device>, config: String) -> Self {
         Self {
             client,
             devices,
@@ -21,7 +21,7 @@ impl<B: Backend> TrainCommandContext<B> {
         }
     }
 
-    pub fn client(&mut self) -> &mut HeatClient {
+    pub fn client(&mut self) -> &mut BurnCentralClient {
         &mut self.client
     }
 
@@ -38,7 +38,7 @@ trait FromTrainCommandContext<B: Backend> {
     fn from_context(context: &TrainCommandContext<B>) -> Self;
 }
 
-impl<B: Backend> FromTrainCommandContext<B> for HeatClient {
+impl<B: Backend> FromTrainCommandContext<B> for BurnCentralClient {
     fn from_context(context: &TrainCommandContext<B>) -> Self {
         context.client.clone()
     }

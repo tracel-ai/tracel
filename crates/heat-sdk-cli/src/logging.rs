@@ -11,7 +11,7 @@ pub const BURN_ORANGE: CustomColor = CustomColor {
 pub fn print_err(err_message: &str) {
     eprintln!(
         "[{}] {}: {}",
-        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "burn-central-cli".custom_color(BURN_ORANGE),
         "error".red().bold(),
         err_message
     );
@@ -27,7 +27,7 @@ macro_rules! print_err {
 pub fn print_warn(warn_message: &str) {
     println!(
         "[{}] {}: {}",
-        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "burn-central-cli".custom_color(BURN_ORANGE),
         "warning".yellow().bold(),
         warn_message
     );
@@ -43,7 +43,7 @@ macro_rules! print_warn {
 pub fn print_info(info_message: &str) {
     println!(
         "[{}] {}: {}",
-        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "burn-central-cli".custom_color(BURN_ORANGE),
         "info".cyan().bold(),
         info_message
     );
@@ -60,7 +60,7 @@ macro_rules! print_info {
 pub fn print_debug(debug_message: &str) {
     println!(
         "[{}] {}: {}",
-        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "burn-central-cli".custom_color(BURN_ORANGE),
         "debug".green().bold(),
         debug_message
     );
@@ -80,7 +80,7 @@ macro_rules! print_debug {
 pub fn print_success(success_message: &str) {
     println!(
         "[{}] {}: {}",
-        "heat-sdk-cli".custom_color(BURN_ORANGE),
+        "burn-central-cli".custom_color(BURN_ORANGE),
         "success".green().bold(),
         success_message
     );

@@ -2,7 +2,7 @@
 authors = ["Tracel Technologies Inc."]
 categories = ["command-line-interface", "command-line-utilities", "development-tools"]
 description = "Macros for Burn Central CLI."
-keywords = ["tracel", "heat", "burn", "macros"]
+keywords = ["tracel", "burn-central", "burn", "macros"]
 edition.workspace = true
 license.workspace = true
 name = "burn-central-cli-macros"

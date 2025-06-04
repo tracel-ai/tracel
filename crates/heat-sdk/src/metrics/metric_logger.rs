@@ -3,8 +3,8 @@ use std::sync::mpsc;
 use burn::train::logger::MetricLogger;
 use burn::train::metric::{MetricEntry, NumericEntry};
 
-use crate::client::HeatClientState;
-use crate::errors::sdk::HeatSdkError;
+use crate::client::BurnCentralClientState;
+use crate::errors::client::BurnCentralClientError;
 use crate::experiment::{Split, WsMessage};
 
 /// The remote metric logger, used to send metric logs to Heat.
@@ -15,23 +15,23 @@ pub struct RemoteMetricLogger {
 }
 
 impl RemoteMetricLogger {
-    /// Create a new instance of the remote metric logger for `Training` with the given [HeatClientState].
-    pub fn new_train(client: HeatClientState) -> Self {
+    /// Create a new instance of the remote metric logger for `Training` with the given [BurnCentralClientState].
+    pub fn new_train(client: BurnCentralClientState) -> Self {
         Self::new(client, Split::Train)
             .expect("RemoteMetricLogger should be created successfully for training split")
     }
 
-    /// Create a new instance of the remote metric logger for `Validation` with the given [HeatClientState].
-    pub fn new_validation(client: HeatClientState) -> Self {
+    /// Create a new instance of the remote metric logger for `Validation` with the given [BurnCentralClientState].
+    pub fn new_validation(client: BurnCentralClientState) -> Self {
         Self::new(client, Split::Val)
             .expect("RemoteMetricLogger should be created successfully for validation split")
     }
 
-    fn new(client: HeatClientState, split: Split) -> Result<Self, HeatSdkError> {
+    fn new(client: BurnCentralClientState, split: Split) -> Result<Self, BurnCentralClientError> {
         Ok(Self {
             sender: client
                 .get_experiment_sender()
-                .map_err(|e| HeatSdkError::CreateRemoteMetricLoggerError(e.to_string()))?,
+                .map_err(|e| BurnCentralClientError::CreateRemoteMetricLoggerError(e.to_string()))?,
             epoch: 1,
             split,
         })

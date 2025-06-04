@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::errors::sdk::HeatSdkError;
+use crate::errors::client::BurnCentralClientError;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -109,7 +109,7 @@ pub struct CrateVersionMetadata {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RegisteredHeatFunction {
+pub struct RegisteredFunction {
     pub mod_path: String,
     pub fn_name: String,
     pub proc_type: String,
@@ -117,8 +117,8 @@ pub struct RegisteredHeatFunction {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HeatCodeMetadata {
-    pub functions: Vec<RegisteredHeatFunction>,
+pub struct BurnCentralCodeMetadata {
+    pub functions: Vec<RegisteredFunction>,
 }
 
 pub struct PackagedCrateData {
@@ -165,11 +165,11 @@ impl ProjectPath {
 }
 
 impl TryFrom<String> for ProjectPath {
-    type Error = HeatSdkError;
+    type Error = BurnCentralClientError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         if !ProjectPath::validate_path(&path) {
-            return Err(HeatSdkError::InvalidProjectPath(path));
+            return Err(BurnCentralClientError::InvalidProjectPath(path));
         }
 
         let parts: Vec<&str> = path.split('/').collect();
@@ -229,18 +229,18 @@ impl ExperimentPath {
 }
 
 impl TryFrom<String> for ExperimentPath {
-    type Error = HeatSdkError;
+    type Error = BurnCentralClientError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         if !ExperimentPath::validate_path(&path) {
-            return Err(HeatSdkError::InvalidExperimentPath(path));
+            return Err(BurnCentralClientError::InvalidExperimentPath(path));
         }
 
         let parts: Vec<&str> = path.split('/').collect();
         let project_path = ProjectPath::try_from(parts[0..2].join("/"))?;
         let experiment_num = parts[2]
             .parse::<i32>()
-            .map_err(|_| HeatSdkError::InvalidExperimentNumber(parts[2].to_string()))?;
+            .map_err(|_| BurnCentralClientError::InvalidExperimentNumber(parts[2].to_string()))?;
 
         Ok(ExperimentPath {
             project_path,

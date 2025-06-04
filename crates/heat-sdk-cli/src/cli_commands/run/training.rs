@@ -1,13 +1,13 @@
 use clap::Parser;
 use colored::Colorize;
 use burn_central_client::{
-    client::{HeatClient, HeatClientConfig, HeatCredentials},
+    client::{BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials},
     schemas::ProjectPath,
 };
 
 use crate::{
     commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
-    context::HeatCliContext,
+    context::BurnCentralCliContext,
     generation::backend::BackendType,
     logging::BURN_ORANGE,
     print_info,
@@ -28,17 +28,17 @@ pub struct TrainingRunArgs {
     #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true, help = "Config files paths."
     )]
     configs: Vec<String>,
-    /// The Heat project path
+    /// The Burn Central project path
     // todo: support project name and creating a project if it doesn't exist
     #[clap(
         short = 'p',
         long = "project",
         required = true,
-        help = "The Heat project path."
+        help = "The Burn Central project path."
     )]
     project_path: String,
-    /// The Heat API key
-    #[clap(short = 'k', long = "key", required = true, help = "The Heat API key.")]
+    /// The Burn Central API key
+    #[clap(short = 'k', long = "key", required = true, help = "The Burn Central API key.")]
     key: String,
     /// Project version
     #[clap(short = 't', long = "version", help = "The project version.")]
@@ -48,7 +48,7 @@ pub struct TrainingRunArgs {
     runner: Option<String>,
 }
 
-pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
         (None, None) => local_run(args, context),
@@ -62,8 +62,8 @@ pub(crate) fn handle_command(args: TrainingRunArgs, context: HeatCliContext) -> 
     }
 }
 
-fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<()> {
-    let heat_client = create_heat_client(
+fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::Result<()> {
+    let client = create_client(
         &args.key,
         context.get_api_endpoint().as_str(),
         context.get_wss(),
@@ -71,11 +71,11 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
     );
 
     let project_version = args.project_version.unwrap();
-    if !heat_client.check_project_version_exists(&project_version)? {
+    if !client.check_project_version_exists(&project_version)? {
         return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version));
     }
 
-    heat_client.start_remote_job(
+    client.start_remote_job(
         args.runner.unwrap(),
         &project_version,
         format!(
@@ -95,7 +95,7 @@ fn remote_run(args: TrainingRunArgs, context: HeatCliContext) -> anyhow::Result<
     Ok(())
 }
 
-fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Result<()> {
+fn local_run(args: TrainingRunArgs, mut context: BurnCentralCliContext) -> anyhow::Result<()> {
     let flags = crate::registry::get_flags();
     print_available_training_functions(&flags);
 
@@ -105,7 +105,7 @@ fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Resu
 
     let mut commands_to_run: Vec<(BuildCommand, RunCommand)> = Vec::new();
 
-    context.set_generated_crate_name("generated-heat-sdk-crate".to_string());
+    context.set_generated_crate_name("generated-burn-crate".to_string());
 
     for backend in &args.backends {
         for config_path in &args.configs {
@@ -148,9 +148,9 @@ fn local_run(args: TrainingRunArgs, mut context: HeatCliContext) -> anyhow::Resu
     Ok(())
 }
 
-fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> HeatClient {
-    let creds = HeatCredentials::new(api_key.to_owned());
-    let client_config = HeatClientConfig::builder(
+fn create_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> BurnCentralClient {
+    let creds = BurnCentralCredentials::new(api_key.to_owned());
+    let client_config = BurnCentralClientConfig::builder(
         creds,
         ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
     )
@@ -158,7 +158,7 @@ fn create_heat_client(api_key: &str, url: &str, wss: bool, project_path: &str) -
     .with_wss(wss)
     .with_num_retries(10)
     .build();
-    HeatClient::create(client_config)
+    BurnCentralClient::create(client_config)
         .expect("Should connect to the Heat server and create a client")
 }
 

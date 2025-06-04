@@ -1,5 +1,5 @@
 use crate::{
-    errors::sdk::HeatSdkError, http::HttpClient, schemas::ExperimentPath,
+    errors::client::BurnCentralClientError, http::HttpClient, schemas::ExperimentPath,
     websocket::WebSocketClient,
 };
 use std::sync::mpsc;
@@ -27,7 +27,7 @@ impl TempLogStore {
         }
     }
 
-    pub fn push(&mut self, log: String) -> Result<(), HeatSdkError> {
+    pub fn push(&mut self, log: String) -> Result<(), BurnCentralClientError> {
         if self.bytes + log.len() > Self::BYTE_LIMIT {
             self.flush()?;
         }
@@ -38,7 +38,7 @@ impl TempLogStore {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), HeatSdkError> {
+    pub fn flush(&mut self) -> Result<(), BurnCentralClientError> {
         if !self.logs.is_empty() {
             let logs_upload_url = self.http_client.request_logs_upload_url(
                 self.experiment_path.owner_name(),
@@ -82,11 +82,11 @@ impl Experiment {
         &self.experiment_path
     }
 
-    pub(crate) fn get_ws_sender(&self) -> Result<mpsc::Sender<WsMessage>, HeatSdkError> {
+    pub(crate) fn get_ws_sender(&self) -> Result<mpsc::Sender<WsMessage>, BurnCentralClientError> {
         if let Some(handler) = &self.handler {
             Ok(handler.get_sender())
         } else {
-            Err(HeatSdkError::UnknownError(
+            Err(BurnCentralClientError::UnknownError(
                 "Experiment not started yet".to_string(),
             ))
         }

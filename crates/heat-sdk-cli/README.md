@@ -1,5 +1,5 @@
 _Work in Progress_
 
-# Heat SDK CLI
+# Burn Central CLI
 
-Construct CLI for Heat projects.
+Construct CLI for Burn Central projects.

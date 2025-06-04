@@ -1,39 +1,36 @@
 use crate::{
     commands::{BuildCommand, RunCommand, RunParams},
     config::Config,
-    generation::{FileTree, GeneratedCrate, HeatDir},
+    generation::{FileTree, GeneratedCrate, BurnDir},
     print_info,
 };
 use std::path::PathBuf;
 
-pub struct HeatCliContext {
+pub struct BurnCentralCliContext {
     user_project_name: String,
     user_crate_dir: PathBuf,
     generated_crate_name: Option<String>,
     build_profile: String,
-    heat_dir: HeatDir,
+    burn_dir: BurnDir,
     api_endpoint: url::Url,
     wss: bool,
 }
 
-impl HeatCliContext {
+impl BurnCentralCliContext {
     pub fn new(config: &Config) -> Self {
         let user_project_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
         let user_crate_dir: PathBuf = std::env::var("CARGO_MANIFEST_DIR")
             .expect("CARGO_MANIFEST_DIR not set")
             .into();
 
-        let heat_dir = match HeatDir::try_from_path(&user_crate_dir) {
-            Ok(heat_dir) => heat_dir,
-            Err(_) => HeatDir::new(),
-        };
+        let burn_dir = BurnDir::try_from_path(&user_crate_dir).unwrap_or_else(|_| BurnDir::new());
 
         Self {
             user_project_name,
             user_crate_dir,
             generated_crate_name: None,
             build_profile: "release".to_string(),
-            heat_dir,
+            burn_dir,
             api_endpoint: config
                 .api_endpoint
                 .parse::<url::Url>()
@@ -43,7 +40,7 @@ impl HeatCliContext {
     }
 
     pub fn init(self) -> Self {
-        self.heat_dir.init(&self.user_crate_dir);
+        self.burn_dir.init(&self.user_crate_dir);
         self
     }
 
@@ -64,7 +61,7 @@ impl HeatCliContext {
             .generated_crate_name
             .as_ref()
             .expect("Generated crate name should exist.");
-        self.heat_dir
+        self.burn_dir
             .get_crate_path(&self.user_crate_dir, crate_name)
             .expect("Crate path should exist.")
     }
@@ -75,15 +72,15 @@ impl HeatCliContext {
 
     fn set_generated_crate(&mut self, generated_crate: GeneratedCrate) {
         let crate_name = generated_crate.name();
-        if self.heat_dir.get_crate(&crate_name).is_some() {
-            self.heat_dir.remove_crate(&crate_name);
+        if self.burn_dir.get_crate(&crate_name).is_some() {
+            self.burn_dir.remove_crate(&crate_name);
         }
-        self.heat_dir.add_crate(&crate_name, generated_crate);
+        self.burn_dir.add_crate(&crate_name, generated_crate);
     }
 
     fn get_target_exe_path(&self) -> Option<PathBuf> {
         let target_path = self
-            .heat_dir
+            .burn_dir
             .get_crate_target_path(self.generated_crate_name.as_ref()?)?;
 
         let full_path = self
@@ -118,10 +115,10 @@ impl HeatCliContext {
                 let mut command = std::process::Command::new(bin_exe_path);
                 command
                     .current_dir(&self.user_crate_dir)
-                    .env("HEAT_PROJECT_DIR", &self.user_crate_dir)
+                    .env("BURN_PROJECT_DIR", &self.user_crate_dir)
                     .args(["--project", project])
                     .args(["--key", key])
-                    .args(["--heat-endpoint", self.get_api_endpoint().as_str()])
+                    .args(["--api-endpoint", self.get_api_endpoint().as_str()])
                     .args(["--wss", self.get_wss().to_string().as_str()])
                     .args(["train", function, config_path]);
                 command
@@ -141,7 +138,7 @@ impl HeatCliContext {
         );
 
         self.set_generated_crate(generated_crate);
-        self.heat_dir.write_crates_dir(&self.user_crate_dir);
+        self.burn_dir.write_crates_dir(&self.user_crate_dir);
 
         Ok(())
     }
@@ -161,7 +158,7 @@ impl HeatCliContext {
             }
         };
 
-        let new_target_dir: Option<String> = std::env::var("HEAT_TARGET_DIR").ok();
+        let new_target_dir: Option<String> = std::env::var("BURN_TARGET_DIR").ok();
 
         let mut build_command = std::process::Command::new("cargo");
         build_command
@@ -169,7 +166,7 @@ impl HeatCliContext {
             .arg(profile_arg)
             .arg("--no-default-features")
             .current_dir(&self.user_crate_dir)
-            .env("HEAT_PROJECT_DIR", &self.user_crate_dir)
+            .env("BURN_PROJECT_DIR", &self.user_crate_dir)
             .args([
                 "--manifest-path",
                 self.get_generated_crate_path()
@@ -187,7 +184,7 @@ impl HeatCliContext {
 
     fn get_binary_exe_path(&self, run_id: &str) -> Option<PathBuf> {
         let bin_name = self.bin_name_from_run_id(run_id);
-        let binary_path = self.heat_dir.get_binary_path(&bin_name)?;
+        let binary_path = self.burn_dir.get_binary_path(&bin_name)?;
         let full_path = self.user_crate_dir.join(binary_path);
         print_info!("Binary exe path: {:?}", full_path);
         Some(full_path)
@@ -212,16 +209,16 @@ impl HeatCliContext {
 
         let target_bin_name = self.bin_name_from_run_id(run_id);
         let dest_exe_path = maybe_dest_exe_path.unwrap_or_else(|| {
-            self.heat_dir
+            self.burn_dir
                 .get_bin_dir(&self.user_crate_dir)
                 .join(&target_bin_name)
         });
 
-        self.heat_dir.write_bin_dir(&self.user_crate_dir);
+        self.burn_dir.write_bin_dir(&self.user_crate_dir);
 
         match std::fs::copy(src_exe_path, dest_exe_path) {
             Ok(_) => {
-                self.heat_dir
+                self.burn_dir
                     .add_binary(&target_bin_name, FileTree::new_file_ref(&target_bin_name));
             }
             Err(e) => {
@@ -236,6 +233,6 @@ impl HeatCliContext {
     }
 
     pub fn get_artifacts_dir_path(&self) -> PathBuf {
-        self.heat_dir.get_artifacts_dir(&self.user_crate_dir)
+        self.burn_dir.get_artifacts_dir(&self.user_crate_dir)
     }
 }

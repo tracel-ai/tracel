@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::schemas::{CrateVersionMetadata, HeatCodeMetadata};
+use crate::schemas::{CrateVersionMetadata, BurnCentralCodeMetadata};
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -21,7 +21,7 @@ pub struct StartExperimentSchema {
 }
 
 #[derive(Serialize)]
-pub struct HeatCredentialsSchema {
+pub struct BurnCentralCredentialsSchema {
     pub api_key: String,
 }
 
@@ -40,7 +40,7 @@ pub struct CreateExperimentResponseSchema {
 #[derive(Debug, Serialize)]
 pub struct CodeUploadParamsSchema {
     pub target_package_name: String,
-    pub heat_metadata: HeatCodeMetadata,
+    pub burn_central_metadata: BurnCentralCodeMetadata,
     pub crates: Vec<CrateVersionMetadata>,
     pub version: String,
 }

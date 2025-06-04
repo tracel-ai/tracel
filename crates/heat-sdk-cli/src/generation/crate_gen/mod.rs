@@ -232,10 +232,10 @@ fn generate_clap_cli() -> proc_macro2::TokenStream {
                     .long("key")
                     .help("The API key")
                     .required(true),
-                clap::Arg::new("heat-endpoint")
+                clap::Arg::new("api-endpoint")
                     .short('e')
-                    .long("heat-endpoint")
-                    .help("The Heat endpoint")
+                    .long("api-endpoint")
+                    .help("The Burn Central endpoint")
                     .required(true),
                 clap::Arg::new("wss")
                     .short('w')
@@ -338,18 +338,18 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         #backend_types
         #clap_cli
 
-        use tracel::heat::command::train::*;
+        use burn_central::command::train::*;
         use burn::prelude::*;
 
-        fn create_heat_client(api_key: &str, url: &str, project: &str, wss: bool) -> tracel::heat::client::HeatClient {
-            let creds = tracel::heat::client::HeatCredentials::new(api_key.to_owned());
-            let client_config = tracel::heat::client::HeatClientConfig::builder(creds, tracel::heat::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
+        fn create_client(api_key: &str, url: &str, project: &str, wss: bool) -> burn_central::client::BurnCentralClient {
+            let creds = burn_central::client::BurnCentralCredentials::new(api_key.to_owned());
+            let client_config = burn_central::client::BurnCentralClientConfig::builder(creds, burn_central::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
                 .with_endpoint(url)
                 .with_wss(wss)
                 .with_num_retries(10)
                 .build();
-            tracel::heat::client::HeatClient::create(client_config)
-                .expect("Should connect to the Heat server and create a client")
+            burn_central::client::BurnCentralClient::create(client_config)
+                .expect("Should connect to the server and create a client")
         }
 
         fn main() {
@@ -358,11 +358,11 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
             let device = #backend_default_device;
 
             let key = matches.get_one::<String>("key").expect("key should be set.");
-            let heat_endpoint = matches.get_one::<String>("heat-endpoint").expect("heat-endpoint should be set.");
+            let endpoint = matches.get_one::<String>("api-endpoint").expect("api-endpoint should be set.");
             let project = matches.get_one::<String>("project").expect("project should be set.");
             let wss = matches.get_one::<String>("wss").expect("wss should be set.").parse::<bool>().expect("wss should be a boolean.");
 
-            let client = create_heat_client(&key, &heat_endpoint, &project, wss);
+            let client = create_client(&key, &endpoint, &project, wss);
 
             if let Some(train_matches) = matches.subcommand_matches("train") {
                 let func = train_matches.get_one::<String>("func").expect("func should be set.");
@@ -415,7 +415,7 @@ pub fn create_crate(
         None,
         vec![],
     ));
-    find_required_dependencies(vec!["tracel", "burn"])
+    find_required_dependencies(vec!["burn-central", "burn"])
         .drain(..)
         .for_each(|mut dep| {
             if dep.name == "burn" {
@@ -423,8 +423,8 @@ pub fn create_crate(
                     dep.add_feature(feature.to_string());
                 });
             }
-            if dep.name == "tracel" {
-                dep.add_feature("heat-sdk".to_string());
+            if dep.name == "burn-central" {
+                dep.add_feature("burn-central-client".to_string());
             }
             generated_crate.add_dependency(dep);
         });

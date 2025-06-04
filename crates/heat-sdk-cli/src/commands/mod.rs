@@ -1,6 +1,6 @@
 pub mod time;
 
-use crate::{context::HeatCliContext, generation::crate_gen::backend::BackendType, print_info};
+use crate::{context::BurnCentralCliContext, generation::crate_gen::backend::BackendType, print_info};
 
 /// Contains the data necessary to run an experiment.
 #[derive(Debug, Clone)]
@@ -31,7 +31,7 @@ pub struct BuildCommand {
 pub(crate) fn execute_experiment_command(
     build_command: BuildCommand,
     run_command: RunCommand,
-    context: &mut HeatCliContext,
+    context: &mut BurnCentralCliContext,
 ) -> anyhow::Result<()> {
     execute_build_command(build_command, context)?;
     execute_run_command(run_command, context)?;
@@ -42,7 +42,7 @@ pub(crate) fn execute_experiment_command(
 /// Execute the build command for an experiment.
 pub(crate) fn execute_build_command(
     build_command: BuildCommand,
-    context: &mut HeatCliContext,
+    context: &mut BurnCentralCliContext,
 ) -> anyhow::Result<()> {
     print_info!(
         "Building experiment project with command: {:?}",
@@ -76,7 +76,7 @@ pub(crate) fn execute_build_command(
 /// Execute the run command for an experiment.
 pub(crate) fn execute_run_command(
     run_command: RunCommand,
-    context: &HeatCliContext,
+    context: &BurnCentralCliContext,
 ) -> anyhow::Result<()> {
     print_info!("Running experiment with command: {:?}", run_command);
 
@@ -107,7 +107,7 @@ pub(crate) fn execute_run_command(
 /// Execute all experiments sequentially.
 pub(crate) fn execute_sequentially(
     commands: Vec<(BuildCommand, RunCommand)>,
-    mut context: HeatCliContext,
+    mut context: BurnCentralCliContext,
 ) -> anyhow::Result<()> {
     for cmd in commands {
         execute_experiment_command(cmd.0, cmd.1, &mut context)?

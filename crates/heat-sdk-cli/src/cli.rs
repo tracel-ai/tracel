@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 use crate::commands::time::format_duration;
 use crate::config::Config;
-use crate::context::HeatCliContext;
+use crate::context::BurnCentralCliContext;
 use crate::{cli_commands, print_err, print_info};
 
 #[derive(Parser, Debug)]
@@ -38,7 +38,7 @@ pub fn cli_main(config: Config) {
         std::process::exit(1);
     }
 
-    let context = HeatCliContext::new(&config).init();
+    let context = BurnCentralCliContext::new(&config).init();
 
     let cli_res = match args.unwrap().command {
         Commands::Run(run_args) => cli_commands::run::handle_command(run_args, context),

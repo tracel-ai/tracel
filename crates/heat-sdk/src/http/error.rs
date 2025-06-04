@@ -2,7 +2,7 @@ use reqwest::StatusCode;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum HeatHttpError {
+pub enum BurnCentralHttpError {
     #[error("Bad session id")]
     BadSessionId,
     #[error("Http Error {0}: {1}")]

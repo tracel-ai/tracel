@@ -2,10 +2,10 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 use reqwest::Url;
 use serde::Serialize;
 
-use crate::http::error::HeatHttpError;
-use crate::schemas::HeatCodeMetadata;
+use crate::http::error::BurnCentralHttpError;
+use crate::schemas::BurnCentralCodeMetadata;
 use crate::{
-    client::HeatCredentials,
+    client::BurnCentralCredentials,
     http::schemas::StartExperimentSchema,
     schemas::{CrateVersionMetadata, Experiment},
 };
@@ -20,25 +20,25 @@ pub enum EndExperimentStatus {
     Fail(String),
 }
 
-impl From<reqwest::Error> for HeatHttpError {
+impl From<reqwest::Error> for BurnCentralHttpError {
     fn from(error: reqwest::Error) -> Self {
         match error.status() {
-            Some(status) => HeatHttpError::HttpError(status, error.to_string()),
-            None => HeatHttpError::UnknownError(error.to_string()),
+            Some(status) => BurnCentralHttpError::HttpError(status, error.to_string()),
+            None => BurnCentralHttpError::UnknownError(error.to_string()),
         }
     }
 }
 
 trait ResponseExt {
-    fn map_to_heat_err(self) -> Result<reqwest::blocking::Response, HeatHttpError>;
+    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, BurnCentralHttpError>;
 }
 
 impl ResponseExt for reqwest::blocking::Response {
-    fn map_to_heat_err(self) -> Result<reqwest::blocking::Response, HeatHttpError> {
+    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, BurnCentralHttpError> {
         if self.status().is_success() {
             Ok(self)
         } else {
-            Err(HeatHttpError::HttpError(self.status(), self.text()?))
+            Err(BurnCentralHttpError::HttpError(self.status(), self.text()?))
         }
     }
 }
@@ -67,9 +67,9 @@ impl HttpClient {
 
     /// Check if the Heat server is reachable.
     #[allow(dead_code)]
-    pub fn health_check(&self) -> Result<(), HeatHttpError> {
+    pub fn health_check(&self) -> Result<(), BurnCentralHttpError> {
         let url = self.join("health");
-        self.http_client.get(url).send()?.map_to_heat_err()?;
+        self.http_client.get(url).send()?.map_to_burn_central_err()?;
         Ok(())
     }
 
@@ -86,13 +86,13 @@ impl HttpClient {
     }
 
     /// Log in to the Heat server with the given credentials.
-    pub fn login(&mut self, credentials: &HeatCredentials) -> Result<(), HeatHttpError> {
+    pub fn login(&mut self, credentials: &BurnCentralCredentials) -> Result<(), BurnCentralHttpError> {
         let url = self.join("login/api-key");
 
         let res = self
             .http_client
             .post(url)
-            .form::<HeatCredentials>(credentials)
+            .form::<BurnCentralCredentials>(credentials)
             .send()?;
 
         let status = res.status();
@@ -106,11 +106,11 @@ impl HttpClient {
                     .expect("Session cookie should be able to convert to str");
                 self.session_cookie = Some(cookie_str.to_string());
             } else {
-                return Err(HeatHttpError::BadSessionId);
+                return Err(BurnCentralHttpError::BadSessionId);
             }
         } else {
             let error_message: String = format!("Cannot connect to Heat server({:?})", res.text()?);
-            return Err(HeatHttpError::HttpError(status, error_message));
+            return Err(BurnCentralHttpError::HttpError(status, error_message));
         }
 
         Ok(())
@@ -140,7 +140,7 @@ impl HttpClient {
         &self,
         owner_name: &str,
         project_name: &str,
-    ) -> Result<Experiment, HeatHttpError> {
+    ) -> Result<Experiment, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -155,7 +155,7 @@ impl HttpClient {
             .json(&serde_json::json!({}))
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .map_to_heat_err()?
+            .map_to_burn_central_err()?
             .json::<CreateExperimentResponseSchema>()?;
 
         let experiment = Experiment {
@@ -180,7 +180,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         config: &impl Serialize,
-    ) -> Result<(), HeatHttpError> {
+    ) -> Result<(), BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let json = StartExperimentSchema {
@@ -198,7 +198,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&json)
             .send()?
-            .map_to_heat_err()?;
+            .map_to_burn_central_err()?;
 
         Ok(())
     }
@@ -212,7 +212,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         end_status: EndExperimentStatus,
-    ) -> Result<(), HeatHttpError> {
+    ) -> Result<(), BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -230,7 +230,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&end_status)
             .send()?
-            .map_to_heat_err()?;
+            .map_to_burn_central_err()?;
 
         Ok(())
     }
@@ -244,7 +244,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
-    ) -> Result<String, HeatHttpError> {
+    ) -> Result<String, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -257,7 +257,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .map_to_heat_err()?
+            .map_to_burn_central_err()?
             .json::<URLSchema>()
             .map(|res| res.url)?;
 
@@ -273,7 +273,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
-    ) -> Result<String, HeatHttpError> {
+    ) -> Result<String, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -286,7 +286,7 @@ impl HttpClient {
             .get(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .map_to_heat_err()?
+            .map_to_burn_central_err()?
             .json::<URLSchema>()
             .map(|res| res.url)?;
 
@@ -301,7 +301,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<String, HeatHttpError> {
+    ) -> Result<String, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -314,7 +314,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .map_to_heat_err()?
+            .map_to_burn_central_err()?
             .json::<URLSchema>()?
             .url;
 
@@ -329,7 +329,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<String, HeatHttpError> {
+    ) -> Result<String, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -342,7 +342,7 @@ impl HttpClient {
             .post(url)
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .send()?
-            .map_to_heat_err()?
+            .map_to_burn_central_err()?
             .json::<URLSchema>()?
             .url;
 
@@ -350,32 +350,32 @@ impl HttpClient {
     }
 
     /// Generic method to upload bytes to the given URL.
-    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), HeatHttpError> {
+    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), BurnCentralHttpError> {
         self.http_client
             .put(url)
             .body(bytes)
             .send()?
-            .map_to_heat_err()?;
+            .map_to_burn_central_err()?;
 
         Ok(())
     }
 
     /// Generic method to download bytes from the given URL.
-    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, HeatHttpError> {
+    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, BurnCentralHttpError> {
         let data = self
             .http_client
             .get(url)
             .send()?
-            .map_to_heat_err()?
+            .map_to_burn_central_err()?
             .bytes()?
             .to_vec();
 
         Ok(data)
     }
 
-    fn validate_session_cookie(&self) -> Result<(), HeatHttpError> {
+    fn validate_session_cookie(&self) -> Result<(), BurnCentralHttpError> {
         if self.session_cookie.is_none() {
-            return Err(HeatHttpError::BadSessionId);
+            return Err(BurnCentralHttpError::BadSessionId);
         }
         Ok(())
     }
@@ -385,10 +385,10 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         target_package_name: &str,
-        heat_metadata: HeatCodeMetadata,
+        code_metadata: BurnCentralCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
         last_commit: &str,
-    ) -> Result<CodeUploadUrlsSchema, HeatHttpError> {
+    ) -> Result<CodeUploadUrlsSchema, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -402,12 +402,12 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&CodeUploadParamsSchema {
                 target_package_name: target_package_name.to_string(),
-                heat_metadata,
+                burn_central_metadata: code_metadata,
                 crates: crates_metadata,
                 version: last_commit.to_string(),
             })
             .send()?
-            .map_to_heat_err()?;
+            .map_to_burn_central_err()?;
 
         let upload_urls = response.json::<CodeUploadUrlsSchema>()?;
         Ok(upload_urls)
@@ -418,7 +418,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         project_version: &str,
-    ) -> Result<bool, HeatHttpError> {
+    ) -> Result<bool, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -435,7 +435,7 @@ impl HttpClient {
         match response.status() {
             reqwest::StatusCode::OK => Ok(true),
             reqwest::StatusCode::NOT_FOUND => Ok(false),
-            _ => Err(HeatHttpError::HttpError(
+            _ => Err(BurnCentralHttpError::HttpError(
                 response.status(),
                 response.text()?,
             )),
@@ -449,7 +449,7 @@ impl HttpClient {
         project_name: &str,
         project_version: &str,
         command: String,
-    ) -> Result<(), HeatHttpError> {
+    ) -> Result<(), BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -468,7 +468,7 @@ impl HttpClient {
             .header(COOKIE, self.session_cookie.as_ref().unwrap())
             .json(&body)
             .send()?
-            .map_to_heat_err()?;
+            .map_to_burn_central_err()?;
 
         Ok(())
     }

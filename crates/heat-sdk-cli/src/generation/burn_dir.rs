@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use super::{crate_gen::GeneratedCrate, filetree::FileTree};
 use std::path::Path;
 
-pub struct HeatDir {
+pub struct BurnDir {
     crates: HashMap<String, FileTree>,
     binaries: HashMap<String, FileTree>,
     // config: ..,
@@ -11,28 +11,28 @@ pub struct HeatDir {
     // logs: ..,
 }
 
-const HEAT_DIR_NAME: &str = ".heat";
-const HEAT_BIN_DIR_NAME: &str = "bin";
-const HEAT_CRATES_DIR_NAME: &str = "crates";
-const HEAT_ARTIFACTS_DIR_NAME: &str = "artifacts";
+const BURN_DIR_NAME: &str = ".burn";
+const BURN_BIN_DIR_NAME: &str = "bin";
+const BURN_CRATES_DIR_NAME: &str = "crates";
+const BURN_ARTIFACTS_DIR_NAME: &str = "artifacts";
 
-impl HeatDir {
+impl BurnDir {
     pub fn init(&self, user_crate_dir: &Path) {
-        std::fs::create_dir_all(user_crate_dir.join(HEAT_DIR_NAME))
+        std::fs::create_dir_all(user_crate_dir.join(BURN_DIR_NAME))
             .expect("Should be able to create heat dir.");
-        std::fs::write(user_crate_dir.join(HEAT_DIR_NAME).join(".gitignore"), "*")
+        std::fs::write(user_crate_dir.join(BURN_DIR_NAME).join(".gitignore"), "*")
             .expect("Should be able to write gitignore file.");
     }
 
     pub fn new() -> Self {
-        HeatDir {
+        BurnDir {
             crates: HashMap::new(),
             binaries: HashMap::new(),
         }
     }
 
     pub fn from_file_tree(file_tree: FileTree) -> anyhow::Result<Self> {
-        let mut heat_files = match file_tree {
+        let mut burn_dir_files = match file_tree {
             FileTree::Directory(_, dir_items) => dir_items,
             _ => return Err(anyhow::anyhow!("Heat directory is not a directory")),
         };
@@ -40,12 +40,12 @@ impl HeatDir {
         let mut crates = HashMap::new();
         let mut binaries = HashMap::new();
 
-        let bin_dir = heat_files
+        let bin_dir = burn_dir_files
             .iter()
             .position(
-                |item| matches!(item, FileTree::Directory(name, _) if name == HEAT_BIN_DIR_NAME),
+                |item| matches!(item, FileTree::Directory(name, _) if name == BURN_BIN_DIR_NAME),
             )
-            .map(|index| heat_files.swap_remove(index));
+            .map(|index| burn_dir_files.swap_remove(index));
 
         if let Some(FileTree::Directory(_, mut bin_items)) = bin_dir {
             for item in bin_items.drain(..) {
@@ -55,12 +55,12 @@ impl HeatDir {
             }
         }
 
-        let crates_dir = heat_files
+        let crates_dir = burn_dir_files
             .iter()
             .position(
-                |item| matches!(item, FileTree::Directory(name, _) if name == HEAT_CRATES_DIR_NAME),
+                |item| matches!(item, FileTree::Directory(name, _) if name == BURN_CRATES_DIR_NAME),
             )
-            .map(|index| heat_files.swap_remove(index));
+            .map(|index| burn_dir_files.swap_remove(index));
 
         if let Some(FileTree::Directory(_, mut crate_items)) = crates_dir {
             for item in crate_items.drain(..) {
@@ -70,17 +70,17 @@ impl HeatDir {
             }
         }
 
-        Ok(HeatDir { crates, binaries })
+        Ok(BurnDir { crates, binaries })
     }
 
     pub fn try_from_path(user_dir_path: &Path) -> anyhow::Result<Self> {
         let file_tree = FileTree::read_from(
-            &user_dir_path.join(HEAT_DIR_NAME),
+            &user_dir_path.join(BURN_DIR_NAME),
             &[std::env::consts::EXE_SUFFIX],
             &["target"],
         )?;
 
-        HeatDir::from_file_tree(file_tree)
+        BurnDir::from_file_tree(file_tree)
     }
 
     pub fn add_crate(&mut self, crate_name: &str, crate_gen: GeneratedCrate) {
@@ -104,14 +104,14 @@ impl HeatDir {
         match self.binaries.get(bin_name)? {
             FileTree::FileRef(name) => Some(PathBuf::from(format!(
                 "{}/{}/{}",
-                HEAT_DIR_NAME,
-                HEAT_BIN_DIR_NAME,
+                BURN_DIR_NAME,
+                BURN_BIN_DIR_NAME,
                 name.clone()
             ))),
             FileTree::File(name, _) => Some(PathBuf::from(format!(
                 "{}/{}/{}",
-                HEAT_DIR_NAME,
-                HEAT_BIN_DIR_NAME,
+                BURN_DIR_NAME,
+                BURN_BIN_DIR_NAME,
                 name.clone()
             ))),
             _ => None,
@@ -122,8 +122,8 @@ impl HeatDir {
         match self.crates.get(crate_name)? {
             FileTree::Directory(name, _) => Some(
                 user_crate_dir
-                    .join(HEAT_DIR_NAME)
-                    .join(HEAT_CRATES_DIR_NAME)
+                    .join(BURN_DIR_NAME)
+                    .join(BURN_CRATES_DIR_NAME)
                     .join(name),
             ),
             _ => None,
@@ -133,30 +133,30 @@ impl HeatDir {
     #[allow(dead_code)]
     pub fn get_crates_dir(&self, user_crate_dir: &Path) -> PathBuf {
         user_crate_dir
-            .join(HEAT_DIR_NAME)
-            .join(HEAT_CRATES_DIR_NAME)
+            .join(BURN_DIR_NAME)
+            .join(BURN_CRATES_DIR_NAME)
     }
 
     pub fn get_bin_dir(&self, user_crate_dir: &Path) -> PathBuf {
-        user_crate_dir.join(HEAT_DIR_NAME).join(HEAT_BIN_DIR_NAME)
+        user_crate_dir.join(BURN_DIR_NAME).join(BURN_BIN_DIR_NAME)
     }
 
     pub fn get_artifacts_dir(&self, user_crate_dir: &Path) -> PathBuf {
         user_crate_dir
-            .join(HEAT_DIR_NAME)
-            .join(HEAT_ARTIFACTS_DIR_NAME)
+            .join(BURN_DIR_NAME)
+            .join(BURN_ARTIFACTS_DIR_NAME)
     }
 
     pub fn get_crate_target_path(&self, crate_name: &str) -> Option<PathBuf> {
-        let new_target_dir = std::env::var("HEAT_TARGET_DIR").ok();
+        let new_target_dir = std::env::var("BURN_TARGET_DIR").ok();
 
         match self.crates.get(crate_name)? {
             FileTree::Directory(name, _) => match new_target_dir {
                 Some(target_dir) => Some(PathBuf::from(target_dir)),
                 None => Some(PathBuf::from(format!(
                     "{}/{}/{}/target",
-                    HEAT_DIR_NAME,
-                    HEAT_CRATES_DIR_NAME,
+                    BURN_DIR_NAME,
+                    BURN_CRATES_DIR_NAME,
                     name.clone()
                 ))),
             },
@@ -170,8 +170,8 @@ impl HeatDir {
             user_crate_dir
                 .to_str()
                 .expect("User crate dir should be a valid path."),
-            HEAT_DIR_NAME,
-            HEAT_BIN_DIR_NAME
+            BURN_DIR_NAME,
+            BURN_BIN_DIR_NAME
         );
         let bin_dir_path = Path::new(&bin_dir_path);
         std::fs::create_dir_all(bin_dir_path).expect("Should be able to create bin dir.");
@@ -188,8 +188,8 @@ impl HeatDir {
             user_crate_dir
                 .to_str()
                 .expect("User crate dir should be a valid path."),
-            HEAT_DIR_NAME,
-            HEAT_CRATES_DIR_NAME
+            BURN_DIR_NAME,
+            BURN_CRATES_DIR_NAME
         );
         let crates_dir_path = Path::new(&crates_dir_path);
         std::fs::create_dir_all(crates_dir_path).expect("Should be able to create crates dir.");
@@ -202,24 +202,24 @@ impl HeatDir {
 
     #[allow(dead_code)]
     pub fn into_file_tree(self) -> FileTree {
-        let mut heat_dir = vec![];
+        let mut burn_dir = vec![];
 
         let mut bin_dir = vec![];
         for (_name, item) in self.binaries {
             bin_dir.push(item);
         }
-        heat_dir.push(FileTree::Directory(HEAT_BIN_DIR_NAME.to_string(), bin_dir));
+        burn_dir.push(FileTree::Directory(BURN_BIN_DIR_NAME.to_string(), bin_dir));
 
         let mut crates_dir = vec![];
         for (_name, item) in self.crates {
             crates_dir.push(item);
         }
-        heat_dir.push(FileTree::Directory(
-            HEAT_CRATES_DIR_NAME.to_string(),
+        burn_dir.push(FileTree::Directory(
+            BURN_CRATES_DIR_NAME.to_string(),
             crates_dir,
         ));
 
-        FileTree::Directory(HEAT_DIR_NAME.to_string(), heat_dir)
+        FileTree::Directory(BURN_DIR_NAME.to_string(), burn_dir)
     }
 
     #[allow(dead_code)]

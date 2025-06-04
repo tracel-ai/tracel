@@ -6,7 +6,7 @@ use burn::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::client::HeatClientState;
+use crate::client::BurnCentralClientState;
 
 /// The strategy to use when saving data.
 #[derive(Debug, Clone)]
@@ -15,16 +15,16 @@ pub enum RecorderStrategy {
     Final,
 }
 
-/// A recorder that saves and loads data from a remote server using the [HeatClientState](HeatClientState).
+/// A recorder that saves and loads data from a remote server using the [BurnCentralClientState](BurnCentralClientState).
 #[derive(Debug, Clone)]
 pub struct RemoteRecorder<S: PrecisionSettings> {
-    client: HeatClientState,
+    client: BurnCentralClientState,
     checkpointer: RecorderStrategy,
     _settings: PhantomData<S>,
 }
 
 impl<S: PrecisionSettings> RemoteRecorder<S> {
-    fn new(client: HeatClientState, checkpointer: RecorderStrategy) -> Self {
+    fn new(client: BurnCentralClientState, checkpointer: RecorderStrategy) -> Self {
         Self {
             client,
             checkpointer,
@@ -32,14 +32,14 @@ impl<S: PrecisionSettings> RemoteRecorder<S> {
         }
     }
 
-    /// Create a new RemoteRecorder with the given [HeatClientState].
-    pub fn checkpoint(client: HeatClientState) -> Self {
+    /// Create a new RemoteRecorder with the given [BurnCentralClientState].
+    pub fn checkpoint(client: BurnCentralClientState) -> Self {
         Self::new(client, RecorderStrategy::Checkpoint)
     }
 
-    /// Create a new RemoteRecorder with the given [HeatClientState].
+    /// Create a new RemoteRecorder with the given [BurnCentralClientState].
     /// This recorder will save the data as a final trained model.
-    pub fn final_model(client: HeatClientState) -> Self {
+    pub fn final_model(client: BurnCentralClientState) -> Self {
         Self::new(client, RecorderStrategy::Final)
     }
 }

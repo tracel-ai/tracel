@@ -66,7 +66,7 @@ pub(crate) fn generate_flag_register_stream(
 
 #[proc_macro_attribute]
 pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
-    let project_dir = std::env::var("HEAT_PROJECT_DIR");
+    let project_dir = std::env::var("BURN_PROJECT_DIR");
     if project_dir.is_ok() {
         let item: proc_macro2::TokenStream = item.into();
         return quote! {
