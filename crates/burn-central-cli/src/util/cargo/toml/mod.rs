@@ -13,7 +13,7 @@ use cargo_util_schemas::manifest::{self, RegistryName, RustVersion, StringOrBool
 
 type CargoResult<T> = anyhow::Result<T>;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
 use crate::{print_info, print_warn};
 
@@ -22,7 +22,7 @@ use super::{
     features::Edition,
     interning::InternedString,
     paths,
-    workspace::{resolve_relative_path, WorkspaceConfig, WorkspaceRootConfig},
+    workspace::{WorkspaceConfig, WorkspaceRootConfig, resolve_relative_path},
 };
 
 /// Based on Cargo's Manifest struct: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/manifest.rs#L62
@@ -662,7 +662,9 @@ fn deprecated_underscore<T>(
 ) -> CargoResult<()> {
     let old_path = new_path.replace('-', "_");
     if old.is_some() && Edition::Edition2024 <= edition {
-        anyhow::bail!("`{old_path}` is unsupported as of the 2024 edition; instead use `{new_path}`\n(in the `{name}` {kind})");
+        anyhow::bail!(
+            "`{old_path}` is unsupported as of the 2024 edition; instead use `{new_path}`\n(in the `{name}` {kind})"
+        );
     } else if old.is_some() && new.is_some() {
         warnings.push(format!(
             "`{old_path}` is redundant with `{new_path}`, preferring `{new_path}` in the `{name}` {kind}"
@@ -682,11 +684,13 @@ fn lints_inherit_with(
 ) -> CargoResult<manifest::TomlLints> {
     if lints.workspace {
         if !lints.lints.is_empty() {
-            anyhow::bail!("cannot override `workspace.lints` in `lints`, either remove the overrides or `lints.workspace = true` and manually specify the lints");
+            anyhow::bail!(
+                "cannot override `workspace.lints` in `lints`, either remove the overrides or `lints.workspace = true` and manually specify the lints"
+            );
         }
-        get_ws_inheritable().with_context(|| {
-            "error inheriting `lints` from workspace root manifest's `workspace.lints`"
-        })
+        get_ws_inheritable().with_context(
+            || "error inheriting `lints` from workspace root manifest's `workspace.lints`",
+        )
     } else {
         Ok(lints.lints)
     }
@@ -812,7 +816,7 @@ fn load_inheritable_fields(
     match workspace_config {
         WorkspaceConfig::Root(root) => Ok(root.inheritable().clone()),
         WorkspaceConfig::Member {
-            root: Some(ref path_to_root),
+            root: Some(path_to_root),
         } => {
             let path = resolved_path
                 .parent()

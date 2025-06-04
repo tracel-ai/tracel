@@ -9,7 +9,7 @@ name = "burn-central"
 readme.workspace = true
 repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central"
 version.workspace = true
-rust-version = "1.79"
+rust-version.workspace = true
 
 [features]
 default = ["client"]

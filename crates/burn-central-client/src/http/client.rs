@@ -1,5 +1,5 @@
-use reqwest::header::{COOKIE, SET_COOKIE};
 use reqwest::Url;
+use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
 use crate::http::error::BurnCentralHttpError;

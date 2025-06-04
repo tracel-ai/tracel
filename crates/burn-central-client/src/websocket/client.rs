@@ -1,7 +1,7 @@
 use reqwest::header::COOKIE;
 use serde::Serialize;
 
-use tungstenite::{client::IntoClientRequest, connect, stream::MaybeTlsStream, Message, WebSocket};
+use tungstenite::{Message, WebSocket, client::IntoClientRequest, connect, stream::MaybeTlsStream};
 
 use super::WebSocketError;
 

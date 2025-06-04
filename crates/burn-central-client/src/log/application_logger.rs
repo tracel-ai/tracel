@@ -9,7 +9,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_core::{Level, LevelFilter};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{registry, Layer};
+use tracing_subscriber::{Layer, registry};
 
 /// The installer for the remote experiment logger.
 pub struct RemoteExperimentLoggerInstaller {

@@ -1,4 +1,4 @@
-use syn::{punctuated::Punctuated, Expr, Meta};
+use syn::{Expr, Meta, punctuated::Punctuated};
 
 pub trait LitMatcher<T> {
     fn match_type(&self) -> T;

@@ -6,7 +6,7 @@ use clap::Parser;
 use colored::Colorize;
 
 use crate::{
-    commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
+    commands::{BuildCommand, RunCommand, RunParams, execute_sequentially},
     context::BurnCentralCliContext,
     generation::backend::BackendType,
     logging::BURN_ORANGE,
@@ -64,7 +64,9 @@ pub(crate) fn handle_command(
             "You must provide the project version to run on the runner with --version argument"
         )),
         (None, Some(_)) => {
-            print_warn!("Project version is ignored when executing locally (i.e. no runner is defined with --runner argument");
+            print_warn!(
+                "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument"
+            );
             local_run(args, context)
         }
     }
@@ -80,7 +82,10 @@ fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::
 
     let project_version = args.project_version.unwrap();
     if !client.check_project_version_exists(&project_version)? {
-        return Err(anyhow::anyhow!("Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.", project_version));
+        return Err(anyhow::anyhow!(
+            "Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.",
+            project_version
+        ));
     }
 
     client.start_remote_job(
@@ -183,7 +188,10 @@ fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<(
         .collect();
 
     match function_flags.len() {
-        0 => Err(anyhow::anyhow!(format!("Function `{}` is not registered as a training function. Annotate a training function with #[burn(training)] to register it.", function))),
+        0 => Err(anyhow::anyhow!(format!(
+            "Function `{}` is not registered as a training function. Annotate a training function with #[burn(training)] to register it.",
+            function
+        ))),
         1 => Ok(()),
         _ => {
             let function_strings: String = function_flags
@@ -192,7 +200,11 @@ fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<(
                 .collect::<Vec<String>>()
                 .join("\n");
 
-            Err(anyhow::anyhow!(format!("Function `{}` is registered multiple times. Please provide the fully qualified function name by writing the entire module path of the function:\n{}", function.custom_color(BURN_ORANGE).bold(), function_strings)))
+            Err(anyhow::anyhow!(format!(
+                "Function `{}` is registered multiple times. Please provide the fully qualified function name by writing the entire module path of the function:\n{}",
+                function.custom_color(BURN_ORANGE).bold(),
+                function_strings
+            )))
         }
     }
 }

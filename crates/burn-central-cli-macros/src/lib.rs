@@ -5,7 +5,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 
 use strum::Display;
-use syn::{parse_macro_input, punctuated::Punctuated, spanned::Spanned, Error, ItemFn, Meta, Path};
+use syn::{Error, ItemFn, Meta, Path, parse_macro_input, punctuated::Punctuated, spanned::Spanned};
 
 #[derive(Eq, Hash, PartialEq, Display)]
 #[strum(serialize_all = "PascalCase")]

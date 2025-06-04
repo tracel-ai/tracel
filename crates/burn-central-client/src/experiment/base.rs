@@ -4,7 +4,7 @@ use crate::{
 };
 use std::sync::mpsc;
 
-use super::{thread::ExperimentWSHandler, WsMessage};
+use super::{WsMessage, thread::ExperimentWSHandler};
 
 #[derive(Debug)]
 pub struct TempLogStore {

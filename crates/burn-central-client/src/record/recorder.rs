@@ -4,7 +4,7 @@ use burn::{
     record::{PrecisionSettings, RecorderError},
     tensor::backend::Backend,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::client::BurnCentralClientState;
 
