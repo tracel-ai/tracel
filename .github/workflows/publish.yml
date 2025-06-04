@@ -6,37 +6,37 @@ on:
       - "v*"
 
 jobs:
-  heat-sdk:
+  burn-central-client:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
-      crate: heat-sdk
+      crate: burn-central-client
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
-  heat-sdk-cli-macros:
+  burn-central-cli-macros:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
-      crate: heat-sdk-cli-macros
+      crate: burn-central-cli-macros
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
-  heat-sdk-cli:
+  burn-central-cli:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
-      crate: heat-sdk-cli
+      crate: burn-central-cli
     needs:
-      - heat-sdk
-      - heat-sdk-cli-macros
+      - burn-central-client
+      - burn-central-cli-macros
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
-  tracel:
+  burn-central:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
-      crate: tracel
+      crate: burn-central
     needs:
-      - heat-sdk
-      - heat-sdk-cli-macros
-      - heat-sdk-cli
+      - burn-central-client
+      - burn-central-cli-macros
+      - burn-central-cli
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
