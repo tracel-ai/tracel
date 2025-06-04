@@ -12,7 +12,7 @@ version.workspace = true
 rust-version = "1.79"
 
 [dependencies]
-burn-central-client = { path = "../heat-sdk", version = "0.1.0" }
+burn-central-client = { path = "../burn-central-client", version = "0.1.0" }
 
 anyhow = { workspace = true }
 
