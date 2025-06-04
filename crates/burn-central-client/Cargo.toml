@@ -15,7 +15,7 @@ rust-version = "1.79"
 
 [dependencies]
 # todo: temporary fix until burn updates its bincode version to 2.0.0
-bincode = "=2.0.0-rc.3"
+bincode = "2.0.1"
 burn = { workspace = true, features = ["train"] }
 
 derive-new = { workspace = true }
@@ -30,7 +30,7 @@ thiserror = { workspace = true }
 tracing = { version = "0.1.40" }
 tracing-core = { version = "0.1.32" }
 tracing-subscriber = { version = "0.3.18" }
-tungstenite = { version = "0.24.0", features = ["native-tls"] }
+tungstenite = { version = "0.26.2", features = ["native-tls"] }
 uuid = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
