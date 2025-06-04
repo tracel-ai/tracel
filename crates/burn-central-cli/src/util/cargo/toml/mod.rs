@@ -253,6 +253,7 @@ fn resolve_package_toml<'a>(
             .map(manifest::InheritableField::Value),
         workspace: original_package.workspace.clone(),
         im_a_teapot: original_package.im_a_teapot,
+        autolib: None,
         autobins: Some(false),
         autoexamples: Some(false),
         autotests: Some(false),
@@ -384,11 +385,11 @@ fn resolve_toml(
     };
 
     if let Some(original_package) = original_toml.package() {
-        let package_name = &original_package.name;
+        let package_name = original_package.name.as_ref().expect("package name is always set").as_str();
 
         let resolved_package = resolve_package_toml(original_package, package_root, &inherit)?;
         let edition = resolved_package
-            .resolved_edition()
+            .normalized_edition()
             .expect("previously resolved")
             .map_or(Edition::default(), |e| {
                 Edition::from_str(e).unwrap_or_default()
@@ -400,14 +401,14 @@ fn resolve_toml(
         resolved_toml.lib = targets::resolve_lib(
             original_toml.lib.as_ref(),
             package_root,
-            &original_package.name,
+            package_name,
             edition,
             warnings,
         )?;
         resolved_toml.bin = Some(targets::resolve_bins(
             original_toml.bin.as_ref(),
             package_root,
-            &original_package.name,
+            package_name,
             edition,
             original_package.autobins,
             warnings,
@@ -1178,7 +1179,7 @@ pub fn prepare_toml_for_publish(
     if let Some(original_package) = me.package() {
         // resolve all workspace fields using the workspace
 
-        let edition = match original_package.resolved_edition() {
+        let edition = match original_package.normalized_edition() {
             Ok(maybe_edition) => maybe_edition.cloned().unwrap_or_else(|| "2015".to_string()),
             // Edition inherited from workspace
             Err(..) => match &workspace

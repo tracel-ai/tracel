@@ -96,7 +96,7 @@ impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecor
         Ok(())
     }
 
-    fn load_item<I: DeserializeOwned>(&self, mut file: Self::LoadArgs) -> Result<I, RecorderError> {
+    fn load_item<I: DeserializeOwned>(&self, file: &mut Self::LoadArgs) -> Result<I, RecorderError> {
         let data = match self.checkpointer {
             RecorderStrategy::Checkpoint => {
                 file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());

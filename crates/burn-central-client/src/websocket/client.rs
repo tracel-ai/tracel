@@ -47,7 +47,7 @@ impl WebSocketClient {
     pub fn send<I: Serialize>(&mut self, message: I) -> Result<(), WebSocketError> {
         if let Some(socket) = &mut self.state {
             socket
-                .send(Message::Text(serde_json::to_string(&message).unwrap()))
+                .send(Message::Text(serde_json::to_string(&message).unwrap().into()))
                 .map_err(|e| WebSocketError::SendError(e.to_string()))?;
         }
 

@@ -154,7 +154,7 @@ pub fn package(
     let own_pkg = metadata
         .packages
         .iter()
-        .find(|pkg| pkg.name == own_pkg_name)
+        .find(|pkg| pkg.name == own_pkg_name.parse().unwrap())
         .cloned()
         .expect("Failed to find own package");
 
@@ -249,7 +249,7 @@ pub fn package(
             })
             .collect::<Vec<_>>();
         let crate_metadata = CrateMetadata::new(
-            pkg.name.clone(),
+            pkg.name.clone().to_string(),
             pkg.version.to_string(),
             crate_deps,
             pkg.features.clone(),
@@ -602,7 +602,7 @@ fn discover_gix_repo(root: &Path) -> anyhow::Result<Option<gix::Repository>> {
     };
     let index = repo.index_or_empty()?;
     // .with_context(|| format!("failed to open git index at {}", repo.path().display()))?;
-    let repo_root = repo.work_dir().ok_or_else(|| {
+    let repo_root = repo.workdir().ok_or_else(|| {
         anyhow::format_err!(
             "did not expect repo at {} to be bare",
             repo.path().display()
@@ -678,7 +678,7 @@ fn list_files_gix(
 
     let index = repo.index_or_empty()?;
     let root = repo
-        .work_dir()
+        .workdir()
         .ok_or_else(|| anyhow::anyhow!("No work dir"))?;
     assert!(root.is_absolute(), "Work dir is not absolute");
 
