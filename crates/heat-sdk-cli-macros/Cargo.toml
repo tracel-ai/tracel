@@ -1,11 +1,11 @@
 [package]
 authors = ["Tracel Technologies Inc."]
 categories = ["command-line-interface", "command-line-utilities", "development-tools"]
-description = "Macros for Tracel Heat SDK CLI."
+description = "Macros for Burn Central CLI."
 keywords = ["tracel", "heat", "burn", "macros"]
 edition.workspace = true
 license.workspace = true
-name = "heat-sdk-cli-macros"
+name = "burn-central-cli-macros"
 readme = "README.md"
 repository = "https://github.com/tracel-ai/tracel/tree/main/crates/head-sdk-cli-macros"
 version.workspace = true

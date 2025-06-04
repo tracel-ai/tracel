@@ -1,6 +1,6 @@
 use clap::Parser;
 use colored::Colorize;
-use heat_sdk::{
+use burn_central_client::{
     client::{HeatClient, HeatClientConfig, HeatCredentials},
     schemas::ProjectPath,
 };

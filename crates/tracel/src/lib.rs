@@ -4,20 +4,18 @@
 //! # Tracel
 
 /// Heat SDK
-pub mod heat {
-    #[cfg(feature = "heat-sdk")]
-    pub use heat_sdk::*;
+#[cfg(feature = "client")]
+pub use burn_central_client::*;
 
-    /// Heat macros
-    #[cfg(feature = "heat-sdk")]
-    pub mod macros {
-        pub use heat_sdk_cli_macros::heat;
-        pub use heat_sdk_cli_macros::heat_cli_main;
-    }
+/// Heat macros
+#[cfg(feature = "client")]
+pub mod macros {
+    pub use burn_central_cli_macros::heat;
+    pub use burn_central_cli_macros::heat_cli_main;
+}
 
-    /// Heat SDK CLI
-    #[cfg(feature = "heat-sdk-cli")]
-    pub mod cli {
-        pub use heat_sdk_cli::*;
-    }
+/// Heat SDK CLI
+#[cfg(feature = "cli")]
+pub mod cli {
+    pub use burn_central_cli::*;
 }

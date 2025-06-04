@@ -2,8 +2,8 @@ use crate::context::HeatCliContext;
 use crate::registry::Flag;
 use crate::{print_err, print_success};
 use clap::Parser;
-use heat_sdk::client::{HeatClient, HeatClientConfig, HeatCredentials};
-use heat_sdk::schemas::{HeatCodeMetadata, ProjectPath, RegisteredHeatFunction};
+use burn_central_client::client::{HeatClient, HeatClientConfig, HeatCredentials};
+use burn_central_client::schemas::{HeatCodeMetadata, ProjectPath, RegisteredHeatFunction};
 use quote::ToTokens;
 
 #[derive(Parser, Debug)]

@@ -1,11 +1,11 @@
 [package]
 authors = ["Tracel Technologies Inc."]
 categories = ["development-tools"]
-description = "Tracel Heat SDK."
-keywords = ["tracel", "heat", "burn", "sdk"]
+description = "Burn Central Client."
+keywords = ["tracel", "burn-central", "burn", "sdk"]
 edition.workspace = true
 license.workspace = true
-name = "heat-sdk"
+name = "burn-central-client"
 readme = "README.md"
 repository = "https://github.com/tracel-ai/tracel/tree/main/crates/head-sdk"
 version.workspace = true

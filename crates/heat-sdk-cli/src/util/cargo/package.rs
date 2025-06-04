@@ -5,7 +5,7 @@ use std::{
 };
 
 use colored::Colorize;
-use heat_sdk::schemas::{CrateMetadata, Dep, PackagedCrateData};
+use burn_central_client::schemas::{CrateMetadata, Dep, PackagedCrateData};
 
 use super::paths;
 use crate::{print_err, print_info, print_warn, util};
@@ -224,12 +224,12 @@ pub fn package(
                     dep.target.clone().map(|t| t.to_string()),
                     match dep.kind {
                         cargo_metadata::DependencyKind::Normal => {
-                            heat_sdk::schemas::DepKind::Normal
+                            burn_central_client::schemas::DepKind::Normal
                         }
                         cargo_metadata::DependencyKind::Development => {
-                            heat_sdk::schemas::DepKind::Dev
+                            burn_central_client::schemas::DepKind::Dev
                         }
-                        cargo_metadata::DependencyKind::Build => heat_sdk::schemas::DepKind::Build,
+                        cargo_metadata::DependencyKind::Build => burn_central_client::schemas::DepKind::Build,
                         cargo_metadata::DependencyKind::Unknown => {
                             unimplemented!("Unknown dep kind")
                         }

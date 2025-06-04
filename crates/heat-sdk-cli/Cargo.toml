@@ -1,18 +1,18 @@
 [package]
 authors = ["Tracel Technologies Inc."]
 categories = ["command-line-interface", "command-line-utilities", "development-tools"]
-description = "Tracel Heat SDK CLI."
+description = "Burn Central CLI."
 keywords = ["tracel", "heat", "burn", "sdk", "cli"]
 edition.workspace = true
 license.workspace = true
-name = "heat-sdk-cli"
+name = "burn-central-cli"
 readme = "README.md"
 repository = "https://github.com/tracel-ai/tracel/tree/main/crates/head-sdk-cli"
 version.workspace = true
 rust-version = "1.79"
 
 [dependencies]
-heat-sdk = { path = "../heat-sdk", version = "0.1.0" }
+burn-central-client = { path = "../heat-sdk", version = "0.1.0" }
 
 anyhow = { workspace = true }
 

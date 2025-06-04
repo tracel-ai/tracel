@@ -54,9 +54,9 @@ pub(crate) fn generate_flag_register_stream(
         proc_macro2::Span::call_site(),
     );
     quote! {
-        tracel::heat::cli::register_flag!(
-            tracel::heat::cli::registry::Flag,
-            tracel::heat::cli::registry::Flag::new(
+        burn_central::cli::register_flag!(
+            burn_central::cli::registry::Flag,
+            burn_central::cli::registry::Flag::new(
                 module_path!(),
                 stringify!(#fn_name),
                 stringify!(#proc_type_str),
@@ -136,7 +136,7 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
     let wss: Option<bool> = get_name_value(&args, "wss");
 
     let mut config_block = quote! {
-        let mut config = tracel::heat::cli::config::Config::default();
+        let mut config = burn_central::cli::config::Config::default();
     };
     if let Some(api_endpoint) = api_endpoint {
         config_block.extend(quote! {
@@ -174,7 +174,7 @@ pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
 
         #item_sig {
             #config_block
-            tracel::heat::cli::cli::cli_main(config);
+            burn_central::cli::cli::cli_main(config);
         }
     };
 
