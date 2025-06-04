@@ -7,7 +7,7 @@ use crate::client::BurnCentralClientState;
 use crate::errors::client::BurnCentralClientError;
 use crate::experiment::{Split, WsMessage};
 
-/// The remote metric logger, used to send metric logs to Heat.
+/// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
     sender: mpsc::Sender<WsMessage>,
     epoch: usize,

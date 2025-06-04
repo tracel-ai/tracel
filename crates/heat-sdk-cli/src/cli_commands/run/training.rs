@@ -17,7 +17,7 @@ use crate::{print_warn, registry::Flag};
 #[derive(Parser, Debug)]
 pub struct TrainingRunArgs {
     /// The training functions to run
-    #[clap(short = 'f', long="functions", value_delimiter = ' ', num_args = 1.., required = true, help = "The training functions to run. Annotate a training function with #[heat(training)] to register it."
+    #[clap(short = 'f', long="functions", value_delimiter = ' ', num_args = 1.., required = true, help = "The training functions to run. Annotate a training function with #[burn(training)] to register it."
     )]
     functions: Vec<String>,
     /// Backend to use
@@ -159,7 +159,7 @@ fn create_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> Bur
     .with_num_retries(10)
     .build();
     BurnCentralClient::create(client_config)
-        .expect("Should connect to the Heat server and create a client")
+        .expect("Should connect to the Burn Central server and create a client")
 }
 
 fn print_available_training_functions(flags: &[Flag]) {
@@ -175,7 +175,7 @@ fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<(
         .collect();
 
     match function_flags.len() {
-        0 => Err(anyhow::anyhow!(format!("Function `{}` is not registered as a training function. Annotate a training function with #[heat(training)] to register it.", function))),
+        0 => Err(anyhow::anyhow!(format!("Function `{}` is not registered as a training function. Annotate a training function with #[burn(training)] to register it.", function))),
         1 => Ok(()),
         _ => {
             let function_strings: String = function_flags

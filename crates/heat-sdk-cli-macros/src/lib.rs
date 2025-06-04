@@ -65,7 +65,7 @@ pub(crate) fn generate_flag_register_stream(
 }
 
 #[proc_macro_attribute]
-pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn burn(args: TokenStream, item: TokenStream) -> TokenStream {
     let project_dir = std::env::var("BURN_PROJECT_DIR");
     if project_dir.is_ok() {
         let item: proc_macro2::TokenStream = item.into();
@@ -83,7 +83,7 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
     if args.len() != 1 {
         errors.push(Error::new(
             args.span(),
-            "Expected one argument for the #[heat] attribute. Please provide `training` or `inference`.",
+            "Expected one argument for the #[burn] attribute. Please provide `training` or `inference`.",
         ));
     }
 
@@ -122,7 +122,7 @@ pub fn heat(args: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn heat_cli_main(args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
     let args: Punctuated<Meta, syn::token::Comma> =
         parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);

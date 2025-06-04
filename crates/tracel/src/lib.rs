@@ -3,18 +3,18 @@
 
 //! # Tracel
 
-/// Heat SDK
+/// Burn Central Client
 #[cfg(feature = "client")]
 pub use burn_central_client::*;
 
-/// Heat macros
+/// Burn Central macros
 #[cfg(feature = "client")]
 pub mod macros {
-    pub use burn_central_cli_macros::heat;
-    pub use burn_central_cli_macros::heat_cli_main;
+    pub use burn_central_cli_macros::burn;
+    pub use burn_central_cli_macros::burn_central_main;
 }
 
-/// Heat SDK CLI
+/// Burn Central CLI
 #[cfg(feature = "cli")]
 pub mod cli {
     pub use burn_central_cli::*;

@@ -94,7 +94,7 @@ impl ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
         std::panic::set_hook(Box::new(move |info| {
             log::error!("PANIC => {}", info.to_string());
             eprintln!(
-                "=== PANIC ===\nA fatal error happened, you can check the experiment logs on Heat.\n============="
+                "=== PANIC ===\nA fatal error happened, you can check the experiment logs on Burn Central.\n============="
             );
             if let Some(client) = client.upgrade().as_mut() {
                 let mut guard = client.lock().unwrap();

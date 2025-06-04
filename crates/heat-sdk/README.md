@@ -1,5 +1,5 @@
 _Work in Progress_
 
-# Heat SDK
+# Burn Central Client
 
-Heat SDK for training, tracking, inference etc...
+Burn Central client for training, tracking, inference etc...

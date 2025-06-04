@@ -8,7 +8,7 @@ use quote::ToTokens;
 
 #[derive(Parser, Debug)]
 pub struct PackageArgs {
-    /// The Heat project path
+    /// The Burn Central project path
     // todo: support project name and creating a project if it doesn't exist
     #[clap(
         short = 'p',
@@ -17,7 +17,7 @@ pub struct PackageArgs {
         help = "The Burn Central project path. Ex: test/Default-Project"
     )]
     project_path: String,
-    /// The Heat API key
+    /// The Burn Central API key
     #[clap(short = 'k', long = "key", required = true, help = "The Burn Central API key.")]
     key: String,
 }

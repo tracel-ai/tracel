@@ -17,7 +17,7 @@ use crate::schemas::{
 };
 use crate::websocket::WebSocketClient;
 
-/// Credentials to connect to the Heat server
+/// Credentials to connect to the Burn Central server
 #[derive(Serialize, Debug, Clone)]
 pub struct BurnCentralCredentials {
     api_key: String,
@@ -35,16 +35,16 @@ impl From<BurnCentralCredentials> for String {
     }
 }
 
-/// Configuration for the HeatClient. Can be created using [BurnCentralClientConfigBuilder], which is created using the [BurnCentralClientConfig::builder] method.
+/// Configuration for the BurnCentralClient. Can be created using [BurnCentralClientConfigBuilder], which is created using the [BurnCentralClientConfig::builder] method.
 #[derive(Debug, Clone)]
 pub struct BurnCentralClientConfig {
-    /// The endpoint of the Heat API
+    /// The endpoint of the Burn Central API
     pub endpoint: String,
     /// Whether to use a secure WebSocket connection
     pub wss: bool,
-    /// Heat credential to create a session with the Heat API
+    /// Burn Central credential to create a session with the Burn Central API
     pub credentials: BurnCentralCredentials,
-    /// The number of retries to attempt when connecting to the Heat API.
+    /// The number of retries to attempt when connecting to the Burn Central API.
     pub num_retries: u8,
     /// The interval to wait between retries in seconds.
     pub retry_interval: u64,
@@ -59,7 +59,7 @@ impl BurnCentralClientConfig {
     }
 }
 
-/// Builder for the HeatClientConfig
+/// Builder for the BurnCentralClientConfig
 pub struct BurnCentralClientConfigBuilder {
     config: BurnCentralClientConfig,
 }
@@ -81,7 +81,7 @@ impl BurnCentralClientConfigBuilder {
         }
     }
 
-    /// Set the endpoint of the Heat API
+    /// Set the endpoint of the Burn Central API
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> BurnCentralClientConfigBuilder {
         self.config.endpoint = endpoint.into();
         self
@@ -94,7 +94,7 @@ impl BurnCentralClientConfigBuilder {
         self
     }
 
-    /// Set the number of retries to attempt when connecting to the Heat API
+    /// Set the number of retries to attempt when connecting to the Burn Central API
     pub fn with_num_retries(mut self, num_retries: u8) -> BurnCentralClientConfigBuilder {
         self.config.num_retries = num_retries;
         self
@@ -106,13 +106,13 @@ impl BurnCentralClientConfigBuilder {
         self
     }
 
-    /// Build the HeatClientConfig
+    /// Build the BurnCentralClientConfig
     pub fn build(self) -> BurnCentralClientConfig {
         self.config
     }
 }
 
-/// The HeatClient is used to interact with the Heat API. It is required for all interactions with the Heat API.
+/// The BurnCentralClient is used to interact with the Burn Central API. It is required for all interactions with the Burn Central API.
 #[derive(Debug, Clone)]
 pub struct BurnCentralClient {
     config: BurnCentralClientConfig,
@@ -120,7 +120,7 @@ pub struct BurnCentralClient {
     active_experiment: Arc<RwLock<Option<Experiment>>>,
 }
 
-/// Type alias for the HeatClient for simplicity
+/// Type alias for the BurnCentralClient for simplicity
 pub type BurnCentralClientState = BurnCentralClient;
 
 impl BurnCentralClient {
@@ -144,7 +144,7 @@ impl BurnCentralClient {
         Ok(())
     }
 
-    /// Create a new HeatClient with the given configuration.
+    /// Create a new BurnCentralClient with the given configuration.
     pub fn create(config: BurnCentralClientConfig) -> Result<BurnCentralClientState, BurnCentralClientError> {
         let mut client = BurnCentralClient::new(config);
 
@@ -183,7 +183,7 @@ impl BurnCentralClient {
         Ok(client)
     }
 
-    /// Start a new experiment. This will create a new experiment on the Heat backend and start it.
+    /// Start a new experiment. This will create a new experiment on the Burn Central backend and start it.
     pub fn start_experiment(&mut self, config: &impl Serialize) -> Result<(), BurnCentralClientError> {
         let experiment = self
             .http_client
@@ -245,7 +245,7 @@ impl BurnCentralClient {
         }
     }
 
-    /// Save checkpoint data to the Heat API.
+    /// Save checkpoint data to the Burn Central API.
     pub(crate) fn save_checkpoint_data(
         &self,
         path: &str,
@@ -284,7 +284,7 @@ impl BurnCentralClient {
         Ok(())
     }
 
-    /// Load checkpoint data from the Heat API
+    /// Load checkpoint data from the Burn Central API
     pub(crate) fn load_checkpoint_data(&self, path: &str) -> Result<Vec<u8>, BurnCentralClientError> {
         let active_experiment = self
             .active_experiment
@@ -307,7 +307,7 @@ impl BurnCentralClient {
         Ok(response)
     }
 
-    /// Save the final model to the Heat backend.
+    /// Save the final model to the Burn Central backend.
     pub(crate) fn save_final_model(&self, data: Vec<u8>) -> Result<(), BurnCentralClientError> {
         let active_experiment = self
             .active_experiment
@@ -336,8 +336,8 @@ impl BurnCentralClient {
         Ok(())
     }
 
-    /// End the active experiment and upload the final model to the Heat backend.
-    /// This will close the WebSocket connection and upload the logs to the Heat backend.
+    /// End the active experiment and upload the final model to the Burn Central backend.
+    /// This will close the WebSocket connection and upload the logs to the Burn Central backend.
     pub fn end_experiment_with_model<B, S>(
         &mut self,
         model: impl burn::module::Module<B>,
@@ -356,7 +356,7 @@ impl BurnCentralClient {
     }
 
     /// End the active experiment with an error reason.
-    /// This will close the WebSocket connection and upload the logs to the Heat backend.
+    /// This will close the WebSocket connection and upload the logs to the Burn Central backend.
     /// No model will be uploaded.
     pub fn end_experiment_with_error(&mut self, error_reason: String) -> Result<(), BurnCentralClientError> {
         self.end_experiment_internal(EndExperimentStatus::Fail(error_reason))

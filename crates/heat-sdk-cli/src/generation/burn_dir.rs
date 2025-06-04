@@ -19,7 +19,7 @@ const BURN_ARTIFACTS_DIR_NAME: &str = "artifacts";
 impl BurnDir {
     pub fn init(&self, user_crate_dir: &Path) {
         std::fs::create_dir_all(user_crate_dir.join(BURN_DIR_NAME))
-            .expect("Should be able to create heat dir.");
+            .expect("Should be able to create burn dir.");
         std::fs::write(user_crate_dir.join(BURN_DIR_NAME).join(".gitignore"), "*")
             .expect("Should be able to write gitignore file.");
     }
@@ -34,7 +34,7 @@ impl BurnDir {
     pub fn from_file_tree(file_tree: FileTree) -> anyhow::Result<Self> {
         let mut burn_dir_files = match file_tree {
             FileTree::Directory(_, dir_items) => dir_items,
-            _ => return Err(anyhow::anyhow!("Heat directory is not a directory")),
+            _ => return Err(anyhow::anyhow!("Burn directory is not a directory")),
         };
 
         let mut crates = HashMap::new();
@@ -227,7 +227,7 @@ impl BurnDir {
         let file_tree = self.into_file_tree();
         file_tree
             .write_to(path)
-            .expect("Should be able to write heat dir to file.");
-        Self::from_file_tree(file_tree).expect("Should be able to read heat dir from file.")
+            .expect("Should be able to write burn dir to file.");
+        Self::from_file_tree(file_tree).expect("Should be able to read burn dir from file.")
     }
 }

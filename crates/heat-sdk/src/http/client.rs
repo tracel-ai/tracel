@@ -43,9 +43,9 @@ impl ResponseExt for reqwest::blocking::Response {
     }
 }
 
-/// A client for making HTTP requests to the Heat API.
+/// A client for making HTTP requests to the Burn Central API.
 ///
-/// The client can be used to interact with the Heat server, such as creating and starting experiments, saving and loading checkpoints, and uploading logs.
+/// The client can be used to interact with the Burn Central server, such as creating and starting experiments, saving and loading checkpoints, and uploading logs.
 #[derive(Debug, Clone)]
 pub struct HttpClient {
     http_client: reqwest::blocking::Client,
@@ -65,7 +65,7 @@ impl HttpClient {
         }
     }
 
-    /// Check if the Heat server is reachable.
+    /// Check if the Burn Central server is reachable.
     #[allow(dead_code)]
     pub fn health_check(&self) -> Result<(), BurnCentralHttpError> {
         let url = self.join("health");
@@ -85,7 +85,7 @@ impl HttpClient {
             .expect("Should be able to join url")
     }
 
-    /// Log in to the Heat server with the given credentials.
+    /// Log in to the Burn Central server with the given credentials.
     pub fn login(&mut self, credentials: &BurnCentralCredentials) -> Result<(), BurnCentralHttpError> {
         let url = self.join("login/api-key");
 
@@ -109,7 +109,7 @@ impl HttpClient {
                 return Err(BurnCentralHttpError::BadSessionId);
             }
         } else {
-            let error_message: String = format!("Cannot connect to Heat server({:?})", res.text()?);
+            let error_message: String = format!("Cannot connect to Burn Central server({:?})", res.text()?);
             return Err(BurnCentralHttpError::HttpError(status, error_message));
         }
 
@@ -235,7 +235,7 @@ impl HttpClient {
         Ok(())
     }
 
-    /// Save the checkpoint data to the Heat server.
+    /// Save the checkpoint data to the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
     pub fn request_checkpoint_save_url(
@@ -264,7 +264,7 @@ impl HttpClient {
         Ok(save_url)
     }
 
-    /// Request a URL to load the checkpoint data from the Heat server.
+    /// Request a URL to load the checkpoint data from the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
     pub fn request_checkpoint_load_url(
@@ -293,7 +293,7 @@ impl HttpClient {
         Ok(load_url)
     }
 
-    /// Request a URL to save the final model to the Heat server.
+    /// Request a URL to save the final model to the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
     pub fn request_final_model_save_url(
@@ -321,7 +321,7 @@ impl HttpClient {
         Ok(save_url)
     }
 
-    /// Request a URL to upload logs to the Heat server.
+    /// Request a URL to upload logs to the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
     pub fn request_logs_upload_url(
