@@ -907,7 +907,7 @@ fn to_workspace_config(
                 // }
             }
             let ws_root_config = to_workspace_root_config(toml_config, manifest_file);
-            WorkspaceConfig::Root(ws_root_config)
+            WorkspaceConfig::Root(Box::new(ws_root_config))
         }
         (None, root) => WorkspaceConfig::Member {
             root: root.cloned(),

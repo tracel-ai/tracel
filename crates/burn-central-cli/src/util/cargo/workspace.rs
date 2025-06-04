@@ -20,7 +20,7 @@ use super::toml::InheritableFields;
 pub enum WorkspaceConfig {
     /// Indicates that `[workspace]` was present and the members were
     /// optionally specified as well.
-    Root(WorkspaceRootConfig),
+    Root(Box<WorkspaceRootConfig>),
 
     /// Indicates that `[workspace]` was present and the `root` field is the
     /// optional value of `package.workspace`, if present.

@@ -92,7 +92,7 @@ impl ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
         let hook = std::panic::take_hook();
         let client = Arc::downgrade(&self.client);
         std::panic::set_hook(Box::new(move |info| {
-            log::error!("PANIC => {}", info.to_string());
+            log::error!("PANIC => {}", info);
             eprintln!(
                 "=== PANIC ===\nA fatal error happened, you can check the experiment logs on Burn Central.\n============="
             );
