@@ -7,7 +7,7 @@ edition.workspace = true
 license.workspace = true
 name = "burn-central-cli-macros"
 readme = "README.md"
-repository = "https://github.com/tracel-ai/tracel/tree/main/crates/head-sdk-cli-macros"
+repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-cli-macros"
 version.workspace = true
 rust-version = "1.79"
 
