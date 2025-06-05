@@ -1,4 +1,7 @@
 use crate::training::{train, training, TrainingConfig};
+use burn::backend::{Autodiff, Wgpu};
+use burn::module::AutodiffModule;
+use burn::tensor::backend::AutodiffBackend;
 use burn::{
     nn::{
         conv::{Conv2d, Conv2dConfig},
@@ -7,8 +10,6 @@ use burn::{
     },
     prelude::*,
 };
-use burn::backend::{Autodiff, Wgpu};
-use burn::tensor::backend::AutodiffBackend;
 use tracel::heat::client::{HeatClient, HeatClientConfig, HeatCredentials};
 use tracel::heat::command::{MultiDevice, TrainCommandContext, TrainCommandHandler};
 use tracel::heat::errors::training::TrainingError;
@@ -24,13 +25,24 @@ pub struct Model<B: Backend> {
     linear2: Linear<B>,
     activation: Relu,
 }
-pub fn trigger<B: Backend, T, M: Module<B>, E: Into<Box<dyn std::error::Error>>, H: TrainCommandHandler<B, T, M, E>>(handler: H, context: TrainCommandContext<B>) -> Result<M, Box<dyn std::error::Error>> {
+
+// static generic bounds test to see if Model's B genric is always impls the AutodiffBackend trait
+
+pub fn trigger<
+    B: Backend,
+    T,
+    M: Module<B>,
+    E: Into<Box<dyn std::error::Error>>,
+    H: TrainCommandHandler<B, T, M, E>,
+>(
+    handler: H,
+    context: TrainCommandContext<B>,
+) -> Result<M, Box<dyn std::error::Error>> {
     match handler.call(context) {
         Ok(model) => Ok(model),
         Err(e) => Err(e.into()),
     }
 }
-
 
 pub trait TrainableModule<B: Backend>: Module<B> {}
 
@@ -38,12 +50,18 @@ impl<B: Backend> TrainableModule<B> for Model<B> {
     // This trait can be used to mark modules that can be trained.
 }
 
+struct TrainFunctionReference {
+    name: String,
+    trait_bounds: Vec<String>,
+}
+
 // registered functions impl block
 // this macro will register the functions in registries
 // fucntions are grouped by their backend trait bounds
 // #[model::register]
 impl<B: Backend> Model<B>
-where Self: TrainableModule<B>,
+where
+    Self: TrainableModule<B>,
 {
     /// Function that doesn't match, it will not be registered.
     pub fn hello_world() -> String {
@@ -67,8 +85,7 @@ where Self: TrainableModule<B>,
         mut client: HeatClient,
         config: TrainingConfig,
         MultiDevice(devices): MultiDevice<B>,
-    ) -> Result<Self, TrainingError>
-    {
+    ) -> Result<Self, TrainingError> {
         Err(TrainingError::UnknownError("hi".to_string()))
     }
 
@@ -76,17 +93,19 @@ where Self: TrainableModule<B>,
     pub fn select_train_function(
         name: &str,
         context: TrainCommandContext<B>,
-    ) -> Result<Self, Box<dyn std::error::Error>>
-    {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         match name {
-            "train1" => {
-                trigger(Self::train1, context)
-            },
-            "train2" => {
-                trigger(Self::train2, context)
-            },
-            _ => Err(Box::new(TrainingError::UnknownError(format!("Unknown train function: {}", name)))),
+            "train1" => trigger(Self::train1, context),
+            "train2" => trigger(Self::train2, context),
+            _ => Err(Box::new(TrainingError::UnknownError(format!(
+                "Unknown train function: {}",
+                name
+            )))),
         }
+    }
+
+    pub fn get_all_train_functions() -> Vec<String> {
+        vec!["train1".to_string(), "train2".to_string()]
     }
 }
 
@@ -102,8 +121,8 @@ pub trait TrainFunctionSelector<B: Backend> {
 ///    It knows how to call both `train1` and `train2`.
 impl<B> TrainFunctionSelector<B> for Model<B>
 where
-    B: Backend + AutodiffBackend,            // ‒ can run train1
-    Model<B>: TrainableModule<B>,            // ‒ (your marker trait)
+    B: Backend + AutodiffBackend, // ‒ can run train1
+    Model<B>: TrainableModule<B>, // ‒ (your marker trait)
 {
     fn select_train(
         name: &str,
@@ -126,72 +145,6 @@ where
         }
     }
 }
-// use disjoint_impls::disjoint_impls;
-
-pub trait Dispatch {
-    type Group;
-}
-
-pub enum GroupA {}
-impl Dispatch for String {
-    type Group = GroupA;
-}
-impl<T> Dispatch for Vec<T> {
-    type Group = GroupA;
-}
-
-pub enum GroupB {}
-impl Dispatch for i32 {
-    type Group = GroupB;
-}
-impl Dispatch for u32 {
-    type Group = GroupB;
-}
-
-// disjoint_impls! {
-    pub trait U<U> where U: From<u8> {
-        const NAME: &'static str;
-    }
-
-    impl<U, T: Dispatch<Group = GroupA>> U<U> for T where U: From<u8> {
-        const NAME: &'static str = "Blanket A";
-    }
-    impl<U, T: Dispatch<Group = GroupB>> U<U> for T where U: From<u8> {
-        const NAME: &'static str = "Blanket B";
-    }
-// }
-
-/*
-pub trait U<U> where U: From<u8> {
-    const NAME: &'static str;
-}
-
-const _: () = {
-    pub trait _U0<_1: ?Sized, U> where U: From<u8> {
-        const NAME: &'static str;
-    }
-
-    impl<_0, _1: Dispatch<Group = GroupA>> _U0<GroupA, _0> for _1 where _0: From<u8> {
-        const NAME: &'static str = "Blanket A";
-    }
-    impl<_0, _1: Dispatch<Group = GroupB>> _U0<GroupB, _0> for _1 where _0: From<u8> {
-        const NAME: &'static str = "Blanket B";
-    }
-
-    impl<_0, _1> U<_0> for _1 where _0: From<u8>, _1: Dispatch, Self: _U0<<_1 as Dispatch>::Group, _0> {
-        const NAME: &'static str = <Self as _U0<<_1 as Dispatch>::Group, _0>>::NAME;
-    }
-};
-*/
-//
-// #[test]
-// fn overlapping_trait_and_param_idents() {
-//     assert_eq!("Blanket A", <String as U<u8>>::NAME);
-//     assert_eq!("Blanket A", <Vec::<u32> as U<u16>>::NAME);
-//     assert_eq!("Blanket B", <u32 as U<u32>>::NAME);
-//     assert_eq!("Blanket B", <i32 as U<u64>>::NAME);
-// }
-
 
 #[test]
 fn test_model_forward() {
@@ -205,9 +158,19 @@ fn test_model_forward() {
         hidden_size: 128,
         dropout: 0.5,
     };
-    let client = HeatClientConfig::builder(HeatCredentials::new("da".parse().unwrap()), ProjectPath::try_from("ad".to_string()).unwrap()).build();
+    let model_: Model<Wgpu> = model_config.init(&device);
+    <Model<Wgpu> as AutodiffModule<Wgpu>>::valid(&model_);
+
+    let client = HeatClientConfig::builder(
+        HeatCredentials::new("da".parse().unwrap()),
+        ProjectPath::try_from("ad".to_string()).unwrap(),
+    )
+    .build();
     let client = HeatClient::create(client).unwrap();
-    let model = Model::<Wgpu>::select_train_function("train1", TrainCommandContext::new(client, vec![device.clone()], model_config.to_string()));
+    let model = Model::<Wgpu>::select_train_function(
+        "train1",
+        TrainCommandContext::new(client, vec![device.clone()], model_config.to_string()),
+    );
     assert!(model.is_ok());
 }
 
