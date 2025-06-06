@@ -1,8 +1,12 @@
 pub mod time;
 
+use std::path::PathBuf;
 use crate::{
     context::BurnCentralCliContext, generation::crate_gen::backend::BackendType, print_info,
 };
+use crate::burn_dir::BurnDir;
+use crate::burn_dir::cache::CacheState;
+use crate::generation::FileTree;
 
 /// Contains the data necessary to run an experiment.
 #[derive(Debug, Clone)]
@@ -41,6 +45,66 @@ pub(crate) fn execute_experiment_command(
     Ok(())
 }
 
+fn copy_binary(
+    burn_dir: &BurnDir,
+    cache: &mut CacheState,
+    name: &str,
+    original_path: &str,
+) -> std::io::Result<()> {
+    let bin_path = burn_dir.bin_dir().join(name);
+    std::fs::create_dir_all(burn_dir.bin_dir())?;
+    std::fs::copy(original_path, &bin_path)?;
+
+    cache.add_binary(name, bin_path.file_name().unwrap().to_string_lossy().to_string());
+    Ok(())
+}
+
+fn bin_name_from_run_id(context: &BurnCentralCliContext, run_id: &str) -> String {
+    format!(
+        "{}-{}{}",
+        &context.generated_crate_name(),
+        run_id,
+        std::env::consts::EXE_SUFFIX
+    )
+}
+
+fn get_target_exe_path(context: &BurnCentralCliContext) -> PathBuf {
+    let crate_name = &context.generated_crate_name();
+    let target_path = context
+        .burn_dir()
+        .crates_dir()
+        .join(crate_name);
+
+    let full_path = target_path
+        .join(&context.metadata().build_profile)
+        .join(format!("{}{}", crate_name, std::env::consts::EXE_SUFFIX));
+
+    full_path
+}
+
+fn generate_crate(
+    context: &mut BurnCentralCliContext,
+    build_command: &BuildCommand,
+) -> anyhow::Result<()> {
+    let generated_crate = crate::generation::crate_gen::create_crate(
+        &context.generated_crate_name(),
+        &context.metadata().user_project_name,
+        context.metadata().user_crate_dir.to_str().unwrap(),
+        vec![&build_command.backend.to_string()],
+        &build_command.backend,
+    );
+
+    let burn_dir = context.burn_dir();
+    let mut cache = burn_dir.load_cache()?;
+    generated_crate.write_to_burn_dir(
+        &burn_dir,
+        &mut cache,
+    )?;
+    burn_dir.save_cache(&cache)?;
+
+    Ok(())
+}
+
 /// Execute the build command for an experiment.
 pub(crate) fn execute_build_command(
     build_command: BuildCommand,
@@ -51,7 +115,7 @@ pub(crate) fn execute_build_command(
         build_command
     );
 
-    context.generate_crate(&build_command)?;
+    generate_crate(context, &build_command)?;
     let build_status = context.make_build_command(&build_command)?.status();
 
     match build_status {
@@ -72,7 +136,23 @@ pub(crate) fn execute_build_command(
         }
     }
 
-    context.copy_executable_to_bin(&build_command.run_id)
+    // Find the built binary path
+    let src_exe_path = get_target_exe_path(context);
+    let target_bin_name = bin_name_from_run_id(context, &build_command.run_id);
+
+    let burn_dir = context.burn_dir();
+    let mut cache = burn_dir.load_cache()?;
+
+    copy_binary(
+        burn_dir,
+        &mut cache,
+        &target_bin_name,
+        src_exe_path.to_str().unwrap(),
+    )?;
+
+    burn_dir.save_cache(&cache)?;
+
+    Ok(())
 }
 
 /// Execute the run command for an experiment.

@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 
 use crate::commands::time::format_duration;
 use crate::config::Config;
-use crate::context::BurnCentralCliContext;
-use crate::{cli_commands, print_err, print_info};
+use crate::context::{BurnCentralCliContext, ProjectMetadata};
+use crate::{cargo, cli_commands, print_err, print_info};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -29,6 +29,15 @@ pub enum Commands {
     // Logout,
 }
 
+fn create_crate_context(config: &Config, args: &CliArgs) -> BurnCentralCliContext {
+    let manifest_path =
+        cargo::try_locate_manifest().expect("Failed to locate manifest");
+
+
+    let crate_context = ProjectMetadata::new(&manifest_path);
+    BurnCentralCliContext::new(&config, crate_context).init()
+}
+
 pub fn cli_main(config: Config) {
     print_info!("Running CLI");
     let time_begin = std::time::Instant::now();
@@ -38,7 +47,7 @@ pub fn cli_main(config: Config) {
         std::process::exit(1);
     }
 
-    let context = BurnCentralCliContext::new(&config).init();
+    let context = create_crate_context(&config, &args.as_ref().unwrap());
 
     let cli_res = match args.unwrap().command {
         Commands::Run(run_args) => cli_commands::run::handle_command(run_args, context),

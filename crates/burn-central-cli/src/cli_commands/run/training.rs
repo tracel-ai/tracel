@@ -1,3 +1,4 @@
+use anyhow::Context;
 use burn_central_client::{
     client::{BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials},
     schemas::ProjectPath,
@@ -37,14 +38,6 @@ pub struct TrainingRunArgs {
         help = "The Burn Central project path."
     )]
     project_path: String,
-    /// The Burn Central API key
-    #[clap(
-        short = 'k',
-        long = "key",
-        required = true,
-        help = "The Burn Central API key."
-    )]
-    key: String,
     /// Project version
     #[clap(short = 't', long = "version", help = "The project version.")]
     project_version: Option<String>,
@@ -73,13 +66,7 @@ pub(crate) fn handle_command(
 }
 
 fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::Result<()> {
-    let client = create_client(
-        &args.key,
-        context.get_api_endpoint().as_str(),
-        context.get_wss(),
-        &args.project_path,
-    );
-
+    let client = context.create_client(&args.project_path)?;
     let project_version = args.project_version.unwrap();
     if !client.check_project_version_exists(&project_version)? {
         return Err(anyhow::anyhow!(
@@ -101,7 +88,7 @@ fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::
                 .join(" "),
             args.configs.join(" "),
             args.project_path,
-            args.key
+            context.get_api_key().context("Failed to get API key")?
         ),
     )?;
 
@@ -117,8 +104,6 @@ fn local_run(args: TrainingRunArgs, mut context: BurnCentralCliContext) -> anyho
     }
 
     let mut commands_to_run: Vec<(BuildCommand, RunCommand)> = Vec::new();
-
-    context.set_generated_crate_name("generated-burn-crate".to_string());
 
     for backend in &args.backends {
         for config_path in &args.configs {
@@ -136,7 +121,7 @@ fn local_run(args: TrainingRunArgs, mut context: BurnCentralCliContext) -> anyho
                             function: function.to_owned(),
                             config_path: config_path.to_owned(),
                             project: args.project_path.clone(),
-                            key: args.key.clone(),
+                            key: context.get_api_key().context("Failed to get API key")?.to_owned(),
                         },
                     },
                 ));
@@ -159,20 +144,6 @@ fn local_run(args: TrainingRunArgs, mut context: BurnCentralCliContext) -> anyho
     }
 
     Ok(())
-}
-
-fn create_client(api_key: &str, url: &str, wss: bool, project_path: &str) -> BurnCentralClient {
-    let creds = BurnCentralCredentials::new(api_key.to_owned());
-    let client_config = BurnCentralClientConfig::builder(
-        creds,
-        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
-    )
-    .with_endpoint(url)
-    .with_wss(wss)
-    .with_num_retries(10)
-    .build();
-    BurnCentralClient::create(client_config)
-        .expect("Should connect to the Burn Central server and create a client")
 }
 
 fn print_available_training_functions(flags: &[Flag]) {
