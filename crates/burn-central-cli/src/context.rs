@@ -89,35 +89,6 @@ impl BurnCentralCliContext {
             .join(&self.project_metadata.generated_crate_name)
     }
 
-    // fn set_generated_crate(&mut self, generated_crate: GeneratedCrate) {
-    //     let crate_name = generated_crate.name();
-    //     if self
-    //         .project_metadata
-    //         .burn_dir
-    //         .get_crate(&crate_name)
-    //         .is_some()
-    //     {
-    //         self.project_metadata.burn_dir.remove_crate(&crate_name);
-    //     }
-    //     self.burn_dir()
-    //         .add_crate(&crate_name, generated_crate);
-    // }
-
-    // fn get_target_exe_path(&self) -> Option<PathBuf> {
-    //     let crate_name = &self.project_metadata.generated_crate_name;
-    //     let target_path = self
-    //         .burn_dir()
-    //         .get_crate_target_path(crate_name)?;
-    //
-    //     let full_path = self
-    //         .project_metadata
-    //         .user_crate_dir
-    //         .join(target_path)
-    //         .join(&self.project_metadata.build_profile)
-    //         .join(format!("{}{}", crate_name, std::env::consts::EXE_SUFFIX));
-    //     Some(full_path)
-    // }
-
     pub fn make_run_command(&self, cmd_desc: &RunCommand) -> std::process::Command {
         match &cmd_desc.run_params {
             RunParams::Training {
@@ -143,23 +114,6 @@ impl BurnCentralCliContext {
         }
     }
 
-    // pub fn generate_crate(&mut self, build_cmd_desc: &BuildCommand) -> anyhow::Result<()> {
-    //     let generated_crate = crate::generation::crate_gen::create_crate(
-    //         &self.project_metadata.generated_crate_name,
-    //         &self.project_metadata.user_project_name,
-    //         self.project_metadata.user_crate_dir.to_str().unwrap(),
-    //         vec![&build_cmd_desc.backend.to_string()],
-    //         &build_cmd_desc.backend,
-    //     );
-    //
-    //     self.set_generated_crate(generated_crate);
-    //     self.project_metadata
-    //         .burn_dir
-    //         .write_crates_dir(&self.project_metadata.user_crate_dir);
-    //
-    //     Ok(())
-    // }
-
     pub fn make_build_command(
         &self,
         _cmd_desc: &BuildCommand,
@@ -177,12 +131,11 @@ impl BurnCentralCliContext {
 
         let new_target_dir: Option<String> = std::env::var("BURN_TARGET_DIR").ok();
 
-        let mut build_command = cargo::command();
+        let mut build_command = self.cargo_cmd();
         build_command
             .arg("build")
             .arg(profile_arg)
             .arg("--no-default-features")
-            .current_dir(&self.project_metadata.user_crate_dir)
             .env("BURN_PROJECT_DIR", &self.project_metadata.user_crate_dir)
             .args([
                 "--manifest-path",
@@ -218,41 +171,8 @@ impl BurnCentralCliContext {
         )
     }
 
-    // pub fn copy_executable_to_bin(&mut self, run_id: &str) -> anyhow::Result<()> {
-    //     let src_exe_path = self
-    //         .get_target_exe_path()
-    //         .expect("Target exe path should exist.");
-    //     let maybe_dest_exe_path = self.get_binary_exe_path(run_id);
-    //
-    //     let target_bin_name = self.bin_name_from_run_id(run_id);
-    //     let dest_exe_path = maybe_dest_exe_path.unwrap_or_else(|| {
-    //         self.burn_dir()
-    //             .bin_dir()
-    //             .join(&target_bin_name)
-    //     });
-    //
-    //     self.burn_dir()
-    //         .write_bin_dir(&self.project_metadata.user_crate_dir);
-    //
-    //     match std::fs::copy(src_exe_path, dest_exe_path) {
-    //         Ok(_) => {
-    //             self.project_metadata
-    //                 .burn_dir
-    //                 .add_binary(&target_bin_name, FileTree::new_file_ref(&target_bin_name));
-    //         }
-    //         Err(e) => {
-    //             return Err(anyhow::anyhow!(format!(
-    //                 "Failed to copy executable: {:?}",
-    //                 e
-    //             )));
-    //         }
-    //     }
-    //
-    //     Ok(())
-    // }
-
     fn cargo_cmd(&self) -> std::process::Command {
-        let mut cmd = std::process::Command::new(cargo::cargo_binary());
+        let mut cmd = cargo::command();
         cmd.current_dir(&self.project_metadata.user_crate_dir);
         cmd
     }
