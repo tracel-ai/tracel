@@ -57,29 +57,14 @@ mod api {
         message = "Did you forget to declare the train group on the module? Use `#[train_impl(GroupName)]`.",
         label = "Here, the `HashedAssociatedType` trait is expected to be implemented."
     )]
+    /// This trait is used to associate a train group with a module using a hash of the group name.
+    /// It is automatically implemented on the model by the `#[train_impl]` macro for each train group.
     pub trait HashedAssociatedType<const H: u64> {
         type Inner;
         fn get() -> Self::Inner;
     }
 
-    /// A macro that simplifies the hashing of train group names.
-    macro_rules! train_impl {
-        ($($group:ident),*) => {
-            $(
-                impl<B: AutodiffBackend> HashedAssociatedType<{ train_group_name_hash(stringify!($group)) }> for $group<B> {
-                    type AssociatedType = $group<B>;
-                }
-            )*
-        };
-    }
-
-    /// A macro that simplifies getting the associated type of a train group by its name.
-    pub fn get_train_group_by_name<const H: u64, T: HashedAssociatedType<H>>(
-        _name: &str,
-    ) -> T::Inner {
-        <T as HashedAssociatedType<H>>::get()
-    }
-
+    /// A utility function to hash the train group name into a u64 value.
     pub const fn train_group_name_hash(name: &str) -> u64 {
         let bytes = name.as_bytes();
         let mut hash = 0xcbf29ce484222325u64;
