@@ -4,7 +4,7 @@ mod cargo_toml;
 use quote::quote;
 use serde::{Deserialize, Serialize};
 
-use crate::generation::FileTree;
+use crate::generation::{FileTree, crate_gen::cargo_toml::FeatureFlag};
 
 use cargo_toml::{CargoToml, Dependency, QueryType};
 
@@ -37,6 +37,14 @@ impl GeneratedCrate {
 
     pub fn add_dependency(&mut self, dependency: Dependency) {
         self.cargo_toml.add_dependency(dependency);
+    }
+
+    #[allow(dead_code)]
+    pub fn add_feature(&mut self, feature: &str, deps: &[impl ToString]) {
+        self.cargo_toml.add_feature(FeatureFlag {
+            name: feature.to_string(),
+            deps: deps.iter().map(|dep| dep.to_string()).collect(),
+        });
     }
 
     pub fn set_package_version(&mut self, version: String) {
@@ -334,7 +342,16 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
     let clap_cli = generate_clap_cli();
     let generated_training = generate_training_function(&train_func_match);
 
+    let recursion_limit = if matches!(main_backend, BackendType::Wgpu) {
+        quote! {
+            #![recursion_limit = "256"]
+        }
+    } else {
+        quote! {}
+    };
+
     let bin_content: proc_macro2::TokenStream = quote! {
+        #recursion_limit
         #backend_types
         #clap_cli
 
@@ -424,7 +441,7 @@ pub fn create_crate(
                 });
             }
             if dep.name == "burn-central" {
-                dep.add_feature("burn-central-client".to_string());
+                dep.add_feature("client".to_string());
             }
             generated_crate.add_dependency(dep);
         });
