@@ -424,7 +424,7 @@ pub fn create_crate(
                 });
             }
             if dep.name == "burn-central" {
-                dep.add_feature("burn-central-client".to_string());
+                dep.add_feature("client".to_string());
             }
             generated_crate.add_dependency(dep);
         });
