@@ -67,17 +67,28 @@ impl Dependency {
     }
 }
 
+pub struct FeatureFlag {
+    pub name: String,
+    pub deps: Vec<String>,
+}
+
 pub struct CargoToml {
     pub package: Package,
     pub dependencies: Vec<Dependency>,
+    pub features: Vec<FeatureFlag>,
 }
 
 impl CargoToml {
     #[allow(dead_code)]
-    pub fn new(package: Package, dependencies: Vec<Dependency>) -> Self {
+    pub fn new(
+        package: Package,
+        dependencies: Vec<Dependency>,
+        features: Vec<FeatureFlag>,
+    ) -> Self {
         Self {
             package,
             dependencies,
+            features,
         }
     }
 
@@ -96,6 +107,10 @@ impl CargoToml {
     pub fn set_package_edition(&mut self, edition: String) {
         self.package.edition = edition;
     }
+
+    pub fn add_feature(&mut self, feature: FeatureFlag) {
+        self.features.push(feature);
+    }
 }
 
 impl Default for CargoToml {
@@ -107,6 +122,7 @@ impl Default for CargoToml {
                 edition: "2021".to_string(),
             },
             dependencies: vec![],
+            features: vec![],
         }
     }
 }
@@ -155,8 +171,20 @@ impl std::fmt::Display for CargoToml {
                 dependencies[&dep.name] = dep_table;
             }
 
+            let mut features = toml_edit::table();
+            for feature in &self.features {
+                let mut feat_arr = toml_edit::Array::new();
+                for dep in &feature.deps {
+                    feat_arr.push(dep);
+                }
+                features[feature.name.as_str()] =
+                    toml_edit::Item::Value(toml_edit::Value::Array(feat_arr));
+            }
+
             cargo_toml["package"] = package;
             cargo_toml["dependencies"] = dependencies;
+
+            cargo_toml["features"] = features;
 
             cargo_toml["workspace"] = toml_edit::table();
             cargo_toml.to_string()
