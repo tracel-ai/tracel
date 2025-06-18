@@ -185,6 +185,7 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
 }
 
 fn find_required_dependencies(req_deps: Vec<&str>) -> Vec<Dependency> {
+    // TODO: Refactor to use cargo metadata crate instead of reading manually.
     let manifest_cmd = std::process::Command::new("cargo")
         .arg("metadata")
         .arg("--no-deps")
