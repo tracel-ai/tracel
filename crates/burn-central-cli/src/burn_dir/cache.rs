@@ -1,5 +1,8 @@
-﻿use serde::{Deserialize, Serialize};
+﻿use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::{fs, io, path::Path};
+use toml;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CrateEntry {
@@ -21,15 +24,12 @@ pub struct CacheState {
     pub binaries: HashMap<String, BinaryEntry>,
 }
 
-use std::{fs, path::Path, io};
-use chrono::Utc;
-use toml;
-
-const BURN_CACHE_FILENAME: &str = "cache.toml";
 
 impl CacheState {
+    const BURN_CACHE_FILENAME: &'static str = "cache.toml";
+
     pub fn load(dir: &Path) -> io::Result<Self> {
-        let path = dir.join(BURN_CACHE_FILENAME);
+        let path = dir.join(Self::BURN_CACHE_FILENAME);
         if !path.exists() {
             return Ok(CacheState {
                 schema_version: "1".to_string(),
@@ -37,14 +37,16 @@ impl CacheState {
             });
         }
         let contents = fs::read_to_string(path)?;
-        let parsed = toml::from_str(&contents).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let parsed =
+            toml::from_str(&contents).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(parsed)
     }
 
     pub fn save(&self, dir: &Path) -> io::Result<()> {
-        let contents = toml::to_string_pretty(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let contents =
+            toml::to_string_pretty(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         fs::create_dir_all(dir)?;
-        fs::write(dir.join(BURN_CACHE_FILENAME), contents)
+        fs::write(dir.join(Self::BURN_CACHE_FILENAME), contents)
     }
 
     pub fn add_crate(&mut self, name: &str, path: String, hash: u64) {
@@ -84,4 +86,3 @@ impl CacheState {
         self.binaries.remove(name)
     }
 }
-

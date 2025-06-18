@@ -59,3 +59,27 @@ pub struct RunnerQueueJobParamsSchema {
     pub project_version: String,
     pub command: RunnerJobCommand,
 }
+
+#[derive(Deserialize)]
+pub struct UserResponseSchema {
+    pub id: i32,
+    pub username: String,
+    pub email: String,
+}
+
+#[derive(Deserialize)]
+pub struct ProjectSchema {
+    pub project_name: String,
+    pub namespace_name: String,
+    pub namespace_type: String,
+    pub description: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub visibility: String,
+}
+
+#[derive(Serialize)]
+pub struct CreateProjectSchema {
+    pub name: String,
+    pub description: Option<String>,
+}

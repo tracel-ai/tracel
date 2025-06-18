@@ -1,14 +1,12 @@
-use crate::context::BurnCentralCliContext;
+use crate::context::CliContext;
 use crate::registry::Flag;
 use crate::{print_err, print_success};
-use burn_central_client::client::{
-    BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
-};
-use burn_central_client::schemas::{BurnCentralCodeMetadata, ProjectPath, RegisteredFunction};
-use clap::Parser;
+use burn_central_client::schemas::{BurnCentralCodeMetadata, RegisteredFunction};
+use clap::Args;
 use quote::ToTokens;
+use crate::util::git::get_last_commit_hash;
 
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct PackageArgs {
     /// The Burn Central project path
     // todo: support project name and creating a project if it doesn't exist
@@ -23,11 +21,11 @@ pub struct PackageArgs {
 
 pub(crate) fn handle_command(
     args: PackageArgs,
-    context: BurnCentralCliContext,
+    context: CliContext,
 ) -> anyhow::Result<()> {
     let last_commit_hash = get_last_commit_hash()?;
 
-    let client = context.create_client(&args.project_path)?;
+    let client = context.create_client()?;
     let crates = crate::util::cargo::package::package(
         &context.get_artifacts_dir_path(),
         context.package_name(),
@@ -70,15 +68,4 @@ fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredFunction> {
             }
         })
         .collect()
-}
-
-fn get_last_commit_hash() -> anyhow::Result<String> {
-    let repo = gix::discover(".")?;
-    let last_commit = repo.head()?.peel_to_commit_in_place()?.id();
-    if repo.is_dirty()? {
-        print_err!("Latest git commit: {}", last_commit);
-        anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
-    }
-
-    Ok(last_commit.to_string())
 }

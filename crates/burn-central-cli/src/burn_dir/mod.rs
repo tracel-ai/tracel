@@ -1,6 +1,7 @@
 ﻿use std::{fs, io};
 use std::path::{Path, PathBuf};
 use crate::burn_dir::cache::CacheState;
+use crate::burn_dir::project::BurnCentralProject;
 
 pub mod project;
 pub mod cache;
@@ -46,5 +47,13 @@ impl BurnDir {
 
     pub fn save_cache(&self, cache: &CacheState) -> io::Result<()> {
         cache.save(&self.root)
+    }
+
+    pub fn load_project(&self) -> io::Result<BurnCentralProject> {
+        BurnCentralProject::load(&self.root)
+    }
+    
+    pub fn save_project(&self, project: &BurnCentralProject) -> io::Result<()> {
+        project.save(&self.root)
     }
 }

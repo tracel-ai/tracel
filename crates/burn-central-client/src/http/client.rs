@@ -2,17 +2,17 @@ use reqwest::Url;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
+use super::schemas::{
+    CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
+    EndExperimentSchema, ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
+};
+use crate::http::CreateProjectSchema;
 use crate::http::error::BurnCentralHttpError;
 use crate::schemas::BurnCentralCodeMetadata;
 use crate::{
     client::BurnCentralCredentials,
     http::schemas::StartExperimentSchema,
     schemas::{CrateVersionMetadata, Experiment},
-};
-
-use super::schemas::{
-    CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
-    EndExperimentSchema, RunnerQueueJobParamsSchema, URLSchema,
 };
 
 pub enum EndExperimentStatus {
@@ -23,7 +23,10 @@ pub enum EndExperimentStatus {
 impl From<reqwest::Error> for BurnCentralHttpError {
     fn from(error: reqwest::Error) -> Self {
         match error.status() {
-            Some(status) => BurnCentralHttpError::HttpError(status, error.to_string()),
+            Some(status) => BurnCentralHttpError::HttpError {
+                status,
+                body: error.to_string(),
+            },
             None => BurnCentralHttpError::UnknownError(error.to_string()),
         }
     }
@@ -38,7 +41,10 @@ impl ResponseExt for reqwest::blocking::Response {
         if self.status().is_success() {
             Ok(self)
         } else {
-            Err(BurnCentralHttpError::HttpError(self.status(), self.text()?))
+            Err(BurnCentralHttpError::HttpError {
+                status: self.status(),
+                body: self.text()?,
+            })
         }
     }
 }
@@ -50,19 +56,82 @@ impl ResponseExt for reqwest::blocking::Response {
 pub struct HttpClient {
     http_client: reqwest::blocking::Client,
     base_url: Url,
-    ws_secure: bool,
     session_cookie: Option<String>,
 }
 
 impl HttpClient {
     /// Create a new HttpClient with the given base URL and API key.
-    pub fn new(base_url: Url, ws_secure: bool) -> Self {
+    pub fn new(base_url: Url) -> Self {
         Self {
             http_client: reqwest::blocking::Client::new(),
             base_url,
-            ws_secure,
             session_cookie: None,
         }
+    }
+
+    pub fn get_json<R>(&self, path: impl AsRef<str>) -> Result<R, BurnCentralHttpError>
+    where
+        R: for<'de> serde::Deserialize<'de>,
+    {
+        let response = self.req(reqwest::Method::GET, path, None::<serde_json::Value>)?;
+        let json = response.json::<R>()?;
+        Ok(json)
+    }
+
+    pub fn post_json<T, R>(
+        &self,
+        path: impl AsRef<str>,
+        body: Option<T>,
+    ) -> Result<R, BurnCentralHttpError>
+    where
+        T: serde::Serialize,
+        R: for<'de> serde::Deserialize<'de>,
+    {
+        let response = self.req(reqwest::Method::POST, path, body)?;
+        let json = response.json::<R>()?;
+        Ok(json)
+    }
+
+    pub fn post<T>(
+        &self,
+        path: impl AsRef<str>,
+        body: Option<T>,
+    ) -> Result<(), BurnCentralHttpError>
+    where
+        T: serde::Serialize,
+    {
+        self.req(reqwest::Method::POST, path, body).map(|_| ())
+    }
+
+    pub fn put<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), BurnCentralHttpError>
+    where
+        T: serde::Serialize,
+    {
+        self.req(reqwest::Method::PUT, path, body).map(|_| ())
+    }
+
+    fn req<T: serde::Serialize>(
+        &self,
+        method: reqwest::Method,
+        path: impl AsRef<str>,
+        body: Option<T>,
+    ) -> Result<reqwest::blocking::Response, BurnCentralHttpError> {
+        let url = self.join(path.as_ref());
+        let request_builder = self.http_client.request(method, url);
+
+        let mut request_builder = if let Some(body) = body {
+            request_builder.json(&body)
+        } else {
+            request_builder
+        };
+
+        if let Some(cookie) = self.session_cookie.as_ref() {
+            request_builder = request_builder.header(COOKIE, cookie);
+        }
+
+        let response = request_builder.send()?.map_to_burn_central_err()?;
+
+        Ok(response)
     }
 
     /// Check if the Burn Central server is reachable.
@@ -117,10 +186,21 @@ impl HttpClient {
         } else {
             let error_message: String =
                 format!("Cannot connect to Burn Central server({:?})", res.text()?);
-            return Err(BurnCentralHttpError::HttpError(status, error_message));
+            return Err(BurnCentralHttpError::HttpError {
+                status,
+                body: error_message,
+            });
         }
 
         Ok(())
+    }
+
+    pub fn get_current_user(&self) -> Result<UserResponseSchema, BurnCentralHttpError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join("user/me");
+
+        self.get_json::<UserResponseSchema>(url)
     }
 
     /// Formats a WebSocket URL for the given experiment.
@@ -134,10 +214,44 @@ impl HttpClient {
             "projects/{}/{}/experiments/{}/ws",
             owner_name, project_name, exp_num
         ));
-        url.set_scheme(if self.ws_secure { "wss" } else { "ws" })
-            .expect("Should be able to set ws scheme");
+        url.set_scheme(if self.base_url.scheme() == "https" {
+            "wss"
+        } else {
+            "ws"
+        })
+        .expect("Should be able to set ws scheme");
 
         url.to_string()
+    }
+
+    pub fn create_project(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        project_description: Option<&str>,
+    ) -> Result<ProjectSchema, BurnCentralHttpError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!("projects/{}/{}", owner_name, project_name));
+
+        let project_data = CreateProjectSchema {
+            name: project_name.to_string(),
+            description: project_description.map(|desc| desc.to_string()),
+        };
+
+        self.post_json::<CreateProjectSchema, ProjectSchema>(url, Some(project_data))
+    }
+
+    pub fn get_project(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+    ) -> Result<ProjectSchema, BurnCentralHttpError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!("projects/{}/{}", owner_name, project_name));
+
+        self.get_json::<ProjectSchema>(url)
     }
 
     /// Create a new experiment for the given project.
@@ -157,13 +271,10 @@ impl HttpClient {
 
         // Create a new experiment
         let experiment_response = self
-            .http_client
-            .post(url)
-            .json(&serde_json::json!({}))
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .send()?
-            .map_to_burn_central_err()?
-            .json::<CreateExperimentResponseSchema>()?;
+            .post_json::<serde_json::Value, CreateExperimentResponseSchema>(
+                url,
+                None::<serde_json::Value>,
+            )?;
 
         let experiment = Experiment {
             experiment_num: experiment_response.experiment_num,
@@ -200,14 +311,7 @@ impl HttpClient {
         ));
 
         // Start the experiment
-        self.http_client
-            .put(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .json(&json)
-            .send()?
-            .map_to_burn_central_err()?;
-
-        Ok(())
+        self.put::<StartExperimentSchema>(url, Some(json))
     }
 
     /// End the experiment with the given status.
@@ -232,14 +336,7 @@ impl HttpClient {
             EndExperimentStatus::Fail(reason) => EndExperimentSchema::Fail(reason),
         };
 
-        self.http_client
-            .put(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .json(&end_status)
-            .send()?
-            .map_to_burn_central_err()?;
-
-        Ok(())
+        self.put::<EndExperimentSchema>(url, Some(end_status))
     }
 
     /// Save the checkpoint data to the Burn Central server.
@@ -260,12 +357,7 @@ impl HttpClient {
         ));
 
         let save_url = self
-            .http_client
-            .post(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .send()?
-            .map_to_burn_central_err()?
-            .json::<URLSchema>()
+            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
             .map(|res| res.url)?;
 
         Ok(save_url)
@@ -288,14 +380,7 @@ impl HttpClient {
             owner_name, project_name, exp_num, file_name
         ));
 
-        let load_url = self
-            .http_client
-            .get(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .send()?
-            .map_to_burn_central_err()?
-            .json::<URLSchema>()
-            .map(|res| res.url)?;
+        let load_url = self.get_json::<URLSchema>(url).map(|res| res.url)?;
 
         Ok(load_url)
     }
@@ -317,13 +402,8 @@ impl HttpClient {
         ));
 
         let save_url = self
-            .http_client
-            .post(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .send()?
-            .map_to_burn_central_err()?
-            .json::<URLSchema>()?
-            .url;
+            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
+            .map(|res| res.url)?;
 
         Ok(save_url)
     }
@@ -345,14 +425,8 @@ impl HttpClient {
         ));
 
         let logs_upload_url = self
-            .http_client
-            .post(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .send()?
-            .map_to_burn_central_err()?
-            .json::<URLSchema>()?
-            .url;
-
+            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
+            .map(|res| res.url)?;
         Ok(logs_upload_url)
     }
 
@@ -407,21 +481,15 @@ impl HttpClient {
             owner_name, project_name
         ));
 
-        let response = self
-            .http_client
-            .post(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .json(&CodeUploadParamsSchema {
+        self.post_json(
+            url,
+            Some(CodeUploadParamsSchema {
                 target_package_name: target_package_name.to_string(),
                 burn_central_metadata: code_metadata,
                 crates: crates_metadata,
                 version: last_commit.to_string(),
-            })
-            .send()?
-            .map_to_burn_central_err()?;
-
-        let upload_urls = response.json::<CodeUploadUrlsSchema>()?;
-        Ok(upload_urls)
+            }),
+        )
     }
 
     pub(crate) fn check_project_version_exists(
@@ -437,19 +505,15 @@ impl HttpClient {
             owner_name, project_name, project_version
         ));
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .send()?;
+        let response = self.req(reqwest::Method::GET, url, None::<serde_json::Value>)?;
 
         match response.status() {
             reqwest::StatusCode::OK => Ok(true),
             reqwest::StatusCode::NOT_FOUND => Ok(false),
-            _ => Err(BurnCentralHttpError::HttpError(
-                response.status(),
-                response.text()?,
-            )),
+            _ => Err(BurnCentralHttpError::HttpError {
+                status: response.status(),
+                body: response.text()?,
+            }),
         }
     }
 
@@ -474,13 +538,6 @@ impl HttpClient {
             command,
         };
 
-        self.http_client
-            .post(url)
-            .header(COOKIE, self.session_cookie.as_ref().unwrap())
-            .json(&body)
-            .send()?
-            .map_to_burn_central_err()?;
-
-        Ok(())
+        self.post(url, Some(body))
     }
 }

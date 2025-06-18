@@ -1,14 +1,10 @@
 use anyhow::Context;
-use burn_central_client::{
-    client::{BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials},
-    schemas::ProjectPath,
-};
 use clap::Parser;
 use colored::Colorize;
 
 use crate::{
-    commands::{BuildCommand, RunCommand, RunParams, execute_sequentially},
-    context::BurnCentralCliContext,
+    commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
+    context::CliContext,
     generation::backend::BackendType,
     logging::BURN_ORANGE,
     print_info,
@@ -29,15 +25,6 @@ pub struct TrainingRunArgs {
     #[clap(short = 'c', long = "configs", value_delimiter = ' ', num_args = 1.., required = true, help = "Config files paths."
     )]
     configs: Vec<String>,
-    /// The Burn Central project path
-    // todo: support project name and creating a project if it doesn't exist
-    #[clap(
-        short = 'p',
-        long = "project",
-        required = true,
-        help = "The Burn Central project path."
-    )]
-    project_path: String,
     /// Project version
     #[clap(short = 't', long = "version", help = "The project version.")]
     project_version: Option<String>,
@@ -48,7 +35,7 @@ pub struct TrainingRunArgs {
 
 pub(crate) fn handle_command(
     args: TrainingRunArgs,
-    context: BurnCentralCliContext,
+    context: CliContext,
 ) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
@@ -65,15 +52,9 @@ pub(crate) fn handle_command(
     }
 }
 
-fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::Result<()> {
-    let client = context.create_client(&args.project_path)?;
+fn remote_run(args: TrainingRunArgs, context: CliContext) -> anyhow::Result<()> {
+    let client = context.create_client()?;
     let project_version = args.project_version.unwrap();
-    if !client.check_project_version_exists(&project_version)? {
-        return Err(anyhow::anyhow!(
-            "Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.",
-            project_version
-        ));
-    }
 
     client.start_remote_job(
         args.runner.unwrap(),
@@ -87,7 +68,7 @@ fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::
                 .collect::<Vec<_>>()
                 .join(" "),
             args.configs.join(" "),
-            args.project_path,
+            context.get_project_path()?,
             context.get_api_key().context("Failed to get API key")?
         ),
     )?;
@@ -95,7 +76,7 @@ fn remote_run(args: TrainingRunArgs, context: BurnCentralCliContext) -> anyhow::
     Ok(())
 }
 
-fn local_run(args: TrainingRunArgs, mut context: BurnCentralCliContext) -> anyhow::Result<()> {
+fn local_run(args: TrainingRunArgs, context: CliContext) -> anyhow::Result<()> {
     let flags = crate::registry::get_flags();
     print_available_training_functions(&flags);
 
@@ -120,8 +101,11 @@ fn local_run(args: TrainingRunArgs, mut context: BurnCentralCliContext) -> anyho
                         run_params: RunParams::Training {
                             function: function.to_owned(),
                             config_path: config_path.to_owned(),
-                            project: args.project_path.clone(),
-                            key: context.get_api_key().context("Failed to get API key")?.to_owned(),
+                            project: context.get_project_path()?.to_string(),
+                            key: context
+                                .get_api_key()
+                                .context("Failed to get API key")?
+                                .to_owned(),
                         },
                     },
                 ));
