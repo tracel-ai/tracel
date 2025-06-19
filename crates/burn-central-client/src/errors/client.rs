@@ -18,8 +18,10 @@ pub enum BurnCentralClientError {
     StartExperimentError(String),
     #[error("Failed to stop experiment: {0}")]
     StopExperimentError(String),
-    #[error("Failed to create client: {0}")]
-    CreateClientError(String),
+    #[error("Invalid credentials: {0}")]
+    InvalidCredentialsError(String),
+    #[error("Failed to reach server: {0}")]
+    ServerConnectionError(String),
     #[error("Failed to create remote metric logger: {0}")]
     CreateRemoteMetricLoggerError(String),
     #[error("Failed to authenticate user: {0}")]

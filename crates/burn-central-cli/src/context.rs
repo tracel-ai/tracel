@@ -12,16 +12,27 @@ use burn_central_client::client::{
 };
 use burn_central_client::schemas::ProjectPath;
 use std::path::{Path, PathBuf};
+use crate::terminal::Terminal;
+
+#[derive(thiserror::Error, Debug)]
+pub enum ClientCreationError {
+    #[error("No credentials found")]
+    NoCredentials,
+    #[error("Server connection error")]
+    ServerConnectionError(String),
+}
 
 pub struct CliContext {
+    terminal: Terminal,
     api_endpoint: url::Url,
     creds: Option<Credentials>,
     project_metadata: ProjectContext,
 }
 
 impl CliContext {
-    pub fn new(config: &Config, project_metadata: ProjectContext) -> Self {
+    pub fn new(terminal: Terminal, config: &Config, project_metadata: ProjectContext) -> Self {
         Self {
+            terminal,
             api_endpoint: config
                 .api_endpoint
                 .parse::<url::Url>()
@@ -68,8 +79,8 @@ impl CliContext {
         ))
     }
 
-    pub fn create_client(&self) -> anyhow::Result<BurnCentralClient> {
-        let api_key = self.get_api_key().context("No credentials found")?;
+    pub fn create_client(&self) -> Result<BurnCentralClient, ClientCreationError> {
+        let api_key = self.get_api_key().ok_or(ClientCreationError::NoCredentials)?;
         let url = self.api_endpoint.as_str();
 
         let project_path = self.get_project_path();
@@ -83,7 +94,8 @@ impl CliContext {
             print_info!("No project path found, creating client without project.");
         }
 
-        BurnCentralClient::create(client_config.build()).context("Failed to create client")
+        BurnCentralClient::create(client_config.build())
+            .map_err(|e| ClientCreationError::ServerConnectionError(e.to_string()))
     }
 
     pub fn package_name(&self) -> &str {
@@ -136,6 +148,10 @@ impl CliContext {
 
     pub fn cwd(&self) -> PathBuf {
         self.project_metadata.user_crate_dir.clone()
+    }
+
+    pub fn terminal(&self) -> &Terminal {
+        &self.terminal
     }
 }
 

@@ -4,6 +4,7 @@ use crate::commands::time::format_duration;
 use crate::config::Config;
 use crate::context::{CliContext, ProjectContext};
 use crate::{cargo, cli_commands, print_err, print_info};
+use crate::terminal::Terminal;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -42,8 +43,9 @@ pub fn cli_main(config: Config) {
     let manifest_path =
         cargo::try_locate_manifest().expect("Failed to locate manifest");
 
+    let terminal = Terminal::new();
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
-    let mut context = CliContext::new(&config, crate_context).init();
+    let mut context = CliContext::new(terminal, &config, crate_context).init();
 
     if matches!(
         args.as_ref().unwrap().command,

@@ -8,15 +8,6 @@ use crate::util::git::get_last_commit_hash;
 
 #[derive(Args, Debug)]
 pub struct PackageArgs {
-    /// The Burn Central project path
-    // todo: support project name and creating a project if it doesn't exist
-    #[clap(
-        short = 'p',
-        long = "project",
-        required = true,
-        help = "The Burn Central project path. Ex: test/Default-Project"
-    )]
-    project_path: String,
 }
 
 pub(crate) fn handle_command(

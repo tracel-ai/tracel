@@ -1,4 +1,5 @@
-﻿use gix::revision::walk::Sorting;
+﻿use gix::Repository;
+use gix::revision::walk::Sorting;
 use gix::traverse::commit::simple::CommitTimeOrder;
 use crate::print_err;
 
@@ -13,24 +14,44 @@ pub fn get_last_commit_hash() -> anyhow::Result<String> {
     Ok(last_commit.to_string())
 }
 
-pub fn get_first_commit_hash() -> String {
-    let repo = gix::discover(".")
-        .ok()
-        .expect("Failed to discover repository");
+pub fn get_first_commit_hash() -> anyhow::Result<Option<String>> {
+    let repo = gix::discover(".")?;
 
     let platform = repo
-        .rev_walk([repo.head_id().expect("Failed to get HEAD id")])
+        .rev_walk([repo.head_id()?])
         .first_parent_only()
         .sorting(Sorting::ByCommitTime(CommitTimeOrder::OldestFirst));
-    let revs = platform.all().expect("Failed to get commits");
+    let revs = platform.all()?;
 
-    let last_hash = revs
-        .last()
-        .expect("No commits found")
-        .expect("Failed to get last commit")
-        .id;
+    let Some(last_hash) = revs.last() else {
+        return Ok(None);
+    };
+    let last_hash = last_hash?.id;
 
-    last_hash.to_string()
+    Ok(Some(last_hash.to_string()))
+}
+
+pub fn is_repo_initialized() -> bool {
+    gix::discover(".").is_ok()
+}
+
+pub fn init_repo() -> anyhow::Result<Repository> {
+    if is_repo_initialized() {
+        return Err(anyhow::anyhow!(
+            "Repository already initialized."
+        ));
+    }
+
+    let repo = gix::init(".")?;
+    Ok(repo)
+}
+
+pub fn write_gitignore() -> anyhow::Result<()> {
+    let repo = gix::discover(".")?;
+    let gitignore_content = include_str!("../../template.gitignore");
+    let gitignore_path = repo.path().join(".gitignore");
+    std::fs::write(gitignore_path, gitignore_content)
+        .map_err(|e| anyhow::anyhow!("Failed to write .gitignore: {}", e))
 }
 
 #[cfg(test)]
@@ -39,7 +60,9 @@ mod tests {
 
     #[test]
     fn test_get_first_commit_hash() {
-        let hash = get_first_commit_hash();
+        let hash = get_first_commit_hash()
+            .expect("Failed to get first commit hash")
+            .expect("No commits found");;
 
         let output = std::process::Command::new("git")
             .args(&["rev-list", "--parents", "HEAD"])

@@ -197,7 +197,7 @@ impl BurnCentralClient {
                     println!("Failed to connect to the server: {}", e);
 
                     if i == client.config.num_retries {
-                        return Err(BurnCentralClientError::CreateClientError(
+                        return Err(BurnCentralClientError::ServerConnectionError(
                             "Server timeout".to_string(),
                         ));
                     }
@@ -208,7 +208,7 @@ impl BurnCentralClient {
                     }) = e
                     {
                         println!("Invalid API key. Please check your API key and try again.");
-                        return Err(BurnCentralClientError::CreateClientError(format!(
+                        return Err(BurnCentralClientError::InvalidCredentialsError(format!(
                             "Invalid API key: {msg}"
                         )));
                     }
