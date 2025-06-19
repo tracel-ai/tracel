@@ -135,6 +135,13 @@ pub struct ProjectPath {
 }
 
 impl ProjectPath {
+    pub fn new(owner_name: String, project_name: String) -> Self {
+        ProjectPath {
+            owner_name,
+            project_name,
+        }
+    }
+
     pub fn validate_path(path: &str) -> bool {
         static NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
             Regex::new(r"^[a-zA-Z0-9_.-]+$")
@@ -264,4 +271,9 @@ pub struct Experiment {
     pub config: serde_json::Value,
     pub created_by: String,
     pub created_at: String,
+}
+
+pub struct User {
+    pub username: String,
+    pub email: String,
 }

@@ -133,7 +133,6 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
         .path()
         .clone();
     let api_endpoint: Option<String> = get_name_value(&args, "api_endpoint");
-    let wss: Option<bool> = get_name_value(&args, "wss");
 
     let mut config_block = quote! {
         let mut config = burn_central::cli::config::Config::default();
@@ -141,11 +140,6 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
     if let Some(api_endpoint) = api_endpoint {
         config_block.extend(quote! {
             config.api_endpoint = #api_endpoint.to_string();
-        });
-    }
-    if let Some(wss) = wss {
-        config_block.extend(quote! {
-            config.wss = #wss;
         });
     }
 

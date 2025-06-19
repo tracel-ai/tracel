@@ -1,46 +1,18 @@
-use crate::context::BurnCentralCliContext;
+use crate::context::CliContext;
+use crate::print_success;
 use crate::registry::Flag;
-use crate::{print_err, print_success};
-use burn_central_client::client::{
-    BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
-};
-use burn_central_client::schemas::{BurnCentralCodeMetadata, ProjectPath, RegisteredFunction};
-use clap::Parser;
+use crate::util::git::get_last_commit_hash;
+use burn_central_client::schemas::{BurnCentralCodeMetadata, RegisteredFunction};
+use clap::Args;
 use quote::ToTokens;
 
-#[derive(Parser, Debug)]
-pub struct PackageArgs {
-    /// The Burn Central project path
-    // todo: support project name and creating a project if it doesn't exist
-    #[clap(
-        short = 'p',
-        long = "project",
-        required = true,
-        help = "The Burn Central project path. Ex: test/Default-Project"
-    )]
-    project_path: String,
-    /// The Burn Central API key
-    #[clap(
-        short = 'k',
-        long = "key",
-        required = true,
-        help = "The Burn Central API key."
-    )]
-    key: String,
-}
+#[derive(Args, Debug)]
+pub struct PackageArgs {}
 
-pub(crate) fn handle_command(
-    args: PackageArgs,
-    context: BurnCentralCliContext,
-) -> anyhow::Result<()> {
+pub(crate) fn handle_command(_args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
     let last_commit_hash = get_last_commit_hash()?;
 
-    let client = create_client(
-        &args.key,
-        context.get_api_endpoint().as_str(),
-        &args.project_path,
-    );
-
+    let client = context.create_client()?;
     let crates = crate::util::cargo::package::package(
         &context.get_artifacts_dir_path(),
         context.package_name(),
@@ -65,19 +37,6 @@ pub(crate) fn handle_command(
     Ok(())
 }
 
-fn create_client(api_key: &str, url: &str, project_path: &str) -> BurnCentralClient {
-    let creds = BurnCentralCredentials::new(api_key.to_owned());
-    let client_config = BurnCentralClientConfig::builder(
-        creds,
-        ProjectPath::try_from(project_path.to_string()).expect("Project path should be valid."),
-    )
-    .with_endpoint(url)
-    .with_num_retries(10)
-    .build();
-    BurnCentralClient::create(client_config)
-        .expect("Should connect to the server and create a client")
-}
-
 fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredFunction> {
     flags
         .iter()
@@ -96,15 +55,4 @@ fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredFunction> {
             }
         })
         .collect()
-}
-
-fn get_last_commit_hash() -> anyhow::Result<String> {
-    let repo = gix::discover(".")?;
-    let last_commit = repo.head()?.peel_to_commit_in_place()?.id();
-    if repo.is_dirty()? {
-        print_err!("Latest git commit: {}", last_commit);
-        anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
-    }
-
-    Ok(last_commit.to_string())
 }

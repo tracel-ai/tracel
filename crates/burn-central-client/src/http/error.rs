@@ -5,9 +5,8 @@ use thiserror::Error;
 pub enum BurnCentralHttpError {
     #[error("Bad session id")]
     BadSessionId,
-    #[error("Http Error {0}: {1}")]
-    HttpError(StatusCode, String),
-
+    #[error("HTTP {status}: {body}")]
+    HttpError { status: StatusCode, body: String },
     #[error("Unknown Error: {0}")]
     UnknownError(String),
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// A tree structure representing a file system.
 /// Can be written to and read from the file system.
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum FileTree {
     /// A file with a name and content.
     File(String, Vec<u8>),
@@ -23,6 +23,7 @@ impl FileTree {
         FileTree::File(name.into(), content.into())
     }
 
+    #[allow(dead_code)]
     pub fn new_file_ref(name: impl Into<String>) -> Self {
         FileTree::FileRef(name.into())
     }
@@ -48,6 +49,7 @@ impl FileTree {
         }
     }
 
+    #[allow(dead_code)]
     pub fn read_from(
         path: &Path,
         ref_suffixes: &[&str],

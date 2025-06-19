@@ -1,238 +1,201 @@
-use crate::{
-    commands::{BuildCommand, RunCommand, RunParams},
-    config::Config,
-    generation::{BurnDir, FileTree, GeneratedCrate},
-    print_info,
+use crate::app_config::{AppConfig, Credentials};
+use crate::burn_dir::BurnDir;
+use crate::burn_dir::project::BurnCentralProject;
+use crate::terminal::Terminal;
+use crate::{cargo, config::Config, print_info};
+use anyhow::Context;
+use burn_central_client::client::{
+    BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
 };
-use std::path::PathBuf;
+use burn_central_client::schemas::ProjectPath;
+use std::path::{Path, PathBuf};
 
-pub struct BurnCentralCliContext {
-    user_project_name: String,
-    user_crate_dir: PathBuf,
-    generated_crate_name: Option<String>,
-    build_profile: String,
-    burn_dir: BurnDir,
-    api_endpoint: url::Url,
-    wss: bool,
+#[derive(thiserror::Error, Debug)]
+pub enum ClientCreationError {
+    #[error("No credentials found")]
+    NoCredentials,
+    #[error("Server connection error")]
+    ServerConnectionError(String),
 }
 
-impl BurnCentralCliContext {
-    pub fn new(config: &Config) -> Self {
-        let user_project_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
-        let user_crate_dir: PathBuf = std::env::var("CARGO_MANIFEST_DIR")
-            .expect("CARGO_MANIFEST_DIR not set")
-            .into();
+pub struct CliContext {
+    terminal: Terminal,
+    api_endpoint: url::Url,
+    creds: Option<Credentials>,
+    project_metadata: ProjectContext,
+}
 
-        let burn_dir = BurnDir::try_from_path(&user_crate_dir).unwrap_or_else(|_| BurnDir::new());
-
+impl CliContext {
+    pub fn new(terminal: Terminal, config: &Config, project_metadata: ProjectContext) -> Self {
         Self {
-            user_project_name,
-            user_crate_dir,
-            generated_crate_name: None,
-            build_profile: "release".to_string(),
-            burn_dir,
+            terminal,
             api_endpoint: config
                 .api_endpoint
                 .parse::<url::Url>()
                 .expect("API endpoint should be valid"),
-            wss: config.wss,
+            creds: None,
+            project_metadata,
         }
     }
 
-    pub fn init(self) -> Self {
-        self.burn_dir.init(&self.user_crate_dir);
+    pub fn init(mut self) -> Self {
+        let entry_res = AppConfig::new();
+        if let Ok(entry) = entry_res {
+            if let Ok(Some(api_key)) = entry.load_credentials() {
+                print_info!("Credentials found.");
+                self.creds = Some(api_key);
+            } else {
+                print_info!("You are not logged in. Please run 'heat login' to log in.");
+            }
+        }
         self
     }
 
+    pub fn set_credentials(&mut self, creds: Credentials) {
+        self.creds = Some(creds);
+        let app_config = AppConfig::new().expect("AppConfig should be created");
+        app_config
+            .save_credentials(self.creds.as_ref().unwrap())
+            .expect("Credentials should be saved");
+    }
+
+    pub fn get_api_key(&self) -> Option<&str> {
+        self.creds.as_ref().map(|creds| creds.api_key.as_str())
+    }
+
+    pub fn get_project_path(&self) -> anyhow::Result<ProjectPath> {
+        let project_info = self
+            .project_metadata
+            .project
+            .as_ref()
+            .context("Could not load project metadata")?;
+        Ok(ProjectPath::new(
+            project_info.owner.clone(),
+            project_info.name.clone(),
+        ))
+    }
+
+    pub fn create_client(&self) -> Result<BurnCentralClient, ClientCreationError> {
+        let api_key = self
+            .get_api_key()
+            .ok_or(ClientCreationError::NoCredentials)?;
+        let url = self.api_endpoint.as_str();
+
+        let project_path = self.get_project_path();
+        let creds = BurnCentralCredentials::new(api_key.to_owned());
+        let mut client_config = BurnCentralClientConfig::builder(creds)
+            .with_endpoint(url)
+            .with_num_retries(3);
+        if let Ok(path) = project_path {
+            client_config = client_config.with_project(path);
+        } else {
+            print_info!("No project path found, creating client without project.");
+        }
+
+        BurnCentralClient::create(client_config.build())
+            .map_err(|e| ClientCreationError::ServerConnectionError(e.to_string()))
+    }
+
     pub fn package_name(&self) -> &str {
-        self.user_project_name.as_str()
+        self.project_metadata.user_crate_name.as_str()
+    }
+
+    pub fn generated_crate_name(&self) -> &str {
+        &self.project_metadata.generated_crate_name
     }
 
     pub fn get_api_endpoint(&self) -> &url::Url {
         &self.api_endpoint
     }
 
-    pub fn get_wss(&self) -> bool {
-        self.wss
-    }
-
-    fn get_generated_crate_path(&self) -> PathBuf {
-        let crate_name = self
-            .generated_crate_name
-            .as_ref()
-            .expect("Generated crate name should exist.");
-        self.burn_dir
-            .get_crate_path(&self.user_crate_dir, crate_name)
-            .expect("Crate path should exist.")
-    }
-
-    pub fn set_generated_crate_name(&mut self, name: String) {
-        self.generated_crate_name = Some(name);
-    }
-
-    fn set_generated_crate(&mut self, generated_crate: GeneratedCrate) {
-        let crate_name = generated_crate.name();
-        if self.burn_dir.get_crate(&crate_name).is_some() {
-            self.burn_dir.remove_crate(&crate_name);
-        }
-        self.burn_dir.add_crate(&crate_name, generated_crate);
-    }
-
-    fn get_target_exe_path(&self) -> Option<PathBuf> {
-        let target_path = self
-            .burn_dir
-            .get_crate_target_path(self.generated_crate_name.as_ref()?)?;
-
-        let full_path = self
-            .user_crate_dir
-            .join(target_path)
-            .join(&self.build_profile)
-            .join(format!(
-                "{}{}",
-                self.generated_crate_name
-                    .as_ref()
-                    .expect("Generated crate name should exist."),
-                std::env::consts::EXE_SUFFIX
-            ));
-        print_info!(
-            "target exe path: {}",
-            full_path.to_str().expect("Path should be valid")
-        );
-        Some(full_path)
-    }
-
-    pub fn make_run_command(&self, cmd_desc: &RunCommand) -> std::process::Command {
-        match &cmd_desc.run_params {
-            RunParams::Training {
-                function,
-                config_path,
-                project,
-                key,
-            } => {
-                let bin_exe_path = self
-                    .get_binary_exe_path(&cmd_desc.run_id)
-                    .expect("Binary exe path should exist.");
-                let mut command = std::process::Command::new(bin_exe_path);
-                command
-                    .current_dir(&self.user_crate_dir)
-                    .env("BURN_PROJECT_DIR", &self.user_crate_dir)
-                    .args(["--project", project])
-                    .args(["--key", key])
-                    .args(["--api-endpoint", self.get_api_endpoint().as_str()])
-                    .args(["--wss", self.get_wss().to_string().as_str()])
-                    .args(["train", function, config_path]);
-                command
-            }
-        }
-    }
-
-    pub fn generate_crate(&mut self, build_cmd_desc: &BuildCommand) -> anyhow::Result<()> {
-        let generated_crate = crate::generation::crate_gen::create_crate(
-            self.generated_crate_name
-                .as_ref()
-                .expect("Generated crate name should exist."),
-            &self.user_project_name,
-            self.user_crate_dir.to_str().unwrap(),
-            vec![&build_cmd_desc.backend.to_string()],
-            &build_cmd_desc.backend,
-        );
-
-        self.set_generated_crate(generated_crate);
-        self.burn_dir.write_crates_dir(&self.user_crate_dir);
-
-        Ok(())
-    }
-
-    pub fn make_build_command(
-        &self,
-        _cmd_desc: &BuildCommand,
-    ) -> anyhow::Result<std::process::Command> {
-        let profile_arg = match self.build_profile.as_str() {
-            "release" => "--release",
-            "debug" => "--debug",
-            _ => {
-                return Err(anyhow::anyhow!(format!(
-                    "Invalid profile: {}",
-                    self.build_profile
-                )));
-            }
-        };
-
-        let new_target_dir: Option<String> = std::env::var("BURN_TARGET_DIR").ok();
-
-        let mut build_command = std::process::Command::new("cargo");
-        build_command
-            .arg("build")
-            .arg(profile_arg)
-            .arg("--no-default-features")
-            .current_dir(&self.user_crate_dir)
-            .env("BURN_PROJECT_DIR", &self.user_crate_dir)
-            .args([
-                "--manifest-path",
-                self.get_generated_crate_path()
-                    .join("Cargo.toml")
-                    .to_str()
-                    .unwrap(),
-            ])
-            .args(["--message-format", "short"]);
-        if let Some(target_dir) = new_target_dir {
-            build_command.args(["--target-dir", &target_dir]);
-        }
-
-        Ok(build_command)
-    }
-
-    fn get_binary_exe_path(&self, run_id: &str) -> Option<PathBuf> {
-        let bin_name = self.bin_name_from_run_id(run_id);
-        let binary_path = self.burn_dir.get_binary_path(&bin_name)?;
-        let full_path = self.user_crate_dir.join(binary_path);
-        print_info!("Binary exe path: {:?}", full_path);
-        Some(full_path)
-    }
-
-    fn bin_name_from_run_id(&self, run_id: &str) -> String {
-        format!(
-            "{}-{}{}",
-            self.generated_crate_name
-                .as_ref()
-                .expect("Generated crate name should exist."),
-            run_id,
-            std::env::consts::EXE_SUFFIX
-        )
-    }
-
-    pub fn copy_executable_to_bin(&mut self, run_id: &str) -> anyhow::Result<()> {
-        let src_exe_path = self
-            .get_target_exe_path()
-            .expect("Target exe path should exist.");
-        let maybe_dest_exe_path = self.get_binary_exe_path(run_id);
-
-        let target_bin_name = self.bin_name_from_run_id(run_id);
-        let dest_exe_path = maybe_dest_exe_path.unwrap_or_else(|| {
-            self.burn_dir
-                .get_bin_dir(&self.user_crate_dir)
-                .join(&target_bin_name)
-        });
-
-        self.burn_dir.write_bin_dir(&self.user_crate_dir);
-
-        match std::fs::copy(src_exe_path, dest_exe_path) {
-            Ok(_) => {
-                self.burn_dir
-                    .add_binary(&target_bin_name, FileTree::new_file_ref(&target_bin_name));
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(format!(
-                    "Failed to copy executable: {:?}",
-                    e
-                )));
-            }
-        }
-
-        Ok(())
+    pub fn cargo_cmd(&self) -> std::process::Command {
+        let mut cmd = cargo::command();
+        cmd.current_dir(self.cwd());
+        cmd
     }
 
     pub fn get_artifacts_dir_path(&self) -> PathBuf {
-        self.burn_dir.get_artifacts_dir(&self.user_crate_dir)
+        self.project_metadata.burn_dir.artifacts_dir()
+    }
+
+    pub fn metadata(&self) -> &ProjectContext {
+        &self.project_metadata
+    }
+
+    pub fn burn_dir(&self) -> &BurnDir {
+        &self.project_metadata.burn_dir
+    }
+
+    pub fn load_project(&mut self) -> anyhow::Result<()> {
+        self.project_metadata.load_project()?;
+        let project = self.project_metadata.project.as_ref().unwrap();
+
+        // TODO: Verify that the info in the project toml and corresponds to a valid project
+        print_info!(
+            "Project loaded: {} ({}), owner: {}",
+            project.owner,
+            project.name,
+            project.git,
+        );
+        Ok(())
+    }
+
+    pub fn cwd(&self) -> PathBuf {
+        self.project_metadata.user_crate_dir.clone()
+    }
+
+    pub fn terminal(&self) -> &Terminal {
+        &self.terminal
+    }
+}
+
+pub struct ProjectContext {
+    pub user_crate_name: String,
+    pub user_crate_dir: PathBuf,
+    pub generated_crate_name: String,
+    pub build_profile: String,
+    pub burn_dir: BurnDir,
+    pub project: Option<BurnCentralProject>,
+}
+
+impl ProjectContext {
+    pub fn load_from_manifest(manifest_path: &Path) -> Self {
+        // assert that the manifest path is a file
+        assert!(manifest_path.is_file());
+        assert!(manifest_path.ends_with("Cargo.toml"));
+        // get the project name from the Cargo.toml
+        let toml_str = std::fs::read_to_string(manifest_path).expect("Cargo.toml should exist");
+        let manifest_document =
+            toml::de::from_str::<toml::Value>(&toml_str).expect("Cargo.toml should be valid");
+
+        let user_crate_name = manifest_document["package"]["name"]
+            .as_str()
+            .expect("Package name should exist")
+            .to_string();
+        print_info!("Project name: {}", user_crate_name);
+        let generated_crate_name = format!("{}_gen", user_crate_name);
+
+        let user_crate_dir = manifest_path
+            .parent()
+            .expect("Project directory should exist")
+            .to_path_buf();
+        let burn_dir = BurnDir::new(&user_crate_dir);
+        burn_dir
+            .init()
+            .expect("Burn directory should be initialized");
+
+        Self {
+            user_crate_name,
+            user_crate_dir,
+            generated_crate_name,
+            build_profile: "release".to_string(),
+            burn_dir,
+            project: None,
+        }
+    }
+
+    pub fn load_project(&mut self) -> anyhow::Result<()> {
+        self.project = Some(self.burn_dir.load_project()?);
+        Ok(())
     }
 }
