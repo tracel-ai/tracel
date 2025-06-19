@@ -2,7 +2,6 @@ pub mod time;
 
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::cache::CacheState;
-use crate::generation::FileTree;
 use crate::{context::CliContext, generation::crate_gen::backend::BackendType, print_info};
 use std::path::PathBuf;
 

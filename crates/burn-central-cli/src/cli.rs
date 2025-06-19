@@ -46,9 +46,10 @@ pub fn cli_main(config: Config) {
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let mut context = CliContext::new(terminal, &config, crate_context).init();
 
-    if matches!(args.as_ref().unwrap().command, |Commands::Run(..)| {
-        Commands::Package(..)
-    }) {
+    if matches!(
+        args.as_ref().unwrap().command,
+        Commands::Run(..) | Commands::Package(..)
+    ) {
         if let Err(e) = context.load_project() {
             print_err!("Failed to identify the project: {}", e);
             std::process::exit(1);

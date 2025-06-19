@@ -9,7 +9,7 @@ use quote::ToTokens;
 #[derive(Args, Debug)]
 pub struct PackageArgs {}
 
-pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
+pub(crate) fn handle_command(_args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
     let last_commit_hash = get_last_commit_hash()?;
 
     let client = context.create_client()?;

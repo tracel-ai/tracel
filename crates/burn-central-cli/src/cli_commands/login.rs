@@ -3,8 +3,6 @@ use crate::context::{CliContext, ClientCreationError};
 use anyhow::Context;
 use burn_central_client::client::BurnCentralClient;
 use clap::Args;
-use std::io;
-use std::io::Write;
 
 fn format_console_url(url: &url::Url) -> String {
     format!("\x1b[1;34m{}\x1b[0m", url)

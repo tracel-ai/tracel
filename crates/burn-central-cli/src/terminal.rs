@@ -1,5 +1,4 @@
 use console::Term;
-use std::io::Write;
 
 pub struct Terminal {
     inner: Term,
