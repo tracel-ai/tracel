@@ -55,7 +55,7 @@ impl CliContext {
         self.creds = Some(creds);
         let app_config = AppConfig::new().expect("AppConfig should be created");
         app_config
-            .save_credentials(&self.creds.as_ref().unwrap())
+            .save_credentials(self.creds.as_ref().unwrap())
             .expect("Credentials should be saved");
     }
 
@@ -110,7 +110,7 @@ impl CliContext {
 
     pub fn cargo_cmd(&self) -> std::process::Command {
         let mut cmd = cargo::command();
-        cmd.current_dir(&self.cwd());
+        cmd.current_dir(self.cwd());
         cmd
     }
 
@@ -164,7 +164,7 @@ impl ProjectContext {
         assert!(manifest_path.is_file());
         assert!(manifest_path.ends_with("Cargo.toml"));
         // get the project name from the Cargo.toml
-        let toml_str = std::fs::read_to_string(&manifest_path).expect("Cargo.toml should exist");
+        let toml_str = std::fs::read_to_string(manifest_path).expect("Cargo.toml should exist");
         let manifest_document =
             toml::de::from_str::<toml::Value>(&toml_str).expect("Cargo.toml should be valid");
 

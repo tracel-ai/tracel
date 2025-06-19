@@ -72,16 +72,14 @@ fn get_target_exe_path(context: &CliContext) -> PathBuf {
     let crate_name = &context.generated_crate_name();
     let target_path = context.burn_dir().crates_dir().join(crate_name);
 
-    let full_path = target_path
+    target_path
         .join(&context.metadata().build_profile)
-        .join(format!("{}{}", crate_name, std::env::consts::EXE_SUFFIX));
-
-    full_path
+        .join(format!("{}{}", crate_name, std::env::consts::EXE_SUFFIX))
 }
 
 fn generate_crate(context: &CliContext, build_command: &BuildCommand) -> anyhow::Result<()> {
     let generated_crate = crate::generation::crate_gen::create_crate(
-        &context.generated_crate_name(),
+        context.generated_crate_name(),
         &context.metadata().user_crate_name,
         context.metadata().user_crate_dir.to_str().unwrap(),
         vec![&build_command.backend.to_string()],
@@ -90,7 +88,7 @@ fn generate_crate(context: &CliContext, build_command: &BuildCommand) -> anyhow:
 
     let burn_dir = context.burn_dir();
     let mut cache = burn_dir.load_cache()?;
-    generated_crate.write_to_burn_dir(&burn_dir, &mut cache)?;
+    generated_crate.write_to_burn_dir(burn_dir, &mut cache)?;
     burn_dir.save_cache(&cache)?;
 
     Ok(())
@@ -124,7 +122,7 @@ pub fn make_build_command(
             context
                 .burn_dir()
                 .crates_dir()
-                .join(&context.generated_crate_name())
+                .join(context.generated_crate_name())
                 .join("Cargo.toml")
                 .to_str()
                 .unwrap(),
@@ -198,7 +196,7 @@ pub fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::pro
             let bin_exe_path = context.burn_dir().bin_dir().join(&bin_name);
             let mut command = std::process::Command::new(bin_exe_path);
             command
-                .current_dir(&context.cwd())
+                .current_dir(context.cwd())
                 .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
                 .args(["--project", project])
                 .args(["--key", key])

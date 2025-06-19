@@ -1,7 +1,7 @@
 use crate::context::CliContext;
+use crate::print_success;
 use crate::registry::Flag;
 use crate::util::git::get_last_commit_hash;
-use crate::print_success;
 use burn_central_client::schemas::{BurnCentralCodeMetadata, RegisteredFunction};
 use clap::Args;
 use quote::ToTokens;

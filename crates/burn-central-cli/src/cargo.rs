@@ -25,6 +25,5 @@ pub fn try_locate_manifest() -> Option<std::path::PathBuf> {
 }
 
 pub fn command() -> std::process::Command {
-    let cmd = std::process::Command::new(cargo_binary());
-    cmd
+    std::process::Command::new(cargo_binary())
 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::print_err;
 use gix::Repository;
 use gix::revision::walk::Sorting;
@@ -63,7 +65,7 @@ mod tests {
             .expect("No commits found");
 
         let output = std::process::Command::new("git")
-            .args(&["rev-list", "--parents", "HEAD"])
+            .args(["rev-list", "--parents", "HEAD"])
             .output()
             .expect("Failed to run git rev-list");
 
@@ -71,7 +73,7 @@ mod tests {
 
         if let Some(last_line) = stdout.lines().last() {
             let parts: Vec<&str> = last_line.split_whitespace().collect();
-            if let Some(first_commit_hash) = parts.get(0) {
+            if let Some(first_commit_hash) = parts.first() {
                 assert_eq!(hash, *first_commit_hash);
             } else {
                 panic!("No commit hash found in the last line of git rev-list output.");

@@ -42,8 +42,7 @@ impl CacheState {
     }
 
     pub fn save(&self, dir: &Path) -> io::Result<()> {
-        let contents =
-            toml::to_string_pretty(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let contents = toml::to_string_pretty(self).map_err(io::Error::other)?;
         fs::create_dir_all(dir)?;
         fs::write(dir.join(Self::BURN_CACHE_FILENAME), contents)
     }
