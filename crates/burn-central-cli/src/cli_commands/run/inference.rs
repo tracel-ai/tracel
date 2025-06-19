@@ -7,9 +7,6 @@ use crate::context::CliContext;
 #[derive(Parser, Debug)]
 pub struct InferenceRunArgs {}
 
-pub(crate) fn handle_command(
-    _args: InferenceRunArgs,
-    _context: CliContext,
-) -> anyhow::Result<()> {
+pub(crate) fn handle_command(_args: InferenceRunArgs, _context: CliContext) -> anyhow::Result<()> {
     todo!("Local inference is not yet supported")
 }

@@ -1,4 +1,4 @@
-﻿use chrono::Utc;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{fs, io, path::Path};
@@ -23,7 +23,6 @@ pub struct CacheState {
     pub crates: HashMap<String, CrateEntry>,
     pub binaries: HashMap<String, BinaryEntry>,
 }
-
 
 impl CacheState {
     const BURN_CACHE_FILENAME: &'static str = "cache.toml";

@@ -1,18 +1,14 @@
 use crate::app_config::{AppConfig, Credentials};
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::project::BurnCentralProject;
-use crate::{
-    cargo,
-    config::Config,
-    print_info,
-};
+use crate::terminal::Terminal;
+use crate::{cargo, config::Config, print_info};
 use anyhow::Context;
 use burn_central_client::client::{
     BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
 };
 use burn_central_client::schemas::ProjectPath;
 use std::path::{Path, PathBuf};
-use crate::terminal::Terminal;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
@@ -80,7 +76,9 @@ impl CliContext {
     }
 
     pub fn create_client(&self) -> Result<BurnCentralClient, ClientCreationError> {
-        let api_key = self.get_api_key().ok_or(ClientCreationError::NoCredentials)?;
+        let api_key = self
+            .get_api_key()
+            .ok_or(ClientCreationError::NoCredentials)?;
         let url = self.api_endpoint.as_str();
 
         let project_path = self.get_project_path();
@@ -130,11 +128,7 @@ impl CliContext {
 
     pub fn load_project(&mut self) -> anyhow::Result<()> {
         self.project_metadata.load_project()?;
-        let project = self
-            .project_metadata
-            .project
-            .as_ref()
-            .unwrap();
+        let project = self.project_metadata.project.as_ref().unwrap();
 
         // TODO: Verify that the info in the project toml and corresponds to a valid project
         print_info!(

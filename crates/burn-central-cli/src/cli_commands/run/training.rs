@@ -3,7 +3,7 @@ use clap::Parser;
 use colored::Colorize;
 
 use crate::{
-    commands::{execute_sequentially, BuildCommand, RunCommand, RunParams},
+    commands::{BuildCommand, RunCommand, RunParams, execute_sequentially},
     context::CliContext,
     generation::backend::BackendType,
     logging::BURN_ORANGE,
@@ -33,10 +33,7 @@ pub struct TrainingRunArgs {
     runner: Option<String>,
 }
 
-pub(crate) fn handle_command(
-    args: TrainingRunArgs,
-    context: CliContext,
-) -> anyhow::Result<()> {
+pub(crate) fn handle_command(args: TrainingRunArgs, context: CliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => remote_run(args, context),
         (None, None) => local_run(args, context),

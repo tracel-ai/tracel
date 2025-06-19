@@ -1,16 +1,16 @@
 pub mod backend;
 mod cargo_toml;
 
-use std::hash::{Hash, Hasher};
 use quote::quote;
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 use crate::generation::FileTree;
 
-use cargo_toml::{CargoToml, Dependency, QueryType};
+use super::backend::BackendType;
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::cache::CacheState;
-use super::backend::BackendType;
+use cargo_toml::{CargoToml, Dependency, QueryType};
 
 pub struct GeneratedCrate {
     name: String,
@@ -60,15 +60,19 @@ impl GeneratedCrate {
     }
 
     pub fn compute_hash(&self) -> String {
-        self.cargo_toml.to_string()
+        self.cargo_toml
+            .to_string()
             .as_bytes()
             .iter()
             .fold(0u64, |acc, &b| acc.wrapping_add(b as u64))
             .to_string()
     }
 
-    pub fn write_to_burn_dir(self, burn_dir: &BurnDir, cache: &mut CacheState) -> std::io::Result<()> {
-
+    pub fn write_to_burn_dir(
+        self,
+        burn_dir: &BurnDir,
+        cache: &mut CacheState,
+    ) -> std::io::Result<()> {
         let name = self.name.to_owned();
         let file_tree = self.into_file_tree();
         let mut hasher = std::hash::DefaultHasher::new();
@@ -78,16 +82,13 @@ impl GeneratedCrate {
         if let Some(cached_crate) = cache.get_crate(&name) {
             if cached_crate.hash == file_tree_hash {
                 return Ok(());
-            }
-            else {
+            } else {
                 std::fs::remove_dir_all(burn_dir.crates_dir().join(&name))?;
                 cache.remove_crate(&name);
             }
         }
 
-        let burn_dir_path = burn_dir
-            .crates_dir()
-            .join(&name);
+        let burn_dir_path = burn_dir.crates_dir().join(&name);
 
         std::fs::create_dir_all(&burn_dir_path)?;
         file_tree.write_to(burn_dir_path.as_path())?;

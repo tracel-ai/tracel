@@ -1,19 +1,15 @@
 use crate::context::CliContext;
 use crate::registry::Flag;
+use crate::util::git::get_last_commit_hash;
 use crate::{print_err, print_success};
 use burn_central_client::schemas::{BurnCentralCodeMetadata, RegisteredFunction};
 use clap::Args;
 use quote::ToTokens;
-use crate::util::git::get_last_commit_hash;
 
 #[derive(Args, Debug)]
-pub struct PackageArgs {
-}
+pub struct PackageArgs {}
 
-pub(crate) fn handle_command(
-    args: PackageArgs,
-    context: CliContext,
-) -> anyhow::Result<()> {
+pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
     let last_commit_hash = get_last_commit_hash()?;
 
     let client = context.create_client()?;

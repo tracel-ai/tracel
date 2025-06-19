@@ -1,14 +1,14 @@
-﻿use console::Term;
+use console::Term;
 use std::io::Write;
 
 pub struct Terminal {
-    inner: Term
+    inner: Term,
 }
 
 impl Terminal {
     pub fn new() -> Self {
         Terminal {
-            inner: Term::stdout()
+            inner: Term::stdout(),
         }
     }
 
@@ -21,7 +21,9 @@ impl Terminal {
     }
 
     pub fn read_line(&self, prompt: &str) -> String {
-        let line = self.inner.read_line_initial_text(prompt)
+        let line = self
+            .inner
+            .read_line_initial_text(prompt)
             .expect("Failed to read line");
         self.inner.flush().expect("Failed to flush terminal");
         line
@@ -33,8 +35,8 @@ impl Terminal {
             pass.with_prompt(prompt)
         } else {
             pass
-        }.interact().map_err(|e| {
-            anyhow::anyhow!("Failed to read password: {}", e)
-        })
+        }
+        .interact()
+        .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))
     }
 }

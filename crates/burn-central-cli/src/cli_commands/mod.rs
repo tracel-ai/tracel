@@ -1,5 +1,5 @@
 pub mod run;
 
-pub mod package;
-pub mod login;
 pub mod init;
+pub mod login;
+pub mod package;

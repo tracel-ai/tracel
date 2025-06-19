@@ -1,10 +1,10 @@
-﻿use crate::app_config::Credentials;
+use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
 use anyhow::Context;
+use burn_central_client::client::BurnCentralClient;
 use clap::Args;
 use std::io;
 use std::io::Write;
-use burn_central_client::client::BurnCentralClient;
 
 fn format_console_url(url: &url::Url) -> String {
     format!("\x1b[1;34m{}\x1b[0m", url)
@@ -32,17 +32,15 @@ pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<BurnCentralClient> {
+pub fn get_client_and_login_if_needed(
+    context: &mut CliContext,
+) -> anyhow::Result<BurnCentralClient> {
     let client_res = context.create_client();
     if let Err(err) = client_res {
         match err {
             ClientCreationError::NoCredentials => {
-                context
-                    .terminal()
-                    .print("No credentials found.");
-                prompt_login(
-                    context,
-                )?;
+                context.terminal().print("No credentials found.");
+                prompt_login(context)?;
                 let client = context
                     .create_client()
                     .context("Failed to authenticate with the server")?;
@@ -51,15 +49,11 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
             ClientCreationError::ServerConnectionError(ref msg) => {
                 context
                     .terminal()
-                    .print(&format!(
-                        "Failed to connect to the server: {}.",
-                        msg
-                    ));
+                    .print(&format!("Failed to connect to the server: {}.", msg));
                 Err(err.into())
             }
         }
-    }
-    else {
+    } else {
         Ok(client_res?)
     }
 }
@@ -68,8 +62,7 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
     if let Some(api_key) = args.api_key {
         context.set_credentials(Credentials { api_key });
     } else {
-        prompt_login(&mut context)
-            .context("Failed to prompt for API key")?;
+        prompt_login(&mut context).context("Failed to prompt for API key")?;
     }
 
     let client = context

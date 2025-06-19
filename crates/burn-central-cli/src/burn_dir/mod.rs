@@ -1,16 +1,14 @@
-﻿use std::{fs, io};
-use std::path::{Path, PathBuf};
 use crate::burn_dir::cache::CacheState;
 use crate::burn_dir::project::BurnCentralProject;
+use std::path::{Path, PathBuf};
+use std::{fs, io};
 
-pub mod project;
 pub mod cache;
-
+pub mod project;
 
 pub struct BurnDir {
     root: PathBuf,
 }
-
 
 impl BurnDir {
     pub fn new(user_crate_dir: &Path) -> Self {
@@ -52,7 +50,7 @@ impl BurnDir {
     pub fn load_project(&self) -> io::Result<BurnCentralProject> {
         BurnCentralProject::load(&self.root)
     }
-    
+
     pub fn save_project(&self, project: &BurnCentralProject) -> io::Result<()> {
         project.save(&self.root)
     }

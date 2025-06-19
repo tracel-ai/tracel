@@ -9,9 +9,8 @@ mod logging;
 mod context;
 mod generation;
 
-mod util;
 mod app_config;
-mod cargo;
 mod burn_dir;
+mod cargo;
 mod terminal;
-
+mod util;

@@ -1,4 +1,4 @@
-﻿use crate::print_info;
+use crate::print_info;
 use std::ffi::OsString;
 
 pub fn cargo_binary() -> OsString {
@@ -11,7 +11,8 @@ pub fn try_locate_manifest() -> Option<std::path::PathBuf> {
         .output()
         .expect("Failed to run cargo locate-project");
     let output_str = String::from_utf8(output.stdout).expect("Failed to parse output");
-    let parsed_output: serde_json::Value = serde_json::from_str(&output_str).expect("Failed to parse output");
+    let parsed_output: serde_json::Value =
+        serde_json::from_str(&output_str).expect("Failed to parse output");
 
     let manifest_path_str = parsed_output["root"]
         .as_str()

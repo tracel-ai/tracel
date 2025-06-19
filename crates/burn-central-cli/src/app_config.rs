@@ -1,4 +1,4 @@
-﻿use directories::ProjectDirs;
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 
@@ -32,13 +32,15 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn new() -> Result<Self, ConfigError> {
-        let proj_dirs =
-            ProjectDirs::from("com", "tracel", "burncentral").ok_or(ConfigError::MissingDirectory)?;
+        let proj_dirs = ProjectDirs::from("com", "tracel", "burncentral")
+            .ok_or(ConfigError::MissingDirectory)?;
 
         let config_dir = proj_dirs.config_dir().to_path_buf();
         fs::create_dir_all(&config_dir)?; // Ensure it exists
 
-        Ok(Self { base_dir: config_dir })
+        Ok(Self {
+            base_dir: config_dir,
+        })
     }
 
     fn credentials_path(&self) -> PathBuf {

@@ -3,9 +3,7 @@ pub mod time;
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::cache::CacheState;
 use crate::generation::FileTree;
-use crate::{
-    context::CliContext, generation::crate_gen::backend::BackendType, print_info,
-};
+use crate::{context::CliContext, generation::crate_gen::backend::BackendType, print_info};
 use std::path::PathBuf;
 
 /// Contains the data necessary to run an experiment.
@@ -82,10 +80,7 @@ fn get_target_exe_path(context: &CliContext) -> PathBuf {
     full_path
 }
 
-fn generate_crate(
-    context: &CliContext,
-    build_command: &BuildCommand,
-) -> anyhow::Result<()> {
+fn generate_crate(context: &CliContext, build_command: &BuildCommand) -> anyhow::Result<()> {
     let generated_crate = crate::generation::crate_gen::create_crate(
         &context.generated_crate_name(),
         &context.metadata().user_crate_name,
@@ -192,10 +187,7 @@ pub(crate) fn execute_build_command(
     Ok(())
 }
 
-pub fn make_run_command(
-    cmd_desc: &RunCommand,
-    context: &CliContext,
-) -> std::process::Command {
+pub fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process::Command {
     match &cmd_desc.run_params {
         RunParams::Training {
             function,

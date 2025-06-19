@@ -1,7 +1,7 @@
-﻿use gix::Repository;
+use crate::print_err;
+use gix::Repository;
 use gix::revision::walk::Sorting;
 use gix::traverse::commit::simple::CommitTimeOrder;
-use crate::print_err;
 
 pub fn get_last_commit_hash() -> anyhow::Result<String> {
     let repo = gix::discover(".")?;
@@ -37,9 +37,7 @@ pub fn is_repo_initialized() -> bool {
 
 pub fn init_repo() -> anyhow::Result<Repository> {
     if is_repo_initialized() {
-        return Err(anyhow::anyhow!(
-            "Repository already initialized."
-        ));
+        return Err(anyhow::anyhow!("Repository already initialized."));
     }
 
     let repo = gix::init(".")?;
@@ -62,7 +60,7 @@ mod tests {
     fn test_get_first_commit_hash() {
         let hash = get_first_commit_hash()
             .expect("Failed to get first commit hash")
-            .expect("No commits found");;
+            .expect("No commits found");
 
         let output = std::process::Command::new("git")
             .args(&["rev-list", "--parents", "HEAD"])
