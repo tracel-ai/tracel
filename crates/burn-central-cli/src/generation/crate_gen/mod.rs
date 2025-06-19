@@ -33,6 +33,7 @@ impl GeneratedCrate {
         &mut self.src
     }
 
+    #[allow(dead_code)]
     pub fn name(&self) -> String {
         self.name.clone()
     }
@@ -57,15 +58,6 @@ impl GeneratedCrate {
                 self.src,
             ],
         )
-    }
-
-    pub fn compute_hash(&self) -> String {
-        self.cargo_toml
-            .to_string()
-            .as_bytes()
-            .iter()
-            .fold(0u64, |acc, &b| acc.wrapping_add(b as u64))
-            .to_string()
     }
 
     pub fn write_to_burn_dir(

@@ -148,6 +148,7 @@ impl BurnCentralClient {
         active_experiment.is_some()
     }
 
+    #[allow(dead_code)]
     fn is_project_set(&self) -> bool {
         let current_project = self
             .current_project
@@ -164,7 +165,7 @@ impl BurnCentralClient {
         current_project.clone()
     }
 
-    fn set_project(&mut self, project_path: ProjectPath) -> Result<(), BurnCentralClientError> {
+    pub fn set_project(&mut self, project_path: ProjectPath) -> Result<(), BurnCentralClientError> {
         if self.is_experiment_running() {
             return Err(BurnCentralClientError::SetProjectError(
                 "Cannot set project while an experiment is running.".to_string(),

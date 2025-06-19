@@ -30,6 +30,7 @@ pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn get_client_and_login_if_needed(
     context: &mut CliContext,
 ) -> anyhow::Result<BurnCentralClient> {

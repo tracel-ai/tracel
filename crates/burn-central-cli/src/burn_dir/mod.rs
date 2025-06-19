@@ -1,4 +1,4 @@
-use crate::burn_dir::cache::CacheState;
+﻿use crate::burn_dir::cache::CacheState;
 use crate::burn_dir::project::BurnCentralProject;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -35,10 +35,6 @@ impl BurnDir {
         self.root.join("artifacts")
     }
 
-    pub fn cache_path(&self) -> PathBuf {
-        self.root.join("cache.toml")
-    }
-
     pub fn load_cache(&self) -> io::Result<CacheState> {
         CacheState::load(&self.root)
     }
@@ -51,6 +47,7 @@ impl BurnDir {
         BurnCentralProject::load(&self.root)
     }
 
+    #[allow(dead_code)]
     pub fn save_project(&self, project: &BurnCentralProject) -> io::Result<()> {
         project.save(&self.root)
     }

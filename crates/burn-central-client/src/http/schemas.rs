@@ -62,11 +62,12 @@ pub struct RunnerQueueJobParamsSchema {
 
 #[derive(Deserialize)]
 pub struct UserResponseSchema {
-    pub id: i32,
+    pub _id: i32,
     pub username: String,
     pub email: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct ProjectSchema {
     pub project_name: String,

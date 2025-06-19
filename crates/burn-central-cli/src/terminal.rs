@@ -11,14 +11,17 @@ impl Terminal {
         }
     }
 
+    #[allow(dead_code)]
     pub fn print(&self, message: &str) {
         println!("{}", message);
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) {
         self.inner.clear_screen().expect("Failed to clear terminal");
     }
 
+    #[allow(dead_code)]
     pub fn read_line(&self, prompt: &str) -> String {
         let line = self
             .inner

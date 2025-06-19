@@ -224,6 +224,7 @@ impl HttpClient {
         url.to_string()
     }
 
+    #[allow(dead_code)]
     pub fn create_project(
         &self,
         owner_name: &str,

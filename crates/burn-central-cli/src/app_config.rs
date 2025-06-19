@@ -2,23 +2,14 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
-    Io(io::Error),
-    Serde(serde_json::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Serde(#[from] serde_json::Error),
+    #[error("Missing configuration directory")]
     MissingDirectory,
-}
-
-impl From<io::Error> for ConfigError {
-    fn from(err: io::Error) -> Self {
-        ConfigError::Io(err)
-    }
-}
-
-impl From<serde_json::Error> for ConfigError {
-    fn from(err: serde_json::Error) -> Self {
-        ConfigError::Serde(err)
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

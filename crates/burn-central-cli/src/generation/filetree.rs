@@ -23,6 +23,7 @@ impl FileTree {
         FileTree::File(name.into(), content.into())
     }
 
+    #[allow(dead_code)]
     pub fn new_file_ref(name: impl Into<String>) -> Self {
         FileTree::FileRef(name.into())
     }
@@ -48,6 +49,7 @@ impl FileTree {
         }
     }
 
+    #[allow(dead_code)]
     pub fn read_from(
         path: &Path,
         ref_suffixes: &[&str],

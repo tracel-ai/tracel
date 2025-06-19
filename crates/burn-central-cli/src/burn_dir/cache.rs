@@ -76,10 +76,12 @@ impl CacheState {
         );
     }
 
+    #[allow(dead_code)]
     pub fn get_binary(&self, name: &str) -> Option<&BinaryEntry> {
         self.binaries.get(name)
     }
 
+    #[allow(dead_code)]
     pub fn remove_binary(&mut self, name: &str) -> Option<BinaryEntry> {
         self.binaries.remove(name)
     }
