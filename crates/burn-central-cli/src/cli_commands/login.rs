@@ -35,26 +35,34 @@ pub fn get_client_and_login_if_needed(
     context: &mut CliContext,
 ) -> anyhow::Result<BurnCentralClient> {
     let client_res = context.create_client();
-    if let Err(err) = client_res {
+    while let Err(err) = &client_res {
         match err {
-            ClientCreationError::NoCredentials => {
-                context.terminal().print("No credentials found.");
+            ClientCreationError::InvalidCredentials | ClientCreationError::NoCredentials => {
                 prompt_login(context)?;
-                let client = context
-                    .create_client()
-                    .context("Failed to authenticate with the server")?;
-                Ok(client)
+                let client = context.create_client();
+                match client {
+                    Ok(client) => {
+                        context.terminal().print("Successfully logged in!");
+                        return Ok(client);
+                    }
+                    Err(e) => {
+                        context.terminal().print(&format!(
+                            "Failed to create client: {}. Please try again. Press Ctrl+C to exit.",
+                            e
+                        ));
+                        continue;
+                    }
+                }
             }
-            ClientCreationError::ServerConnectionError(ref msg) => {
+            ClientCreationError::ServerConnectionError(msg) => {
                 context
                     .terminal()
                     .print(&format!("Failed to connect to the server: {}.", msg));
-                Err(err.into())
+                continue;
             }
         }
-    } else {
-        Ok(client_res?)
     }
+    Ok(client_res?)
 }
 
 pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Result<()> {

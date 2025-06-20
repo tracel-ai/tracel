@@ -9,11 +9,14 @@ use burn_central_client::client::{
 };
 use burn_central_client::schemas::ProjectPath;
 use std::path::{Path, PathBuf};
+use cargo_metadata::Error::CargoMetadata;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
     #[error("No credentials found")]
     NoCredentials,
+    #[error("Invalid credentials")]
+    InvalidCredentials,
     #[error("Server connection error")]
     ServerConnectionError(String),
 }
@@ -81,19 +84,20 @@ impl CliContext {
             .ok_or(ClientCreationError::NoCredentials)?;
         let url = self.api_endpoint.as_str();
 
-        let project_path = self.get_project_path();
         let creds = BurnCentralCredentials::new(api_key.to_owned());
         let mut client_config = BurnCentralClientConfig::builder(creds)
             .with_endpoint(url)
             .with_num_retries(3);
-        if let Ok(path) = project_path {
+        if let Ok(path) = self.get_project_path() {
             client_config = client_config.with_project(path);
-        } else {
-            print_info!("No project path found, creating client without project.");
         }
 
-        BurnCentralClient::create(client_config.build())
-            .map_err(|e| ClientCreationError::ServerConnectionError(e.to_string()))
+        BurnCentralClient::create(client_config.build()).map_err(|e| match e {
+            burn_central_client::error::BurnCentralClientError::InvalidCredentialsError(..) => {
+                ClientCreationError::InvalidCredentials
+            }
+            _ => ClientCreationError::ServerConnectionError(e.to_string()),
+        })
     }
 
     pub fn package_name(&self) -> &str {
@@ -142,6 +146,20 @@ impl CliContext {
 
     pub fn cwd(&self) -> PathBuf {
         self.project_metadata.user_crate_dir.clone()
+    }
+
+    pub fn get_workspace_root(&self) -> anyhow::Result<PathBuf> {
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .no_deps()
+            .current_dir(self.cwd())
+            .exec();
+
+        match metadata {
+            Ok(meta) => {
+                Ok(meta.workspace_root.into())
+            }
+            Err(e) => Err(anyhow::anyhow!("Unexpected error: {}", e)),
+        }
     }
 
     pub fn terminal(&self) -> &Terminal {

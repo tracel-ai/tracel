@@ -1,4 +1,4 @@
-use thiserror::Error;
+﻿use thiserror::Error;
 
 use crate::{http::error::BurnCentralHttpError, websocket::WebSocketError};
 

@@ -8,7 +8,7 @@ use burn::tensor::backend::Backend;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::errors::client::BurnCentralClientError;
+use crate::error::BurnCentralClientError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::error::BurnCentralHttpError;
 use crate::http::{EndExperimentStatus, HttpClient};
@@ -195,7 +195,7 @@ impl BurnCentralClient {
             match client.connect() {
                 Ok(_) => break,
                 Err(e) => {
-                    println!("Failed to connect to the server: {}", e);
+                    // println!("Failed to connect to the server: {}", e);
 
                     if i == client.config.num_retries {
                         return Err(BurnCentralClientError::ServerConnectionError(
@@ -208,7 +208,7 @@ impl BurnCentralClient {
                         body: msg,
                     }) = e
                     {
-                        println!("Invalid API key. Please check your API key and try again.");
+                        // println!("Invalid API key. Please check your API key and try again.");
                         return Err(BurnCentralClientError::InvalidCredentialsError(format!(
                             "Invalid API key: {msg}"
                         )));

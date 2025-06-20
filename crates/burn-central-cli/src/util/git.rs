@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::path::Path;
+use anyhow::Context;
 use crate::print_err;
 use gix::Repository;
 use gix::revision::walk::Sorting;
@@ -16,7 +18,16 @@ pub fn get_last_commit_hash() -> anyhow::Result<String> {
     Ok(last_commit.to_string())
 }
 
-pub fn get_first_commit_hash() -> anyhow::Result<Option<String>> {
+pub fn is_repo_dirty() -> anyhow::Result<bool> {
+    let repo = gix::discover(".")?;
+    let is_dirty = repo.is_dirty()?;
+    if is_dirty {
+        print_err!("The repository is dirty. Please commit or stash your changes before proceeding.");
+    }
+    Ok(is_dirty)
+}
+
+pub fn get_first_commit_hash() -> anyhow::Result<String> {
     let repo = gix::discover(".")?;
 
     let platform = repo
@@ -25,24 +36,23 @@ pub fn get_first_commit_hash() -> anyhow::Result<Option<String>> {
         .sorting(Sorting::ByCommitTime(CommitTimeOrder::OldestFirst));
     let revs = platform.all()?;
 
-    let Some(last_hash) = revs.last() else {
-        return Ok(None);
-    };
-    let last_hash = last_hash?.id;
+    let last_hash = revs.last().context("No commits found in the repository.")?;
+    let last_hash = last_hash?
+        .id();
 
-    Ok(Some(last_hash.to_string()))
+    Ok(last_hash.to_string())
 }
 
 pub fn is_repo_initialized() -> bool {
     gix::discover(".").is_ok()
 }
 
-pub fn init_repo() -> anyhow::Result<Repository> {
+pub fn init_repo(dir: &Path) -> anyhow::Result<Repository> {
     if is_repo_initialized() {
         return Err(anyhow::anyhow!("Repository already initialized."));
     }
 
-    let repo = gix::init(".")?;
+    let repo = gix::init(dir)?;
     Ok(repo)
 }
 
@@ -61,8 +71,7 @@ mod tests {
     #[test]
     fn test_get_first_commit_hash() {
         let hash = get_first_commit_hash()
-            .expect("Failed to get first commit hash")
-            .expect("No commits found");
+            .expect("Failed to get first commit hash");
 
         let output = std::process::Command::new("git")
             .args(["rev-list", "--parents", "HEAD"])
