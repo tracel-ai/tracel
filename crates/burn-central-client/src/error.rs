@@ -34,6 +34,8 @@ pub enum BurnCentralClientError {
     UploadProjectVersionError(String),
     #[error("Failed to start remote job: {0}")]
     StartRemoteJobError(String),
+    #[error("Failed to create project: {0}")]
+    CreateProjectError(String),
 
     #[error("File Read Error: {0}")]
     FileReadError(String),

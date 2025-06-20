@@ -98,6 +98,11 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     };
 
     // create the burn central project here
+    let created_project = client.create_project(&owner_name, &project_name, Some(&first_commit_hash));
+    if let Err(e) = created_project {
+        cliclack::outro_cancel(&format!("Failed to create project: {}", e))?;
+        return Err(anyhow::anyhow!("Failed to create project: {}", e));
+    }
 
     context.burn_dir().save_project(&BurnCentralProject {
         name: project_name.clone(),

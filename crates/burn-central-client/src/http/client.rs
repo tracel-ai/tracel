@@ -224,7 +224,6 @@ impl HttpClient {
         url.to_string()
     }
 
-    #[allow(dead_code)]
     pub fn create_project(
         &self,
         owner_name: &str,
@@ -233,7 +232,7 @@ impl HttpClient {
     ) -> Result<ProjectSchema, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
-        let url = self.join(&format!("projects/{}/{}", owner_name, project_name));
+        let url = self.join("user/projects");
 
         let project_data = CreateProjectSchema {
             name: project_name.to_string(),

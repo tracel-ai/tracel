@@ -451,6 +451,27 @@ impl BurnCentralClient {
         Ok(())
     }
 
+    pub fn create_project(
+        &self,
+        namespace_name: &str,
+        project_name: &str,
+        description: Option<&str>,
+    ) -> Result<ProjectPath, BurnCentralClientError> {
+        self.http_client.create_project(
+            namespace_name,
+            project_name,
+            description,
+        ).map_err(|e| {
+            BurnCentralClientError::CreateProjectError(format!(
+                "Failed to create project: {}",
+                e
+            ))
+        })?;
+
+        let new_project_path = ProjectPath::new(namespace_name.to_string(), project_name.to_string());
+        Ok(new_project_path)
+    }
+
     pub fn upload_new_project_version(
         &self,
         target_package_name: &str,
