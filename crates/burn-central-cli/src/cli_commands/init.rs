@@ -111,7 +111,6 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         })
         .interact::<String>()?;
 
-        
         if input.is_empty() {
             context.metadata().user_crate_name.clone()
         } else {
