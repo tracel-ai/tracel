@@ -13,10 +13,11 @@ pub struct LoginArgs {
 
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     let prompt = format!(
-        "Enter your API key found on {} below:\n",
-        Terminal::url(&context.get_api_endpoint().join("me")?)
+        "Enter your API key found on {} below.",
+        Terminal::url(&context.get_api_endpoint().join("me")?),
     );
-    let api_key = context.terminal().read_line(&prompt)?;
+    context.terminal().print(&prompt);
+    let api_key = context.terminal_mut().read_password("Key")?;
     if !api_key.trim().is_empty() {
         context.set_credentials(Credentials { api_key });
     } else {
