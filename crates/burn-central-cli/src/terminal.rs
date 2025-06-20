@@ -31,7 +31,7 @@ impl Terminal {
     pub fn read_password(&mut self, prompt: &str) -> anyhow::Result<String> {
         let prompt = format!("{} {prompt}: ", console::style("?").green());
         self.inner
-            .write(&prompt.as_bytes())
+            .write(prompt.as_bytes())
             .map_err(|e| anyhow::anyhow!("Failed to write prompt: {}", e))?;
         let password = self
             .inner

@@ -8,7 +8,6 @@ use burn_central_client::client::{
     BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
 };
 use burn_central_client::schemas::ProjectPath;
-use cargo_metadata::Error::CargoMetadata;
 use std::path::{Path, PathBuf};
 
 #[derive(thiserror::Error, Debug)]

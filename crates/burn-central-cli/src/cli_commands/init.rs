@@ -4,7 +4,6 @@ use crate::terminal::Terminal;
 use crate::util::git;
 use anyhow::Context;
 use clap::Args;
-use std::io::Write;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -33,7 +32,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
 
     if !git::is_repo_initialized() {
         let repo = git::init_repo(&ws_root)?;
-        cliclack::log::step(&format!(
+        cliclack::log::step(format!(
             "No git repository found. Initialized new git repository at: {}",
             repo.path().display()
         ))?;
@@ -88,11 +87,11 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     ];
     let owner_name = cliclack::select("Select the owner of the project")
         .items(&available_namespaces)
-        .initial_value(&available_namespaces[0].clone().0)
+        .initial_value(available_namespaces[0].clone().0)
         .interact()?;
 
     let project_name = {
-        let input = cliclack::input(&format!(
+        let input = cliclack::input(format!(
             "Enter the project name (default: {}) ",
             console::style(&context.metadata().user_crate_name).bold()
         ))
@@ -112,19 +111,19 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         })
         .interact::<String>()?;
 
-        let project_name = if input.is_empty() {
+        
+        if input.is_empty() {
             context.metadata().user_crate_name.clone()
         } else {
             input
-        };
-        project_name
+        }
     };
 
     // create the burn central project here
     let created_project =
-        client.create_project(&owner_name, &project_name, Some(&first_commit_hash));
+        client.create_project(owner_name, &project_name, Some(&first_commit_hash));
     if let Err(e) = created_project {
-        cliclack::outro_cancel(&format!("Failed to create project: {}", e))?;
+        cliclack::outro_cancel(format!("Failed to create project: {}", e))?;
         return Err(anyhow::anyhow!("Failed to create project: {}", e));
     }
 
@@ -137,7 +136,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
 
     let frontend_url =
         &format!("https://central.burn.dev/{}/{}", owner_name, project_name).parse()?;
-    cliclack::outro(&format!(
+    cliclack::outro(format!(
         "Project initialized successfully! You can check out your project at {}",
         Terminal::url(frontend_url)
     ))?;
@@ -190,7 +189,7 @@ pub fn commit_sequence(context: &CliContext) -> anyhow::Result<()> {
                     return Err(anyhow::anyhow!("Manual commit cancelled"));
                 }
                 Ok(console::Key::Enter) => {
-                    if !git::is_repo_dirty().is_ok() {
+                    if git::is_repo_dirty().is_err() {
                         spinner.stop("Manual commit");
                         break;
                     }
