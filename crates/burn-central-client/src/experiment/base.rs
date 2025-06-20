@@ -1,9 +1,9 @@
+use super::{WsMessage, thread::ExperimentWSHandler};
 use crate::{
     error::BurnCentralClientError, http::HttpClient, schemas::ExperimentPath,
     websocket::WebSocketClient,
 };
 use std::sync::mpsc;
-use super::{WsMessage, thread::ExperimentWSHandler};
 
 #[derive(Debug)]
 pub struct TempLogStore {

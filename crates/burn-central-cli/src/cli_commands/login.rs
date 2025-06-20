@@ -1,9 +1,9 @@
 use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
+use crate::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::client::BurnCentralClient;
 use clap::Args;
-use crate::terminal::Terminal;
 
 #[derive(Args, Debug)]
 pub struct LoginArgs {

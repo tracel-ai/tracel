@@ -1,10 +1,10 @@
-use std::io::Write;
 use crate::burn_dir::project::BurnCentralProject;
 use crate::context::CliContext;
+use crate::terminal::Terminal;
 use crate::util::git;
 use anyhow::Context;
 use clap::Args;
-use crate::terminal::Terminal;
+use std::io::Write;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -41,18 +41,30 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     match git::is_repo_dirty() {
         Ok(false) => (),
         Ok(true) => {
-            cliclack::log::info("Repository is dirty. Please commit or stash your changes before proceeding.")?;
-            commit_sequence(&context).map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
-        },
+            cliclack::log::info(
+                "Repository is dirty. Please commit or stash your changes before proceeding.",
+            )?;
+            commit_sequence(&context)
+                .map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
+        }
         Err(e) if e.to_string().contains("does not have any commits") => {
-            cliclack::log::info("Repository is dirty. Please commit or stash your changes before proceeding.")?;
-            commit_sequence(&context).map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
-        },
-        Err(_) => return Err(anyhow::anyhow!("Failed to check if the repository is dirty.")),
+            cliclack::log::info(
+                "Repository is dirty. Please commit or stash your changes before proceeding.",
+            )?;
+            commit_sequence(&context)
+                .map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
+        }
+        Err(_) => {
+            return Err(anyhow::anyhow!(
+                "Failed to check if the repository is dirty."
+            ));
+        }
     }
     let first_commit_hash = git::get_first_commit_hash();
     if let Err(e) = first_commit_hash {
-        cliclack::outro_cancel("No commits found in the repository. Please make an initial commit before proceeding.")?;
+        cliclack::outro_cancel(
+            "No commits found in the repository. Please make an initial commit before proceeding.",
+        )?;
         return Err(anyhow::anyhow!("Failed to get first commit hash: {}", e));
     }
     let first_commit_hash = first_commit_hash?;
@@ -62,9 +74,17 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     // TODO: Fetch available namespaces from the server
     let available_namespaces = [
         (&user_name, format!("[user] {}", &user_name), ""),
-        (&"my-organisation".to_string(), "[org] my-organization".to_string(), ""),
+        (
+            &"my-organisation".to_string(),
+            "[org] my-organization".to_string(),
+            "",
+        ),
         (&"tracel-ai".to_string(), "[org] tracel-ai".to_string(), ""),
-        (&"burn-central-dev".to_string(), "[org] burn-central-dev".to_string(), ""),
+        (
+            &"burn-central-dev".to_string(),
+            "[org] burn-central-dev".to_string(),
+            "",
+        ),
     ];
     let owner_name = cliclack::select("Select the owner of the project")
         .items(&available_namespaces)
@@ -73,21 +93,24 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
 
     let project_name = {
         let input = cliclack::input(&format!(
-                "Enter the project name (default: {}) ",
-                console::style(&context.metadata().user_crate_name).bold()
-            ))
-            .placeholder(&context.metadata().user_crate_name)
-            .required(false)
-            .validate(|input: &String| {
-                if input.is_empty() {
-                    Ok(())
-                } else if input.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-                    Ok(())
-                } else {
-                    Err("Project name must be alphanumeric or contain underscores only.".to_string())
-                }
-            })
-            .interact::<String>()?;
+            "Enter the project name (default: {}) ",
+            console::style(&context.metadata().user_crate_name).bold()
+        ))
+        .placeholder(&context.metadata().user_crate_name)
+        .required(false)
+        .validate(|input: &String| {
+            if input.is_empty() {
+                Ok(())
+            } else if input
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            {
+                Ok(())
+            } else {
+                Err("Project name must be alphanumeric or contain underscores only.".to_string())
+            }
+        })
+        .interact::<String>()?;
 
         let project_name = if input.is_empty() {
             context.metadata().user_crate_name.clone()
@@ -98,7 +121,8 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     };
 
     // create the burn central project here
-    let created_project = client.create_project(&owner_name, &project_name, Some(&first_commit_hash));
+    let created_project =
+        client.create_project(&owner_name, &project_name, Some(&first_commit_hash));
     if let Err(e) = created_project {
         cliclack::outro_cancel(&format!("Failed to create project: {}", e))?;
         return Err(anyhow::anyhow!("Failed to create project: {}", e));
@@ -111,8 +135,12 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     })?;
     cliclack::log::success("Created project metadata")?;
 
-    let frontend_url = &format!("https://central.burn.dev/{}/{}", owner_name, project_name).parse()?;
-    cliclack::outro(&format!("Project initialized successfully! You can check out your project at {}", Terminal::url(frontend_url)))?;
+    let frontend_url =
+        &format!("https://central.burn.dev/{}/{}", owner_name, project_name).parse()?;
+    cliclack::outro(&format!(
+        "Project initialized successfully! You can check out your project at {}",
+        Terminal::url(frontend_url)
+    ))?;
 
     Ok(())
 }
@@ -146,9 +174,11 @@ pub fn commit_sequence(context: &CliContext) -> anyhow::Result<()> {
             "{}\n{}\n\n{}",
             console::style("Manual commit").bold(),
             console::style("Press Esc, Enter, or Ctrl-C").dim(),
-            console::style("Please make a commit before proceeding. Press Enter to continue or Esc to cancel.")
-                .magenta()
-                .italic()
+            console::style(
+                "Please make a commit before proceeding. Press Enter to continue or Esc to cancel."
+            )
+            .magenta()
+            .italic()
         );
         spinner.start(message);
         let term = console::Term::stderr();

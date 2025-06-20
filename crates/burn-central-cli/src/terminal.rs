@@ -1,5 +1,5 @@
-use std::io::Write;
 use console::Term;
+use std::io::Write;
 
 pub struct Terminal {
     inner: Term,
@@ -24,14 +24,11 @@ impl Terminal {
 
     #[allow(dead_code)]
     pub fn read_line(&self, prompt: &str) -> anyhow::Result<String> {
-        let line = self
-            .inner
-            .read_line_initial_text(prompt)?;
+        let line = self.inner.read_line_initial_text(prompt)?;
         Ok(line)
     }
 
     pub fn read_password(&mut self, prompt: &str) -> anyhow::Result<String> {
-
         let prompt = format!("{} {prompt}: ", console::style("?").green());
         self.inner
             .write(&prompt.as_bytes())
@@ -42,7 +39,8 @@ impl Terminal {
             .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))?;
 
         self.inner.clear_last_lines(1)?;
-        self.inner.write_line(&format!("{}{}", &prompt, "********"))?;
+        self.inner
+            .write_line(&format!("{}{}", &prompt, "********"))?;
 
         Ok(password)
     }

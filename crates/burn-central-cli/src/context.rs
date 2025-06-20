@@ -8,8 +8,8 @@ use burn_central_client::client::{
     BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
 };
 use burn_central_client::schemas::ProjectPath;
-use std::path::{Path, PathBuf};
 use cargo_metadata::Error::CargoMetadata;
+use std::path::{Path, PathBuf};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
@@ -155,9 +155,7 @@ impl CliContext {
             .exec();
 
         match metadata {
-            Ok(meta) => {
-                Ok(meta.workspace_root.into())
-            }
+            Ok(meta) => Ok(meta.workspace_root.into()),
             Err(e) => Err(anyhow::anyhow!("Unexpected error: {}", e)),
         }
     }
