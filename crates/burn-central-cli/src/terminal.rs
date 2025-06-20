@@ -47,15 +47,6 @@ impl Terminal {
         Ok(password)
     }
 
-    pub fn read_confirmation(&self, prompt: &str) -> anyhow::Result<bool> {
-        let response = self.read_line(prompt)?;
-        match response.trim().to_lowercase().as_str() {
-            "y" | "yes" => Ok(true),
-            "n" | "no" => Ok(false),
-            _ => Err(anyhow::anyhow!("Invalid response: {}", response)),
-        }
-    }
-
     pub fn wait_for_keypress(&self) -> anyhow::Result<()> {
         self.inner
             .read_key()
