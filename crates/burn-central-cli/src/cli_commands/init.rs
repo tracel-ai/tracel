@@ -1,8 +1,10 @@
+use std::io::Write;
 use crate::burn_dir::project::BurnCentralProject;
 use crate::context::CliContext;
 use crate::util::git;
 use anyhow::Context;
 use clap::Args;
+use crate::terminal::Terminal;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -26,97 +28,98 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         .get_workspace_root()
         .context("Failed to get workspace root")?;
 
-    if !git::is_repo_initialized() {
-        context
-            .terminal()
-            .print("No git repository found. Initializing a new git repository.");
-        let repo = git::init_repo(&ws_root)?;
-        context.terminal().print(&format!(
-            "Initialized new git repository at: {}",
-            repo.path().display()
-        ));
-    }
-    let first_commit_hash = match git::get_first_commit_hash() {
-        Ok(first_commit_hash) => {
-            context
-                .terminal()
-                .print(&format!("First commit hash: {}", first_commit_hash));
-            first_commit_hash
-        }
-        Err(e) => {
-            if !e.to_string().contains("does not have any commits") {
-                return Err(e);
-            }
-            context.terminal().print("No commits found in the repository. Please make an initial commit before proceeding.");
-            match commit_sequence(&context) {
-                Ok(_) => {
-                    context
-                        .terminal()
-                        .print("Initial commit made successfully.");
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to make initial commit: {}", e));
-                }
-            }
-            git::get_first_commit_hash()
-                .context("Failed to get first commit hash after initial commit")?
-        }
-    };
+    cliclack::clear_screen()?;
+    cliclack::intro(console::style("Project Initialization").black().on_blue())?;
 
-    let input_project_name = loop {
-        let input = context
-            .terminal()
-            .read_line(&format!(
+    if !git::is_repo_initialized() {
+        let repo = git::init_repo(&ws_root)?;
+        cliclack::log::step(&format!(
+            "No git repository found. Initialized new git repository at: {}",
+            repo.path().display()
+        ))?;
+    }
+    match git::is_repo_dirty() {
+        Ok(false) => (),
+        Ok(true) => {
+            cliclack::log::info("Repository is dirty. Please commit or stash your changes before proceeding.")?;
+            commit_sequence(&context).map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
+        },
+        Err(e) if e.to_string().contains("does not have any commits") => {
+            cliclack::log::info("Repository is dirty. Please commit or stash your changes before proceeding.")?;
+            commit_sequence(&context).map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
+        },
+        Err(_) => return Err(anyhow::anyhow!("Failed to check if the repository is dirty.")),
+    }
+    let first_commit_hash = git::get_first_commit_hash();
+    if let Err(e) = first_commit_hash {
+        cliclack::outro_cancel("No commits found in the repository. Please make an initial commit before proceeding.")?;
+        return Err(anyhow::anyhow!("Failed to get first commit hash: {}", e));
+    }
+    let first_commit_hash = first_commit_hash?;
+
+    let user_name = client.get_current_user()?.username;
+
+    // TODO: Fetch available namespaces from the server
+    let available_namespaces = [
+        (&user_name, format!("[user] {}", &user_name), ""),
+        (&"my-organisation".to_string(), "[org] my-organization".to_string(), ""),
+        (&"tracel-ai".to_string(), "[org] tracel-ai".to_string(), ""),
+        (&"burn-central-dev".to_string(), "[org] burn-central-dev".to_string(), ""),
+    ];
+    let owner_name = cliclack::select("Select the owner of the project")
+        .items(&available_namespaces)
+        .initial_value(&available_namespaces[0].clone().0)
+        .interact()?;
+
+    let project_name = {
+        let input = cliclack::input(&format!(
                 "Enter the project name (default: {}) ",
                 console::style(&context.metadata().user_crate_name).bold()
             ))
-            .map(|s| s.trim().to_string())
-            .context("Failed to read project name")?;
+            .placeholder(&context.metadata().user_crate_name)
+            .required(false)
+            .validate(|input: &String| {
+                if input.is_empty() {
+                    Ok(())
+                } else if input.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    Ok(())
+                } else {
+                    Err("Project name must be alphanumeric or contain underscores only.".to_string())
+                }
+            })
+            .interact::<String>()?;
 
         let project_name = if input.is_empty() {
             context.metadata().user_crate_name.clone()
         } else {
             input
         };
-
-        if project_name.is_empty() {
-            context
-                .terminal()
-                .print("Project name cannot be empty. Please try again.");
-        } else {
-            break project_name;
-        }
+        project_name
     };
 
-    context.terminal().print("Creating project metadata...");
+    // create the burn central project here
+
     context.burn_dir().save_project(&BurnCentralProject {
-        name: input_project_name,
-        owner: client.get_current_user()?.username,
+        name: project_name.clone(),
+        owner: owner_name.clone(),
         git: first_commit_hash,
     })?;
+    cliclack::log::success("Created project metadata")?;
+
+    let frontend_url = &format!("https://central.burn.dev/{}/{}", owner_name, project_name).parse()?;
+    cliclack::outro(&format!("Project initialized successfully! You can check out your project at {}", Terminal::url(frontend_url)))?;
 
     Ok(())
 }
 
 pub fn commit_sequence(context: &CliContext) -> anyhow::Result<()> {
-    let do_commit = loop {
-        match context
-            .terminal()
-            .read_confirmation("Do you want to automatically commit all files? (y/n) ")
-        {
-            Ok(value) => break value,
-            Err(e) => {
-                context.terminal().print(&format!(
-                    "Failed to read confirmation: {}. Please try again.",
-                    e
-                ));
-            }
-        }
-    };
+    let do_commit = cliclack::confirm("Automatically commit all files?").interact()?;
     if do_commit {
-        let commit_message = "Initial commit by Burn Central CLI";
+        let commit_message = "Automatic commit by Burn Central CLI";
         let status = std::process::Command::new("git")
             .args(["add", "."])
+            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
             .status()
             .context("Failed to run `git add .`")?;
         if !status.success() {
@@ -124,20 +127,45 @@ pub fn commit_sequence(context: &CliContext) -> anyhow::Result<()> {
         }
         let status = std::process::Command::new("git")
             .args(["commit", "-m", commit_message])
+            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
             .status()
             .context("Failed to run `git commit -m`")?;
         if !status.success() {
             return Err(anyhow::anyhow!("Failed to commit files to git"));
         }
-        context.terminal().print("Committed all files to git.");
+        cliclack::log::success("Committed all files to git.")?;
     } else {
+        let spinner = cliclack::spinner();
+        let message = format!(
+            "{}\n{}\n\n{}",
+            console::style("Manual commit").bold(),
+            console::style("Press Esc, Enter, or Ctrl-C").dim(),
+            console::style("Please make a commit before proceeding. Press Enter to continue or Esc to cancel.")
+                .magenta()
+                .italic()
+        );
+        spinner.start(message);
+        let term = console::Term::stderr();
         loop {
-            context
-                .terminal()
-                .print("Please make an initial commit before proceeding. Press any key to try again.");
-            context.terminal().wait_for_keypress()?;
-            if git::get_first_commit_hash().is_ok() {
-                break;
+            match term.read_key() {
+                Ok(console::Key::Escape) => {
+                    spinner.cancel("Manual commit");
+                    cliclack::outro_cancel("Cancelled")?;
+                    return Err(anyhow::anyhow!("Manual commit cancelled"));
+                }
+                Ok(console::Key::Enter) => {
+                    if !git::is_repo_dirty().is_ok() {
+                        spinner.stop("Manual commit");
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    spinner.error("Manual commit");
+                    cliclack::outro_cancel("Interrupted")?;
+                    return Err(anyhow::anyhow!("Manual commit interrupted"));
+                }
+                _ => continue,
             }
         }
     }

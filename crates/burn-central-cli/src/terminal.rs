@@ -45,14 +45,7 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn read_password(&self, prompt: Option<&str>) -> anyhow::Result<String> {
-        let pass = dialoguer::Password::new();
-        if let Some(prompt) = prompt {
-            pass.with_prompt(prompt)
-        } else {
-            pass
-        }
-        .interact()
-        .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))
+    pub fn url(url: &url::Url) -> String {
+        format!("\x1b[1;34m{}\x1b[0m", url)
     }
 }

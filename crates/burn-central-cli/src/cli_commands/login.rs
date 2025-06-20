@@ -3,10 +3,7 @@ use crate::context::{CliContext, ClientCreationError};
 use anyhow::Context;
 use burn_central_client::client::BurnCentralClient;
 use clap::Args;
-
-fn format_console_url(url: &url::Url) -> String {
-    format!("\x1b[1;34m{}\x1b[0m", url)
-}
+use crate::terminal::Terminal;
 
 #[derive(Args, Debug)]
 pub struct LoginArgs {
@@ -17,9 +14,9 @@ pub struct LoginArgs {
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     let prompt = format!(
         "Enter your API key found on {} below:\n",
-        format_console_url(&context.get_api_endpoint().join("me")?)
+        Terminal::url(&context.get_api_endpoint().join("me")?)
     );
-    let api_key = context.terminal().read_password(Some(&prompt))?;
+    let api_key = context.terminal().read_line(&prompt)?;
     if !api_key.trim().is_empty() {
         context.set_credentials(Credentials { api_key });
     } else {
