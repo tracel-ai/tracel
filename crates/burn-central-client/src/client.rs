@@ -8,7 +8,7 @@ use burn::tensor::backend::Backend;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::errors::client::BurnCentralClientError;
+use crate::error::BurnCentralClientError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::error::BurnCentralHttpError;
 use crate::http::{EndExperimentStatus, HttpClient};
@@ -195,7 +195,7 @@ impl BurnCentralClient {
             match client.connect() {
                 Ok(_) => break,
                 Err(e) => {
-                    println!("Failed to connect to the server: {}", e);
+                    // println!("Failed to connect to the server: {}", e);
 
                     if i == client.config.num_retries {
                         return Err(BurnCentralClientError::ServerConnectionError(
@@ -208,7 +208,7 @@ impl BurnCentralClient {
                         body: msg,
                     }) = e
                     {
-                        println!("Invalid API key. Please check your API key and try again.");
+                        // println!("Invalid API key. Please check your API key and try again.");
                         return Err(BurnCentralClientError::InvalidCredentialsError(format!(
                             "Invalid API key: {msg}"
                         )));
@@ -449,6 +449,26 @@ impl BurnCentralClient {
         )?;
 
         Ok(())
+    }
+
+    pub fn create_project(
+        &self,
+        namespace_name: &str,
+        project_name: &str,
+        description: Option<&str>,
+    ) -> Result<ProjectPath, BurnCentralClientError> {
+        self.http_client
+            .create_project(namespace_name, project_name, description)
+            .map_err(|e| {
+                BurnCentralClientError::CreateProjectError(format!(
+                    "Failed to create project: {}",
+                    e
+                ))
+            })?;
+
+        let new_project_path =
+            ProjectPath::new(namespace_name.to_string(), project_name.to_string());
+        Ok(new_project_path)
     }
 
     pub fn upload_new_project_version(

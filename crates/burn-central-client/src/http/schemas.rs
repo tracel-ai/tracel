@@ -62,6 +62,7 @@ pub struct RunnerQueueJobParamsSchema {
 
 #[derive(Deserialize)]
 pub struct UserResponseSchema {
+    #[serde(rename = "id")]
     pub _id: i32,
     pub username: String,
     pub email: String,

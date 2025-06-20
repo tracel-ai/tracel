@@ -4,7 +4,7 @@ use burn::train::logger::MetricLogger;
 use burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::client::BurnCentralClientState;
-use crate::errors::client::BurnCentralClientError;
+use crate::error::BurnCentralClientError;
 use crate::experiment::{Split, WsMessage};
 
 /// The remote metric logger, used to send metric logs to Burn Central.
