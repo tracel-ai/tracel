@@ -21,6 +21,7 @@ pub struct Dependency {
     pub version: String,
     pub kind: DependencyKind,
     pub features: Vec<String>,
+    pub default_features: bool,
 }
 
 impl Dependency {
@@ -29,21 +30,30 @@ impl Dependency {
         version: String,
         registry: Option<String>,
         features: Vec<String>,
+        default_features: bool,
     ) -> Self {
         Self {
             name,
             version,
             kind: DependencyKind::Registry(registry),
             features,
+            default_features,
         }
     }
 
-    pub fn new_path(name: String, version: String, path: String, features: Vec<String>) -> Self {
+    pub fn new_path(
+        name: String,
+        version: String,
+        path: String,
+        features: Vec<String>,
+        default_features: bool,
+    ) -> Self {
         Self {
             name,
             version,
             kind: DependencyKind::Path(path),
             features,
+            default_features,
         }
     }
 
@@ -53,12 +63,14 @@ impl Dependency {
         url: String,
         query: QueryType,
         features: Vec<String>,
+        default_features: bool,
     ) -> Self {
         Self {
             name,
             version,
             kind: DependencyKind::Git(url, query),
             features,
+            default_features,
         }
     }
 
@@ -148,6 +160,7 @@ impl std::fmt::Display for CargoToml {
                     dep_table["features"] =
                         toml_edit::Item::Value(toml_edit::Value::Array(feat_arr));
                 }
+                dep_table["default-features"] = toml_edit::value(dep.default_features);
                 match &dep.kind {
                     DependencyKind::Path(path) => {
                         dep_table["path"] = toml_edit::value(path);

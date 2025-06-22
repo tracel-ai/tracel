@@ -17,7 +17,6 @@ rust-version.workspace = true
 # todo: temporary fix until burn updates its bincode version to 2.0.0
 bincode = "2.0.1"
 burn = { workspace = true, features = ["train"] }
-
 derive-new = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
@@ -27,7 +26,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
-tracing = { version = "0.1.41" }
+tracing = { workspace = true }
 tracing-core = { version = "0.1.33" }
 tracing-subscriber = { version = "0.3.19" }
 tungstenite = { version = "0.26.2", features = ["native-tls"] }

@@ -91,6 +91,7 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
             version,
             package.path.as_ref().unwrap().clone(),
             vec![],
+            package.uses_default_features
         )
     } else {
         let source = package.source.as_ref().unwrap();
@@ -133,13 +134,14 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
                     url.path()
                 );
 
-                Dependency::new_git(package.name.clone(), version, dep_url, query_type, vec![])
+                Dependency::new_git(package.name.clone(), version, dep_url, query_type, vec![], package.uses_default_features)
             }
             "registry" => Dependency::new(
                 package.name.clone(),
                 version,
                 package.registry.clone(),
                 vec![],
+                package.uses_default_features,
             ),
             _ => {
                 panic!("Error")
@@ -419,18 +421,21 @@ pub fn create_crate(
         "*".to_string(),
         user_project_dir.to_string(),
         vec![],
+        true,
     ));
     generated_crate.add_dependency(Dependency::new(
         "clap".to_string(),
         "*".to_string(),
         None,
         vec!["cargo".to_string()],
+        true,
     ));
     generated_crate.add_dependency(Dependency::new(
         "serde_json".to_string(),
         "*".to_string(),
         None,
         vec![],
+        true,
     ));
     find_required_dependencies(vec!["burn-central", "burn"])
         .drain(..)
