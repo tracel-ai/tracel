@@ -45,13 +45,6 @@ impl Terminal {
         Ok(password)
     }
 
-    pub fn wait_for_keypress(&self) -> anyhow::Result<()> {
-        self.inner
-            .read_key()
-            .map_err(|e| anyhow::anyhow!("Failed to read keypress: {}", e))?;
-        Ok(())
-    }
-
     pub fn url(url: &url::Url) -> String {
         format!("\x1b[1;34m{}\x1b[0m", url)
     }

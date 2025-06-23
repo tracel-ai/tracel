@@ -226,7 +226,7 @@ impl HttpClient {
 
     pub fn create_project(
         &self,
-        owner_name: &str,
+        _owner_name: &str,
         project_name: &str,
         project_description: Option<&str>,
     ) -> Result<ProjectSchema, BurnCentralHttpError> {

@@ -43,14 +43,14 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
             cliclack::log::info(
                 "Repository is dirty. Please commit or stash your changes before proceeding.",
             )?;
-            commit_sequence(&context)
+            commit_sequence()
                 .map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
         }
         Err(e) if e.to_string().contains("does not have any commits") => {
             cliclack::log::info(
                 "Repository is dirty. Please commit or stash your changes before proceeding.",
             )?;
-            commit_sequence(&context)
+            commit_sequence()
                 .map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
         }
         Err(_) => {
@@ -98,11 +98,10 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         .placeholder(&context.metadata().user_crate_name)
         .required(false)
         .validate(|input: &String| {
-            if input.is_empty() {
-                Ok(())
-            } else if input
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            if input.is_empty()
+                || input
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
             {
                 Ok(())
             } else {
@@ -143,7 +142,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     Ok(())
 }
 
-pub fn commit_sequence(context: &CliContext) -> anyhow::Result<()> {
+pub fn commit_sequence() -> anyhow::Result<()> {
     let do_commit = cliclack::confirm("Automatically commit all files?").interact()?;
     if do_commit {
         let commit_message = "Automatic commit by Burn Central CLI";
