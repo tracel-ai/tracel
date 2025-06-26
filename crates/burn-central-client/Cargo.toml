@@ -34,3 +34,8 @@ tungstenite = { version = "0.26.2", features = ["native-tls"] }
 uuid = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
+axum = { version = "0.8.4", features = ["tokio", "macros"] }
+tokio = "1.45.1"
+
+[dev-dependencies]
+burn = { workspace = true, features = ["train", "ndarray"] }
