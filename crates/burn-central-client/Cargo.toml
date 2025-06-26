@@ -39,3 +39,6 @@ tokio = "1.45.1"
 
 [dev-dependencies]
 burn = { workspace = true, features = ["train", "ndarray"] }
+tower = { version = "0.4.1", features = ["util"] }
+http-body-util = "0.1.0"
+mime = "0.3.17"
