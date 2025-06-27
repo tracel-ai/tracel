@@ -190,6 +190,6 @@ impl std::fmt::Display for CargoToml {
             cargo_toml.to_string()
         };
 
-        write!(f, "{}", formatted)
+        write!(f, "{formatted}")
     }
 }

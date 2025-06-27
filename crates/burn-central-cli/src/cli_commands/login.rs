@@ -45,8 +45,7 @@ pub fn get_client_and_login_if_needed(
                     }
                     Err(e) => {
                         context.terminal().print(&format!(
-                            "Failed to create client: {}. Please try again. Press Ctrl+C to exit.",
-                            e
+                            "Failed to create client: {e}. Please try again. Press Ctrl+C to exit."
                         ));
                         continue;
                     }
@@ -55,7 +54,7 @@ pub fn get_client_and_login_if_needed(
             ClientCreationError::ServerConnectionError(msg) => {
                 context
                     .terminal()
-                    .print(&format!("Failed to connect to the server: {}.", msg));
+                    .print(&format!("Failed to connect to the server: {msg}."));
                 continue;
             }
         }

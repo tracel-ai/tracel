@@ -132,7 +132,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
             ProjectPath::new(project.namespace_name, project.project_name)
         }
         Err(e) => {
-            cliclack::outro_cancel(format!("Failed to check for existing project: {}", e))?;
+            cliclack::outro_cancel(format!("Failed to check for existing project: {e}"))?;
             return Err(anyhow::anyhow!(
                 "Failed to check for existing project: {}",
                 e
@@ -153,7 +153,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
             let created_project =
                 client.create_project(owner_name, &project_name, description_input.as_deref());
             if let Err(e) = created_project {
-                cliclack::outro_cancel(format!("Failed to create project: {}", e))?;
+                cliclack::outro_cancel(format!("Failed to create project: {e}"))?;
                 return Err(anyhow::anyhow!("Failed to create project: {}", e));
             }
             created_project?
@@ -169,8 +169,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     })?;
     cliclack::log::success("Created project metadata")?;
 
-    let frontend_url =
-        &format!("https://central.burn.dev/{}/{}", owner_name, project_name).parse()?;
+    let frontend_url = &format!("https://central.burn.dev/{owner_name}/{project_name}").parse()?;
     cliclack::outro(format!(
         "Project initialized successfully! You can check out your project at {}",
         Terminal::url(frontend_url)

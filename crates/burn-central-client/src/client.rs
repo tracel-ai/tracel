@@ -471,9 +471,7 @@ impl BurnCentralClient {
                     Err(e)
                 }
             })
-            .map_err(|e| {
-                BurnCentralClientError::GetProjectError(format!("{}: {}", project_name, e))
-            })?;
+            .map_err(|e| BurnCentralClientError::GetProjectError(format!("{project_name}: {e}")))?;
 
         Ok(project)
     }
@@ -487,10 +485,7 @@ impl BurnCentralClient {
         self.http_client
             .create_project(namespace_name, project_name, description)
             .map_err(|e| {
-                BurnCentralClientError::CreateProjectError(format!(
-                    "Failed to create project: {}",
-                    e
-                ))
+                BurnCentralClientError::CreateProjectError(format!("Failed to create project: {e}"))
             })?;
 
         let new_project_path =
@@ -538,14 +533,12 @@ impl BurnCentralClient {
                 .urls
                 .get(&crate_name)
                 .ok_or(BurnCentralClientError::UnknownError(format!(
-                    "No URL found for crate {}",
-                    crate_name
+                    "No URL found for crate {crate_name}"
                 )))?;
 
             let data = std::fs::read(file_path).map_err(|e| {
                 BurnCentralClientError::FileReadError(format!(
-                    "Could not read crate data for crate {}: {}",
-                    crate_name, e
+                    "Could not read crate data for crate {crate_name}: {e}"
                 ))
             })?;
 
@@ -574,8 +567,7 @@ impl BurnCentralClient {
             project_version,
         )? {
             return Err(BurnCentralClientError::StartRemoteJobError(format!(
-                "Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.",
-                project_version
+                "Project version `{project_version}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version."
             )));
         }
 

@@ -211,8 +211,7 @@ impl HttpClient {
         exp_num: i32,
     ) -> String {
         let mut url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/ws",
-            owner_name, project_name, exp_num
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/ws"
         ));
         url.set_scheme(if self.base_url.scheme() == "https" {
             "wss"
@@ -249,7 +248,7 @@ impl HttpClient {
     ) -> Result<ProjectSchema, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
-        let url = self.join(&format!("projects/{}/{}", owner_name, project_name));
+        let url = self.join(&format!("projects/{owner_name}/{project_name}"));
 
         self.get_json::<ProjectSchema>(url)
     }
@@ -264,10 +263,7 @@ impl HttpClient {
     ) -> Result<Experiment, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
-        let url = self.join(&format!(
-            "projects/{}/{}/experiments",
-            owner_name, project_name
-        ));
+        let url = self.join(&format!("projects/{owner_name}/{project_name}/experiments"));
 
         // Create a new experiment
         let experiment_response = self
@@ -306,8 +302,7 @@ impl HttpClient {
         };
 
         let url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/start",
-            owner_name, project_name, exp_num
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/start"
         ));
 
         // Start the experiment
@@ -327,8 +322,7 @@ impl HttpClient {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/end",
-            owner_name, project_name, exp_num
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/end"
         ));
 
         let end_status: EndExperimentSchema = match end_status {
@@ -352,8 +346,7 @@ impl HttpClient {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/checkpoints/{}",
-            owner_name, project_name, exp_num, file_name
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/checkpoints/{file_name}"
         ));
 
         let save_url = self
@@ -376,8 +369,7 @@ impl HttpClient {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/checkpoints/{}",
-            owner_name, project_name, exp_num, file_name
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/checkpoints/{file_name}"
         ));
 
         let load_url = self.get_json::<URLSchema>(url).map(|res| res.url)?;
@@ -397,8 +389,7 @@ impl HttpClient {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/save_model",
-            owner_name, project_name, exp_num
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/save_model"
         ));
 
         let save_url = self
@@ -420,8 +411,7 @@ impl HttpClient {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{}/{}/experiments/{}/logs",
-            owner_name, project_name, exp_num
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/logs"
         ));
 
         let logs_upload_url = self
@@ -476,10 +466,7 @@ impl HttpClient {
     ) -> Result<CodeUploadUrlsSchema, BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
-        let url = self.join(&format!(
-            "projects/{}/{}/code/upload",
-            owner_name, project_name
-        ));
+        let url = self.join(&format!("projects/{owner_name}/{project_name}/code/upload"));
 
         self.post_json(
             url,
@@ -501,8 +488,7 @@ impl HttpClient {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{}/{}/code/{}",
-            owner_name, project_name, project_version
+            "projects/{owner_name}/{project_name}/code/{project_version}"
         ));
 
         let response = self.req(reqwest::Method::GET, url, None::<serde_json::Value>)?;
@@ -527,10 +513,7 @@ impl HttpClient {
     ) -> Result<(), BurnCentralHttpError> {
         self.validate_session_cookie()?;
 
-        let url = self.join(&format!(
-            "projects/{}/{}/jobs/queue",
-            owner_name, project_name
-        ));
+        let url = self.join(&format!("projects/{owner_name}/{project_name}/jobs/queue"));
 
         let body = RunnerQueueJobParamsSchema {
             runner_group_name: runner_group_name.to_string(),

@@ -187,7 +187,7 @@ impl ProjectContext {
             .expect("Package name should exist")
             .to_string();
         print_info!("Project name: {}", user_crate_name);
-        let generated_crate_name = format!("{}_gen", user_crate_name);
+        let generated_crate_name = format!("{user_crate_name}_gen");
 
         let user_crate_dir = manifest_path
             .parent()

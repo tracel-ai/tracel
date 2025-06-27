@@ -46,6 +46,6 @@ impl Terminal {
     }
 
     pub fn url(url: &url::Url) -> String {
-        format!("\x1b[1;34m{}\x1b[0m", url)
+        format!("\x1b[1;34m{url}\x1b[0m")
     }
 }

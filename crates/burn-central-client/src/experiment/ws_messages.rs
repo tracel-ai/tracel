@@ -34,6 +34,6 @@ impl<S: Into<String> + Clone> From<S> for WsMessage {
 impl fmt::Display for WsMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let json_string = serde_json::to_string(self).expect("WsMessage should serialize to JSON");
-        write!(f, "{}", json_string)
+        write!(f, "{json_string}")
     }
 }
