@@ -35,8 +35,6 @@ mod core {
         use crate::client::BurnCentralClient;
         use burn::prelude::Backend;
 
-        use serde::{Deserialize, Serialize};
-
         /// A context that contains necessary information for operating with models managed by Burn Central.
         #[derive(Debug, Clone)]
         pub struct ModelContext<B: Backend> {
@@ -73,13 +71,6 @@ mod core {
             ) -> Result<Self::Output, Self::Error>;
         }
 
-        // /// A trait that represents a model that can be loaded from an arbitrary source, such as a remote server.
-        // pub trait Load<B: Backend> {
-        //     fn load_from_context(self, context: ModelContext<B>) -> Result<Self, String>
-        //     where
-        //         Self: Sized;
-        // }
-
         pub trait ModelLoader<B: Backend> {
             type Model: Model<B>;
             /// Load a model from the given context.
@@ -112,10 +103,10 @@ mod core {
     /// A module that contains the service-related traits and types to allow for the serving of models in user-defined applications.
     pub mod service {
         use crate::core::model::{Model, ModelContext, Predict};
-        use axum::Router;
         use axum::extract::{FromRequest, Request, State};
         use axum::response::IntoResponse;
         use axum::routing::post;
+        use axum::Router;
         use burn::prelude::Backend;
         use serde::{Deserialize, Serialize};
         use std::sync::Arc;
@@ -258,8 +249,8 @@ mod core {
         use tower::util::ServiceExt;
 
         mod nn {
-            use crate::RemoteRecorder;
             use crate::core::model::{Model, ModelContext, ModelLoader, Predict};
+            use crate::RemoteRecorder;
             use burn::module::Module;
             use burn::prelude::Backend;
             use burn::record::FullPrecisionSettings;
@@ -383,7 +374,12 @@ mod core {
                 }
             }
         }
-        fn test_load_model<B: Backend>() {
+
+        #[test]
+        fn test_load_model() {
+            type B = burn::backend::NdArray;
+            type D = burn::backend::ndarray::NdArrayDevice;
+
             let client = BurnCentralClientConfig::builder(
                 BurnCentralCredentials::new("a".to_string()),
                 ProjectPath::try_from("test/test".to_string()).unwrap(),
@@ -391,7 +387,7 @@ mod core {
             .build();
             let client = BurnCentralClient::create(client).unwrap();
 
-            let devices = vec![B::Device::default()];
+            let devices = vec![D::default()];
 
             let context: ModelContext<_> = ModelContext {
                 client: None,
@@ -641,7 +637,7 @@ mod core {
         #[tokio::test]
         async fn test_model_service() {
             use crate::core::service::IntoService;
-            use crate::core::ui_tests::nn::{TestModel, TestModelLoader};
+            use crate::core::ui_tests::nn::TestModel;
             use burn::backend::ndarray::NdArrayDevice;
 
             type BackendImpl = burn::backend::NdArray;
