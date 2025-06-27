@@ -52,20 +52,25 @@ mod core {
             /// The output type for the prediction.
             type Output;
 
+            /// The error type for the prediction.
+            type Error: std::fmt::Debug + std::fmt::Display;
+
             /// Predict the output for the given input.
             ///
             /// # Arguments
             ///
             /// * `input` - The input to predict on.
             ///
+            /// * `context` - The context in which the model is being used, containing client and devices.
+            ///
             /// # Returns
             ///
-            /// The predicted output.
+            /// A result containing the predicted output or an error if the prediction fails.
             fn predict(
                 &self,
                 input: Self::Input,
                 context: ModelContext<B>,
-            ) -> Result<Self::Output, String>;
+            ) -> Result<Self::Output, Self::Error>;
         }
 
         // /// A trait that represents a model that can be loaded from an arbitrary source, such as a remote server.
@@ -102,27 +107,6 @@ mod core {
                 ""
             }
         }
-
-        // impl<R, B> Load<B> for R
-        // where
-        //     R: burn::module::Module<B>,
-        //     B: Backend,
-        // {
-        //     fn load_from_context(self, context: ModelContext<B>) -> Result<Self, String> {
-        //         let device = context
-        //             .devices
-        //             .first()
-        //             .ok_or("No device found in the context")?;
-        //
-        //         let rec =
-        //             RemoteRecorder::<FullPrecisionSettings>::final_model(context.client.clone());
-        //         let record = rec
-        //             .load("".parse().unwrap(), device)
-        //             .map_err(|e| e.to_string())?;
-        //
-        //         Ok(self.load_record(record))
-        //     }
-        // }
     }
 
     /// A module that contains the service-related traits and types to allow for the serving of models in user-defined applications.
@@ -175,7 +159,6 @@ mod core {
         where
             B: Backend,
             M: Model<B> + 'static + Sync + Send,
-            // enforce input and output schemas serializable
             M::Input: for<'de> Deserialize<'de>,
             M::Output: Serialize,
         {
@@ -191,7 +174,6 @@ mod core {
                 use axum::Router;
                 use axum::routing::get;
 
-                // Create a router with a default route that returns the model name and description
                 async fn predict<B, M>(
                     state: State<ServiceStoreState<B, ModelService<M>>>,
                     req: Request,
@@ -199,11 +181,9 @@ mod core {
                 where
                     B: Backend,
                     M: Model<B> + 'static + Sync + Send,
-                    // enforce input and output schemas serializable
                     M::Input: for<'de> Deserialize<'de>,
                     M::Output: Serialize,
                 {
-                    // Here we would implement the prediction logic
                     let input = axum::extract::Json::from_request(req, &())
                         .await
                         .map_err(|e| e.into_response())?;
@@ -213,7 +193,7 @@ mod core {
                         Ok(result) => Ok(axum::response::Json(result).into_response()),
                         Err(err) => Err(axum::response::Response::builder()
                             .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(axum::body::Body::from(err))
+                            .body(axum::body::Body::from(err.to_string()))
                             .unwrap()),
                     }
                 }
@@ -324,7 +304,7 @@ mod core {
             // Generated code for the model trait
             impl<B: Backend> Model<B> for TestModel<B> {
                 fn model_name(&self) -> &str {
-                    "MNISTModel"
+                    "testmodel"
                 }
 
                 fn model_description(&self) -> &str {
@@ -392,6 +372,8 @@ mod core {
             impl<B: Backend> Predict<B> for TestModel<B> {
                 type Input = InputSchema;
                 type Output = OutputSchema;
+                type Error = String;
+
                 fn predict(
                     &self,
                     input: Self::Input,
@@ -434,7 +416,7 @@ mod core {
                 timestamp: std::time::SystemTime,
             }
 
-            #[derive()]
+            // #[derive(Service)]
             // #[service(
             //     name = "TestService",
             //     description = "A test service for Burn Central"
@@ -506,10 +488,8 @@ mod core {
                     // This is just a placeholder for the metadata metrics endpoint
                     let logged_requests = self.logged_requests.read().await;
                     let num_requests = logged_requests.len() as u32;
-                    let successful_requests = logged_requests
-                        .iter()
-                        .filter(|r| r.result.is_ok())
-                        .count() as u32;
+                    let successful_requests =
+                        logged_requests.iter().filter(|r| r.result.is_ok()).count() as u32;
                     let failed_requests = num_requests - successful_requests;
                     let metrics = MyServiceMetrics {
                         total_requests: num_requests,
@@ -542,13 +522,16 @@ mod core {
                     {
                         println!("Received request for prediction");
                         // Here we would call the predict method
-                        let res = state.service.predict_something(
-                            axum::Json::from_request(req, &())
-                                .await
-                                .map_err(|e| e.into_response())?
-                                .0,
-                            (*state.context).clone(),
-                        ).await;
+                        let res = state
+                            .service
+                            .predict_something(
+                                axum::Json::from_request(req, &())
+                                    .await
+                                    .map_err(|e| e.into_response())?
+                                    .0,
+                                (*state.context).clone(),
+                            )
+                            .await;
                         match res {
                             Ok(output) => Ok(Json(output).into_response()),
                             Err(err) => Err(axum::response::Response::builder()
@@ -560,11 +543,10 @@ mod core {
 
                     async fn metrics_handler<B: Backend>(
                         State(state): State<ServiceStoreState<B, TestService<B>>>,
-                    ) -> Result<axum::response::Response, axum::response::Response> {
+                    ) -> Result<axum::response::Response, axum::response::Response>
+                    {
                         // Here we would call the metrics method
-                        let res = state.service.metrics(
-                            (*state.context).clone(),
-                        ).await;
+                        let res = state.service.metrics((*state.context).clone()).await;
                         match res {
                             Ok(metrics) => Ok(Json(metrics).into_response()),
                             Err(err) => Err(axum::response::Response::builder()
@@ -613,7 +595,8 @@ mod core {
                 prediction_type: "test".to_string(),
                 payload: "world".to_string(),
             };
-            let response = service_router.clone()
+            let response = service_router
+                .clone()
                 .oneshot(
                     Request::builder()
                         .method(http::Method::POST)
