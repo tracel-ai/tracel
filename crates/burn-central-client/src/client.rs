@@ -139,9 +139,7 @@ impl BurnCentralClient {
     }
 
     fn get_project_path(&self) -> Option<ProjectPath> {
-        let current_project = &self
-            .config
-            .project_path;
+        let current_project = &self.config.project_path;
         current_project.clone()
     }
 
