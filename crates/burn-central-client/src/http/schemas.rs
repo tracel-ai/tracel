@@ -69,7 +69,7 @@ pub struct UserResponseSchema {
 }
 
 #[allow(dead_code)]
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct ProjectSchema {
     pub project_name: String,
     pub namespace_name: String,

@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::error::BurnCentralClientError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::error::BurnCentralHttpError;
-use crate::http::{EndExperimentStatus, HttpClient};
+use crate::http::{EndExperimentStatus, HttpClient, ProjectSchema};
 use crate::schemas::{
     BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
     User,
@@ -449,6 +449,33 @@ impl BurnCentralClient {
         )?;
 
         Ok(())
+    }
+
+    pub fn find_project(
+        &self,
+        namespace_name: &str,
+        project_name: &str,
+    ) -> Result<Option<ProjectSchema>, BurnCentralClientError> {
+        let project = self
+            .http_client
+            .get_project(namespace_name, project_name)
+            .map(Some)
+            .or_else(|e| {
+                if let BurnCentralHttpError::HttpError {
+                    status: StatusCode::NOT_FOUND,
+                    ..
+                } = e
+                {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| {
+                BurnCentralClientError::GetProjectError(format!("{}: {}", project_name, e))
+            })?;
+
+        Ok(project)
     }
 
     pub fn create_project(

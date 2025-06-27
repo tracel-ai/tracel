@@ -22,12 +22,7 @@ pub enum Commands {
 
     /// Package your project for running on a remote machine.
     Package(cli_commands::package::PackageArgs),
-    // todo
-    // Ls(),
-    // todo
     Login(cli_commands::login::LoginArgs),
-    // todo
-    // Logout,
     Init(cli_commands::init::InitArgs),
 }
 

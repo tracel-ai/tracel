@@ -3,6 +3,7 @@ use crate::context::CliContext;
 use crate::terminal::Terminal;
 use crate::util::git;
 use anyhow::Context;
+use burn_central_client::schemas::ProjectPath;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -117,17 +118,54 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         }
     };
 
-    // create the burn central project here
-    let created_project =
-        client.create_project(owner_name, &project_name, Some(&first_commit_hash));
-    if let Err(e) = created_project {
-        cliclack::outro_cancel(format!("Failed to create project: {}", e))?;
-        return Err(anyhow::anyhow!("Failed to create project: {}", e));
-    }
+    let project_path = match client.find_project(owner_name, &project_name) {
+        Ok(Some(project)) => {
+            if !cliclack::confirm(format!(
+                "Project {} already exists under owner {}. Do you want to link it?",
+                project.project_name, project.namespace_name
+            ))
+            .interact()?
+            {
+                cliclack::outro_cancel("Project initialization cancelled")?;
+                return Err(anyhow::anyhow!("Project initialization cancelled by user"));
+            }
+            ProjectPath::new(project.namespace_name, project.project_name)
+        }
+        Err(e) => {
+            cliclack::outro_cancel(format!("Failed to check for existing project: {}", e))?;
+            return Err(anyhow::anyhow!(
+                "Failed to check for existing project: {}",
+                e
+            ));
+        }
+        Ok(..) => {
+            let description_input =
+                cliclack::input("Enter the project description (default empty) ")
+                    .required(false)
+                    .interact::<String>()?;
+
+            let description_input = if description_input.is_empty() {
+                None
+            } else {
+                Some(description_input)
+            };
+
+            let created_project =
+                client.create_project(owner_name, &project_name, description_input.as_deref());
+            if let Err(e) = created_project {
+                cliclack::outro_cancel(format!("Failed to create project: {}", e))?;
+                return Err(anyhow::anyhow!("Failed to create project: {}", e));
+            }
+            created_project?
+        }
+    };
+
+    let project_name = project_path.project_name();
+    let owner_name = project_path.owner_name();
 
     context.burn_dir().save_project(&BurnCentralProject {
-        name: project_name.clone(),
-        owner: owner_name.clone(),
+        name: project_name.to_string(),
+        owner: owner_name.to_string(),
         git: first_commit_hash,
     })?;
     cliclack::log::success("Created project metadata")?;
