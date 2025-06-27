@@ -29,7 +29,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         .context("Failed to get workspace root")?;
 
     cliclack::clear_screen()?;
-    cliclack::intro(console::style("Project Initialization").black().on_blue())?;
+    cliclack::intro(console::style("Project Initialization").black().on_green())?;
 
     if !git::is_repo_initialized() {
         let repo = git::init_repo(&ws_root)?;
@@ -67,7 +67,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         )?;
         return Err(anyhow::anyhow!("Failed to get first commit hash: {}", e));
     }
-    let first_commit_hash = first_commit_hash?;
+    let _first_commit_hash = first_commit_hash?;
 
     let user_name = client.get_current_user()?.username;
 
@@ -121,7 +121,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     let project_path = match client.find_project(owner_name, &project_name) {
         Ok(Some(project)) => {
             if !cliclack::confirm(format!(
-                "Project {} already exists under owner {}. Do you want to link it?",
+                "Project \"{}\" already exists under owner \"{}\". Do you want to link it?",
                 project.project_name, project.namespace_name
             ))
             .interact()?
@@ -166,7 +166,6 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     context.burn_dir().save_project(&BurnCentralProject {
         name: project_name.to_string(),
         owner: owner_name.to_string(),
-        git: first_commit_hash,
     })?;
     cliclack::log::success("Created project metadata")?;
 

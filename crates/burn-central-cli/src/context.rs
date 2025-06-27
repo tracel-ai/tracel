@@ -134,12 +134,7 @@ impl CliContext {
         let project = self.project_metadata.project.as_ref().unwrap();
 
         // TODO: Verify that the info in the project toml and corresponds to a valid project
-        print_info!(
-            "Project loaded: {} ({}), owner: {}",
-            project.owner,
-            project.name,
-            project.git,
-        );
+        print_info!("Project loaded: {}/{}", project.owner, project.name,);
         Ok(())
     }
 
