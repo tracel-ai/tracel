@@ -26,7 +26,7 @@ pub enum BurnCentralClientError {
     CreateRemoteMetricLoggerError(String),
     #[error("Failed to authenticate user: {0}")]
     AuthenticationError(String),
-    #[error("Inavlid project id: {0}")]
+    #[error("Invalid project id: {0}")]
     InvalidProjectError(String),
     #[error("Failed to set project: {0}")]
     SetProjectError(String),
