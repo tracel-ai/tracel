@@ -112,7 +112,6 @@ pub struct BurnCentralClient {
     config: BurnCentralClientConfig,
     http_client: HttpClient,
     active_experiment: Arc<RwLock<Option<Experiment>>>,
-    current_project: Arc<RwLock<Option<ProjectPath>>>,
 }
 
 /// Type alias for the BurnCentralClient for simplicity
@@ -130,7 +129,6 @@ impl BurnCentralClient {
             config,
             http_client,
             active_experiment: Default::default(),
-            current_project: Default::default(),
         }
     }
 
@@ -140,48 +138,11 @@ impl BurnCentralClient {
         Ok(())
     }
 
-    fn is_experiment_running(&self) -> bool {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-        active_experiment.is_some()
-    }
-
-    #[allow(dead_code)]
-    fn is_project_set(&self) -> bool {
-        let current_project = self
-            .current_project
-            .read()
-            .expect("Should be able to lock current_project as read.");
-        current_project.is_some()
-    }
-
     fn get_project_path(&self) -> Option<ProjectPath> {
-        let current_project = self
-            .current_project
-            .read()
-            .expect("Should be able to lock current_project as read.");
+        let current_project = &self
+            .config
+            .project_path;
         current_project.clone()
-    }
-
-    pub fn set_project(&mut self, project_path: ProjectPath) -> Result<(), BurnCentralClientError> {
-        if self.is_experiment_running() {
-            return Err(BurnCentralClientError::SetProjectError(
-                "Cannot set project while an experiment is running.".to_string(),
-            ));
-        }
-        let _ = self
-            .http_client
-            .get_project(project_path.owner_name(), project_path.project_name())?;
-
-        let mut current_project = self
-            .current_project
-            .write()
-            .expect("Should be able to lock current_project as write.");
-        *current_project = Some(project_path.clone());
-
-        Ok(())
     }
 
     /// Create a new BurnCentralClient with the given configuration.
