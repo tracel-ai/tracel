@@ -91,7 +91,7 @@ impl GeneratedCrate {
         let burn_dir_path = burn_dir.crates_dir().join(&name);
 
         std::fs::create_dir_all(&burn_dir_path)?;
-        file_tree.write_to(burn_dir_path.as_path())?;
+        file_tree.write_to(burn_dir_path.parent().unwrap())?;
 
         cache.add_crate(
             &name,
