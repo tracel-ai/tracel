@@ -2,7 +2,7 @@ use crate::app_config::{AppConfig, Credentials};
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::project::BurnCentralProject;
 use crate::terminal::Terminal;
-use crate::{cargo, config::Config, print_info};
+use crate::{cargo, config::Config};
 use anyhow::Context;
 use burn_central_client::client::{
     BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
@@ -127,12 +127,7 @@ impl CliContext {
     }
 
     pub fn load_project(&mut self) -> anyhow::Result<()> {
-        self.project_metadata.load_project()?;
-        let project = self.project_metadata.project.as_ref().unwrap();
-
-        // TODO: Verify that the info in the project toml and corresponds to a valid project
-        print_info!("Project loaded: {}/{}", project.owner, project.name,);
-        Ok(())
+        self.project_metadata.load_project()
     }
 
     pub fn cwd(&self) -> PathBuf {
@@ -183,7 +178,6 @@ impl ProjectContext {
             .as_str()
             .expect("Package name should exist")
             .to_string();
-        print_info!("Project name: {}", user_crate_name);
         let generated_crate_name = format!("{user_crate_name}_gen");
 
         let user_crate_dir = manifest_path

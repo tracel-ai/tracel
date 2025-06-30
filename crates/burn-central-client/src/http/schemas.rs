@@ -68,7 +68,6 @@ pub struct UserResponseSchema {
     pub email: String,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 pub struct ProjectSchema {
     pub project_name: String,

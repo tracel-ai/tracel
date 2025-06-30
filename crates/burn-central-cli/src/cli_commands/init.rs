@@ -3,7 +3,8 @@ use crate::context::CliContext;
 use crate::terminal::Terminal;
 use crate::util::git;
 use anyhow::Context;
-use burn_central_client::schemas::ProjectPath;
+use burn_central_client::client::BurnCentralClient;
+use burn_central_client::schemas::{Project, ProjectPath};
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -31,35 +32,9 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     cliclack::clear_screen()?;
     cliclack::intro(console::style("Project Initialization").black().on_green())?;
 
-    if !git::is_repo_initialized() {
-        let repo = git::init_repo(&ws_root)?;
-        cliclack::log::step(format!(
-            "No git repository found. Initialized new git repository at: {}",
-            repo.path().display()
-        ))?;
-    }
-    match git::is_repo_dirty() {
-        Ok(false) => (),
-        Ok(true) => {
-            cliclack::log::info(
-                "Repository is dirty. Please commit or stash your changes before proceeding.",
-            )?;
-            commit_sequence()
-                .map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
-        }
-        Err(e) if e.to_string().contains("does not have any commits") => {
-            cliclack::log::info(
-                "Repository is dirty. Please commit or stash your changes before proceeding.",
-            )?;
-            commit_sequence()
-                .map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))?;
-        }
-        Err(_) => {
-            return Err(anyhow::anyhow!(
-                "Failed to check if the repository is dirty."
-            ));
-        }
-    }
+    ensure_git_repo_initialized(&ws_root)?;
+    ensure_git_repo_clean()?;
+
     let first_commit_hash = git::get_first_commit_hash();
     if let Err(e) = first_commit_hash {
         cliclack::outro_cancel(
@@ -69,94 +44,15 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     }
     let _first_commit_hash = first_commit_hash?;
 
-    let user_name = client.get_current_user()?.username;
+    let owner_name = prompt_owner_name(&client)?;
+    let project_name = prompt_project_name(&context)?;
 
-    // TODO: Fetch available namespaces from the server
-    let available_namespaces = [
-        (&user_name, format!("[user] {}", &user_name), ""),
-        (
-            &"my-organisation".to_string(),
-            "[org] my-organization".to_string(),
-            "",
-        ),
-        (&"tracel-ai".to_string(), "[org] tracel-ai".to_string(), ""),
-        (
-            &"burn-central-dev".to_string(),
-            "[org] burn-central-dev".to_string(),
-            "",
-        ),
-    ];
-    let owner_name = cliclack::select("Select the owner of the project")
-        .items(&available_namespaces)
-        .initial_value(available_namespaces[0].clone().0)
-        .interact()?;
-
-    let project_name = {
-        let input = cliclack::input(format!(
-            "Enter the project name (default: {}) ",
-            console::style(&context.metadata().user_crate_name).bold()
-        ))
-        .placeholder(&context.metadata().user_crate_name)
-        .required(false)
-        .validate(|input: &String| {
-            if input.is_empty()
-                || input
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-            {
-                Ok(())
-            } else {
-                Err("Project name must be alphanumeric or contain underscores only.".to_string())
-            }
-        })
-        .interact::<String>()?;
-
-        if input.is_empty() {
-            context.metadata().user_crate_name.clone()
-        } else {
-            input
-        }
-    };
-
-    let project_path = match client.find_project(owner_name, &project_name) {
-        Ok(Some(project)) => {
-            if !cliclack::confirm(format!(
-                "Project \"{}\" already exists under owner \"{}\". Do you want to link it?",
-                project.project_name, project.namespace_name
-            ))
-            .interact()?
-            {
-                cliclack::outro_cancel("Project initialization cancelled")?;
-                return Err(anyhow::anyhow!("Project initialization cancelled by user"));
-            }
-            ProjectPath::new(project.namespace_name, project.project_name)
-        }
+    let project_path = match client.find_project(&owner_name, &project_name) {
+        Ok(Some(project)) => handle_existing_project(&project)?,
+        Ok(None) => create_new_project(&client, &owner_name, &project_name)?,
         Err(e) => {
             cliclack::outro_cancel(format!("Failed to check for existing project: {e}"))?;
-            return Err(anyhow::anyhow!(
-                "Failed to check for existing project: {}",
-                e
-            ));
-        }
-        Ok(..) => {
-            let description_input =
-                cliclack::input("Enter the project description (default empty) ")
-                    .required(false)
-                    .interact::<String>()?;
-
-            let description_input = if description_input.is_empty() {
-                None
-            } else {
-                Some(description_input)
-            };
-
-            let created_project =
-                client.create_project(owner_name, &project_name, description_input.as_deref());
-            if let Err(e) = created_project {
-                cliclack::outro_cancel(format!("Failed to create project: {e}"))?;
-                return Err(anyhow::anyhow!("Failed to create project: {}", e));
-            }
-            created_project?
+            return Err(anyhow::anyhow!(e));
         }
     };
 
@@ -176,6 +72,132 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     ))?;
 
     Ok(())
+}
+
+fn prompt_owner_name(client: &BurnCentralClient) -> anyhow::Result<String> {
+    let user_name = client.get_current_user()?.username;
+    let namespaces = [
+        (&user_name, format!("[user] {user_name}"), ""),
+        (
+            &"my-organisation".to_string(),
+            "[org] my-organization".to_string(),
+            "",
+        ),
+        (&"tracel-ai".to_string(), "[org] tracel-ai".to_string(), ""),
+        (
+            &"burn-central-dev".to_string(),
+            "[org] burn-central-dev".to_string(),
+            "",
+        ),
+    ];
+
+    cliclack::select("Select the owner of the project")
+        .items(&namespaces)
+        .initial_value(namespaces[0].0)
+        .interact()
+        .cloned()
+        .map_err(anyhow::Error::from)
+}
+
+pub fn prompt_project_name(context: &CliContext) -> anyhow::Result<String> {
+    let input = cliclack::input(format!(
+        "Enter the project name (default: {}) ",
+        console::style(&context.metadata().user_crate_name).bold()
+    ))
+    .placeholder(&context.metadata().user_crate_name)
+    .required(false)
+    .validate(|input: &String| {
+        if input.is_empty()
+            || input
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            Ok(())
+        } else {
+            Err("Project name must be alphanumeric or contain underscores only.".to_string())
+        }
+    })
+    .interact::<String>()?;
+
+    let input = if input.is_empty() {
+        context.metadata().user_crate_name.clone()
+    } else {
+        input
+    };
+
+    Ok(input)
+}
+
+fn handle_existing_project(project: &Project) -> anyhow::Result<ProjectPath> {
+    let confirmed = cliclack::confirm(format!(
+        "Project \"{}\" already exists under owner \"{}\". Do you want to link it?",
+        project.project_name, project.namespace_name
+    ))
+    .interact()?;
+
+    if confirmed {
+        Ok(ProjectPath::new(
+            project.namespace_name.clone(),
+            project.project_name.clone(),
+        ))
+    } else {
+        cliclack::outro_cancel("Project initialization cancelled")?;
+        Err(anyhow::anyhow!("Project initialization cancelled by user"))
+    }
+}
+
+fn create_new_project(
+    client: &BurnCentralClient,
+    owner: &str,
+    name: &str,
+) -> anyhow::Result<ProjectPath> {
+    let description = cliclack::input("Enter the project description (default empty)")
+        .required(false)
+        .interact::<String>()?;
+    let desc = if description.is_empty() {
+        None
+    } else {
+        Some(description)
+    };
+
+    client
+        .create_project(owner, name, desc.as_deref())
+        .map_err(|e| {
+            cliclack::outro_cancel(format!("Failed to create project: {e}")).unwrap();
+            anyhow::anyhow!("Failed to create project: {}", e)
+        })
+}
+
+pub fn ensure_git_repo_initialized(ws_root: &std::path::Path) -> anyhow::Result<()> {
+    if !git::is_repo_initialized() {
+        let repo = git::init_repo(ws_root)?;
+        cliclack::log::step(format!(
+            "No git repository found. Initialized new git repository at: {}",
+            repo.path().display()
+        ))?;
+    }
+    Ok(())
+}
+
+pub fn ensure_git_repo_clean() -> anyhow::Result<()> {
+    match git::is_repo_dirty() {
+        Ok(false) => Ok(()),
+        Ok(true) => {
+            cliclack::log::info(
+                "Repository is dirty. Please commit or stash your changes before proceeding.",
+            )?;
+            commit_sequence().map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))
+        }
+        Err(e) if e.to_string().contains("does not have any commits") => {
+            cliclack::log::info(
+                "Repository is dirty. Please commit or stash your changes before proceeding.",
+            )?;
+            commit_sequence().map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))
+        }
+        Err(_) => Err(anyhow::anyhow!(
+            "Failed to check if the repository is dirty."
+        )),
+    }
 }
 
 pub fn commit_sequence() -> anyhow::Result<()> {

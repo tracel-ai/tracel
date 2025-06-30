@@ -11,10 +11,10 @@ use serde::Serialize;
 use crate::error::BurnCentralClientError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::error::BurnCentralHttpError;
-use crate::http::{EndExperimentStatus, HttpClient, ProjectSchema};
+use crate::http::{EndExperimentStatus, HttpClient};
 use crate::schemas::{
-    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
-    User,
+    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, Project,
+    ProjectPath, User,
 };
 use crate::websocket::WebSocketClient;
 
@@ -414,7 +414,7 @@ impl BurnCentralClient {
         &self,
         namespace_name: &str,
         project_name: &str,
-    ) -> Result<Option<ProjectSchema>, BurnCentralClientError> {
+    ) -> Result<Option<Project>, BurnCentralClientError> {
         let project = self
             .http_client
             .get_project(namespace_name, project_name)
@@ -430,8 +430,16 @@ impl BurnCentralClient {
                     Err(e)
                 }
             })
-            .map_err(|e| BurnCentralClientError::GetProjectError(format!("{project_name}: {e}")))?;
-
+            .map_err(|e| BurnCentralClientError::GetProjectError(format!("{project_name}: {e}")))?
+            .map(|project_schema| Project {
+                project_name: project_schema.project_name,
+                namespace_name: project_schema.namespace_name,
+                namespace_type: project_schema.namespace_type,
+                description: project_schema.description,
+                created_by: project_schema.created_by,
+                created_at: project_schema.created_at,
+                visibility: project_schema.visibility,
+            });
         Ok(project)
     }
 

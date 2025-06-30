@@ -277,3 +277,14 @@ pub struct User {
     pub username: String,
     pub email: String,
 }
+
+#[derive(Debug, Clone)]
+pub struct Project {
+    pub project_name: String,
+    pub namespace_name: String,
+    pub namespace_type: String,
+    pub description: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub visibility: String,
+}
