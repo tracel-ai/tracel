@@ -44,10 +44,7 @@ impl CliContext {
         let entry_res = AppConfig::new();
         if let Ok(entry) = entry_res {
             if let Ok(Some(api_key)) = entry.load_credentials() {
-                print_info!("Credentials found.");
                 self.creds = Some(api_key);
-            } else {
-                print_info!("You are not logged in. Please run 'heat login' to log in.");
             }
         }
         self
