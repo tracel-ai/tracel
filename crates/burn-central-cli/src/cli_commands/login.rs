@@ -1,12 +1,9 @@
 use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
+use crate::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::client::BurnCentralClient;
 use clap::Args;
-
-fn format_console_url(url: &url::Url) -> String {
-    format!("\x1b[1;34m{}\x1b[0m", url)
-}
 
 #[derive(Args, Debug)]
 pub struct LoginArgs {
@@ -16,10 +13,11 @@ pub struct LoginArgs {
 
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     let prompt = format!(
-        "Enter your API key found on {} below:\n",
-        format_console_url(&context.get_api_endpoint().join("me")?)
+        "Enter your API key found on {} below.",
+        Terminal::url(&context.get_api_endpoint().join("me")?),
     );
-    let api_key = context.terminal().read_password(Some(&prompt))?;
+    context.terminal().print(&prompt);
+    let api_key = context.terminal_mut().read_password("Key")?;
     if !api_key.trim().is_empty() {
         context.set_credentials(Credentials { api_key });
     } else {
@@ -35,26 +33,33 @@ pub fn get_client_and_login_if_needed(
     context: &mut CliContext,
 ) -> anyhow::Result<BurnCentralClient> {
     let client_res = context.create_client();
-    if let Err(err) = client_res {
+    while let Err(err) = &client_res {
         match err {
-            ClientCreationError::NoCredentials => {
-                context.terminal().print("No credentials found.");
+            ClientCreationError::InvalidCredentials | ClientCreationError::NoCredentials => {
                 prompt_login(context)?;
-                let client = context
-                    .create_client()
-                    .context("Failed to authenticate with the server")?;
-                Ok(client)
+                let client = context.create_client();
+                match client {
+                    Ok(client) => {
+                        context.terminal().print("Successfully logged in!");
+                        return Ok(client);
+                    }
+                    Err(e) => {
+                        context.terminal().print(&format!(
+                            "Failed to create client: {e}. Please try again. Press Ctrl+C to exit."
+                        ));
+                        continue;
+                    }
+                }
             }
-            ClientCreationError::ServerConnectionError(ref msg) => {
+            ClientCreationError::ServerConnectionError(msg) => {
                 context
                     .terminal()
-                    .print(&format!("Failed to connect to the server: {}.", msg));
-                Err(err.into())
+                    .print(&format!("Failed to connect to the server: {msg}."));
+                continue;
             }
         }
-    } else {
-        Ok(client_res?)
     }
+    Ok(client_res?)
 }
 
 pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Result<()> {

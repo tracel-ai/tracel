@@ -8,13 +8,13 @@ use burn::tensor::backend::Backend;
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::errors::client::BurnCentralClientError;
+use crate::error::BurnCentralClientError;
 use crate::experiment::{Experiment, TempLogStore, WsMessage};
 use crate::http::error::BurnCentralHttpError;
 use crate::http::{EndExperimentStatus, HttpClient};
 use crate::schemas::{
-    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
-    User,
+    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, Project,
+    ProjectPath, User,
 };
 use crate::websocket::WebSocketClient;
 
@@ -112,7 +112,6 @@ pub struct BurnCentralClient {
     config: BurnCentralClientConfig,
     http_client: HttpClient,
     active_experiment: Arc<RwLock<Option<Experiment>>>,
-    current_project: Arc<RwLock<Option<ProjectPath>>>,
 }
 
 /// Type alias for the BurnCentralClient for simplicity
@@ -130,7 +129,6 @@ impl BurnCentralClient {
             config,
             http_client,
             active_experiment: Default::default(),
-            current_project: Default::default(),
         }
     }
 
@@ -140,48 +138,9 @@ impl BurnCentralClient {
         Ok(())
     }
 
-    fn is_experiment_running(&self) -> bool {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-        active_experiment.is_some()
-    }
-
-    #[allow(dead_code)]
-    fn is_project_set(&self) -> bool {
-        let current_project = self
-            .current_project
-            .read()
-            .expect("Should be able to lock current_project as read.");
-        current_project.is_some()
-    }
-
     fn get_project_path(&self) -> Option<ProjectPath> {
-        let current_project = self
-            .current_project
-            .read()
-            .expect("Should be able to lock current_project as read.");
+        let current_project = &self.config.project_path;
         current_project.clone()
-    }
-
-    pub fn set_project(&mut self, project_path: ProjectPath) -> Result<(), BurnCentralClientError> {
-        if self.is_experiment_running() {
-            return Err(BurnCentralClientError::SetProjectError(
-                "Cannot set project while an experiment is running.".to_string(),
-            ));
-        }
-        let _ = self
-            .http_client
-            .get_project(project_path.owner_name(), project_path.project_name())?;
-
-        let mut current_project = self
-            .current_project
-            .write()
-            .expect("Should be able to lock current_project as write.");
-        *current_project = Some(project_path.clone());
-
-        Ok(())
     }
 
     /// Create a new BurnCentralClient with the given configuration.
@@ -195,7 +154,7 @@ impl BurnCentralClient {
             match client.connect() {
                 Ok(_) => break,
                 Err(e) => {
-                    println!("Failed to connect to the server: {}", e);
+                    // println!("Failed to connect to the server: {}", e);
 
                     if i == client.config.num_retries {
                         return Err(BurnCentralClientError::ServerConnectionError(
@@ -208,7 +167,7 @@ impl BurnCentralClient {
                         body: msg,
                     }) = e
                     {
-                        println!("Invalid API key. Please check your API key and try again.");
+                        // println!("Invalid API key. Please check your API key and try again.");
                         return Err(BurnCentralClientError::InvalidCredentialsError(format!(
                             "Invalid API key: {msg}"
                         )));
@@ -451,6 +410,56 @@ impl BurnCentralClient {
         Ok(())
     }
 
+    pub fn find_project(
+        &self,
+        namespace_name: &str,
+        project_name: &str,
+    ) -> Result<Option<Project>, BurnCentralClientError> {
+        let project = self
+            .http_client
+            .get_project(namespace_name, project_name)
+            .map(Some)
+            .or_else(|e| {
+                if let BurnCentralHttpError::HttpError {
+                    status: StatusCode::NOT_FOUND,
+                    ..
+                } = e
+                {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| BurnCentralClientError::GetProjectError(format!("{project_name}: {e}")))?
+            .map(|project_schema| Project {
+                project_name: project_schema.project_name,
+                namespace_name: project_schema.namespace_name,
+                namespace_type: project_schema.namespace_type,
+                description: project_schema.description,
+                created_by: project_schema.created_by,
+                created_at: project_schema.created_at,
+                visibility: project_schema.visibility,
+            });
+        Ok(project)
+    }
+
+    pub fn create_project(
+        &self,
+        namespace_name: &str,
+        project_name: &str,
+        description: Option<&str>,
+    ) -> Result<ProjectPath, BurnCentralClientError> {
+        self.http_client
+            .create_project(namespace_name, project_name, description)
+            .map_err(|e| {
+                BurnCentralClientError::CreateProjectError(format!("Failed to create project: {e}"))
+            })?;
+
+        let new_project_path =
+            ProjectPath::new(namespace_name.to_string(), project_name.to_string());
+        Ok(new_project_path)
+    }
+
     pub fn upload_new_project_version(
         &self,
         target_package_name: &str,
@@ -491,14 +500,12 @@ impl BurnCentralClient {
                 .urls
                 .get(&crate_name)
                 .ok_or(BurnCentralClientError::UnknownError(format!(
-                    "No URL found for crate {}",
-                    crate_name
+                    "No URL found for crate {crate_name}"
                 )))?;
 
             let data = std::fs::read(file_path).map_err(|e| {
                 BurnCentralClientError::FileReadError(format!(
-                    "Could not read crate data for crate {}: {}",
-                    crate_name, e
+                    "Could not read crate data for crate {crate_name}: {e}"
                 ))
             })?;
 
@@ -527,8 +534,7 @@ impl BurnCentralClient {
             project_version,
         )? {
             return Err(BurnCentralClientError::StartRemoteJobError(format!(
-                "Project version `{}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version.",
-                project_version
+                "Project version `{project_version}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version."
             )));
         }
 

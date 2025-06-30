@@ -1,4 +1,4 @@
-use thiserror::Error;
+﻿use thiserror::Error;
 
 use crate::{http::error::BurnCentralHttpError, websocket::WebSocketError};
 
@@ -26,7 +26,7 @@ pub enum BurnCentralClientError {
     CreateRemoteMetricLoggerError(String),
     #[error("Failed to authenticate user: {0}")]
     AuthenticationError(String),
-    #[error("Inavlid project id: {0}")]
+    #[error("Invalid project id: {0}")]
     InvalidProjectError(String),
     #[error("Failed to set project: {0}")]
     SetProjectError(String),
@@ -34,6 +34,10 @@ pub enum BurnCentralClientError {
     UploadProjectVersionError(String),
     #[error("Failed to start remote job: {0}")]
     StartRemoteJobError(String),
+    #[error("Failed to create project: {0}")]
+    CreateProjectError(String),
+    #[error("Failed to get project: {0}")]
+    GetProjectError(String),
 
     #[error("File Read Error: {0}")]
     FileReadError(String),

@@ -86,7 +86,7 @@ fn local_run(args: TrainingRunArgs, context: CliContext) -> anyhow::Result<()> {
     for backend in &args.backends {
         for config_path in &args.configs {
             for function in &args.functions {
-                let run_id = format!("{}", backend);
+                let run_id = format!("{backend}");
 
                 commands_to_run.push((
                     BuildCommand {

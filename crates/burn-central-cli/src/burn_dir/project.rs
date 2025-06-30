@@ -6,7 +6,6 @@ use std::{fs, io};
 pub struct BurnCentralProject {
     pub name: String,
     pub owner: String,
-    pub git: String,
 }
 
 impl BurnCentralProject {

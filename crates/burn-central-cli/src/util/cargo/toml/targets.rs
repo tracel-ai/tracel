@@ -150,7 +150,7 @@ pub fn resolve_bins(
 /// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/targets.rs#L333
 fn legacy_bin_path(package_root: &Path, name: &str, has_lib: bool) -> Option<PathBuf> {
     if !has_lib {
-        let rel_path = Path::new("src").join(format!("{}.rs", name));
+        let rel_path = Path::new("src").join(format!("{name}.rs"));
         if package_root.join(&rel_path).exists() {
             return Some(rel_path);
         }
@@ -518,7 +518,7 @@ fn toml_targets_and_inferred(
                             }
                             warnings.push(format!(
                                 "\
-An explicit [[{section}]] section is specified in Cargo.toml which currently
+An explicit [[{target_kind}]] section is specified in Cargo.toml which currently
 disables Cargo from automatically inferring other {target_kind_human} targets.
 This inference behavior will change in the Rust 2018 edition and the following
 files will be included as a {target_kind_human} target:
@@ -532,10 +532,6 @@ automatically infer them to be a target, such as in subfolders.
 
 For more information on this warning you can consult
 https://github.com/rust-lang/cargo/issues/5330",
-                                section = target_kind,
-                                target_kind_human = target_kind_human,
-                                rem_targets_str = rem_targets_str,
-                                autodiscover_flag_name = autodiscover_flag_name,
                             ));
                         };
                         false
@@ -783,9 +779,8 @@ fn validate_target_name(
             }
             if cfg!(windows) && restricted_names::is_windows_reserved(name) {
                 warnings.push(format!(
-                    "{} target `{}` is a reserved Windows filename, \
-                        this target will not work on Windows platforms",
-                    target_kind_human, name
+                    "{target_kind_human} target `{name}` is a reserved Windows filename, \
+                        this target will not work on Windows platforms"
                 ));
             }
         }
@@ -809,9 +804,8 @@ fn validate_bin_proc_macro(
     if target.proc_macro() == Some(true) {
         let name = name_or_panic(target);
         errors.push(format!(
-            "the target `{}` is a binary and can't have `proc-macro` \
-                 set `true`",
-            name
+            "the target `{name}` is a binary and can't have `proc-macro` \
+                 set `true`"
         ));
     } else {
         validate_proc_macro(target, "binary", edition, warnings)?;

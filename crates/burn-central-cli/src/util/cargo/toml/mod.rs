@@ -157,7 +157,7 @@ fn field_inherit_with<T>(
     match field {
         manifest::InheritableField::Value(value) => Ok(value),
         manifest::InheritableField::Inherit(_) => get_ws_inheritable()
-            .with_context(|| format!("`{}` was inherited but `{}` was not defined", label, label)),
+            .with_context(|| format!("`{label}` was inherited but `{label}` was not defined")),
     }
 }
 
@@ -1126,7 +1126,7 @@ fn prepare_target_for_publish(
     let path = target
         .path
         .as_ref()
-        .unwrap_or_else(|| panic!("previously resolved {:?} path", target));
+        .unwrap_or_else(|| panic!("previously resolved {target:?} path"));
     let path = paths::normalize_path(&path.0);
     if !included.contains(&path) {
         let name = target.name.as_ref().expect("previously resolved");

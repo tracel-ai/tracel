@@ -22,12 +22,9 @@ pub enum Commands {
 
     /// Package your project for running on a remote machine.
     Package(cli_commands::package::PackageArgs),
-    // todo
-    // Ls(),
-    // todo
+    /// Log in to the Burn Central server.
     Login(cli_commands::login::LoginArgs),
-    // todo
-    // Logout,
+    /// Initialize a new project or reinitialize an existing one.
     Init(cli_commands::init::InitArgs),
 }
 

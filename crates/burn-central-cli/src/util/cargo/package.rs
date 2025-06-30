@@ -397,7 +397,7 @@ fn create_package(
     let dir = artifacts_dir;
     std::fs::create_dir_all(dir)?;
 
-    let tmp = format!(".{}", filename);
+    let tmp = format!(".{filename}");
     let mut file = std::fs::File::create(dir.join(&tmp))?;
 
     print_info!("Packaging {} files into {}", filecount, filename);

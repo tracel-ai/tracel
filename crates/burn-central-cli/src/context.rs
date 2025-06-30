@@ -2,7 +2,7 @@ use crate::app_config::{AppConfig, Credentials};
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::project::BurnCentralProject;
 use crate::terminal::Terminal;
-use crate::{cargo, config::Config, print_info};
+use crate::{cargo, config::Config};
 use anyhow::Context;
 use burn_central_client::client::{
     BurnCentralClient, BurnCentralClientConfig, BurnCentralCredentials,
@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 pub enum ClientCreationError {
     #[error("No credentials found")]
     NoCredentials,
+    #[error("Invalid credentials")]
+    InvalidCredentials,
     #[error("Server connection error")]
     ServerConnectionError(String),
 }
@@ -42,10 +44,7 @@ impl CliContext {
         let entry_res = AppConfig::new();
         if let Ok(entry) = entry_res {
             if let Ok(Some(api_key)) = entry.load_credentials() {
-                print_info!("Credentials found.");
                 self.creds = Some(api_key);
-            } else {
-                print_info!("You are not logged in. Please run 'heat login' to log in.");
             }
         }
         self
@@ -81,19 +80,20 @@ impl CliContext {
             .ok_or(ClientCreationError::NoCredentials)?;
         let url = self.api_endpoint.as_str();
 
-        let project_path = self.get_project_path();
         let creds = BurnCentralCredentials::new(api_key.to_owned());
         let mut client_config = BurnCentralClientConfig::builder(creds)
             .with_endpoint(url)
             .with_num_retries(3);
-        if let Ok(path) = project_path {
+        if let Ok(path) = self.get_project_path() {
             client_config = client_config.with_project(path);
-        } else {
-            print_info!("No project path found, creating client without project.");
         }
 
-        BurnCentralClient::create(client_config.build())
-            .map_err(|e| ClientCreationError::ServerConnectionError(e.to_string()))
+        BurnCentralClient::create(client_config.build()).map_err(|e| match e {
+            burn_central_client::error::BurnCentralClientError::InvalidCredentialsError(..) => {
+                ClientCreationError::InvalidCredentials
+            }
+            _ => ClientCreationError::ServerConnectionError(e.to_string()),
+        })
     }
 
     pub fn package_name(&self) -> &str {
@@ -127,25 +127,31 @@ impl CliContext {
     }
 
     pub fn load_project(&mut self) -> anyhow::Result<()> {
-        self.project_metadata.load_project()?;
-        let project = self.project_metadata.project.as_ref().unwrap();
-
-        // TODO: Verify that the info in the project toml and corresponds to a valid project
-        print_info!(
-            "Project loaded: {} ({}), owner: {}",
-            project.owner,
-            project.name,
-            project.git,
-        );
-        Ok(())
+        self.project_metadata.load_project()
     }
 
     pub fn cwd(&self) -> PathBuf {
         self.project_metadata.user_crate_dir.clone()
     }
 
+    pub fn get_workspace_root(&self) -> anyhow::Result<PathBuf> {
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .no_deps()
+            .current_dir(self.cwd())
+            .exec();
+
+        match metadata {
+            Ok(meta) => Ok(meta.workspace_root.into()),
+            Err(e) => Err(anyhow::anyhow!("Unexpected error: {}", e)),
+        }
+    }
+
     pub fn terminal(&self) -> &Terminal {
         &self.terminal
+    }
+
+    pub fn terminal_mut(&mut self) -> &mut Terminal {
+        &mut self.terminal
     }
 }
 
@@ -172,8 +178,7 @@ impl ProjectContext {
             .as_str()
             .expect("Package name should exist")
             .to_string();
-        print_info!("Project name: {}", user_crate_name);
-        let generated_crate_name = format!("{}_gen", user_crate_name);
+        let generated_crate_name = format!("{user_crate_name}_gen");
 
         let user_crate_dir = manifest_path
             .parent()

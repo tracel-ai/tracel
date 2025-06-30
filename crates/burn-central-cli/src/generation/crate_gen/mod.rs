@@ -91,7 +91,7 @@ impl GeneratedCrate {
         let burn_dir_path = burn_dir.crates_dir().join(&name);
 
         std::fs::create_dir_all(&burn_dir_path)?;
-        file_tree.write_to(burn_dir_path.as_path())?;
+        file_tree.write_to(burn_dir_path.parent().unwrap())?;
 
         cache.add_crate(
             &name,
@@ -143,7 +143,7 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
 
         let source = source
             .as_str()
-            .strip_prefix(&format!("{}+", source_kind))
+            .strip_prefix(&format!("{source_kind}+"))
             .expect("Should be able to strip prefix.");
         let url = url::Url::parse(source).expect("Should be able to parse url.");
 
@@ -324,7 +324,7 @@ fn generate_proc_call(
     mod_path: &str,
     fn_name: &str,
 ) -> proc_macro2::TokenStream {
-    let syn_func_path = syn::parse_str::<syn::Path>(&format!("{}::{}", mod_path, fn_name))
+    let syn_func_path = syn::parse_str::<syn::Path>(&format!("{mod_path}::{fn_name}"))
         .expect("Failed to parse path.");
 
     quote! {
