@@ -72,7 +72,11 @@ fn bin_name_from_run_id(context: &CliContext, run_id: &str) -> String {
 
 fn get_target_exe_path(context: &CliContext) -> PathBuf {
     let crate_name = &context.generated_crate_name();
-    let target_path = context.burn_dir().crates_dir().join(crate_name).join("target");
+    let target_path = context
+        .burn_dir()
+        .crates_dir()
+        .join(crate_name)
+        .join("target");
 
     target_path
         .join(&context.metadata().build_profile)
@@ -179,7 +183,8 @@ pub(crate) fn execute_build_command(
         &mut cache,
         &target_bin_name,
         src_exe_path.to_str().unwrap(),
-    ).context("Failed to copy binary")?;
+    )
+    .context("Failed to copy binary")?;
 
     burn_dir.save_cache(&cache)?;
 

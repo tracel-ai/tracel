@@ -6,7 +6,7 @@ use burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::client::BurnCentralClientState;
 use crate::error::BurnCentralClientError;
-use crate::experiment::{WsMessage};
+use crate::experiment::WsMessage;
 
 /// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
@@ -18,7 +18,10 @@ pub struct RemoteMetricLogger {
 
 impl RemoteMetricLogger {
     /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
-    pub fn new(client: BurnCentralClientState, group: String) -> Result<Self, BurnCentralClientError> {
+    pub fn new(
+        client: BurnCentralClientState,
+        group: String,
+    ) -> Result<Self, BurnCentralClientError> {
         Ok(Self {
             sender: client.get_experiment_sender().map_err(|e| {
                 BurnCentralClientError::CreateRemoteMetricLoggerError(e.to_string())
