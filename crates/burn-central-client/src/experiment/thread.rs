@@ -48,7 +48,7 @@ impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
                 WsMessage::MetricLog {
                     name,
                     epoch,
-                    iteration,
+                    iteration: _iteration,
                     value,
                     group,
                 } => {
