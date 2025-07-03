@@ -77,13 +77,13 @@ impl GeneratedCrate {
         let file_tree = self.into_file_tree();
         let mut hasher = std::hash::DefaultHasher::new();
         file_tree.hash(&mut hasher);
-        let file_tree_hash = hasher.finish();
+        let file_tree_hash = hasher.finish().to_string();
 
         if let Some(cached_crate) = cache.get_crate(&name) {
             if cached_crate.hash == file_tree_hash {
                 return Ok(());
             } else {
-                std::fs::remove_dir_all(burn_dir.crates_dir().join(&name))?;
+                // std::fs::remove_dir_all(burn_dir.crates_dir().join(&name))?;
                 cache.remove_crate(&name);
             }
         }
@@ -283,11 +283,6 @@ fn generate_clap_cli() -> proc_macro2::TokenStream {
                     .long("api-endpoint")
                     .help("The Burn Central endpoint")
                     .required(true),
-                clap::Arg::new("wss")
-                    .short('w')
-                    .long("wss")
-                    .help("Whether to use WSS")
-                    .required(true),
             ]);
 
             command
@@ -396,12 +391,12 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         use burn_central::command::train::*;
         use burn::prelude::*;
 
-        fn create_client(api_key: &str, url: &str, project: &str, wss: bool) -> burn_central::client::BurnCentralClient {
+        fn create_client(api_key: &str, url: &str, project: &str) -> burn_central::client::BurnCentralClient {
             let creds = burn_central::client::BurnCentralCredentials::new(api_key.to_owned());
-            let client_config = burn_central::client::BurnCentralClientConfig::builder(creds, burn_central::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
+            let client_config = burn_central::client::BurnCentralClientConfig::builder(creds)
                 .with_endpoint(url)
-                .with_wss(wss)
                 .with_num_retries(10)
+                .with_project(burn_central::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
                 .build();
             burn_central::client::BurnCentralClient::create(client_config)
                 .expect("Should connect to the server and create a client")
@@ -415,9 +410,8 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
             let key = matches.get_one::<String>("key").expect("key should be set.");
             let endpoint = matches.get_one::<String>("api-endpoint").expect("api-endpoint should be set.");
             let project = matches.get_one::<String>("project").expect("project should be set.");
-            let wss = matches.get_one::<String>("wss").expect("wss should be set.").parse::<bool>().expect("wss should be a boolean.");
 
-            let client = create_client(&key, &endpoint, &project, wss);
+            let client = create_client(&key, &endpoint, &project);
 
             if let Some(train_matches) = matches.subcommand_matches("train") {
                 let func = train_matches.get_one::<String>("func").expect("func should be set.");

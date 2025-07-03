@@ -2,19 +2,14 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum Split {
-    Train,
-    Val,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub enum WsMessage {
     MetricLog {
         name: String,
         epoch: usize,
+        iteration: usize,
         value: f64,
-        split: Split,
+        group: String,
     },
     Log(String),
     Error(String),

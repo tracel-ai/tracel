@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::mpsc;
 
 use burn::train::logger::MetricLogger;
@@ -5,35 +6,26 @@ use burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::client::BurnCentralClientState;
 use crate::error::BurnCentralClientError;
-use crate::experiment::{Split, WsMessage};
+use crate::experiment::{WsMessage};
 
 /// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
     sender: mpsc::Sender<WsMessage>,
     epoch: usize,
-    split: Split,
+    iterations: HashMap<String, usize>,
+    group: String,
 }
 
 impl RemoteMetricLogger {
-    /// Create a new instance of the remote metric logger for `Training` with the given [BurnCentralClientState].
-    pub fn new_train(client: BurnCentralClientState) -> Self {
-        Self::new(client, Split::Train)
-            .expect("RemoteMetricLogger should be created successfully for training split")
-    }
-
-    /// Create a new instance of the remote metric logger for `Validation` with the given [BurnCentralClientState].
-    pub fn new_validation(client: BurnCentralClientState) -> Self {
-        Self::new(client, Split::Val)
-            .expect("RemoteMetricLogger should be created successfully for validation split")
-    }
-
-    fn new(client: BurnCentralClientState, split: Split) -> Result<Self, BurnCentralClientError> {
+    /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
+    pub fn new(client: BurnCentralClientState, group: String) -> Result<Self, BurnCentralClientError> {
         Ok(Self {
             sender: client.get_experiment_sender().map_err(|e| {
                 BurnCentralClientError::CreateRemoteMetricLoggerError(e.to_string())
             })?,
             epoch: 1,
-            split,
+            iterations: HashMap::new(),
+            group,
         })
     }
 }
@@ -72,18 +64,24 @@ impl MetricLogger for RemoteMetricLogger {
         // deserialize
         let numeric_entry: NumericEntry = deserialize_numeric_entry(value).unwrap();
 
+        let iteration = self.iterations.entry(key.clone()).or_insert(0);
+
         // send to server
         self.sender
             .send(WsMessage::MetricLog {
                 name: key.clone(),
                 epoch: self.epoch,
+                iteration: *iteration,
                 value: match numeric_entry {
                     NumericEntry::Value(v) => v,
                     NumericEntry::Aggregated(v, _) => v,
                 },
-                split: self.split.clone(),
+                group: self.group.clone(),
             })
             .unwrap();
+
+        // todo: this is an incorrect way to get the iteration, ideally, the learner would provide this on every log call.
+        *iteration += 1;
     }
 
     fn end_epoch(&mut self, epoch: usize) {

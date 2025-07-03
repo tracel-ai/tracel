@@ -269,7 +269,7 @@ impl HttpClient {
         let experiment_response = self
             .post_json::<serde_json::Value, CreateExperimentResponseSchema>(
                 url,
-                None::<serde_json::Value>,
+                Some(serde_json::json!({})),
             )?;
 
         let experiment = Experiment {
