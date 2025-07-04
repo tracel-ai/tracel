@@ -61,8 +61,16 @@ pub struct HttpClient {
 
 impl HttpClient {
     /// Create a new HttpClient with the given base URL and API key.
-    pub fn new(base_url: Url) -> Self {
-        Self {
+    pub fn new(base_url: Url, credentials: &BurnCentralCredentials) -> Result<Self, BurnCentralHttpError> {
+        let mut client = Self::new_without_credentials(base_url);
+        let cookie = client.login(&credentials)?;
+        client.session_cookie = Some(cookie);
+        Ok(client)
+    }
+
+    /// Create a new HttpClient without credentials.
+    pub fn new_without_credentials(base_url: Url) -> Self {
+        HttpClient {
             http_client: reqwest::blocking::Client::new(),
             base_url,
             session_cookie: None,
@@ -158,10 +166,10 @@ impl HttpClient {
     }
 
     /// Log in to the Burn Central server with the given credentials.
-    pub fn login(
-        &mut self,
+    fn login(
+        &self,
         credentials: &BurnCentralCredentials,
-    ) -> Result<(), BurnCentralHttpError> {
+    ) -> Result<String, BurnCentralHttpError> {
         let url = self.join("login/api-key");
 
         let res = self
@@ -179,20 +187,18 @@ impl HttpClient {
                 let cookie_str = cookie
                     .to_str()
                     .expect("Session cookie should be able to convert to str");
-                self.session_cookie = Some(cookie_str.to_string());
+                Ok(cookie_str.to_string())
             } else {
-                return Err(BurnCentralHttpError::BadSessionId);
+                Err(BurnCentralHttpError::BadSessionId)
             }
         } else {
-            let error_message: String =
+            let error_message =
                 format!("Cannot connect to Burn Central server({:?})", res.text()?);
-            return Err(BurnCentralHttpError::HttpError {
+            Err(BurnCentralHttpError::HttpError {
                 status,
                 body: error_message,
-            });
+            })
         }
-
-        Ok(())
     }
 
     pub fn get_current_user(&self) -> Result<UserResponseSchema, BurnCentralHttpError> {

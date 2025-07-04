@@ -1,5 +1,5 @@
 mod base;
-mod thread;
+mod socket;
 mod ws_messages;
 
 pub use base::*;
