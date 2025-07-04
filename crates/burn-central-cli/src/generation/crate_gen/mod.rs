@@ -83,7 +83,6 @@ impl GeneratedCrate {
             if cached_crate.hash == file_tree_hash {
                 return Ok(());
             } else {
-                // std::fs::remove_dir_all(burn_dir.crates_dir().join(&name))?;
                 cache.remove_crate(&name);
             }
         }
