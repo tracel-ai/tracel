@@ -17,6 +17,7 @@ struct ExperimentWSThread {
     ws_client: WebSocketClient,
     receiver: mpsc::Receiver<WsMessage>,
     in_memory_logs: TempLogStore,
+    iteration_count: usize,
 }
 
 impl ExperimentWSThread {
@@ -29,6 +30,7 @@ impl ExperimentWSThread {
             ws_client,
             receiver,
             in_memory_logs,
+            iteration_count: 0,
         }
     }
 }
@@ -46,15 +48,18 @@ impl ExperimentThread<WSThreadResult> for ExperimentWSThread {
                 WsMessage::MetricLog {
                     name,
                     epoch,
+                    iteration: _iteration,
                     value,
-                    split,
+                    group,
                 } => {
+                    self.iteration_count += 1;
                     self.ws_client
                         .send(WsMessage::MetricLog {
                             name,
                             epoch,
+                            iteration: self.iteration_count,
                             value,
-                            split,
+                            group,
                         })
                         .unwrap();
                 }

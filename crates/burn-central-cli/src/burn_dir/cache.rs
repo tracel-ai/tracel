@@ -8,7 +8,7 @@ use toml;
 pub struct CrateEntry {
     pub path: String,
     pub created_at: String,
-    pub hash: u64,
+    pub hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -47,7 +47,7 @@ impl CacheState {
         fs::write(dir.join(Self::BURN_CACHE_FILENAME), contents)
     }
 
-    pub fn add_crate(&mut self, name: &str, path: String, hash: u64) {
+    pub fn add_crate(&mut self, name: &str, path: String, hash: String) {
         self.crates.insert(
             name.to_string(),
             CrateEntry {

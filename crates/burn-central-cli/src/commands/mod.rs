@@ -1,5 +1,7 @@
 pub mod time;
 
+use anyhow::Context as _;
+
 use crate::burn_dir::BurnDir;
 use crate::burn_dir::cache::CacheState;
 use crate::{context::CliContext, generation::crate_gen::backend::BackendType, print_info};
@@ -70,7 +72,11 @@ fn bin_name_from_run_id(context: &CliContext, run_id: &str) -> String {
 
 fn get_target_exe_path(context: &CliContext) -> PathBuf {
     let crate_name = &context.generated_crate_name();
-    let target_path = context.burn_dir().crates_dir().join(crate_name);
+    let target_path = context
+        .burn_dir()
+        .crates_dir()
+        .join(crate_name)
+        .join("target");
 
     target_path
         .join(&context.metadata().build_profile)
@@ -170,14 +176,15 @@ pub(crate) fn execute_build_command(
     let target_bin_name = bin_name_from_run_id(context, &build_command.run_id);
 
     let burn_dir = context.burn_dir();
-    let mut cache = burn_dir.load_cache()?;
+    let mut cache = burn_dir.load_cache().context("Failed to load cache")?;
 
     copy_binary(
         burn_dir,
         &mut cache,
         &target_bin_name,
         src_exe_path.to_str().unwrap(),
-    )?;
+    )
+    .context("Failed to copy binary")?;
 
     burn_dir.save_cache(&cache)?;
 
