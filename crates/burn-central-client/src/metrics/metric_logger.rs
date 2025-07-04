@@ -6,11 +6,11 @@ use burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::client::BurnCentralClientState;
 use crate::error::BurnCentralClientError;
-use crate::experiment::WsMessage;
+use crate::experiment::{Experiment, ExperimentHandle, ExperimentMessage};
 
 /// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
-    sender: mpsc::Sender<WsMessage>,
+    experiment_handle: ExperimentHandle,
     epoch: usize,
     iterations: HashMap<String, usize>,
     group: String,
@@ -19,13 +19,11 @@ pub struct RemoteMetricLogger {
 impl RemoteMetricLogger {
     /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
     pub fn new(
-        client: BurnCentralClientState,
+        experiment_handle: &Experiment,
         group: String,
     ) -> Result<Self, BurnCentralClientError> {
         Ok(Self {
-            sender: client.get_experiment_sender().map_err(|e| {
-                BurnCentralClientError::CreateRemoteMetricLoggerError(e.to_string())
-            })?,
+            experiment_handle: experiment_handle.handle(),
             epoch: 1,
             iterations: HashMap::new(),
             group,
@@ -70,18 +68,16 @@ impl MetricLogger for RemoteMetricLogger {
         let iteration = self.iterations.entry(key.clone()).or_insert(0);
 
         // send to server
-        self.sender
-            .send(WsMessage::MetricLog {
-                name: key.clone(),
-                epoch: self.epoch,
-                iteration: *iteration,
-                value: match numeric_entry {
-                    NumericEntry::Value(v) => v,
-                    NumericEntry::Aggregated(v, _) => v,
-                },
-                group: self.group.clone(),
-            })
-            .unwrap();
+        self.experiment_handle.log_metric(
+            key.clone(),
+            self.epoch,
+            *iteration,
+            match numeric_entry {
+                NumericEntry::Value(v) => v,
+                NumericEntry::Aggregated(v, _) => v,
+            },
+            self.group.clone(),
+        );
 
         // todo: this is an incorrect way to get the iteration, ideally, the learner would provide this on every log call.
         *iteration += 1;

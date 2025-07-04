@@ -81,14 +81,14 @@ impl CliContext {
         let url = self.api_endpoint.as_str();
 
         let creds = BurnCentralCredentials::new(api_key.to_owned());
-        let mut client_config = BurnCentralClientConfig::builder(creds)
-            .with_endpoint(url)
-            .with_num_retries(3);
+        let mut builder = BurnCentralClient::builder(creds)
+            .with_endpoint(url);
+
         if let Ok(path) = self.get_project_path() {
-            client_config = client_config.with_project(path);
+            builder = builder.with_project(path);
         }
 
-        BurnCentralClient::create(client_config.build()).map_err(|e| match e {
+        builder.build().map_err(|e| match e {
             burn_central_client::error::BurnCentralClientError::InvalidCredentialsError(..) => {
                 ClientCreationError::InvalidCredentials
             }

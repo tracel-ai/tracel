@@ -1,127 +1,101 @@
-use std::{marker::PhantomData, path::PathBuf};
+﻿use crate::http::HttpClient;
+use crate::schemas::ExperimentPath;
+use burn::prelude::Backend;
+use burn::record::{FullPrecisionSettings, Recorder, RecorderError};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use strum::EnumString;
 
-use burn::{
-    record::{PrecisionSettings, RecorderError},
-    tensor::backend::Backend,
-};
-use serde::{Serialize, de::DeserializeOwned};
-
-use crate::client::BurnCentralClientState;
-
-/// The strategy to use when saving data.
-#[derive(Debug, Clone)]
-pub enum RecorderStrategy {
+#[derive(Clone, EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub enum ArtifactKind {
+    Model,
     Checkpoint,
-    Final,
+    Dataset,
 }
 
-/// A recorder that saves and loads data from a remote server using the [BurnCentralClientState](BurnCentralClientState).
-#[derive(Debug, Clone)]
-pub struct RemoteRecorder<S: PrecisionSettings> {
-    client: BurnCentralClientState,
-    checkpointer: RecorderStrategy,
-    _settings: PhantomData<S>,
+#[derive(Clone)]
+pub struct ArtifactRecordArgs {
+    pub experiment_path: ExperimentPath,
+    pub name: String,
+    pub kind: ArtifactKind,
 }
 
-impl<S: PrecisionSettings> RemoteRecorder<S> {
-    fn new(client: BurnCentralClientState, checkpointer: RecorderStrategy) -> Self {
-        Self {
-            client,
-            checkpointer,
-            _settings: PhantomData,
+pub struct ArtifactLoadArgs {
+    pub experiment_path: ExperimentPath,
+    pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtifactRecorder {
+    http_client: HttpClient,
+}
+
+impl ArtifactRecorder {
+    pub fn new(http_client: HttpClient) -> Self {
+        ArtifactRecorder {
+            http_client,
         }
     }
-
-    /// Create a new RemoteRecorder with the given [BurnCentralClientState].
-    pub fn checkpoint(client: BurnCentralClientState) -> Self {
-        Self::new(client, RecorderStrategy::Checkpoint)
-    }
-
-    /// Create a new RemoteRecorder with the given [BurnCentralClientState].
-    /// This recorder will save the data as a final trained model.
-    pub fn final_model(client: BurnCentralClientState) -> Self {
-        Self::new(client, RecorderStrategy::Final)
-    }
 }
 
-impl<B: Backend, S: PrecisionSettings> burn::record::FileRecorder<B> for RemoteRecorder<S> {
-    fn file_extension() -> &'static str {
-        "mpk"
-    }
-}
-
-impl<S: PrecisionSettings> Default for RemoteRecorder<S> {
+impl Default for ArtifactRecorder {
     fn default() -> Self {
-        unimplemented!("Default is not implemented for RemoteRecorder, as it requires a client.")
+        unimplemented!("Default for ArtifactRecorder is not implemented, use new() instead");
     }
 }
 
-impl<B: Backend, S: PrecisionSettings> burn::record::Recorder<B> for RemoteRecorder<S> {
-    type Settings = S;
-    type RecordArgs = PathBuf;
+impl<B: Backend> Recorder<B> for ArtifactRecorder {
+    type Settings = FullPrecisionSettings;
+    type RecordArgs = ArtifactRecordArgs;
     type RecordOutput = ();
-    type LoadArgs = PathBuf;
+    type LoadArgs = ArtifactLoadArgs;
 
-    fn save_item<I: Serialize>(
-        &self,
-        item: I,
-        mut file: Self::RecordArgs,
-    ) -> Result<Self::RecordOutput, RecorderError> {
+    fn save_item<I: Serialize>(&self, item: I, args: Self::RecordArgs) -> Result<Self::RecordOutput, RecorderError> {
         let serialized_bytes =
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
-        match self.checkpointer {
-            RecorderStrategy::Checkpoint => {
-                file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
-                let file_name = file
-                    .file_name()
-                    .ok_or(RecorderError::Unknown(
-                        "File name should be present".to_string(),
-                    ))?
-                    .to_str()
-                    .ok_or(RecorderError::Unknown(
-                        "File name should be a valid string".to_string(),
-                    ))?;
-                self.client
-                    .save_checkpoint_data(file_name, serialized_bytes.clone())
-                    .map_err(|err| RecorderError::Unknown(err.to_string()))?;
-            }
-            RecorderStrategy::Final => {
-                self.client
-                    .save_final_model(serialized_bytes.clone())
-                    .map_err(|err| RecorderError::Unknown(err.to_string()))?;
-            }
-        }
+        // We don't have real artifact storage yet, so we'll just call the checkpoint save URL for now.
+        let upload_url = self.http_client.request_checkpoint_save_url(
+            &args.experiment_path.owner_name(),
+            &args.experiment_path.project_name(),
+            args.experiment_path.experiment_num(),
+            &args.name,
+        ).map_err(|e| {
+            RecorderError::Unknown(format!("Failed to get upload URL: {}", e))
+        })?;
+
+        self.http_client.upload_bytes_to_url(
+            &upload_url,
+            serialized_bytes,
+        ).map_err(|e| {
+            RecorderError::Unknown(format!("Failed to upload item: {}", e))
+        })?;
 
         Ok(())
     }
 
-    fn load_item<I: DeserializeOwned>(
-        &self,
-        file: &mut Self::LoadArgs,
-    ) -> Result<I, RecorderError> {
-        let data = match self.checkpointer {
-            RecorderStrategy::Checkpoint => {
-                file.set_extension(<Self as burn::record::FileRecorder<B>>::file_extension());
-                let file_name = file
-                    .file_name()
-                    .ok_or(RecorderError::Unknown(
-                        "File name should be present".to_string(),
-                    ))?
-                    .to_str()
-                    .ok_or(RecorderError::Unknown(
-                        "File name should be a valid string".to_string(),
-                    ))?;
-                self.client
-                    .load_checkpoint_data(file_name)
-                    .map_err(|err| RecorderError::Unknown(err.to_string()))?
-            }
-            RecorderStrategy::Final => {
-                unimplemented!("Final model loading is not implemented yet.")
-            }
-        };
+    fn load_item<I>(&self, args: &mut Self::LoadArgs) -> Result<I, RecorderError>
+    where
+        I: DeserializeOwned,
+    {
+        // We don't have real artifact storage yet, so we'll just call the checkpoint load URL for now.
+        let download_url = self.http_client.request_checkpoint_load_url(
+            &args.experiment_path.owner_name(),
+            &args.experiment_path.project_name(),
+            args.experiment_path.experiment_num(),
+            &args.name,
+        ).map_err(|e| {
+            RecorderError::Unknown(format!("Failed to get download URL: {}", e))
+        })?;
 
-        let item = rmp_serde::decode::from_slice(&data).expect("Should be able to deserialize.");
-        Ok(item)
+        let bytes = self.http_client.download_bytes_from_url(&download_url)
+            .map_err(|e| {
+                RecorderError::Unknown(format!("Failed to download item: {}", e))
+            })?;
+
+        rmp_serde::decode::from_slice(&bytes).map_err(|e| {
+            RecorderError::DeserializeError(format!("Failed to deserialize item: {}", e))
+        })
     }
 }
