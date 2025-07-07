@@ -13,3 +13,6 @@ mod websocket;
 pub use record::*;
 
 pub mod command;
+mod burn_central;
+
+pub use burn_central::BurnCentral;

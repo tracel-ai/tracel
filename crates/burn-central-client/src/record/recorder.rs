@@ -2,8 +2,8 @@
 use crate::schemas::ExperimentPath;
 use burn::prelude::Backend;
 use burn::record::{FullPrecisionSettings, Recorder, RecorderError};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use strum::EnumString;
 
 #[derive(Clone, EnumString)]
@@ -33,9 +33,7 @@ pub struct ArtifactRecorder {
 
 impl ArtifactRecorder {
     pub fn new(http_client: HttpClient) -> Self {
-        ArtifactRecorder {
-            http_client,
-        }
+        ArtifactRecorder { http_client }
     }
 }
 
@@ -51,26 +49,28 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
     type RecordOutput = ();
     type LoadArgs = ArtifactLoadArgs;
 
-    fn save_item<I: Serialize>(&self, item: I, args: Self::RecordArgs) -> Result<Self::RecordOutput, RecorderError> {
+    fn save_item<I: Serialize>(
+        &self,
+        item: I,
+        args: Self::RecordArgs,
+    ) -> Result<Self::RecordOutput, RecorderError> {
         let serialized_bytes =
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
         // We don't have real artifact storage yet, so we'll just call the checkpoint save URL for now.
-        let upload_url = self.http_client.request_checkpoint_save_url(
-            &args.experiment_path.owner_name(),
-            &args.experiment_path.project_name(),
-            args.experiment_path.experiment_num(),
-            &args.name,
-        ).map_err(|e| {
-            RecorderError::Unknown(format!("Failed to get upload URL: {}", e))
-        })?;
+        let upload_url = self
+            .http_client
+            .request_checkpoint_save_url(
+                &args.experiment_path.owner_name(),
+                &args.experiment_path.project_name(),
+                args.experiment_path.experiment_num(),
+                &args.name,
+            )
+            .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {}", e)))?;
 
-        self.http_client.upload_bytes_to_url(
-            &upload_url,
-            serialized_bytes,
-        ).map_err(|e| {
-            RecorderError::Unknown(format!("Failed to upload item: {}", e))
-        })?;
+        self.http_client
+            .upload_bytes_to_url(&upload_url, serialized_bytes)
+            .map_err(|e| RecorderError::Unknown(format!("Failed to upload item: {}", e)))?;
 
         Ok(())
     }
@@ -80,19 +80,20 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
         I: DeserializeOwned,
     {
         // We don't have real artifact storage yet, so we'll just call the checkpoint load URL for now.
-        let download_url = self.http_client.request_checkpoint_load_url(
-            &args.experiment_path.owner_name(),
-            &args.experiment_path.project_name(),
-            args.experiment_path.experiment_num(),
-            &args.name,
-        ).map_err(|e| {
-            RecorderError::Unknown(format!("Failed to get download URL: {}", e))
-        })?;
+        let download_url = self
+            .http_client
+            .request_checkpoint_load_url(
+                &args.experiment_path.owner_name(),
+                &args.experiment_path.project_name(),
+                args.experiment_path.experiment_num(),
+                &args.name,
+            )
+            .map_err(|e| RecorderError::Unknown(format!("Failed to get download URL: {}", e)))?;
 
-        let bytes = self.http_client.download_bytes_from_url(&download_url)
-            .map_err(|e| {
-                RecorderError::Unknown(format!("Failed to download item: {}", e))
-            })?;
+        let bytes = self
+            .http_client
+            .download_bytes_from_url(&download_url)
+            .map_err(|e| RecorderError::Unknown(format!("Failed to download item: {}", e)))?;
 
         rmp_serde::decode::from_slice(&bytes).map_err(|e| {
             RecorderError::DeserializeError(format!("Failed to deserialize item: {}", e))

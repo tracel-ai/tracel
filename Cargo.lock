@@ -468,6 +468,7 @@ dependencies = [
 name = "burn-central-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "burn",
  "derive-new 0.7.0",

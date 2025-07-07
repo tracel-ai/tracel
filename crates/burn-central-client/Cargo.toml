@@ -34,3 +34,7 @@ tungstenite = { version = "0.26.2", features = ["native-tls"] }
 uuid = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
+
+[dev-dependencies]
+burn = { workspace = true, features = ["ndarray"] }
+anyhow = { workspace = true }

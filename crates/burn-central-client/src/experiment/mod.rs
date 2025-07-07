@@ -1,6 +1,9 @@
 mod base;
 mod socket;
-mod ws_messages;
+mod message;
+mod error;
+mod log_store;
 
 pub use base::*;
-pub use ws_messages::*;
+pub use message::*;
+pub use error::*;
