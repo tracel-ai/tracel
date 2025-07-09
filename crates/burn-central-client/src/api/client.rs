@@ -55,8 +55,8 @@ impl ResponseExt for reqwest::blocking::Response {
                         .text()
                         .map_err(|e| ClientError::UnknownError(e.to_string()))?
                         .parse::<serde_json::Value>()
-                        .and_then(|v| serde_json::from_value::<ApiErrorBody>(v))
-                        .map_err(|e| ClientError::Serialization(e))?,
+                        .and_then(serde_json::from_value::<ApiErrorBody>)
+                        .map_err(ClientError::Serialization)?,
                 }),
             }
         }
@@ -77,7 +77,7 @@ impl Client {
     /// Create a new HttpClient with the given base URL and API key.
     pub fn new(base_url: Url, credentials: &BurnCentralCredentials) -> Result<Self, ClientError> {
         let mut client = Self::new_without_credentials(base_url);
-        let cookie = client.login(&credentials)?;
+        let cookie = client.login(credentials)?;
         client.session_cookie = Some(cookie);
         Ok(client)
     }
@@ -296,7 +296,7 @@ impl Client {
         self.validate_session_cookie()?;
 
         let json = StartExperimentSchema {
-            config: serde_json::to_value(config).unwrap(),
+            config: serde_json::to_value(config)?,
         };
 
         let url = self.join(&format!(
@@ -473,7 +473,7 @@ impl Client {
         )
     }
 
-    pub(crate) fn check_project_version_exists(
+    pub fn check_project_version_exists(
         &self,
         owner_name: &str,
         project_name: &str,

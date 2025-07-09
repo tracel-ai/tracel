@@ -4,9 +4,9 @@ use burn::prelude::Backend;
 use burn::record::{FullPrecisionSettings, Recorder, RecorderError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use strum::EnumString;
+use strum::Display;
 
-#[derive(Clone, EnumString)]
+#[derive(Clone, Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum ArtifactKind {
     Model,
@@ -56,20 +56,27 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
         let serialized_bytes =
             rmp_serde::encode::to_vec_named(&item).expect("Should be able to serialize.");
 
+        tracing::debug!(
+            "Saving artifact '{}' of kind '{}' for experiment {}",
+            args.name,
+            args.kind,
+            args.experiment_path
+        );
+
         // We don't have real artifact storage yet, so we'll just call the checkpoint save URL for now.
         let upload_url = self
             .client
             .request_checkpoint_save_url(
-                &args.experiment_path.owner_name(),
-                &args.experiment_path.project_name(),
+                args.experiment_path.owner_name(),
+                args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
                 &args.name,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {}", e)))?;
+            .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {e}")))?;
 
         self.client
             .upload_bytes_to_url(&upload_url, serialized_bytes)
-            .map_err(|e| RecorderError::Unknown(format!("Failed to upload item: {}", e)))?;
+            .map_err(|e| RecorderError::Unknown(format!("Failed to upload item: {e}")))?;
 
         Ok(())
     }
@@ -82,20 +89,20 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
         let download_url = self
             .client
             .request_checkpoint_load_url(
-                &args.experiment_path.owner_name(),
-                &args.experiment_path.project_name(),
+                args.experiment_path.owner_name(),
+                args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
                 &args.name,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to get download URL: {}", e)))?;
+            .map_err(|e| RecorderError::Unknown(format!("Failed to get download URL: {e}")))?;
 
         let bytes = self
             .client
             .download_bytes_from_url(&download_url)
-            .map_err(|e| RecorderError::Unknown(format!("Failed to download item: {}", e)))?;
+            .map_err(|e| RecorderError::Unknown(format!("Failed to download item: {e}")))?;
 
         rmp_serde::decode::from_slice(&bytes).map_err(|e| {
-            RecorderError::DeserializeError(format!("Failed to deserialize item: {}", e))
+            RecorderError::DeserializeError(format!("Failed to deserialize item: {e}"))
         })
     }
 }

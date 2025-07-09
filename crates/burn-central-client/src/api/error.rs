@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 use serde::Deserialize;
 use std::fmt::{Display, Formatter};
-use strum::{Display, EnumString};
+use strum::Display;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Deserialize, Display)]

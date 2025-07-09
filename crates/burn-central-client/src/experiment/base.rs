@@ -117,10 +117,6 @@ struct ExperimentRunInner {
 }
 
 impl ExperimentRunInner {
-    pub fn id(&self) -> &ExperimentPath {
-        &self.id
-    }
-
     fn send(&self, message: ExperimentMessage) -> Result<(), ExperimentTrackerError> {
         self.sender
             .send(message)
@@ -202,8 +198,8 @@ impl ExperimentRun {
         let mut ws_client = WebSocketClient::new();
 
         let ws_endpoint = http_client.format_websocket_url(
-            &experiment_path.owner_name(),
-            &experiment_path.project_name(),
+            experiment_path.owner_name(),
+            experiment_path.project_name(),
             experiment_path.experiment_num(),
         );
         let cookie = http_client
@@ -282,10 +278,7 @@ impl ExperimentRun {
                 end_status,
             )
             .map_err(|e| {
-                ExperimentTrackerError::InternalError(format!(
-                    "Failed to end experiment: {}",
-                    e.to_string()
-                ))
+                ExperimentTrackerError::InternalError(format!("Failed to end experiment: {e}"))
             })?;
 
         Ok(())

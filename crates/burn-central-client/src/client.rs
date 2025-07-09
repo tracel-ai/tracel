@@ -1,4 +1,5 @@
-﻿///! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
+﻿//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
+
 use crate::api::Client;
 use crate::api::ClientError;
 use crate::credentials::BurnCentralCredentials;
@@ -225,10 +226,7 @@ impl BurnCentral {
             .client
             .create_experiment(namespace, project_name)
             .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to create experiment for {}/{}",
-                    namespace, project_name
-                ),
+                context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,
             })?;
         let experiment_path = ExperimentPath::try_from(format!(
@@ -244,7 +242,7 @@ impl BurnCentral {
                 config,
             )
             .map_err(|e| BurnCentralError::Client {
-                context: format!("Failed to start experiment {}/{}", namespace, project_name),
+                context: format!("Failed to start experiment {namespace}/{project_name}"),
                 source: e,
             })?;
 
@@ -289,8 +287,7 @@ impl BurnCentral {
             )
             .map_err(|e| BurnCentralError::Client {
                 context: format!(
-                    "Failed to get upload URLs for project {}/{}",
-                    namespace, project_name
+                    "Failed to get upload URLs for project {namespace}/{project_name}"
                 ),
                 source: e,
             })?;
@@ -300,8 +297,7 @@ impl BurnCentral {
                 .urls
                 .get(&crate_name)
                 .ok_or(BurnCentralError::Internal(format!(
-                    "No upload URL found for crate: {}",
-                    crate_name
+                    "No upload URL found for crate: {crate_name}"
                 )))?;
 
             let data = std::fs::read(&file_path).map_err(|e| {
@@ -314,7 +310,7 @@ impl BurnCentral {
             self.client
                 .upload_bytes_to_url(url, data)
                 .map_err(|e| BurnCentralError::Client {
-                    context: format!("Failed to upload crate {} to URL {}", crate_name, url),
+                    context: format!("Failed to upload crate {crate_name} to URL {url}"),
                     source: e,
                 })?;
         }
@@ -341,8 +337,7 @@ impl BurnCentral {
             )
             .map_err(|e| BurnCentralError::Client {
                 context: format!(
-                    "Failed to start remote job for {}/{}/{}",
-                    namespace, project_name, runner_group_name
+                    "Failed to start remote job for {namespace}/{project_name}/{runner_group_name}"
                 ),
                 source: e,
             })?;

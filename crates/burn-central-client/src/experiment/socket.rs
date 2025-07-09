@@ -114,7 +114,6 @@ impl ExperimentThread {
                         ExperimentMessage::Error(err) => {
                             self.handle_websocket_send(ExperimentMessage::Error(err))?;
                         }
-                        _ => {}
                     }
                 }
             }
@@ -147,8 +146,6 @@ impl ExperimentSocket {
         self.abort_sender
             .send(())
             .map_err(|_| ThreadError::AbortError)?;
-        self.handle
-            .join()
-            .unwrap_or_else(|_| Err(ThreadError::Panic))
+        self.handle.join().unwrap_or(Err(ThreadError::Panic))
     }
 }

@@ -1,5 +1,4 @@
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use burn::train::ApplicationLoggerInstaller;

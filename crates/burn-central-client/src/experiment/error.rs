@@ -1,4 +1,3 @@
-use crate::websocket::WebSocketError;
 use burn::record::RecorderError;
 
 #[derive(Debug, thiserror::Error)]

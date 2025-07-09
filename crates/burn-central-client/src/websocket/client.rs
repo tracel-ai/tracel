@@ -17,6 +17,7 @@ impl WebSocketClient {
         Self { state: None }
     }
 
+    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.state.is_some()
     }
