@@ -25,14 +25,10 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
         return Ok(());
     }
 
-    prompt_init(&context, &client)
-        .context("Failed to initialize the project")
+    prompt_init(&context, &client).context("Failed to initialize the project")
 }
 
-pub fn prompt_init(
-    context: &CliContext,
-    client: &BurnCentral,
-) -> anyhow::Result<()> {
+pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result<()> {
     let ws_root = context
         .get_workspace_root()
         .context("Failed to get workspace root")?;
