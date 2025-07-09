@@ -1,4 +1,4 @@
-﻿//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
+//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
 use crate::api::Client;
 use crate::api::ClientError;
@@ -90,13 +90,14 @@ impl BurnCentralBuilder {
     /// Builds the [BurnCentral] client.
     pub fn build(self) -> Result<BurnCentral, InitError> {
         let url = match self.endpoint {
-            Some(s) => s.parse::<Url>().map_err(|e| InitError::InvalidEndpointUrl(e.to_string()))?,
-            None => Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid"),
+            Some(s) => s
+                .parse::<Url>()
+                .map_err(|e| InitError::InvalidEndpointUrl(e.to_string()))?,
+            None => {
+                Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid")
+            }
         };
-        let client = Client::new(
-            url,
-            &self.credentials,
-        )?;
+        let client = Client::new(url, &self.credentials)?;
         Ok(BurnCentral::new(client))
     }
 }
