@@ -12,39 +12,6 @@ use reqwest::Url;
 use serde::Serialize;
 use std::path::PathBuf;
 
-/// This builder struct is used to create a [BurnCentral] client.
-pub struct BurnCentralBuilder {
-    endpoint: Option<Url>,
-    credentials: BurnCentralCredentials,
-}
-
-impl BurnCentralBuilder {
-    /// Creates a new [BurnCentralBuilder] with the given credentials.
-    pub fn new(credentials: impl Into<BurnCentralCredentials>) -> Self {
-        BurnCentralBuilder {
-            endpoint: None,
-            credentials: credentials.into(),
-        }
-    }
-
-    /// Sets the endpoint for the [BurnCentral] client.
-    pub fn with_endpoint(mut self, endpoint: Url) -> Self {
-        self.endpoint = Some(endpoint);
-        self
-    }
-
-    /// Builds the [BurnCentral] client.
-    pub fn build(self) -> Result<BurnCentral, InitError> {
-        let client = Client::new(
-            self.endpoint.unwrap_or_else(|| {
-                Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid")
-            }),
-            &self.credentials,
-        )?;
-        Ok(BurnCentral::new(client))
-    }
-}
-
 /// Errors that can occur during the initialization of the [BurnCentral] client.
 #[derive(Debug, thiserror::Error)]
 pub enum InitError {
@@ -99,6 +66,41 @@ pub enum BurnCentralError {
     Internal(String),
 }
 
+/// This builder struct is used to create a [BurnCentral] client.
+pub struct BurnCentralBuilder {
+    endpoint: Option<String>,
+    credentials: BurnCentralCredentials,
+}
+
+impl BurnCentralBuilder {
+    /// Creates a new [BurnCentralBuilder] with the given credentials.
+    pub fn new(credentials: impl Into<BurnCentralCredentials>) -> Self {
+        BurnCentralBuilder {
+            endpoint: None,
+            credentials: credentials.into(),
+        }
+    }
+
+    /// Sets the endpoint for the [BurnCentral] client.
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = Some(endpoint.into());
+        self
+    }
+
+    /// Builds the [BurnCentral] client.
+    pub fn build(self) -> Result<BurnCentral, InitError> {
+        let url = match self.endpoint {
+            Some(s) => s.parse::<Url>().map_err(|e| InitError::InvalidEndpointUrl(e.to_string()))?,
+            None => Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid"),
+        };
+        let client = Client::new(
+            url,
+            &self.credentials,
+        )?;
+        Ok(BurnCentral::new(client))
+    }
+}
+
 /// This struct provides the main interface to interact with Burn Central.
 pub struct BurnCentral {
     client: Client,
@@ -129,7 +131,7 @@ impl BurnCentral {
             .map_err(|_| InitError::EnvNotSet("BURN_CENTRAL_API_KEY".to_string()))?;
 
         BurnCentralBuilder::new(credentials)
-            .with_endpoint(endpoint)
+            .with_endpoint(endpoint.as_str())
             .build()
     }
 
