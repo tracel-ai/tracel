@@ -85,6 +85,9 @@ impl CliContext {
             burn_central_client::InitError::Client(e) if e.is_login_error() => {
                 ClientCreationError::InvalidCredentials
             }
+            burn_central_client::InitError::Client(e) if e.code().is_some() => {
+                ClientCreationError::InvalidCredentials
+            }
             _ => ClientCreationError::ServerConnectionError(e.to_string()),
         })
     }

@@ -56,7 +56,10 @@ impl ResponseExt for reqwest::blocking::Response {
                         .map_err(|e| ClientError::UnknownError(e.to_string()))?
                         .parse::<serde_json::Value>()
                         .and_then(serde_json::from_value::<ApiErrorBody>)
-                        .map_err(ClientError::Serialization)?,
+                        .unwrap_or_else(|e| ApiErrorBody {
+                            code: ApiErrorCode::Unknown,
+                            message: e.to_string(),
+                        }),
                 }),
             }
         }
