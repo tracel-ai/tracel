@@ -63,7 +63,6 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
             args.experiment_path
         );
 
-        // We don't have real artifact storage yet, so we'll just call the checkpoint save URL for now.
         let upload_url = self
             .client
             .request_checkpoint_save_url(
@@ -85,7 +84,6 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
     where
         I: DeserializeOwned,
     {
-        // We don't have real artifact storage yet, so we'll just call the checkpoint load URL for now.
         let download_url = self
             .client
             .request_checkpoint_load_url(
