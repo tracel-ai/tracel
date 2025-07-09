@@ -43,6 +43,8 @@ uuid = { version = "1.17.0", features = [
     "macro-diagnostics",
     "serde",
 ] }
+crossbeam = { version = "0.8.4", default-features = false, features = ["crossbeam-channel"]}
+
 
 ### For xtask crate ###
 tracel-xtask = { version = "=1.1.8" }

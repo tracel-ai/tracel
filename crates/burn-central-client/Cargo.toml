@@ -34,6 +34,7 @@ tungstenite = { version = "0.26.2", features = ["native-tls"] }
 uuid = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
+crossbeam = { workspace = true, default-features = false, features = ["crossbeam-channel", "std"] }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

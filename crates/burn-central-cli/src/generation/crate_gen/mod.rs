@@ -296,18 +296,9 @@ fn generate_training_function(
         let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
         let training_config: serde_json::Value = serde_json::from_str(&training_config_str).expect("Config should be deserialized");
 
-        let mut train_cmd_context = TrainCommandContext::new(client, vec![device], training_config_str);
+        let experiment = client.start_experiment(project_path.owner_name(), project_path.project_name(), &training_config).expect("Experiment should be started");
 
-        train_cmd_context.client()
-            .start_experiment(&training_config)
-            .expect("Experiment should be started");
-
-        pub fn trigger<B: Backend, T, M: Module<B>, E: Into<Box<dyn std::error::Error>>, H: TrainCommandHandler<B, T, M, E>>(handler: H, context: TrainCommandContext<B>) -> Result<M, Box<dyn std::error::Error>> {
-            match handler.call(context) {
-                Ok(model) => Ok(model),
-                Err(e) => Err(e.into()),
-            }
-        }
+        let mut train_cmd_context = burn_central::command::TrainCommandContext::<MyAutodiffBackend>::new(&experiment, vec![device], training_config_str);
 
         #train_func_match;
     }
@@ -322,7 +313,7 @@ fn generate_proc_call(
         .expect("Failed to parse path.");
 
     quote! {
-        trigger(#syn_func_path, train_cmd_context.clone())
+        burn_central::command::TrainCommandHandler::call(#syn_func_path, &train_cmd_context)
     }
 }
 
@@ -330,9 +321,9 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
     let flags = crate::registry::get_flags();
 
     let backend_types =
-        crate::generation::crate_gen::backend::generate_backend_typedef_stream(main_backend);
-    let (_backend_type_name, autodiff_backend_type_name) =
-        crate::generation::crate_gen::backend::get_backend_type_names();
+        backend::generate_backend_typedef_stream(main_backend);
+    let (_backend_type_name, _autodiff_backend_type_name) =
+        backend::get_backend_type_names();
     let backend_default_device = main_backend.default_device_stream();
 
     let train_match_arms: Vec<proc_macro2::TokenStream> = flags
@@ -349,14 +340,15 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
                  #fn_name => {
                     match #proc_call {
                         Ok(model) => {
-                            train_cmd_context.client()
-                            .end_experiment_with_model::<#autodiff_backend_type_name, burn::record::HalfPrecisionSettings>(model.clone())
-                            .expect("Experiment should end successfully");
+                            experiment.log_artifact(
+                                "model",
+                                burn_central::record::ArtifactKind::Model,
+                                model.into_record(),
+                            );
+                            experiment.finish().expect("Experiment should finish successfully");
                         }
                         Err(e) => {
-                            train_cmd_context.client()
-                            .end_experiment_with_error(e.to_string())
-                            .expect("Experiment should end successfully");
+                            experiment.fail(e.to_string()).expect("Experiment should fail successfully");
                         }
                     }
                 }
@@ -390,15 +382,14 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         use burn_central::command::train::*;
         use burn::prelude::*;
 
-        fn create_client(api_key: &str, url: &str, project: &str) -> burn_central::client::BurnCentralClient {
-            let creds = burn_central::client::BurnCentralCredentials::new(api_key.to_owned());
-            let client_config = burn_central::client::BurnCentralClientConfig::builder(creds)
-                .with_endpoint(url)
-                .with_num_retries(10)
-                .with_project(burn_central::schemas::ProjectPath::try_from(project.to_string()).expect("Project path should be valid."))
-                .build();
-            burn_central::client::BurnCentralClient::create(client_config)
-                .expect("Should connect to the server and create a client")
+        fn create_client(
+            api_key: &str,
+            url: &str,
+        ) -> burn_central::BurnCentral {
+            let creds = burn_central::credentials::BurnCentralCredentials::new(api_key.to_owned());
+            burn_central::BurnCentral::builder(creds)
+                .with_endpoint(url.parse().unwrap())
+                .build().expect("Burn Central client should be created")
         }
 
         fn main() {
@@ -410,8 +401,9 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
             let endpoint = matches.get_one::<String>("api-endpoint").expect("api-endpoint should be set.");
             let project = matches.get_one::<String>("project").expect("project should be set.");
 
-            let client = create_client(&key, &endpoint, &project);
-
+            let client = create_client(&key, &endpoint);
+            let project_path = burn_central::schemas::ProjectPath::try_from(project.to_string())
+                .expect("Project path should be valid");
             if let Some(train_matches) = matches.subcommand_matches("train") {
                 let func = train_matches.get_one::<String>("func").expect("func should be set.");
                 let config_path = train_matches.get_one::<String>("config").expect("config should be set.");

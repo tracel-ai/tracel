@@ -1,8 +1,7 @@
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use crate::client::BurnCentralClientState;
-use crate::experiment::{Experiment, ExperimentHandle, ExperimentMessage};
+use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use burn::train::ApplicationLoggerInstaller;
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -13,12 +12,12 @@ use tracing_subscriber::{Layer, registry};
 
 /// The installer for the remote experiment logger.
 pub struct RemoteExperimentLoggerInstaller {
-    experiment_handle: Arc<ExperimentHandle>,
+    experiment_handle: Arc<ExperimentRunHandle>,
 }
 
 impl RemoteExperimentLoggerInstaller {
     /// Creates a new instance of the remote experiment logger installer with the given [BurnCentralClientState].
-    pub fn new(experiment_handle: &Experiment) -> Self {
+    pub fn new(experiment_handle: &ExperimentRun) -> Self {
         Self {
             experiment_handle: Arc::new(experiment_handle.handle()),
         }
@@ -26,11 +25,11 @@ impl RemoteExperimentLoggerInstaller {
 }
 
 struct RemoteWriter {
-    sender: Arc<ExperimentHandle>,
+    sender: Arc<ExperimentRunHandle>,
 }
 
 struct RemoteWriterMaker {
-    experiment_handle: Arc<ExperimentHandle>,
+    experiment_handle: Arc<ExperimentRunHandle>,
 }
 
 impl MakeWriter<'_> for RemoteWriterMaker {

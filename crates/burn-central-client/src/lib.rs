@@ -1,18 +1,16 @@
-pub mod client;
+pub mod api;
+mod client;
+pub mod command;
+pub mod credentials;
 pub mod error;
+
+pub mod schemas;
 
 pub mod log;
 pub mod metrics;
 pub mod record;
-pub mod schemas;
 
-mod experiment;
-mod http;
+pub mod experiment;
 mod websocket;
 
-pub use record::*;
-
-pub mod command;
-mod burn_central;
-
-pub use burn_central::BurnCentral;
+pub use crate::client::*;

@@ -1,28 +1,28 @@
-use super::{ExperimentMessage, socket::ExperimentSocket};
-use crate::experiment::error::ExperimentError;
+use super::socket::ExperimentSocket;
+use crate::api::EndExperimentStatus;
+use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
+use crate::experiment::message::ExperimentMessage;
 use crate::experiment::socket::ThreadError;
-use crate::http::EndExperimentStatus;
-use crate::{
-    ArtifactKind, ArtifactLoadArgs, ArtifactRecordArgs, ArtifactRecorder, http::HttpClient,
-    schemas::ExperimentPath, websocket::WebSocketClient,
-};
+use crate::record::{ArtifactKind, ArtifactLoadArgs, ArtifactRecordArgs, ArtifactRecorder};
+use crate::{api::Client, schemas::ExperimentPath, websocket::WebSocketClient};
 use burn::prelude::Backend;
 use burn::record::{Record, Recorder};
+use crossbeam::channel::Sender;
 use std::ops::Deref;
-use std::sync::{Arc, Weak, mpsc};
+use std::sync::{Arc, Weak};
 
 /// Represents a handle to an experiment, allowing logging of artifacts, metrics, and messages.
 #[derive(Clone, Debug)]
-pub struct ExperimentHandle {
-    recorder: Weak<ExperimentRecorder>,
+pub struct ExperimentRunHandle {
+    recorder: Weak<ExperimentRunInner>,
 }
 
-impl ExperimentHandle {
-    fn try_upgrade(&self) -> Result<Arc<ExperimentRecorder>, ExperimentError> {
+impl ExperimentRunHandle {
+    fn try_upgrade(&self) -> Result<Arc<ExperimentRunInner>, ExperimentTrackerError> {
         self.recorder
             .upgrade()
-            .ok_or(ExperimentError::InactiveExperiment)
+            .ok_or(ExperimentTrackerError::InactiveExperiment)
     }
 
     /// Logs an artifact with the given name and kind.
@@ -42,7 +42,7 @@ impl ExperimentHandle {
         name: impl Into<String>,
         kind: ArtifactKind,
         record: impl Record<B>,
-    ) -> Result<(), ExperimentError> {
+    ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?.log_artifact(name, kind, record)
     }
 
@@ -51,7 +51,7 @@ impl ExperimentHandle {
         &self,
         name: impl Into<String>,
         device: &B::Device,
-    ) -> Result<R, ExperimentError>
+    ) -> Result<R, ExperimentTrackerError>
     where
         B: Backend,
         R: Record<B>,
@@ -80,7 +80,7 @@ impl ExperimentHandle {
         iteration: usize,
         value: f64,
         group: impl Into<String>,
-    ) -> Result<(), ExperimentError> {
+    ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?
             .log_metric(name, epoch, iteration, value, group)
     }
@@ -92,7 +92,7 @@ impl ExperimentHandle {
     }
 
     /// Attempts to log an info message.
-    pub fn try_log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+    pub fn try_log_info(&self, message: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?.log_info(message)
     }
 
@@ -103,28 +103,28 @@ impl ExperimentHandle {
     }
 
     /// Attempts to log an error message.
-    pub fn try_log_error(&self, error: impl Into<String>) -> Result<(), ExperimentError> {
+    pub fn try_log_error(&self, error: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?.log_error(error)
     }
 }
 
 /// Represents a recorder for an experiment, allowing logging of artifacts, metrics, and messages.
-/// It is used internally by the [Experiment](Experiment) struct to handle logging operations.
-struct ExperimentRecorder {
+/// It is used internally by the [Experiment](ExperimentRun) struct to handle logging operations.
+struct ExperimentRunInner {
     id: ExperimentPath,
-    http_client: HttpClient,
-    sender: mpsc::Sender<ExperimentMessage>,
+    http_client: Client,
+    sender: Sender<ExperimentMessage>,
 }
 
-impl ExperimentRecorder {
+impl ExperimentRunInner {
     pub fn id(&self) -> &ExperimentPath {
         &self.id
     }
 
-    fn send(&self, message: ExperimentMessage) -> Result<(), ExperimentError> {
+    fn send(&self, message: ExperimentMessage) -> Result<(), ExperimentTrackerError> {
         self.sender
             .send(message)
-            .map_err(|_| ExperimentError::SocketClosed)
+            .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
     pub fn log_artifact<B: Backend>(
@@ -132,7 +132,7 @@ impl ExperimentRecorder {
         name: impl Into<String>,
         kind: ArtifactKind,
         record: impl Record<B>,
-    ) -> Result<(), ExperimentError> {
+    ) -> Result<(), ExperimentTrackerError> {
         let recorder = ArtifactRecorder::new(self.http_client.clone());
         let args = ArtifactRecordArgs {
             experiment_path: self.id.clone(),
@@ -141,14 +141,14 @@ impl ExperimentRecorder {
         };
         recorder
             .record(record, args)
-            .map_err(ExperimentError::BurnRecorderError)
+            .map_err(ExperimentTrackerError::BurnRecorderError)
     }
 
     pub fn load_artifact<B: Backend, R: Record<B>>(
         &self,
         name: impl Into<String>,
         device: &B::Device,
-    ) -> Result<R, ExperimentError> {
+    ) -> Result<R, ExperimentTrackerError> {
         let recorder = ArtifactRecorder::new(self.http_client.clone());
         let args = ArtifactLoadArgs {
             experiment_path: self.id.clone(),
@@ -156,7 +156,7 @@ impl ExperimentRecorder {
         };
         recorder
             .load(args, device)
-            .map_err(ExperimentError::BurnRecorderError)
+            .map_err(ExperimentTrackerError::BurnRecorderError)
     }
 
     pub fn log_metric(
@@ -166,7 +166,7 @@ impl ExperimentRecorder {
         iteration: usize,
         value: f64,
         group: impl Into<String>,
-    ) -> Result<(), ExperimentError> {
+    ) -> Result<(), ExperimentTrackerError> {
         let message = ExperimentMessage::MetricLog {
             name: name.into(),
             epoch,
@@ -177,28 +177,28 @@ impl ExperimentRecorder {
         self.send(message)
     }
 
-    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.send(ExperimentMessage::Log(message.into()))
     }
 
-    pub fn log_error(&self, error: impl Into<String>) -> Result<(), ExperimentError> {
+    pub fn log_error(&self, error: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.send(ExperimentMessage::Error(error.into()))
     }
 }
 
 /// Represents an experiment in Burn Central, which is a run of a machine learning model or process.
-pub struct Experiment {
-    recorder: Arc<ExperimentRecorder>,
+pub struct ExperimentRun {
+    inner: Arc<ExperimentRunInner>,
     socket: Option<ExperimentSocket>,
     // temporary field to allow dereferencing to handle
-    _handle: ExperimentHandle,
+    _handle: ExperimentRunHandle,
 }
 
-impl Experiment {
+impl ExperimentRun {
     pub fn new(
-        http_client: HttpClient,
+        http_client: Client,
         experiment_path: ExperimentPath,
-    ) -> Result<Self, ExperimentError> {
+    ) -> Result<Self, ExperimentTrackerError> {
         let mut ws_client = WebSocketClient::new();
 
         let ws_endpoint = http_client.format_websocket_url(
@@ -211,40 +211,43 @@ impl Experiment {
             .expect("Session cookie should be available");
         ws_client
             .connect(ws_endpoint, cookie)
-            .map_err(ExperimentError::WebSocketError)?;
+            .map_err(|e| ExperimentTrackerError::ConnectionFailed(e.to_string()))?;
 
         let log_store = TempLogStore::new(http_client.clone(), experiment_path.clone());
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = crossbeam::channel::unbounded();
         let socket = ExperimentSocket::new(ws_client, log_store, receiver);
 
-        let recorder = Arc::new(ExperimentRecorder {
+        let inner = Arc::new(ExperimentRunInner {
             id: experiment_path.clone(),
             http_client: http_client.clone(),
             sender,
         });
 
-        let handle = ExperimentHandle {
-            recorder: Arc::downgrade(&recorder),
+        let _handle = ExperimentRunHandle {
+            recorder: Arc::downgrade(&inner),
         };
 
-        Ok(Experiment {
-            recorder,
+        Ok(ExperimentRun {
+            inner,
             socket: Some(socket),
-            _handle: handle,
+            _handle,
         })
     }
 
     /// Returns a handle to the experiment, allowing logging of artifacts, metrics, and messages.
-    pub fn handle(&self) -> ExperimentHandle {
-        ExperimentHandle {
-            recorder: Arc::downgrade(&self.recorder),
+    pub fn handle(&self) -> ExperimentRunHandle {
+        ExperimentRunHandle {
+            recorder: Arc::downgrade(&self.inner),
         }
     }
 
-    fn finish_internal(&mut self, end_status: EndExperimentStatus) -> Result<(), ExperimentError> {
+    fn finish_internal(
+        &mut self,
+        end_status: EndExperimentStatus,
+    ) -> Result<(), ExperimentTrackerError> {
         let thread_result = match self.socket.take() {
             Some(socket) => socket.close(),
-            None => return Err(ExperimentError::AlreadyFinished),
+            None => return Err(ExperimentTrackerError::AlreadyFinished),
         };
 
         match thread_result {
@@ -259,31 +262,27 @@ impl Experiment {
                 eprintln!("Warning: Message channel closed before thread could complete");
             }
             Err(ThreadError::AbortError) => {
-                return Err(ExperimentError::InternalError(
+                return Err(ExperimentTrackerError::InternalError(
                     "Failed to abort thread.".into(),
                 ));
             }
             Err(ThreadError::Panic) => {
-                return Err(ExperimentError::InternalError(
+                return Err(ExperimentTrackerError::InternalError(
                     "Experiment thread panicked".into(),
                 ));
             }
         }
 
-        if let Err(e) = self.recorder.send(ExperimentMessage::Close) {
-            eprintln!("Warning: Failed to send close message: {}", e);
-        }
-
-        self.recorder
+        self.inner
             .http_client
             .end_experiment(
-                self.recorder.id.owner_name(),
-                self.recorder.id.project_name(),
-                self.recorder.id.experiment_num(),
+                self.inner.id.owner_name(),
+                self.inner.id.project_name(),
+                self.inner.id.experiment_num(),
                 end_status,
             )
             .map_err(|e| {
-                ExperimentError::InternalError(format!(
+                ExperimentTrackerError::InternalError(format!(
                     "Failed to end experiment: {}",
                     e.to_string()
                 ))
@@ -292,16 +291,16 @@ impl Experiment {
         Ok(())
     }
 
-    pub fn finish(mut self) -> Result<(), ExperimentError> {
+    pub fn finish(mut self) -> Result<(), ExperimentTrackerError> {
         self.finish_internal(EndExperimentStatus::Success)
     }
 
-    pub fn fail(mut self, reason: impl Into<String>) -> Result<(), ExperimentError> {
+    pub fn fail(mut self, reason: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.finish_internal(EndExperimentStatus::Fail(reason.into()))
     }
 }
 
-impl Drop for Experiment {
+impl Drop for ExperimentRun {
     fn drop(&mut self) {
         let _ = self.finish_internal(EndExperimentStatus::Fail(
             "Experiment dropped without finishing".to_string(),
@@ -311,8 +310,8 @@ impl Drop for Experiment {
 
 /// Temporary implementation to allow dereferencing the Experiment to its recorder
 /// This will be removed once the experiment logging api is completed
-impl Deref for Experiment {
-    type Target = ExperimentHandle;
+impl Deref for ExperimentRun {
+    type Target = ExperimentRunHandle;
 
     fn deref(&self) -> &Self::Target {
         &self._handle
@@ -320,17 +319,17 @@ impl Deref for Experiment {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod test {
-    use crate::ArtifactKind;
-    use crate::experiment::Experiment;
-    use crate::http::HttpClient;
+    use crate::api::Client;
+    use crate::experiment::ExperimentRun;
+    use crate::record::ArtifactKind;
     use crate::schemas::ExperimentPath;
     use burn::backend::NdArray;
     use burn::nn::conv::{Conv2d, Conv2dConfig};
     use burn::nn::pool::{AdaptiveAvgPool2d, AdaptiveAvgPool2dConfig};
     use burn::nn::{Dropout, DropoutConfig, Linear, LinearConfig, Relu};
     use burn::prelude::*;
-    use burn::record::Recorder;
 
     #[derive(Module, Debug)]
     pub struct Model<B: Backend> {
@@ -365,7 +364,6 @@ mod test {
         }
     }
 
-    #[test]
     fn test_experiment_handle() -> anyhow::Result<()> {
         type TestBackend = NdArray;
         type TestDevice = <TestBackend as Backend>::Device;
@@ -377,8 +375,8 @@ mod test {
     }
 
     fn train_experiment<B: Backend>(device: B::Device) -> anyhow::Result<()> {
-        let experiment = Experiment::new(
-            HttpClient::new_without_credentials("http://localhost:9001".parse().unwrap()),
+        let experiment = ExperimentRun::new(
+            Client::new_without_credentials("http://localhost:9001".parse().unwrap()),
             ExperimentPath::try_from("test_owner/test_project/1".to_string()).unwrap(),
         )?;
 
@@ -407,19 +405,17 @@ mod test {
     }
 
     fn eval_experiment<B: Backend>(device: B::Device) -> anyhow::Result<()> {
-        let experiment = Experiment::new(
-            HttpClient::new_without_credentials("http://localhost:8000".parse().unwrap()),
+        let experiment = ExperimentRun::new(
+            Client::new_without_credentials("http://localhost:8000".parse().unwrap()),
             ExperimentPath::try_from("test_owner/test_project/1".to_string()).unwrap(),
         )?;
 
         let model_config = ModelConfig::new(10, 128);
 
         // load the artifact back
-        let loaded_model_record = experiment
-            .load_artifact("model", &device)
-            .expect("Failed to load model artifact");
+        let loaded_model_record = experiment.load_artifact("model", &device)?;
 
-        let model = model_config
+        let _model = model_config
             .init::<B>(&device)
             .load_record(loaded_model_record);
 

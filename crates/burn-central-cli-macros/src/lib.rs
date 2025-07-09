@@ -79,6 +79,7 @@ pub fn burn(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut errors = Vec::<Error>::new();
     let args = parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
     let item = parse_macro_input!(item as ItemFn);
+    let fn_name = &item.sig.ident;
 
     if args.len() != 1 {
         errors.push(Error::new(
@@ -111,11 +112,25 @@ pub fn burn(args: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let test_fn = if procedure_type == ProcedureType::Training {
+        quote! {
+            #[allow(unused_variables)]
+            const _: () = {
+                fn test<B: burn::tensor::backend::AutodiffBackend>(context: burn_central::command::TrainCommandContext<B>) {
+                    _ = burn_central::command::TrainCommandHandler::call(#fn_name, &context);
+                }
+            };
+        }
+    } else {
+        quote! {}
+    };
+
     let code = quote! {
         #[allow(dead_code)]
         #item
 
         #flag_register
+        #test_fn
     };
 
     code.into()

@@ -1,5 +1,6 @@
 mod checkpoint;
-mod recorder;
+mod artifact;
 
 pub use checkpoint::*;
-pub use recorder::*;
+pub use artifact::ArtifactKind;
+pub(crate) use artifact::*;

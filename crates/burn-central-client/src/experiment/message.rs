@@ -13,7 +13,6 @@ pub enum ExperimentMessage {
     },
     Log(String),
     Error(String),
-    Close,
 }
 
 impl<S: Into<String> + Clone> From<S> for ExperimentMessage {

@@ -3,12 +3,11 @@ use std::collections::HashMap;
 use burn::train::logger::MetricLogger;
 use burn::train::metric::{MetricEntry, NumericEntry};
 
-use crate::error::BurnCentralClientError;
-use crate::experiment::{Experiment, ExperimentHandle};
+use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 
 /// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
-    experiment_handle: ExperimentHandle,
+    experiment_handle: ExperimentRunHandle,
     epoch: usize,
     iterations: HashMap<String, usize>,
     group: String,
@@ -17,15 +16,15 @@ pub struct RemoteMetricLogger {
 impl RemoteMetricLogger {
     /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
     pub fn new(
-        experiment: &Experiment,
+        experiment: &ExperimentRun,
         group: String,
-    ) -> Result<Self, BurnCentralClientError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             experiment_handle: experiment.handle(),
             epoch: 1,
             iterations: HashMap::new(),
             group,
-        })
+        }
     }
 }
 

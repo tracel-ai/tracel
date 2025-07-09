@@ -6,12 +6,12 @@ use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
     EndExperimentSchema, ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
 };
-use crate::http::CreateProjectSchema;
-use crate::http::error::BurnCentralHttpError;
+use crate::api::CreateProjectSchema;
+use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::schemas::BurnCentralCodeMetadata;
 use crate::{
-    client::BurnCentralCredentials,
-    http::schemas::StartExperimentSchema,
+    api::schemas::StartExperimentSchema,
+    credentials::BurnCentralCredentials,
     schemas::{CrateVersionMetadata, Experiment},
 };
 
@@ -20,31 +20,47 @@ pub enum EndExperimentStatus {
     Fail(String),
 }
 
-impl From<reqwest::Error> for BurnCentralHttpError {
+impl From<reqwest::Error> for ClientError {
     fn from(error: reqwest::Error) -> Self {
         match error.status() {
-            Some(status) => BurnCentralHttpError::HttpError {
+            Some(status) => ClientError::ApiError {
                 status,
-                body: error.to_string(),
+                body: ApiErrorBody {
+                    code: ApiErrorCode::Unknown,
+                    message: error.to_string(),
+                },
             },
-            None => BurnCentralHttpError::UnknownError(error.to_string()),
+            None => ClientError::UnknownError(error.to_string()),
         }
     }
 }
 
 trait ResponseExt {
-    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, BurnCentralHttpError>;
+    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, ClientError>;
 }
 
 impl ResponseExt for reqwest::blocking::Response {
-    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, BurnCentralHttpError> {
+    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, ClientError> {
         if self.status().is_success() {
             Ok(self)
         } else {
-            Err(BurnCentralHttpError::HttpError {
-                status: self.status(),
-                body: self.text()?,
-            })
+            match self.status() {
+                reqwest::StatusCode::NOT_FOUND => Err(ClientError::NotFound),
+                reqwest::StatusCode::UNAUTHORIZED => Err(ClientError::Unauthorized),
+                reqwest::StatusCode::FORBIDDEN => Err(ClientError::Forbidden),
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR => {
+                    Err(ClientError::InternalServerError)
+                }
+                _ => Err(ClientError::ApiError {
+                    status: self.status(),
+                    body: self
+                        .text()
+                        .map_err(|e| ClientError::UnknownError(e.to_string()))?
+                        .parse::<serde_json::Value>()
+                        .and_then(|v| serde_json::from_value::<ApiErrorBody>(v))
+                        .map_err(|e| ClientError::Serialization(e))?,
+                }),
+            }
         }
     }
 }
@@ -53,15 +69,18 @@ impl ResponseExt for reqwest::blocking::Response {
 ///
 /// The client can be used to interact with the Burn Central server, such as creating and starting experiments, saving and loading checkpoints, and uploading logs.
 #[derive(Debug, Clone)]
-pub struct HttpClient {
+pub struct Client {
     http_client: reqwest::blocking::Client,
     base_url: Url,
     session_cookie: Option<String>,
 }
 
-impl HttpClient {
+impl Client {
     /// Create a new HttpClient with the given base URL and API key.
-    pub fn new(base_url: Url, credentials: &BurnCentralCredentials) -> Result<Self, BurnCentralHttpError> {
+    pub fn new(
+        base_url: Url,
+        credentials: &BurnCentralCredentials,
+    ) -> Result<Self, ClientError> {
         let mut client = Self::new_without_credentials(base_url);
         let cookie = client.login(&credentials)?;
         client.session_cookie = Some(cookie);
@@ -70,14 +89,14 @@ impl HttpClient {
 
     /// Create a new HttpClient without credentials.
     pub fn new_without_credentials(base_url: Url) -> Self {
-        HttpClient {
+        Client {
             http_client: reqwest::blocking::Client::new(),
             base_url,
             session_cookie: None,
         }
     }
 
-    pub fn get_json<R>(&self, path: impl AsRef<str>) -> Result<R, BurnCentralHttpError>
+    pub fn get_json<R>(&self, path: impl AsRef<str>) -> Result<R, ClientError>
     where
         R: for<'de> serde::Deserialize<'de>,
     {
@@ -90,7 +109,7 @@ impl HttpClient {
         &self,
         path: impl AsRef<str>,
         body: Option<T>,
-    ) -> Result<R, BurnCentralHttpError>
+    ) -> Result<R, ClientError>
     where
         T: serde::Serialize,
         R: for<'de> serde::Deserialize<'de>,
@@ -104,14 +123,14 @@ impl HttpClient {
         &self,
         path: impl AsRef<str>,
         body: Option<T>,
-    ) -> Result<(), BurnCentralHttpError>
+    ) -> Result<(), ClientError>
     where
         T: serde::Serialize,
     {
         self.req(reqwest::Method::POST, path, body).map(|_| ())
     }
 
-    pub fn put<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), BurnCentralHttpError>
+    pub fn put<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), ClientError>
     where
         T: serde::Serialize,
     {
@@ -123,7 +142,7 @@ impl HttpClient {
         method: reqwest::Method,
         path: impl AsRef<str>,
         body: Option<T>,
-    ) -> Result<reqwest::blocking::Response, BurnCentralHttpError> {
+    ) -> Result<reqwest::blocking::Response, ClientError> {
         let url = self.join(path.as_ref());
         let request_builder = self.http_client.request(method, url);
 
@@ -144,7 +163,7 @@ impl HttpClient {
 
     /// Check if the Burn Central server is reachable.
     #[allow(dead_code)]
-    pub fn health_check(&self) -> Result<(), BurnCentralHttpError> {
+    pub fn health_check(&self) -> Result<(), ClientError> {
         let url = self.join("health");
         self.http_client
             .get(url)
@@ -166,42 +185,28 @@ impl HttpClient {
     }
 
     /// Log in to the Burn Central server with the given credentials.
-    fn login(
-        &self,
-        credentials: &BurnCentralCredentials,
-    ) -> Result<String, BurnCentralHttpError> {
+    fn login(&self, credentials: &BurnCentralCredentials) -> Result<String, ClientError> {
         let url = self.join("login/api-key");
 
         let res = self
             .http_client
             .post(url)
             .form::<BurnCentralCredentials>(credentials)
-            .send()?;
+            .send()?
+            .map_to_burn_central_err()?;
 
-        let status = res.status();
-
-        // store session cookie
-        if status.is_success() {
-            let cookie_header = res.headers().get(SET_COOKIE);
-            if let Some(cookie) = cookie_header {
-                let cookie_str = cookie
-                    .to_str()
-                    .expect("Session cookie should be able to convert to str");
-                Ok(cookie_str.to_string())
-            } else {
-                Err(BurnCentralHttpError::BadSessionId)
-            }
+        let cookie_header = res.headers().get(SET_COOKIE);
+        if let Some(cookie) = cookie_header {
+            let cookie_str = cookie
+                .to_str()
+                .expect("Session cookie should be able to convert to str");
+            Ok(cookie_str.to_string())
         } else {
-            let error_message =
-                format!("Cannot connect to Burn Central server({:?})", res.text()?);
-            Err(BurnCentralHttpError::HttpError {
-                status,
-                body: error_message,
-            })
+            Err(ClientError::BadSessionId)
         }
     }
 
-    pub fn get_current_user(&self) -> Result<UserResponseSchema, BurnCentralHttpError> {
+    pub fn get_current_user(&self) -> Result<UserResponseSchema, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join("user/me");
@@ -234,7 +239,7 @@ impl HttpClient {
         _owner_name: &str,
         project_name: &str,
         project_description: Option<&str>,
-    ) -> Result<ProjectSchema, BurnCentralHttpError> {
+    ) -> Result<ProjectSchema, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join("user/projects");
@@ -251,7 +256,7 @@ impl HttpClient {
         &self,
         owner_name: &str,
         project_name: &str,
-    ) -> Result<ProjectSchema, BurnCentralHttpError> {
+    ) -> Result<ProjectSchema, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}"));
@@ -266,7 +271,7 @@ impl HttpClient {
         &self,
         owner_name: &str,
         project_name: &str,
-    ) -> Result<Experiment, BurnCentralHttpError> {
+    ) -> Result<Experiment, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/experiments"));
@@ -300,7 +305,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         config: &impl Serialize,
-    ) -> Result<(), BurnCentralHttpError> {
+    ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
 
         let json = StartExperimentSchema {
@@ -324,7 +329,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         end_status: EndExperimentStatus,
-    ) -> Result<(), BurnCentralHttpError> {
+    ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -348,7 +353,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
-    ) -> Result<String, BurnCentralHttpError> {
+    ) -> Result<String, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -371,7 +376,7 @@ impl HttpClient {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
-    ) -> Result<String, BurnCentralHttpError> {
+    ) -> Result<String, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -391,7 +396,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<String, BurnCentralHttpError> {
+    ) -> Result<String, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -413,7 +418,7 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<String, BurnCentralHttpError> {
+    ) -> Result<String, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -431,7 +436,7 @@ impl HttpClient {
         &self,
         url: &str,
         bytes: Vec<u8>,
-    ) -> Result<(), BurnCentralHttpError> {
+    ) -> Result<(), ClientError> {
         self.http_client
             .put(url)
             .body(bytes)
@@ -442,7 +447,7 @@ impl HttpClient {
     }
 
     /// Generic method to download bytes from the given URL.
-    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, BurnCentralHttpError> {
+    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, ClientError> {
         let data = self
             .http_client
             .get(url)
@@ -454,9 +459,9 @@ impl HttpClient {
         Ok(data)
     }
 
-    fn validate_session_cookie(&self) -> Result<(), BurnCentralHttpError> {
+    fn validate_session_cookie(&self) -> Result<(), ClientError> {
         if self.session_cookie.is_none() {
-            return Err(BurnCentralHttpError::BadSessionId);
+            return Err(ClientError::BadSessionId);
         }
         Ok(())
     }
@@ -469,7 +474,7 @@ impl HttpClient {
         code_metadata: BurnCentralCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
         last_commit: &str,
-    ) -> Result<CodeUploadUrlsSchema, BurnCentralHttpError> {
+    ) -> Result<CodeUploadUrlsSchema, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/code/upload"));
@@ -490,22 +495,20 @@ impl HttpClient {
         owner_name: &str,
         project_name: &str,
         project_version: &str,
-    ) -> Result<bool, BurnCentralHttpError> {
+    ) -> Result<bool, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
             "projects/{owner_name}/{project_name}/code/{project_version}"
         ));
 
-        let response = self.req(reqwest::Method::GET, url, None::<serde_json::Value>)?;
-
-        match response.status() {
-            reqwest::StatusCode::OK => Ok(true),
-            reqwest::StatusCode::NOT_FOUND => Ok(false),
-            _ => Err(BurnCentralHttpError::HttpError {
-                status: response.status(),
-                body: response.text()?,
-            }),
+        match self.get_json::<serde_json::Value>(url) {
+            Ok(_) => Ok(true),
+            Err(ClientError::ApiError {
+                status: reqwest::StatusCode::NOT_FOUND,
+                ..
+            }) => Ok(false),
+            Err(e) => Err(e),
         }
     }
 
@@ -516,7 +519,7 @@ impl HttpClient {
         project_name: &str,
         project_version: &str,
         command: String,
-    ) -> Result<(), BurnCentralHttpError> {
+    ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/jobs/queue"));

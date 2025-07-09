@@ -1,26 +1,26 @@
 use std::path::PathBuf;
 
-use crate::ArtifactKind;
-use crate::experiment::{Experiment, ExperimentHandle};
-use burn::record::{FullPrecisionSettings, Record};
-use burn::{record::RecorderError, tensor::backend::Backend};
+use crate::experiment::{ExperimentRun, ExperimentRunHandle};
+use crate::record::ArtifactKind;
+use burn::record::{FileRecorder, FullPrecisionSettings, Record, Recorder, RecorderError};
+use burn::tensor::backend::Backend;
 use serde::{Serialize, de::DeserializeOwned};
 
 /// A recorder that saves and loads data from a remote server using the [BurnCentralClientState](BurnCentralClientState).
 #[derive(Debug, Clone)]
 pub struct RemoteCheckpointRecorder {
-    experiment_handle: ExperimentHandle,
+    experiment_handle: ExperimentRunHandle,
 }
 
 impl RemoteCheckpointRecorder {
-    fn new(experiment: &Experiment) -> Self {
+    pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),
         }
     }
 }
 
-impl<B: Backend> burn::record::FileRecorder<B> for RemoteCheckpointRecorder {
+impl<B: Backend> FileRecorder<B> for RemoteCheckpointRecorder {
     fn file_extension() -> &'static str {
         "mpk"
     }
@@ -32,7 +32,7 @@ impl Default for RemoteCheckpointRecorder {
     }
 }
 
-impl<B: Backend> burn::record::Recorder<B> for RemoteCheckpointRecorder {
+impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
     type Settings = FullPrecisionSettings;
     type RecordArgs = PathBuf;
     type RecordOutput = ();

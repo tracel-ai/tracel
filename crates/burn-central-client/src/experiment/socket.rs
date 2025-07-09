@@ -1,37 +1,9 @@
-use std::{sync::mpsc, thread::JoinHandle};
+use crate::api::ClientError;
 use crate::experiment::log_store::TempLogStore;
 use crate::websocket::WebSocketClient;
-
-use super::ExperimentMessage;
-
-#[derive(Debug)]
-pub struct ThreadResult {}
-
-struct ExperimentThread {
-    ws_client: WebSocketClient,
-    receiver: mpsc::Receiver<ExperimentMessage>,
-    abort_receiver: mpsc::Receiver<()>,
-    // State
-    in_memory_logs: TempLogStore,
-    iteration_count: usize,
-}
-
-impl ExperimentThread {
-    pub fn new(
-        ws_client: WebSocketClient,
-        receiver: mpsc::Receiver<ExperimentMessage>,
-        abort_receiver: mpsc::Receiver<()>,
-        in_memory_logs: TempLogStore,
-    ) -> Self {
-        Self {
-            ws_client,
-            receiver,
-            abort_receiver,
-            in_memory_logs,
-            iteration_count: 0,
-        }
-    }
-}
+use crossbeam::channel::{select, Sender, Receiver};
+use std::thread::JoinHandle;
+use crate::experiment::message::ExperimentMessage;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
@@ -40,77 +12,105 @@ pub enum ThreadError {
     #[error("Message channel closed unexpectedly")]
     MessageChannelClosed,
     #[error("Log storage failed: {0}")]
-    LogFlushError(String),
+    LogFlushError(ClientError),
     #[error("Failed to abort thread")]
     AbortError,
     #[error("Unexpected panic in thread")]
     Panic,
 }
 
+const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
+const CHANNEL_BUFFER_SIZE: usize = 1;
+
+#[derive(Debug)]
+pub struct ThreadResult {}
+
+struct ExperimentThread {
+    ws_client: WebSocketClient,
+    message_receiver: Receiver<ExperimentMessage>,
+    abort_signal: Receiver<()>,
+    log_store: TempLogStore,
+    iteration_count: usize,
+}
+
 impl ExperimentThread {
+    pub fn new(
+        ws_client: WebSocketClient,
+        message_receiver: Receiver<ExperimentMessage>,
+        abort_signal: Receiver<()>,
+        log_store: TempLogStore,
+    ) -> Self {
+        Self {
+            ws_client,
+            message_receiver,
+            abort_signal,
+            log_store,
+            iteration_count: 0,
+        }
+    }
+
     fn run(mut self) -> Result<ThreadResult, ThreadError> {
         self.thread_loop()?;
-        self.ws_client
-            .close()
-            .map_err(|_| ThreadError::WebSocket("Failed to close WebSocket".to_string()))?;
-        self.in_memory_logs
-            .flush()
-            .map_err(|e| ThreadError::LogFlushError(e.to_string()))?;
-
+        self.cleanup()?;
         Ok(ThreadResult {})
     }
 
-    fn thread_loop(&mut self) -> Result<ThreadResult, ThreadError> {
+    fn cleanup(&mut self) -> Result<(), ThreadError> {
+        self.ws_client
+            .close()
+            .map_err(|_| ThreadError::WebSocket(WEBSOCKET_CLOSE_ERROR.to_string()))?;
+        self.log_store
+            .flush()
+            .map_err(ThreadError::LogFlushError)?;
+        Ok(())
+    }
+
+    fn handle_websocket_send<T: serde::Serialize>(&mut self, message: T) -> Result<(), ThreadError> {
+        self.ws_client
+            .send(message)
+            .map_err(|e| ThreadError::WebSocket(e.to_string()))
+    }
+
+    fn handle_metric_log(&mut self, name: String, epoch: usize, value: f64, group: String) -> Result<(), ThreadError> {
+        self.iteration_count += 1;
+        self.handle_websocket_send(ExperimentMessage::MetricLog {
+            name,
+            epoch,
+            iteration: self.iteration_count,
+            value,
+            group,
+        })
+    }
+
+    fn handle_log_message(&mut self, log: String) -> Result<(), ThreadError> {
+        self.log_store
+            .push(log.clone())
+            .map_err(ThreadError::LogFlushError)?;
+        self.handle_websocket_send(ExperimentMessage::Log(log))
+    }
+
+
+    fn thread_loop(&mut self) -> Result<(), ThreadError> {
         loop {
-            match self.abort_receiver.try_recv() {
-                Ok(_) => {
-                    self.ws_client
-                        .send(ExperimentMessage::Close)
-                        .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
-                    return Ok(ThreadResult {});
+            select! {
+                recv(self.abort_signal) -> _ => {
+                    return Ok(());
                 }
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(ThreadError::MessageChannelClosed);
+                recv(self.message_receiver) -> msg => {
+                    let message = msg.map_err(|_| ThreadError::MessageChannelClosed)?;
+                    match message {
+                        ExperimentMessage::MetricLog { name, epoch, iteration: _, value, group } => {
+                            self.handle_metric_log(name, epoch, value, group)?;
+                        }
+                        ExperimentMessage::Log(log) => {
+                            self.handle_log_message(log)?;
+                        }
+                        ExperimentMessage::Error(err) => {
+                            self.handle_websocket_send(ExperimentMessage::Error(err))?;
+                        }
+                        _ => {}
+                    }
                 }
-            }
-            let res = self
-                .receiver
-                .recv()
-                .map_err(|_| ThreadError::MessageChannelClosed)?;
-            match res {
-                ExperimentMessage::MetricLog {
-                    name,
-                    epoch,
-                    iteration: _,
-                    value,
-                    group,
-                } => {
-                    self.iteration_count += 1;
-                    self.ws_client
-                        .send(ExperimentMessage::MetricLog {
-                            name,
-                            epoch,
-                            iteration: self.iteration_count,
-                            value,
-                            group,
-                        })
-                        .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
-                }
-                ExperimentMessage::Log(log) => {
-                    self.in_memory_logs
-                        .push(log.clone())
-                        .map_err(|e| ThreadError::LogFlushError(e.to_string()))?;
-                    self.ws_client
-                        .send(ExperimentMessage::Log(log))
-                        .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
-                }
-                ExperimentMessage::Error(err) => {
-                    self.ws_client
-                        .send(ExperimentMessage::Error(err))
-                        .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
-                }
-                _ => {}
             }
         }
     }
@@ -118,7 +118,7 @@ impl ExperimentThread {
 
 #[derive(Debug)]
 pub struct ExperimentSocket {
-    abort_sender: mpsc::SyncSender<()>,
+    abort_sender: Sender<()>,
     handle: JoinHandle<Result<ThreadResult, ThreadError>>,
 }
 
@@ -126,17 +126,12 @@ impl ExperimentSocket {
     pub fn new(
         ws_client: WebSocketClient,
         log_store: TempLogStore,
-        receiver: mpsc::Receiver<ExperimentMessage>,
+        message_receiver: Receiver<ExperimentMessage>,
     ) -> Self {
-        let (abort_sender, abort_receiver) = mpsc::sync_channel(1);
-
-        let thread = ExperimentThread::new(ws_client, receiver, abort_receiver, log_store);
+        let (abort_sender, abort_signal) = crossbeam::channel::bounded(CHANNEL_BUFFER_SIZE);
+        let thread = ExperimentThread::new(ws_client, message_receiver, abort_signal, log_store);
         let handle = std::thread::spawn(|| thread.run());
-
-        Self {
-            abort_sender,
-            handle,
-        }
+        Self { abort_sender, handle }
     }
 
     pub fn close(self) -> Result<ThreadResult, ThreadError> {

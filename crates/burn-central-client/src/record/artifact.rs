@@ -1,4 +1,4 @@
-﻿use crate::http::HttpClient;
+﻿use crate::api::Client;
 use crate::schemas::ExperimentPath;
 use burn::prelude::Backend;
 use burn::record::{FullPrecisionSettings, Recorder, RecorderError};
@@ -11,7 +11,6 @@ use strum::EnumString;
 pub enum ArtifactKind {
     Model,
     Checkpoint,
-    Dataset,
 }
 
 #[derive(Clone)]
@@ -28,12 +27,12 @@ pub struct ArtifactLoadArgs {
 
 #[derive(Clone, Debug)]
 pub struct ArtifactRecorder {
-    http_client: HttpClient,
+    client: Client,
 }
 
 impl ArtifactRecorder {
-    pub fn new(http_client: HttpClient) -> Self {
-        ArtifactRecorder { http_client }
+    pub fn new(client: Client) -> Self {
+        ArtifactRecorder { client }
     }
 }
 
@@ -59,7 +58,7 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
 
         // We don't have real artifact storage yet, so we'll just call the checkpoint save URL for now.
         let upload_url = self
-            .http_client
+            .client
             .request_checkpoint_save_url(
                 &args.experiment_path.owner_name(),
                 &args.experiment_path.project_name(),
@@ -68,7 +67,7 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
             )
             .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {}", e)))?;
 
-        self.http_client
+        self.client
             .upload_bytes_to_url(&upload_url, serialized_bytes)
             .map_err(|e| RecorderError::Unknown(format!("Failed to upload item: {}", e)))?;
 
@@ -81,7 +80,7 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
     {
         // We don't have real artifact storage yet, so we'll just call the checkpoint load URL for now.
         let download_url = self
-            .http_client
+            .client
             .request_checkpoint_load_url(
                 &args.experiment_path.owner_name(),
                 &args.experiment_path.project_name(),
@@ -91,7 +90,7 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
             .map_err(|e| RecorderError::Unknown(format!("Failed to get download URL: {}", e)))?;
 
         let bytes = self
-            .http_client
+            .client
             .download_bytes_from_url(&download_url)
             .map_err(|e| RecorderError::Unknown(format!("Failed to download item: {}", e)))?;
 
