@@ -4,10 +4,10 @@ use crate::burn_dir::project::BurnCentralProject;
 use crate::terminal::Terminal;
 use crate::{cargo, config::Config};
 use anyhow::Context;
-use burn_central_client::schemas::ProjectPath;
-use std::path::{Path, PathBuf};
 use burn_central_client::BurnCentral;
 use burn_central_client::credentials::BurnCentralCredentials;
+use burn_central_client::schemas::ProjectPath;
+use std::path::{Path, PathBuf};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
@@ -79,8 +79,7 @@ impl CliContext {
             .ok_or(ClientCreationError::NoCredentials)?;
 
         let creds = BurnCentralCredentials::new(api_key.to_owned());
-        let builder = BurnCentral::builder(creds)
-            .with_endpoint(self.api_endpoint.clone());
+        let builder = BurnCentral::builder(creds).with_endpoint(self.api_endpoint.clone());
 
         builder.build().map_err(|e| match e {
             burn_central_client::InitError::Client(e) if e.is_login_error() => {

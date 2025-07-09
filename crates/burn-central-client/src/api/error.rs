@@ -1,6 +1,6 @@
-use std::fmt::{Display, Formatter};
 use reqwest::StatusCode;
 use serde::Deserialize;
+use std::fmt::{Display, Formatter};
 use strum::{Display, EnumString};
 use thiserror::Error;
 
@@ -11,7 +11,7 @@ pub enum ApiErrorCode {
     ProjectAlreadyExists,
     // ...
     #[serde(other)]
-    Unknown
+    Unknown,
 }
 
 #[derive(Deserialize, Debug)]
@@ -48,7 +48,10 @@ pub enum ClientError {
     #[error("Internal server error")]
     InternalServerError,
     #[error("Api error {status}: {body}")]
-    ApiError { status: StatusCode, body: ApiErrorBody },
+    ApiError {
+        status: StatusCode,
+        body: ApiErrorBody,
+    },
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
     #[error("Unknown Error: {0}")]

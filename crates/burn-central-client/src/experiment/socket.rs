@@ -1,9 +1,9 @@
 use crate::api::ClientError;
 use crate::experiment::log_store::TempLogStore;
-use crate::websocket::WebSocketClient;
-use crossbeam::channel::{select, Sender, Receiver};
-use std::thread::JoinHandle;
 use crate::experiment::message::ExperimentMessage;
+use crate::websocket::WebSocketClient;
+use crossbeam::channel::{Receiver, Sender, select};
+use std::thread::JoinHandle;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
@@ -59,19 +59,26 @@ impl ExperimentThread {
         self.ws_client
             .close()
             .map_err(|_| ThreadError::WebSocket(WEBSOCKET_CLOSE_ERROR.to_string()))?;
-        self.log_store
-            .flush()
-            .map_err(ThreadError::LogFlushError)?;
+        self.log_store.flush().map_err(ThreadError::LogFlushError)?;
         Ok(())
     }
 
-    fn handle_websocket_send<T: serde::Serialize>(&mut self, message: T) -> Result<(), ThreadError> {
+    fn handle_websocket_send<T: serde::Serialize>(
+        &mut self,
+        message: T,
+    ) -> Result<(), ThreadError> {
         self.ws_client
             .send(message)
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
     }
 
-    fn handle_metric_log(&mut self, name: String, epoch: usize, value: f64, group: String) -> Result<(), ThreadError> {
+    fn handle_metric_log(
+        &mut self,
+        name: String,
+        epoch: usize,
+        value: f64,
+        group: String,
+    ) -> Result<(), ThreadError> {
         self.iteration_count += 1;
         self.handle_websocket_send(ExperimentMessage::MetricLog {
             name,
@@ -88,7 +95,6 @@ impl ExperimentThread {
             .map_err(ThreadError::LogFlushError)?;
         self.handle_websocket_send(ExperimentMessage::Log(log))
     }
-
 
     fn thread_loop(&mut self) -> Result<(), ThreadError> {
         loop {
@@ -131,7 +137,10 @@ impl ExperimentSocket {
         let (abort_sender, abort_signal) = crossbeam::channel::bounded(CHANNEL_BUFFER_SIZE);
         let thread = ExperimentThread::new(ws_client, message_receiver, abort_signal, log_store);
         let handle = std::thread::spawn(|| thread.run());
-        Self { abort_sender, handle }
+        Self {
+            abort_sender,
+            handle,
+        }
     }
 
     pub fn close(self) -> Result<ThreadResult, ThreadError> {

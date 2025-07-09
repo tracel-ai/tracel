@@ -48,9 +48,7 @@ impl ResponseExt for reqwest::blocking::Response {
                 reqwest::StatusCode::NOT_FOUND => Err(ClientError::NotFound),
                 reqwest::StatusCode::UNAUTHORIZED => Err(ClientError::Unauthorized),
                 reqwest::StatusCode::FORBIDDEN => Err(ClientError::Forbidden),
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR => {
-                    Err(ClientError::InternalServerError)
-                }
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR => Err(ClientError::InternalServerError),
                 _ => Err(ClientError::ApiError {
                     status: self.status(),
                     body: self
@@ -77,10 +75,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new HttpClient with the given base URL and API key.
-    pub fn new(
-        base_url: Url,
-        credentials: &BurnCentralCredentials,
-    ) -> Result<Self, ClientError> {
+    pub fn new(base_url: Url, credentials: &BurnCentralCredentials) -> Result<Self, ClientError> {
         let mut client = Self::new_without_credentials(base_url);
         let cookie = client.login(&credentials)?;
         client.session_cookie = Some(cookie);
@@ -105,11 +100,7 @@ impl Client {
         Ok(json)
     }
 
-    pub fn post_json<T, R>(
-        &self,
-        path: impl AsRef<str>,
-        body: Option<T>,
-    ) -> Result<R, ClientError>
+    pub fn post_json<T, R>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<R, ClientError>
     where
         T: serde::Serialize,
         R: for<'de> serde::Deserialize<'de>,
@@ -119,11 +110,7 @@ impl Client {
         Ok(json)
     }
 
-    pub fn post<T>(
-        &self,
-        path: impl AsRef<str>,
-        body: Option<T>,
-    ) -> Result<(), ClientError>
+    pub fn post<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), ClientError>
     where
         T: serde::Serialize,
     {
@@ -432,11 +419,7 @@ impl Client {
     }
 
     /// Generic method to upload bytes to the given URL.
-    pub fn upload_bytes_to_url(
-        &self,
-        url: &str,
-        bytes: Vec<u8>,
-    ) -> Result<(), ClientError> {
+    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), ClientError> {
         self.http_client
             .put(url)
             .body(bytes)

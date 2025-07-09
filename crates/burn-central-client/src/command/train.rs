@@ -1,5 +1,5 @@
-use burn::{config::Config, module::Module, tensor::backend::Backend};
 use crate::experiment::ExperimentRun;
+use burn::{config::Config, module::Module, tensor::backend::Backend};
 
 #[derive(Debug, Clone)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);

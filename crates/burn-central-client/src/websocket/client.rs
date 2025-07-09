@@ -1,8 +1,10 @@
 use reqwest::header::COOKIE;
 use serde::Serialize;
 
-use tungstenite::{Message, WebSocket, client::IntoClientRequest, connect, stream::MaybeTlsStream, Utf8Bytes};
 use crate::websocket::WebSocketError;
+use tungstenite::{
+    Message, Utf8Bytes, WebSocket, client::IntoClientRequest, connect, stream::MaybeTlsStream,
+};
 
 type Socket = WebSocket<MaybeTlsStream<std::net::TcpStream>>;
 
@@ -24,11 +26,15 @@ impl WebSocketClient {
             .into_client_request()
             .expect("Should be able to create a client request from the URL");
 
-        req.headers_mut()
-            .append(COOKIE, cookie.parse().expect("Should be able to parse cookie header"));
+        req.headers_mut().append(
+            COOKIE,
+            cookie
+                .parse()
+                .expect("Should be able to parse cookie header"),
+        );
 
-        let (socket, _) = connect(req)
-            .map_err(|e| WebSocketError::ConnectionError(e.to_string()))?;
+        let (socket, _) =
+            connect(req).map_err(|e| WebSocketError::ConnectionError(e.to_string()))?;
 
         self.state = Some(socket);
         Ok(())

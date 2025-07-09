@@ -70,9 +70,7 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
     let client = context
         .create_client()
         .context("Failed to authenticate with the server")?;
-    let user = client
-        .me()
-        .context("Failed to retrieve current user")?;
+    let user = client.me().context("Failed to retrieve current user")?;
     println!("Successfully logged in! Welcome {}.", user.username);
     Ok(())
 }

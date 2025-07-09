@@ -15,10 +15,7 @@ pub struct RemoteMetricLogger {
 
 impl RemoteMetricLogger {
     /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
-    pub fn new(
-        experiment: &ExperimentRun,
-        group: String,
-    ) -> Self {
+    pub fn new(experiment: &ExperimentRun, group: String) -> Self {
         Self {
             experiment_handle: experiment.handle(),
             epoch: 1,

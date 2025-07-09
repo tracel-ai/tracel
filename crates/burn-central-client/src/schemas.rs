@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
+use crate::client::BurnCentralError;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use crate::client::BurnCentralError;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]

@@ -1,5 +1,5 @@
-﻿use burn::record::RecorderError;
 use crate::websocket::WebSocketError;
+use burn::record::RecorderError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExperimentTrackerError {

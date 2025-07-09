@@ -320,10 +320,8 @@ fn generate_proc_call(
 fn generate_main_rs(main_backend: &BackendType) -> String {
     let flags = crate::registry::get_flags();
 
-    let backend_types =
-        backend::generate_backend_typedef_stream(main_backend);
-    let (_backend_type_name, _autodiff_backend_type_name) =
-        backend::get_backend_type_names();
+    let backend_types = backend::generate_backend_typedef_stream(main_backend);
+    let (_backend_type_name, _autodiff_backend_type_name) = backend::get_backend_type_names();
     let backend_default_device = main_backend.default_device_stream();
 
     let train_match_arms: Vec<proc_macro2::TokenStream> = flags
