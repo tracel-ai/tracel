@@ -1,10 +1,9 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
+use crate::client::BurnCentralError;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-
-use crate::error::BurnCentralClientError;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -130,8 +129,8 @@ pub struct PackagedCrateData {
 
 #[derive(Debug, Clone)]
 pub struct ProjectPath {
-    owner_name: String,
-    project_name: String,
+    pub owner_name: String,
+    pub project_name: String,
 }
 
 impl ProjectPath {
@@ -172,11 +171,11 @@ impl ProjectPath {
 }
 
 impl TryFrom<String> for ProjectPath {
-    type Error = BurnCentralClientError;
+    type Error = BurnCentralError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         if !ProjectPath::validate_path(&path) {
-            return Err(BurnCentralClientError::InvalidProjectPath(path));
+            return Err(Self::Error::InvalidProjectPath(path));
         }
 
         let parts: Vec<&str> = path.split('/').collect();
@@ -236,18 +235,18 @@ impl ExperimentPath {
 }
 
 impl TryFrom<String> for ExperimentPath {
-    type Error = BurnCentralClientError;
+    type Error = BurnCentralError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         if !ExperimentPath::validate_path(&path) {
-            return Err(BurnCentralClientError::InvalidExperimentPath(path));
+            return Err(Self::Error::InvalidExperimentPath(path));
         }
 
         let parts: Vec<&str> = path.split('/').collect();
         let project_path = ProjectPath::try_from(parts[0..2].join("/"))?;
         let experiment_num = parts[2]
             .parse::<i32>()
-            .map_err(|_| BurnCentralClientError::InvalidExperimentNumber(parts[2].to_string()))?;
+            .map_err(|_| Self::Error::InvalidExperimentNumber(parts[2].to_string()))?;
 
         Ok(ExperimentPath {
             project_path,
@@ -279,7 +278,7 @@ pub struct User {
 }
 
 #[derive(Debug, Clone)]
-pub struct Project {
+pub struct ProjectSchema {
     pub project_name: String,
     pub namespace_name: String,
     pub namespace_type: String,

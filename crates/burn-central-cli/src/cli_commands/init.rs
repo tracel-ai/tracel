@@ -3,8 +3,8 @@ use crate::context::CliContext;
 use crate::terminal::Terminal;
 use crate::util::git;
 use anyhow::Context;
-use burn_central_client::client::BurnCentralClient;
-use burn_central_client::schemas::{Project, ProjectPath};
+use burn_central_client::BurnCentral;
+use burn_central_client::schemas::{ProjectPath, ProjectSchema};
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -74,8 +74,8 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     Ok(())
 }
 
-fn prompt_owner_name(client: &BurnCentralClient) -> anyhow::Result<String> {
-    let user_name = client.get_current_user()?.username;
+fn prompt_owner_name(client: &BurnCentral) -> anyhow::Result<String> {
+    let user_name = client.me()?.username;
     let namespaces = [
         (&user_name, format!("[user] {user_name}"), ""),
         (
@@ -128,7 +128,7 @@ pub fn prompt_project_name(context: &CliContext) -> anyhow::Result<String> {
     Ok(input)
 }
 
-fn handle_existing_project(project: &Project) -> anyhow::Result<ProjectPath> {
+fn handle_existing_project(project: &ProjectSchema) -> anyhow::Result<ProjectPath> {
     let confirmed = cliclack::confirm(format!(
         "Project \"{}\" already exists under owner \"{}\". Do you want to link it?",
         project.project_name, project.namespace_name
@@ -147,7 +147,7 @@ fn handle_existing_project(project: &Project) -> anyhow::Result<ProjectPath> {
 }
 
 fn create_new_project(
-    client: &BurnCentralClient,
+    client: &BurnCentral,
     owner: &str,
     name: &str,
 ) -> anyhow::Result<ProjectPath> {

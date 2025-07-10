@@ -2,7 +2,7 @@ use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
 use crate::terminal::Terminal;
 use anyhow::Context;
-use burn_central_client::client::BurnCentralClient;
+use burn_central_client::BurnCentral;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -28,10 +28,7 @@ pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn get_client_and_login_if_needed(
-    context: &mut CliContext,
-) -> anyhow::Result<BurnCentralClient> {
+pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<BurnCentral> {
     let client_res = context.create_client();
     while let Err(err) = &client_res {
         match err {
@@ -72,9 +69,7 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
     let client = context
         .create_client()
         .context("Failed to authenticate with the server")?;
-    let user = client
-        .get_current_user()
-        .context("Failed to retrieve current user")?;
+    let user = client.me().context("Failed to retrieve current user")?;
     println!("Successfully logged in! Welcome {}.", user.username);
     Ok(())
 }

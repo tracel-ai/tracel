@@ -1,437 +1,171 @@
-use std::path::PathBuf;
-use std::sync::mpsc;
-use std::sync::{Arc, RwLock};
-use std::thread;
-use std::time::Duration;
+//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
-use burn::tensor::backend::Backend;
-use reqwest::StatusCode;
-use serde::Serialize;
-
-use crate::error::BurnCentralClientError;
-use crate::experiment::{Experiment, TempLogStore, WsMessage};
-use crate::http::error::BurnCentralHttpError;
-use crate::http::{EndExperimentStatus, HttpClient};
+use crate::api::Client;
+use crate::api::ClientError;
+use crate::credentials::BurnCentralCredentials;
+use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::schemas::{
-    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, Project,
-    ProjectPath, User,
+    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
+    ProjectSchema, User,
 };
-use crate::websocket::WebSocketClient;
+use reqwest::Url;
+use serde::Serialize;
+use std::path::PathBuf;
 
-/// Credentials to connect to the Burn Central server
-#[derive(Serialize, Debug, Clone)]
-pub struct BurnCentralCredentials {
-    api_key: String,
+/// Errors that can occur during the initialization of the [BurnCentral] client.
+#[derive(Debug, thiserror::Error)]
+pub enum InitError {
+    /// Represents an error related to the client.
+    #[error("Client error: {0}")]
+    Client(#[from] ClientError),
+    /// Represents an error when the endpoint URL is invalid.
+    #[error("Failed to parse endpoint URL: {0}")]
+    InvalidEndpointUrl(String),
+    /// Represents an error when an environment variable is not set.
+    #[error("Environment variable not set: {0}")]
+    EnvNotSet(String),
 }
 
-impl BurnCentralCredentials {
-    pub fn new(api_key: String) -> Self {
-        Self { api_key }
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum BurnCentralError {
+    // Input validation errors
+    #[error("Invalid experiment path: {0}")]
+    InvalidExperimentPath(String),
+    #[error("Invalid project path: {0}")]
+    InvalidProjectPath(String),
+    #[error("Invalid experiment number: {0}")]
+    InvalidExperimentNumber(String),
+
+    /// Represents an error related to client operations.
+    ///
+    /// This error variant is used to encapsulate client-specific errors along with additional context
+    /// and the underlying source error for more detailed debugging.
+    ///
+    /// # Fields
+    /// - `context` (String): A description or additional information about the client error context.
+    /// - `source` (ClientError): The underlying source of the client error, providing more details about the cause.
+    #[error("Client error: {context}")]
+    Client {
+        context: String,
+        source: ClientError,
+    },
+    /// Represents an error related to the experiment tracker.
+    #[error("Experiment error: {0}")]
+    ExperimentTracker(#[from] ExperimentTrackerError),
+
+    /// Error that should be used when the user is not logged in but tries to perform an operation that requires authentication.
+    #[error("The user is not authenticated.")]
+    Unauthenticated,
+
+    /// Error that should be used when the client performs operations that can fail due to IO issues.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    /// Error that should be used when the client encounters an error that is not specifically handled.
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
-impl From<BurnCentralCredentials> for String {
-    fn from(val: BurnCentralCredentials) -> Self {
-        val.api_key
-    }
+/// This builder struct is used to create a [BurnCentral] client.
+pub struct BurnCentralBuilder {
+    endpoint: Option<String>,
+    credentials: BurnCentralCredentials,
 }
 
-/// Configuration for the BurnCentralClient. Can be created using [BurnCentralClientConfigBuilder], which is created using the [BurnCentralClientConfig::builder] method.
-#[derive(Debug, Clone)]
-pub struct BurnCentralClientConfig {
-    /// The endpoint of the Burn Central API
-    pub endpoint: String,
-    /// Burn Central credential to create a session with the Burn Central API
-    pub credentials: BurnCentralCredentials,
-    /// The number of retries to attempt when connecting to the Burn Central API.
-    pub num_retries: u8,
-    /// The interval to wait between retries in seconds.
-    pub retry_interval: u64,
-    /// The project path to create the experiment in.
-    pub project_path: Option<ProjectPath>,
-}
-
-impl BurnCentralClientConfig {
-    /// Create a new [BurnCentralClientConfigBuilder] with the given API key.
-    pub fn builder(creds: BurnCentralCredentials) -> BurnCentralClientConfigBuilder {
-        BurnCentralClientConfigBuilder::new(creds)
-    }
-}
-
-/// Builder for the BurnCentralClientConfig
-pub struct BurnCentralClientConfigBuilder {
-    config: BurnCentralClientConfig,
-}
-
-impl BurnCentralClientConfigBuilder {
-    pub(crate) fn new(creds: BurnCentralCredentials) -> BurnCentralClientConfigBuilder {
-        BurnCentralClientConfigBuilder {
-            config: BurnCentralClientConfig {
-                endpoint: "http://127.0.0.1:9001".into(),
-                credentials: creds,
-                num_retries: 3,
-                retry_interval: 3,
-                project_path: None,
-            },
+impl BurnCentralBuilder {
+    /// Creates a new [BurnCentralBuilder] with the given credentials.
+    pub fn new(credentials: impl Into<BurnCentralCredentials>) -> Self {
+        BurnCentralBuilder {
+            endpoint: None,
+            credentials: credentials.into(),
         }
     }
 
-    /// Set the endpoint of the Burn Central API
-    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> BurnCentralClientConfigBuilder {
-        self.config.endpoint = endpoint.into();
+    /// Sets the endpoint for the [BurnCentral] client.
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = Some(endpoint.into());
         self
     }
 
-    /// Set the number of retries to attempt when connecting to the Burn Central API
-    pub fn with_num_retries(mut self, num_retries: u8) -> BurnCentralClientConfigBuilder {
-        self.config.num_retries = num_retries;
-        self
-    }
-
-    /// Set the interval to wait between retries in seconds
-    pub fn with_retry_interval(mut self, retry_interval: u64) -> BurnCentralClientConfigBuilder {
-        self.config.retry_interval = retry_interval;
-        self
-    }
-
-    /// Set the project to create the experiment in
-    pub fn with_project(mut self, project_path: ProjectPath) -> BurnCentralClientConfigBuilder {
-        self.config.project_path = Some(project_path);
-        self
-    }
-
-    /// Build the BurnCentralClientConfig
-    pub fn build(self) -> BurnCentralClientConfig {
-        self.config
-    }
-}
-
-/// The BurnCentralClient is used to interact with the Burn Central API. It is required for all interactions with the Burn Central API.
-#[derive(Debug, Clone)]
-pub struct BurnCentralClient {
-    config: BurnCentralClientConfig,
-    http_client: HttpClient,
-    active_experiment: Arc<RwLock<Option<Experiment>>>,
-}
-
-/// Type alias for the BurnCentralClient for simplicity
-pub type BurnCentralClientState = BurnCentralClient;
-
-impl BurnCentralClient {
-    fn new(config: BurnCentralClientConfig) -> BurnCentralClient {
-        let url = config
-            .endpoint
-            .parse()
-            .expect("Should be able to parse the URL");
-        let http_client = HttpClient::new(url);
-
-        BurnCentralClient {
-            config,
-            http_client,
-            active_experiment: Default::default(),
-        }
-    }
-
-    fn connect(&mut self) -> Result<(), BurnCentralClientError> {
-        self.http_client.login(&self.config.credentials)?;
-
-        Ok(())
-    }
-
-    fn get_project_path(&self) -> Option<ProjectPath> {
-        let current_project = &self.config.project_path;
-        current_project.clone()
-    }
-
-    /// Create a new BurnCentralClient with the given configuration.
-    pub fn create(
-        config: BurnCentralClientConfig,
-    ) -> Result<BurnCentralClientState, BurnCentralClientError> {
-        let mut client = BurnCentralClient::new(config);
-
-        // Try to connect to the api, if it fails, return an error
-        for i in 0..=client.config.num_retries {
-            match client.connect() {
-                Ok(_) => break,
-                Err(e) => {
-                    // println!("Failed to connect to the server: {}", e);
-
-                    if i == client.config.num_retries {
-                        return Err(BurnCentralClientError::ServerConnectionError(
-                            "Server timeout".to_string(),
-                        ));
-                    }
-
-                    if let BurnCentralClientError::HttpError(BurnCentralHttpError::HttpError {
-                        status: StatusCode::UNPROCESSABLE_ENTITY,
-                        body: msg,
-                    }) = e
-                    {
-                        // println!("Invalid API key. Please check your API key and try again.");
-                        return Err(BurnCentralClientError::InvalidCredentialsError(format!(
-                            "Invalid API key: {msg}"
-                        )));
-                    }
-                    println!(
-                        "Failed to connect to the server. Retrying in {} seconds...",
-                        client.config.retry_interval
-                    );
-                    thread::sleep(Duration::from_secs(client.config.retry_interval));
-                }
+    /// Builds the [BurnCentral] client.
+    pub fn build(self) -> Result<BurnCentral, InitError> {
+        let url = match self.endpoint {
+            Some(s) => s
+                .parse::<Url>()
+                .map_err(|e| InitError::InvalidEndpointUrl(e.to_string()))?,
+            None => {
+                Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid")
             }
-        }
-
-        Ok(client)
-    }
-
-    pub fn get_current_user(&self) -> Result<User, BurnCentralClientError> {
-        self.http_client
-            .get_current_user()
-            .map_err(BurnCentralClientError::HttpError)
-            .map(|user| User {
-                username: user.username,
-                email: user.email,
-            })
-    }
-
-    /// Start a new experiment. This will create a new experiment on the Burn Central backend and start it.
-    pub fn start_experiment(
-        &mut self,
-        config: &impl Serialize,
-    ) -> Result<(), BurnCentralClientError> {
-        let Some(project_path) = self.get_project_path() else {
-            return Err(BurnCentralClientError::StartExperimentError(
-                "No project set. Please set a project before starting an experiment.".to_string(),
-            ));
         };
+        let client = Client::new(url, &self.credentials)?;
+        Ok(BurnCentral::new(client))
+    }
+}
 
-        let experiment = self
-            .http_client
-            .create_experiment(project_path.owner_name(), project_path.project_name())
-            .map_err(BurnCentralClientError::HttpError)?;
+/// This struct provides the main interface to interact with Burn Central.
+pub struct BurnCentral {
+    client: Client,
+}
 
-        let experiment_path =
-            ExperimentPath::try_from(format!("{}/{}", project_path, experiment.experiment_num))?;
-
-        self.http_client
-            .start_experiment(
-                project_path.owner_name(),
-                &experiment.project_name,
-                experiment.experiment_num,
-                config,
-            )
-            .map_err(BurnCentralClientError::HttpError)?;
-
-        println!("Experiment num: {}", experiment.experiment_num);
-
-        let ws_endpoint = self.http_client.format_websocket_url(
-            project_path.owner_name(),
-            &experiment.project_name,
-            experiment.experiment_num,
-        );
-
-        let mut ws_client = WebSocketClient::new();
-        ws_client.connect(ws_endpoint, self.http_client.get_session_cookie().unwrap())?;
-
-        let exp_log_store = TempLogStore::new(self.http_client.clone(), experiment_path.clone());
-
-        let experiment = Experiment::new(experiment_path, ws_client, exp_log_store);
-        let mut exp_guard = self
-            .active_experiment
-            .write()
-            .expect("Should be able to lock active_experiment as write.");
-        exp_guard.replace(experiment);
-
-        Ok(())
+impl BurnCentral {
+    /// Creates a new [BurnCentral] instance with the given credentials.
+    pub fn login(credentials: impl Into<BurnCentralCredentials>) -> Result<Self, InitError> {
+        let credentials = credentials.into();
+        BurnCentralBuilder::new(credentials).build()
     }
 
-    /// Get the sender for the active experiment's WebSocket connection.
-    pub(crate) fn get_experiment_sender(
-        &self,
-    ) -> Result<mpsc::Sender<WsMessage>, BurnCentralClientError> {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-        if let Some(w) = active_experiment.as_ref() {
-            w.get_ws_sender()
-        } else {
-            Err(BurnCentralClientError::UnknownError(
-                "No active experiment to get sender.".to_string(),
-            ))
-        }
+    /// Creates a new [BurnCentralBuilder] to configure the client.
+    pub fn builder(credentials: impl Into<BurnCentralCredentials>) -> BurnCentralBuilder {
+        BurnCentralBuilder::new(credentials)
     }
 
-    /// Save checkpoint data to the Burn Central API.
-    pub(crate) fn save_checkpoint_data(
-        &self,
-        path: &str,
-        checkpoint: Vec<u8>,
-    ) -> Result<(), BurnCentralClientError> {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-        let experiment_path = active_experiment
-            .as_ref()
-            .expect("Experiment should exist.")
-            .experiment_path()
-            .clone();
+    /// Creates a new [BurnCentral] instance from environment variables.
+    ///
+    /// This function reads the `BURN_CENTRAL_ENDPOINT` and `BURN_CENTRAL_API_KEY` environment variables.
+    /// If the `BURN_CENTRAL_ENDPOINT` is not set, it defaults to `https://central.burn.dev/api/`.
+    pub fn from_env() -> Result<Self, InitError> {
+        let endpoint = std::env::var("BURN_CENTRAL_ENDPOINT")
+            .unwrap_or_else(|_| "https://central.burn.dev/api/".to_string())
+            .parse::<Url>()
+            .map_err(|_| InitError::InvalidEndpointUrl("BURN_CENTRAL_ENDPOINT".to_string()))?;
+        let credentials = BurnCentralCredentials::from_env()
+            .map_err(|_| InitError::EnvNotSet("BURN_CENTRAL_API_KEY".to_string()))?;
 
-        let url = self.http_client.request_checkpoint_save_url(
-            experiment_path.owner_name(),
-            experiment_path.project_name(),
-            experiment_path.experiment_num(),
-            path,
-        )?;
-
-        let time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Should be able to get time.")
-            .as_millis();
-
-        self.http_client.upload_bytes_to_url(&url, checkpoint)?;
-
-        let time_end = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Should be able to get time.")
-            .as_millis();
-
-        log::info!("Time to upload checkpoint: {}", time_end - time);
-        Ok(())
+        BurnCentralBuilder::new(credentials)
+            .with_endpoint(endpoint.as_str())
+            .build()
     }
 
-    /// Load checkpoint data from the Burn Central API
-    pub(crate) fn load_checkpoint_data(
-        &self,
-        path: &str,
-    ) -> Result<Vec<u8>, BurnCentralClientError> {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-        let experiment_path = active_experiment
-            .as_ref()
-            .expect("Experiment should exist.")
-            .experiment_path()
-            .clone();
-
-        let url = self.http_client.request_checkpoint_load_url(
-            experiment_path.owner_name(),
-            experiment_path.project_name(),
-            experiment_path.experiment_num(),
-            path,
-        )?;
-        let response = self.http_client.download_bytes_from_url(&url)?;
-
-        Ok(response)
-    }
-
-    /// Save the final model to the Burn Central backend.
-    pub(crate) fn save_final_model(&self, data: Vec<u8>) -> Result<(), BurnCentralClientError> {
-        let active_experiment = self
-            .active_experiment
-            .read()
-            .expect("Should be able to lock active_experiment as read.");
-
-        if active_experiment.is_none() {
-            return Err(BurnCentralClientError::UnknownError(
-                "No active experiment to upload final model.".to_string(),
-            ));
-        }
-
-        let experiment_path = active_experiment
-            .as_ref()
-            .expect("Experiment should exist.")
-            .experiment_path()
-            .clone();
-
-        let url = self.http_client.request_final_model_save_url(
-            experiment_path.owner_name(),
-            experiment_path.project_name(),
-            experiment_path.experiment_num(),
-        )?;
-        self.http_client.upload_bytes_to_url(&url, data)?;
-
-        Ok(())
-    }
-
-    /// End the active experiment and upload the final model to the Burn Central backend.
-    /// This will close the WebSocket connection and upload the logs to the Burn Central backend.
-    pub fn end_experiment_with_model<B, S>(
-        &mut self,
-        model: impl burn::module::Module<B>,
-    ) -> Result<(), BurnCentralClientError>
-    where
-        B: Backend,
-        S: burn::record::PrecisionSettings,
-    {
-        let recorder = crate::record::RemoteRecorder::<S>::final_model(self.clone());
-        let res = model.save_file("", &recorder);
-        if let Err(e) = res {
-            return Err(BurnCentralClientError::StopExperimentError(e.to_string()));
-        }
-
-        self.end_experiment_internal(EndExperimentStatus::Success)
-    }
-
-    /// End the active experiment with an error reason.
-    /// This will close the WebSocket connection and upload the logs to the Burn Central backend.
-    /// No model will be uploaded.
-    pub fn end_experiment_with_error(
-        &mut self,
-        error_reason: String,
-    ) -> Result<(), BurnCentralClientError> {
-        self.end_experiment_internal(EndExperimentStatus::Fail(error_reason))
-    }
-
-    fn end_experiment_internal(
-        &mut self,
-        end_status: EndExperimentStatus,
-    ) -> Result<(), BurnCentralClientError> {
-        let mut active_experiment = self
-            .active_experiment
-            .write()
-            .expect("Should be able to lock active_experiment as write.");
-        let mut experiment = active_experiment.take().expect("Experiment should exist.");
-        let experiment_path = experiment.experiment_path().clone();
-
-        // Stop the websocket handling thread
-        experiment.stop();
-
-        // End the experiment in the backend
-        self.http_client.end_experiment(
-            experiment_path.owner_name(),
-            experiment_path.project_name(),
-            experiment_path.experiment_num(),
-            end_status,
-        )?;
-
-        Ok(())
+    /// Creates a new instance of [BurnCentral] with the given [Client].
+    fn new(client: Client) -> Self {
+        BurnCentral { client }
     }
 
     pub fn find_project(
         &self,
-        namespace_name: &str,
-        project_name: &str,
-    ) -> Result<Option<Project>, BurnCentralClientError> {
+        owner_name: impl AsRef<str>,
+        project_name: impl AsRef<str>,
+    ) -> Result<Option<ProjectSchema>, BurnCentralError> {
         let project = self
-            .http_client
-            .get_project(namespace_name, project_name)
+            .client
+            .get_project(owner_name.as_ref(), project_name.as_ref())
             .map(Some)
             .or_else(|e| {
-                if let BurnCentralHttpError::HttpError {
-                    status: StatusCode::NOT_FOUND,
-                    ..
-                } = e
-                {
+                if matches!(e, ClientError::NotFound) {
                     Ok(None)
                 } else {
                     Err(e)
                 }
             })
-            .map_err(|e| BurnCentralClientError::GetProjectError(format!("{project_name}: {e}")))?
-            .map(|project_schema| Project {
+            .map_err(|e| BurnCentralError::Client {
+                context: format!(
+                    "Failed to get project {}/{}",
+                    owner_name.as_ref(),
+                    project_name.as_ref()
+                ),
+                source: e,
+            })?
+            .map(|project_schema| ProjectSchema {
                 project_name: project_schema.project_name,
                 namespace_name: project_schema.namespace_name,
                 namespace_type: project_schema.namespace_type,
@@ -445,34 +179,92 @@ impl BurnCentralClient {
 
     pub fn create_project(
         &self,
-        namespace_name: &str,
-        project_name: &str,
+        namespace_name: impl AsRef<str>,
+        project_name: impl AsRef<str>,
         description: Option<&str>,
-    ) -> Result<ProjectPath, BurnCentralClientError> {
-        self.http_client
-            .create_project(namespace_name, project_name, description)
-            .map_err(|e| {
-                BurnCentralClientError::CreateProjectError(format!("Failed to create project: {e}"))
+    ) -> Result<ProjectPath, BurnCentralError> {
+        let project = self
+            .client
+            .create_project(namespace_name.as_ref(), project_name.as_ref(), description)
+            .map_err(|e| BurnCentralError::Client {
+                context: format!(
+                    "Failed to create project {}/{}",
+                    namespace_name.as_ref(),
+                    project_name.as_ref()
+                ),
+                source: e,
             })?;
 
-        let new_project_path =
-            ProjectPath::new(namespace_name.to_string(), project_name.to_string());
+        let new_project_path = ProjectPath::new(project.namespace_name, project.project_name);
         Ok(new_project_path)
     }
 
+    /// Returns the current user information.
+    pub fn me(&self) -> Result<User, BurnCentralError> {
+        let user = self.client.get_current_user().map_err(|e| {
+            if matches!(e, ClientError::Unauthorized) {
+                BurnCentralError::Unauthenticated
+            } else {
+                BurnCentralError::Client {
+                    context: "Failed to get current user".to_string(),
+                    source: e,
+                }
+            }
+        })?;
+
+        Ok(User {
+            username: user.username,
+            email: user.email,
+        })
+    }
+
+    /// Start a new experiment. This will create a new experiment on the Burn Central backend and start it.
+    pub fn start_experiment(
+        &self,
+        namespace: &str,
+        project_name: &str,
+        config: &impl Serialize,
+    ) -> Result<ExperimentRun, BurnCentralError> {
+        let experiment = self
+            .client
+            .create_experiment(namespace, project_name)
+            .map_err(|e| BurnCentralError::Client {
+                context: format!("Failed to create experiment for {namespace}/{project_name}"),
+                source: e,
+            })?;
+        let experiment_path = ExperimentPath::try_from(format!(
+            "{}/{}/{}",
+            namespace, project_name, experiment.experiment_num
+        ))?;
+
+        self.client
+            .start_experiment(
+                namespace,
+                &experiment.project_name,
+                experiment.experiment_num,
+                config,
+            )
+            .map_err(|e| BurnCentralError::Client {
+                context: format!("Failed to start experiment {namespace}/{project_name}"),
+                source: e,
+            })?;
+
+        println!("Experiment num: {}", experiment.experiment_num);
+
+        ExperimentRun::new(self.client.clone(), experiment_path)
+            .map_err(BurnCentralError::ExperimentTracker)
+    }
+
+    /// Upload a new version of a project to Burn Central.
     pub fn upload_new_project_version(
         &self,
+        namespace: &str,
+        project_name: &str,
         target_package_name: &str,
         code_metadata: BurnCentralCodeMetadata,
         crates_data: Vec<PackagedCrateData>,
         last_commit: &str,
-    ) -> Result<String, BurnCentralClientError> {
-        let Some(project_path) = self.get_project_path() else {
-            return Err(BurnCentralClientError::UploadProjectVersionError(
-                "No project set. Please set a project before uploading a new version.".to_string(),
-            ));
-        };
-
+    ) -> Result<String, BurnCentralError> {
         let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
             .into_iter()
             .map(|krate| {
@@ -486,30 +278,44 @@ impl BurnCentralClient {
             })
             .unzip();
 
-        let urls = self.http_client.publish_project_version_urls(
-            project_path.owner_name(),
-            project_path.project_name(),
-            target_package_name,
-            code_metadata,
-            metadata,
-            last_commit,
-        )?;
+        let urls = self
+            .client
+            .publish_project_version_urls(
+                namespace,
+                project_name,
+                target_package_name,
+                code_metadata,
+                metadata,
+                last_commit,
+            )
+            .map_err(|e| BurnCentralError::Client {
+                context: format!(
+                    "Failed to get upload URLs for project {namespace}/{project_name}"
+                ),
+                source: e,
+            })?;
 
         for (crate_name, file_path) in data.into_iter() {
             let url = urls
                 .urls
                 .get(&crate_name)
-                .ok_or(BurnCentralClientError::UnknownError(format!(
-                    "No URL found for crate {crate_name}"
+                .ok_or(BurnCentralError::Internal(format!(
+                    "No upload URL found for crate: {crate_name}"
                 )))?;
 
-            let data = std::fs::read(file_path).map_err(|e| {
-                BurnCentralClientError::FileReadError(format!(
-                    "Could not read crate data for crate {crate_name}: {e}"
-                ))
+            let data = std::fs::read(&file_path).map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to read crate file {}: {}", file_path.display(), e),
+                )
             })?;
 
-            self.http_client.upload_bytes_to_url(url, data)?;
+            self.client
+                .upload_bytes_to_url(url, data)
+                .map_err(|e| BurnCentralError::Client {
+                    context: format!("Failed to upload crate {crate_name} to URL {url}"),
+                    source: e,
+                })?;
         }
 
         Ok(urls.project_version)
@@ -518,54 +324,27 @@ impl BurnCentralClient {
     /// Start a remote job on the Burn Central backend.
     pub fn start_remote_job(
         &self,
+        namespace: &str,
+        project_name: &str,
         runner_group_name: String,
         project_version: &str,
         command: String,
-    ) -> Result<(), BurnCentralClientError> {
-        let Some(project_path) = self.get_project_path() else {
-            return Err(BurnCentralClientError::StartRemoteJobError(
-                "No project set. Please set a project before starting a remote job.".to_string(),
-            ));
-        };
-
-        if !self.http_client.check_project_version_exists(
-            project_path.owner_name(),
-            project_path.project_name(),
-            project_version,
-        )? {
-            return Err(BurnCentralClientError::StartRemoteJobError(format!(
-                "Project version `{project_version}` does not exist. Please upload your code using the `package` command then you can run your code remotely with that version."
-            )));
-        }
-
-        self.http_client.start_remote_job(
-            &runner_group_name,
-            project_path.owner_name(),
-            project_path.project_name(),
-            project_version,
-            command,
-        )?;
+    ) -> Result<(), BurnCentralError> {
+        self.client
+            .start_remote_job(
+                &runner_group_name,
+                namespace,
+                project_name,
+                project_version,
+                command,
+            )
+            .map_err(|e| BurnCentralError::Client {
+                context: format!(
+                    "Failed to start remote job for {namespace}/{project_name}/{runner_group_name}"
+                ),
+                source: e,
+            })?;
 
         Ok(())
-    }
-}
-
-impl Drop for BurnCentralClient {
-    fn drop(&mut self) {
-        // if the ref count is 1, then we are the last reference to the client, so we should end the experiment
-        if Arc::strong_count(&self.active_experiment) == 1 {
-            {
-                let active_experiment = self
-                    .active_experiment
-                    .read()
-                    .expect("Should be able to lock active_experiment as read.");
-                if active_experiment.is_none() {
-                    return;
-                }
-            }
-
-            self.end_experiment_internal(EndExperimentStatus::Success)
-                .expect("Should be able to end the experiment after dropping the last client.");
-        }
     }
 }

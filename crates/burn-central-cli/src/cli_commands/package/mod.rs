@@ -25,7 +25,10 @@ pub(crate) fn handle_command(_args: PackageArgs, context: CliContext) -> anyhow:
         functions: registered_functions,
     };
 
+    let project_path = context.get_project_path()?;
     let project_version = client.upload_new_project_version(
+        project_path.owner_name(),
+        project_path.project_name(),
         context.package_name(),
         code_metadata,
         crates,

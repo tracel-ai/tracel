@@ -1,6 +1,7 @@
 mod client;
-pub(crate) mod error;
+mod error;
 mod schemas;
 
 pub use client::*;
+pub use error::*;
 pub use schemas::*;

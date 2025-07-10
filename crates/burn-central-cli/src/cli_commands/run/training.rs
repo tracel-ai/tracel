@@ -52,8 +52,12 @@ pub(crate) fn handle_command(args: TrainingRunArgs, context: CliContext) -> anyh
 fn remote_run(args: TrainingRunArgs, context: CliContext) -> anyhow::Result<()> {
     let client = context.create_client()?;
     let project_version = args.project_version.unwrap();
-
+    let project_path = context
+        .get_project_path()
+        .context("Failed to get project path")?;
     client.start_remote_job(
+        &project_path.owner_name,
+        &project_path.project_name,
         args.runner.unwrap(),
         &project_version,
         format!(
