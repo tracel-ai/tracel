@@ -28,7 +28,6 @@ pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<BurnCentral> {
     let client_res = context.create_client();
     while let Err(err) = &client_res {
