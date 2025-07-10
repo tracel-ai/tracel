@@ -61,9 +61,15 @@ pub fn cli_main(config: Config) {
 }
 
 fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<()> {
-    if matches!(command, Commands::Run(..) | Commands::Package(..)) {
+    if matches!(
+        command,
+        Commands::Run(..) | Commands::Package(..)
+    ) {
         if let Err(e) = context.load_project() {
-            return Err(anyhow::anyhow!("Failed to load project metadata: {}.", e));
+            return Err(anyhow::anyhow!(
+                "Failed to load project metadata: {}.",
+                e
+            ));
         }
     }
 
@@ -82,14 +88,17 @@ fn default_command(mut context: CliContext) -> anyhow::Result<()> {
 
     let client = cli_commands::login::get_client_and_login_if_needed(&mut context)
         .context("Failed to obtain the client")?;
-
+    
     if !project_loaded {
         print_info!("No project loaded. Running initialization sequence.");
         cli_commands::init::prompt_init(&context, &client)
             .context("Failed to initialize the project")?;
 
-        cli_commands::package::handle_command(cli_commands::package::PackageArgs {}, context)
-            .context("Failed to package the project")?;
+        cli_commands::package::handle_command(
+            cli_commands::package::PackageArgs {},
+            context,
+        )
+        .context("Failed to package the project")?;
     } else {
         print_info!("No command provided. Please specify a command to run.");
     }
