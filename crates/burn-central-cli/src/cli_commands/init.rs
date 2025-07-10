@@ -48,12 +48,12 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     }
     let _first_commit_hash = first_commit_hash?;
 
-    let owner_name = prompt_owner_name(&client)?;
-    let project_name = prompt_project_name(&context)?;
+    let owner_name = prompt_owner_name(client)?;
+    let project_name = prompt_project_name(context)?;
 
     let project_path = match client.find_project(&owner_name, &project_name) {
         Ok(Some(project)) => handle_existing_project(&project)?,
-        Ok(None) => create_new_project(&client, &owner_name, &project_name)?,
+        Ok(None) => create_new_project(client, &owner_name, &project_name)?,
         Err(e) => {
             cliclack::outro_cancel(format!("Failed to check for existing project: {e}"))?;
             return Err(anyhow::anyhow!(e));
