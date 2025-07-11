@@ -2,6 +2,7 @@
 
 use crate::api::Client;
 use crate::api::ClientError;
+use crate::api::OrganizationSchema;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::schemas::{
@@ -44,7 +45,7 @@ pub enum BurnCentralError {
     /// # Fields
     /// - `context` (String): A description or additional information about the client error context.
     /// - `source` (ClientError): The underlying source of the client error, providing more details about the cause.
-    #[error("Client error: {context}")]
+    #[error("Client error: {context}\nSource: {source}")]
     Client {
         context: String,
         source: ClientError,
@@ -177,19 +178,43 @@ impl BurnCentral {
         Ok(project)
     }
 
-    pub fn create_project(
+    pub fn create_user_project(
         &self,
-        namespace_name: impl AsRef<str>,
         project_name: impl AsRef<str>,
         description: Option<&str>,
     ) -> Result<ProjectPath, BurnCentralError> {
         let project = self
             .client
-            .create_project(namespace_name.as_ref(), project_name.as_ref(), description)
+            .create_user_project(project_name.as_ref(), description)
+            .map_err(|e| BurnCentralError::Client {
+                context: format!(
+                    "Failed to create project {}",
+                    project_name.as_ref()
+                ),
+                source: e,
+            })?;
+
+        let new_project_path = ProjectPath::new(project.namespace_name, project.project_name);
+        Ok(new_project_path)
+    }
+
+    pub fn create_organization_project(
+        &self,
+        organization_name: impl AsRef<str>,
+        project_name: impl AsRef<str>,
+        description: Option<&str>,
+    ) -> Result<ProjectPath, BurnCentralError> {
+        let project = self
+            .client
+            .create_organization_project(
+                organization_name.as_ref(),
+                project_name.as_ref(),
+                description,
+            )
             .map_err(|e| BurnCentralError::Client {
                 context: format!(
                     "Failed to create project {}/{}",
-                    namespace_name.as_ref(),
+                    organization_name.as_ref(),
                     project_name.as_ref()
                 ),
                 source: e,
@@ -346,5 +371,15 @@ impl BurnCentral {
             })?;
 
         Ok(())
+    }
+    
+    pub fn get_organizations(&self) -> Result<Vec<OrganizationSchema>, BurnCentralError> {
+        self.client
+            .get_user_organizations()
+            .map_err(|e| BurnCentralError::Client {
+                context: "Failed to get user organizations".to_string(),
+                source: e,
+            })
+            .map(|response| response.organizations)
     }
 }

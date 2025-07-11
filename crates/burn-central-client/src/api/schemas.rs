@@ -84,3 +84,15 @@ pub struct CreateProjectSchema {
     pub name: String,
     pub description: Option<String>,
 }
+
+#[derive(Deserialize)]
+pub struct GetUserOrganizationsResponseSchema {
+    pub organizations: Vec<OrganizationSchema>,
+}
+
+#[derive(Deserialize)]
+pub struct OrganizationSchema {
+    pub id: i32,
+    pub name: String,
+    pub namespace: String,
+}
