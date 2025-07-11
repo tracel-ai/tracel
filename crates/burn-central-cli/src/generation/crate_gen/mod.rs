@@ -386,7 +386,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         ) -> burn_central::BurnCentral {
             let creds = burn_central::credentials::BurnCentralCredentials::new(api_key.to_owned());
             burn_central::BurnCentral::builder(creds)
-                .with_endpoint(url.parse().unwrap())
+                .with_endpoint(url)
                 .build().expect("Burn Central client should be created")
         }
 

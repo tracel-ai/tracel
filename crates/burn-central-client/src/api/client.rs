@@ -199,7 +199,7 @@ impl Client {
     pub fn get_current_user(&self) -> Result<UserResponseSchema, ClientError> {
         self.validate_session_cookie()?;
 
-        let url = self.join("user/me");
+        let url = self.join("user");
 
         self.get_json::<UserResponseSchema>(url)
     }

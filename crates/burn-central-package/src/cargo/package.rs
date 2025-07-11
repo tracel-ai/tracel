@@ -1,14 +1,15 @@
+use crate::cargo::toml::Manifest;
 use std::{
     collections::{BTreeMap, HashMap},
     io::Seek,
     path::{Path, PathBuf},
 };
 
-use burn_central_client::schemas::{CrateMetadata, Dep, PackagedCrateData};
+use crate::{cargo, CrateMetadata, Dep, PackagedCrateData};
 use colored::Colorize;
 
 use super::paths;
-use crate::{print_err, print_info, print_warn, util};
+use crate::{print_err, print_info, print_warn};
 use sha2::Digest as _;
 use sha2::Sha256;
 
@@ -100,7 +101,7 @@ fn check_package(root_dir: &Path, package: &cargo_metadata::Package) -> anyhow::
         let pkg_manifest_dir = pkg_manifest_dir.canonicalize().unwrap();
 
         let is_in_root = pkg_manifest_dir.starts_with(root_dir);
-        if is_in_root {
+        if true {
             // check if file exists
             let file_exists = file_path.exists();
             if file_exists {
@@ -132,7 +133,7 @@ fn check_package(root_dir: &Path, package: &cargo_metadata::Package) -> anyhow::
 
 pub struct Package {
     pub package: cargo_metadata::Package,
-    pub manifest: util::cargo::toml::Manifest,
+    pub manifest: Manifest,
     pub manifest_path: PathBuf,
 }
 
@@ -159,7 +160,7 @@ pub fn package(
         .expect("Failed to find own package");
 
     let workspace_toml =
-        util::cargo::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
+        cargo::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
 
     print_info!("{}", "Checking local packages".green().bold());
 
@@ -192,7 +193,7 @@ pub fn package(
             print_info!("    {}", file.rel_path.display());
         }
 
-        let resolved_manifest = util::cargo::toml::read_manifest(
+        let resolved_manifest = cargo::toml::read_manifest(
             pkg.manifest_path.as_std_path(),
             Some(&workspace_toml_path),
         )?;
@@ -224,13 +225,13 @@ pub fn package(
                     dep.target.clone().map(|t| t.to_string()),
                     match dep.kind {
                         cargo_metadata::DependencyKind::Normal => {
-                            burn_central_client::schemas::DepKind::Normal
+                            crate::DepKind::Normal
                         }
                         cargo_metadata::DependencyKind::Development => {
-                            burn_central_client::schemas::DepKind::Dev
+                            crate::DepKind::Dev
                         }
                         cargo_metadata::DependencyKind::Build => {
-                            burn_central_client::schemas::DepKind::Build
+                            crate::DepKind::Build
                         }
                         cargo_metadata::DependencyKind::Unknown => {
                             unimplemented!("Unknown dep kind")

@@ -414,40 +414,30 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "burn-central-client",
- "cargo-util-schemas 0.8.1",
- "cargo_metadata",
+ "burn-central-package",
+ "cargo_metadata 0.20.0",
  "chrono",
  "clap",
  "cliclack",
  "colored",
  "console",
  "directories",
- "flate2",
  "gix",
- "ignore",
  "inventory",
- "lazycell",
  "once_cell",
  "paste",
- "pathdiff",
  "prettyplease",
  "proc-macro2",
  "quote",
  "serde",
- "serde-untagged",
- "serde_ignored",
  "serde_json",
- "sha2",
  "strum 0.27.1",
  "syn",
  "syn-serde",
- "tar",
  "thiserror 2.0.12",
  "toml",
- "toml_edit",
- "unicase",
+ "toml_edit 0.22.26",
  "url",
- "walkdir",
 ]
 
 [[package]]
@@ -470,6 +460,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "burn",
+ "burn-central-package",
  "crossbeam",
  "derive-new 0.7.0",
  "log",
@@ -487,6 +478,31 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite",
  "uuid",
+]
+
+[[package]]
+name = "burn-central-package"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo-util-schemas 0.8.2",
+ "cargo_metadata 0.21.0",
+ "colored",
+ "derive-new 0.7.0",
+ "flate2",
+ "gix",
+ "ignore",
+ "lazycell",
+ "pathdiff",
+ "serde",
+ "serde-untagged",
+ "serde_ignored",
+ "sha2",
+ "tar",
+ "toml",
+ "toml_edit 0.23.0",
+ "unicase",
+ "walkdir",
 ]
 
 [[package]]
@@ -899,9 +915,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-util-schemas"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea8b01266e95c3cf839fe626e651fa36a9171033caa917a773d7a0ba1d5ce6be"
+checksum = "7dc1a6f7b5651af85774ae5a34b4e8be397d9cf4bc063b7e6dbd99a841837830"
 dependencies = [
  "semver",
  "serde",
@@ -922,6 +938,21 @@ dependencies = [
  "camino",
  "cargo-platform",
  "cargo-util-schemas 0.2.0",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cfca2aaa699835ba88faf58a06342a314a950d2b9686165e038286c30316868"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "cargo-util-schemas 0.8.2",
  "semver",
  "serde",
  "serde_json",
@@ -4791,7 +4822,7 @@ version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edce586971a4dfaa28950c6f18ed55e0406c1ab88bbce2c6f6293a7aaba73d35"
 dependencies = [
- "toml_edit",
+ "toml_edit 0.22.26",
 ]
 
 [[package]]
@@ -5625,6 +5656,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40734c41988f7306bb04f0ecf60ec0f3f1caa34290e4e8ea471dcd3346483b83"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6265,9 +6305,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05ae329d1f08c4d17a59bed7ff5b5a769d062e64a62d34a3261b219e62cd5aae"
 dependencies = [
  "serde",
- "serde_spanned",
- "toml_datetime",
- "toml_edit",
+ "serde_spanned 0.6.8",
+ "toml_datetime 0.6.9",
+ "toml_edit 0.22.26",
 ]
 
 [[package]]
@@ -6280,6 +6320,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml_datetime"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bade1c3e902f58d73d3f294cd7f20391c1cb2fbcb643b73566bc773971df91e3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "toml_edit"
 version = "0.22.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6287,9 +6336,33 @@ checksum = "310068873db2c5b3e7659d2cc35d21855dbafa50d1ce336397c666e3cb08137e"
 dependencies = [
  "indexmap",
  "serde",
- "serde_spanned",
- "toml_datetime",
+ "serde_spanned 0.6.8",
+ "toml_datetime 0.6.9",
  "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54449f7f7569ce6f57cda7812361961c0f6a77f720802537b5618585b4a7ff4c"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned 1.0.0",
+ "toml_datetime 0.7.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5c1c469eda89749d2230d8156a5969a69ffe0d6d01200581cdc6110674d293e"
+dependencies = [
  "winnow",
 ]
 
@@ -6298,6 +6371,12 @@ name = "toml_write"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfb942dfe1d8e29a7ee7fcbde5bd2b9a25fb89aa70caea2eba3bee836ff41076"
+
+[[package]]
+name = "toml_writer"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b679217f2848de74cabd3e8fc5e6d66f40b7da40f8e1954d92054d9010690fd5"
 
 [[package]]
 name = "torch-sys"

@@ -13,7 +13,7 @@ pub(crate) fn handle_command(_args: PackageArgs, context: CliContext) -> anyhow:
     let last_commit_hash = get_last_commit_hash()?;
 
     let client = context.create_client()?;
-    let crates = crate::util::cargo::package::package(
+    let crates = burn_central_package::cargo::package::package(
         &context.get_artifacts_dir_path(),
         context.package_name(),
     )?;

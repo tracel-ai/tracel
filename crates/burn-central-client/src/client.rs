@@ -5,12 +5,13 @@ use crate::api::ClientError;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::schemas::{
-    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
+    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, ProjectPath,
     ProjectSchema, User,
 };
 use reqwest::Url;
 use serde::Serialize;
 use std::path::PathBuf;
+use burn_central_package::PackagedCrateData;
 
 /// Errors that can occur during the initialization of the [BurnCentral] client.
 #[derive(Debug, thiserror::Error)]
