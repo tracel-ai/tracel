@@ -56,7 +56,7 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         ProjectKind::User => user.username.as_str(),
         ProjectKind::Organization(org_name) => org_name.as_str(),
     };
-    let project_path = match client.find_project(&owner_name, &project_name) {
+    let project_path = match client.find_project(owner_name, &project_name) {
         Ok(Some(project)) => handle_existing_project(&project)?,
         Ok(None) => create_new_project(client, project_owner, &project_name)?,
         Err(e) => {
@@ -85,14 +85,14 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
 
 fn prompt_owner_name(user_name: &str, client: &BurnCentral) -> anyhow::Result<ProjectKind> {
     let organizations = client.get_organizations()?;
-    let mut namespaces = vec![
-        (ProjectKind::User, format!("[user] {user_name}"), ""),
-    ];
-    namespaces.extend(
-        organizations
-            .into_iter()
-            .map(|org| (ProjectKind::Organization(org.name.clone()), format!("[org] {}", org.name), "")),
-    );
+    let mut namespaces = vec![(ProjectKind::User, format!("[user] {user_name}"), "")];
+    namespaces.extend(organizations.into_iter().map(|org| {
+        (
+            ProjectKind::Organization(org.name.clone()),
+            format!("[org] {}", org.name),
+            "",
+        )
+    }));
     cliclack::select("Select the owner of the project")
         .items(&namespaces)
         .initial_value(ProjectKind::User)

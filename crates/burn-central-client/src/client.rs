@@ -1,4 +1,4 @@
-﻿//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
+//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
 use crate::api::Client;
 use crate::api::ClientError;
@@ -187,10 +187,7 @@ impl BurnCentral {
             .client
             .create_user_project(project_name.as_ref(), description)
             .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to create project {}",
-                    project_name.as_ref()
-                ),
+                context: format!("Failed to create project {}", project_name.as_ref()),
                 source: e,
             })?;
 
@@ -372,7 +369,7 @@ impl BurnCentral {
 
         Ok(())
     }
-    
+
     pub fn get_organizations(&self) -> Result<Vec<OrganizationSchema>, BurnCentralError> {
         self.client
             .get_user_organizations()
