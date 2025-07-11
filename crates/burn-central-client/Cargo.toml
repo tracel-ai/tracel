@@ -17,6 +17,7 @@ rust-version.workspace = true
 # todo: temporary fix until burn updates its bincode version to 2.0.0
 bincode = "2.0.1"
 burn = { workspace = true, features = ["train"] }
+burn-central-package = { path = "../burn-central-package", version = "0.1.0" }
 
 derive-new = { workspace = true }
 log = { workspace = true }

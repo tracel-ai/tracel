@@ -18,12 +18,9 @@ use cargo_util_schemas::manifest::{
     PathValue, StringOrBool, TomlBenchTarget, TomlBinTarget, TomlExampleTarget, TomlLibTarget,
     TomlTarget, TomlTestTarget,
 };
-
-use super::CargoResult;
-
-use crate::util::cargo::features::Edition;
-use crate::util::cargo::restricted_names;
-use crate::util::cargo::toml::deprecated_underscore;
+use crate::cargo::features::Edition;
+use crate::cargo::restricted_names;
+use super::{deprecated_underscore, CargoResult};
 
 const DEFAULT_TEST_DIR_NAME: &str = "tests";
 const DEFAULT_BENCH_DIR_NAME: &str = "benches";

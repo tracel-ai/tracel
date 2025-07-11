@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 type CargoResult<T> = anyhow::Result<T>;
 
 use anyhow::anyhow;
-
+use crate::cargo::paths;
 use crate::print_debug;
-use crate::util::cargo::paths;
 
 use super::paths::normalize_path;
 
@@ -93,7 +92,7 @@ pub struct WorkspaceRootConfig {
     default_members: Option<Vec<String>>,
     exclude: Vec<String>,
     inheritable_fields: InheritableFields,
-    custom_metadata: Option<toml::Value>,
+    custom_metadata: Option<toml::value::Value>,
 }
 
 /// From Cargo (with a few functions removed): https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/core/workspace.rs#L1776
@@ -105,7 +104,7 @@ impl WorkspaceRootConfig {
         default_members: &Option<Vec<String>>,
         exclude: &Option<Vec<String>>,
         inheritable: &Option<InheritableFields>,
-        custom_metadata: &Option<toml::Value>,
+        custom_metadata: &Option<toml::value::Value>,
     ) -> WorkspaceRootConfig {
         WorkspaceRootConfig {
             root_dir: root_dir.to_path_buf(),

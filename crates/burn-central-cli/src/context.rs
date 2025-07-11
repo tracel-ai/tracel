@@ -183,7 +183,7 @@ impl ProjectContext {
         // get the project name from the Cargo.toml
         let toml_str = std::fs::read_to_string(manifest_path).expect("Cargo.toml should exist");
         let manifest_document =
-            toml::de::from_str::<toml::Value>(&toml_str).expect("Cargo.toml should be valid");
+            toml::de::from_str::<toml::value::Value>(&toml_str).expect("Cargo.toml should be valid");
 
         let user_crate_name = manifest_document["package"]["name"]
             .as_str()
