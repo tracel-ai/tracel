@@ -1,4 +1,4 @@
-//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
+﻿//! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
 use crate::api::Client;
 use crate::api::ClientError;
