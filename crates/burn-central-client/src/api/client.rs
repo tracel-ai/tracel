@@ -6,8 +6,8 @@ use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
     EndExperimentSchema, ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
 };
-use crate::api::CreateProjectSchema;
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
+use crate::api::{CreateProjectSchema, GetUserOrganizationsResponseSchema};
 use crate::schemas::BurnCentralCodeMetadata;
 use crate::{
     api::schemas::StartExperimentSchema,
@@ -199,7 +199,7 @@ impl Client {
     pub fn get_current_user(&self) -> Result<UserResponseSchema, ClientError> {
         self.validate_session_cookie()?;
 
-        let url = self.join("user/me");
+        let url = self.join("user");
 
         self.get_json::<UserResponseSchema>(url)
     }
@@ -224,9 +224,8 @@ impl Client {
         url.to_string()
     }
 
-    pub fn create_project(
+    pub fn create_user_project(
         &self,
-        _owner_name: &str,
         project_name: &str,
         project_description: Option<&str>,
     ) -> Result<ProjectSchema, ClientError> {
@@ -240,6 +239,34 @@ impl Client {
         };
 
         self.post_json::<CreateProjectSchema, ProjectSchema>(url, Some(project_data))
+    }
+
+    pub fn create_organization_project(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        project_description: Option<&str>,
+    ) -> Result<ProjectSchema, ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!("organizations/{owner_name}/projects"));
+
+        let project_data = CreateProjectSchema {
+            name: project_name.to_string(),
+            description: project_description.map(|desc| desc.to_string()),
+        };
+
+        self.post_json::<CreateProjectSchema, ProjectSchema>(url, Some(project_data))
+    }
+
+    pub fn get_user_organizations(
+        &self,
+    ) -> Result<GetUserOrganizationsResponseSchema, ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join("user/organizations");
+
+        self.get_json(url)
     }
 
     pub fn get_project(

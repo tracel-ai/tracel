@@ -29,6 +29,7 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
 }
 
 pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result<()> {
+    let user = client.me()?;
     let ws_root = context
         .get_workspace_root()
         .context("Failed to get workspace root")?;
@@ -48,12 +49,16 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     }
     let _first_commit_hash = first_commit_hash?;
 
-    let owner_name = prompt_owner_name(client)?;
+    let project_owner = prompt_owner_name(&user.username, client)?;
     let project_name = prompt_project_name(context)?;
 
-    let project_path = match client.find_project(&owner_name, &project_name) {
+    let owner_name = match &project_owner {
+        ProjectKind::User => user.username.as_str(),
+        ProjectKind::Organization(org_name) => org_name.as_str(),
+    };
+    let project_path = match client.find_project(owner_name, &project_name) {
         Ok(Some(project)) => handle_existing_project(&project)?,
-        Ok(None) => create_new_project(client, &owner_name, &project_name)?,
+        Ok(None) => create_new_project(client, project_owner, &project_name)?,
         Err(e) => {
             cliclack::outro_cancel(format!("Failed to check for existing project: {e}"))?;
             return Err(anyhow::anyhow!(e));
@@ -78,28 +83,20 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     Ok(())
 }
 
-fn prompt_owner_name(client: &BurnCentral) -> anyhow::Result<String> {
-    let user_name = client.me()?.username;
-    let namespaces = [
-        (&user_name, format!("[user] {user_name}"), ""),
+fn prompt_owner_name(user_name: &str, client: &BurnCentral) -> anyhow::Result<ProjectKind> {
+    let organizations = client.get_organizations()?;
+    let mut namespaces = vec![(ProjectKind::User, format!("[user] {user_name}"), "")];
+    namespaces.extend(organizations.into_iter().map(|org| {
         (
-            &"my-organisation".to_string(),
-            "[org] my-organization".to_string(),
+            ProjectKind::Organization(org.name.clone()),
+            format!("[org] {}", org.name),
             "",
-        ),
-        (&"tracel-ai".to_string(), "[org] tracel-ai".to_string(), ""),
-        (
-            &"burn-central-dev".to_string(),
-            "[org] burn-central-dev".to_string(),
-            "",
-        ),
-    ];
-
+        )
+    }));
     cliclack::select("Select the owner of the project")
         .items(&namespaces)
-        .initial_value(namespaces[0].0)
+        .initial_value(ProjectKind::User)
         .interact()
-        .cloned()
         .map_err(anyhow::Error::from)
 }
 
@@ -150,9 +147,15 @@ fn handle_existing_project(project: &ProjectSchema) -> anyhow::Result<ProjectPat
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProjectKind {
+    User,
+    Organization(String),
+}
+
 fn create_new_project(
     client: &BurnCentral,
-    owner: &str,
+    project_kind: ProjectKind,
     name: &str,
 ) -> anyhow::Result<ProjectPath> {
     let description = cliclack::input("Enter the project description (default empty)")
@@ -164,12 +167,16 @@ fn create_new_project(
         Some(description)
     };
 
-    client
-        .create_project(owner, name, desc.as_deref())
-        .map_err(|e| {
-            cliclack::outro_cancel(format!("Failed to create project: {e}")).unwrap();
-            anyhow::anyhow!("Failed to create project: {}", e)
-        })
+    match project_kind {
+        ProjectKind::User => client.create_user_project(name, desc.as_deref()),
+        ProjectKind::Organization(org_name) => {
+            client.create_organization_project(&org_name, name, desc.as_deref())
+        }
+    }
+    .map_err(|e| {
+        cliclack::outro_cancel(format!("Failed to create project: {e}")).unwrap();
+        anyhow::anyhow!("Failed to create project: {}", e)
+    })
 }
 
 pub fn ensure_git_repo_initialized(ws_root: &std::path::Path) -> anyhow::Result<()> {
