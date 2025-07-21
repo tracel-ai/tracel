@@ -14,7 +14,7 @@ pub struct LoginArgs {
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     let prompt = format!(
         "Enter your API key found on {} below.",
-        Terminal::url(&context.get_api_endpoint().join("me")?),
+        Terminal::url(&context.get_frontend_endpoint().join("/settings/api-key")?),
     );
     context.terminal().print(&prompt);
     let api_key = context.terminal_mut().read_password("Key")?;
@@ -29,34 +29,39 @@ pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
 }
 
 pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<BurnCentral> {
-    let client_res = context.create_client();
-    while let Err(err) = &client_res {
-        match err {
-            ClientCreationError::InvalidCredentials | ClientCreationError::NoCredentials => {
-                prompt_login(context)?;
-                let client = context.create_client();
-                match client {
-                    Ok(client) => {
-                        context.terminal().print("Successfully logged in!");
-                        return Ok(client);
+    const MAX_RETRIES: u32 = 3;
+    let mut attempts = 0;
+
+    loop {
+        match context.create_client() {
+            Ok(client) => {
+                if attempts > 0 {
+                    context.terminal().print("Successfully logged in!");
+                }
+                return Ok(client);
+            }
+            Err(err) => {
+                attempts += 1;
+                match err {
+                    ClientCreationError::InvalidCredentials | ClientCreationError::NoCredentials => {
+                        if attempts > MAX_RETRIES {
+                            return Err(anyhow::anyhow!("Maximum login attempts exceeded"));
+                        }
+                        context.terminal().print("Failed to login. Please try again. Press Ctrl+C to exit.");
+                        prompt_login(context)?;
                     }
-                    Err(e) => {
-                        context.terminal().print(&format!(
-                            "Failed to create client: {e}. Please try again. Press Ctrl+C to exit."
-                        ));
-                        continue;
+                    ClientCreationError::ServerConnectionError(msg) => {
+                        if attempts > MAX_RETRIES {
+                            return Err(anyhow::anyhow!("Server connection failed after maximum retries: {}", msg));
+                        }
+                        context
+                            .terminal()
+                            .print(&format!("Failed to connect to the server: {msg}. Retrying..."));
                     }
                 }
             }
-            ClientCreationError::ServerConnectionError(msg) => {
-                context
-                    .terminal()
-                    .print(&format!("Failed to connect to the server: {msg}."));
-                continue;
-            }
         }
     }
-    Ok(client_res?)
 }
 
 pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Result<()> {

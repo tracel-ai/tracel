@@ -80,8 +80,7 @@ fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<
 fn default_command(mut context: CliContext) -> anyhow::Result<()> {
     let project_loaded = context.load_project().is_ok();
 
-    let client = cli_commands::login::get_client_and_login_if_needed(&mut context)
-        .context("Failed to obtain the client")?;
+    let client = cli_commands::login::get_client_and_login_if_needed(&mut context)?;
 
     if !project_loaded {
         print_info!("No project loaded. Running initialization sequence.");
