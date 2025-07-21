@@ -14,7 +14,7 @@ pub struct LoginArgs {
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     let prompt = format!(
         "Enter your API key found on {} below.",
-        Terminal::url(&context.get_frontend_endpoint().join("/settings/api-key")?),
+        Terminal::url(&context.get_frontend_endpoint().join("/settings/api-keys")?),
     );
     context.terminal().print(&prompt);
     let api_key = context.terminal_mut().read_password("Key")?;
