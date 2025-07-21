@@ -43,20 +43,26 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
             Err(err) => {
                 attempts += 1;
                 match err {
-                    ClientCreationError::InvalidCredentials | ClientCreationError::NoCredentials => {
+                    ClientCreationError::InvalidCredentials
+                    | ClientCreationError::NoCredentials => {
                         if attempts > MAX_RETRIES {
                             return Err(anyhow::anyhow!("Maximum login attempts exceeded"));
                         }
-                        context.terminal().print("Failed to login. Please try again. Press Ctrl+C to exit.");
+                        context
+                            .terminal()
+                            .print("Failed to login. Please try again. Press Ctrl+C to exit.");
                         prompt_login(context)?;
                     }
                     ClientCreationError::ServerConnectionError(msg) => {
                         if attempts > MAX_RETRIES {
-                            return Err(anyhow::anyhow!("Server connection failed after maximum retries: {}", msg));
+                            return Err(anyhow::anyhow!(
+                                "Server connection failed after maximum retries: {}",
+                                msg
+                            ));
                         }
-                        context
-                            .terminal()
-                            .print(&format!("Failed to connect to the server: {msg}. Retrying..."));
+                        context.terminal().print(&format!(
+                            "Failed to connect to the server: {msg}. Retrying..."
+                        ));
                     }
                 }
             }

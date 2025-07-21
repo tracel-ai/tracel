@@ -105,11 +105,17 @@ impl CliContext {
     }
 
     pub fn get_frontend_endpoint(&self) -> url::Url {
-        let host = self.api_endpoint.host_str().expect("API endpoint should have a host");
+        let host = self
+            .api_endpoint
+            .host_str()
+            .expect("API endpoint should have a host");
 
-        let mut host_url = url::Url::parse("https://example.com").expect("Base URL should be valid");
+        let mut host_url =
+            url::Url::parse("https://example.com").expect("Base URL should be valid");
         host_url.set_host(Some(host)).expect("Host should be valid");
-        host_url.set_scheme(self.api_endpoint.scheme()).expect("Scheme should be valid");
+        host_url
+            .set_scheme(self.api_endpoint.scheme())
+            .expect("Scheme should be valid");
         host_url
     }
 

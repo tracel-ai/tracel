@@ -73,7 +73,9 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     })?;
     cliclack::log::success("Created project metadata")?;
 
-    let frontend_url = context.get_frontend_endpoint().join(&format!("/{owner_name}/{project_name}"))?;
+    let frontend_url = context
+        .get_frontend_endpoint()
+        .join(&format!("/{owner_name}/{project_name}"))?;
     cliclack::outro(format!(
         "Project initialized successfully! You can check out your project at {}",
         Terminal::url(&frontend_url)
