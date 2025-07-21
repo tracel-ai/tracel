@@ -15,8 +15,7 @@ pub struct InitArgs {
 }
 
 pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result<()> {
-    let client = super::login::get_client_and_login_if_needed(&mut context)
-        .context("Failed to obtain the client")?;
+    let client = super::login::get_client_and_login_if_needed(&mut context)?;
 
     if !args.force && context.burn_dir().load_project().is_ok() {
         context
@@ -74,10 +73,12 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     })?;
     cliclack::log::success("Created project metadata")?;
 
-    let frontend_url = &format!("https://central.burn.dev/{owner_name}/{project_name}").parse()?;
+    let frontend_url = context
+        .get_frontend_endpoint()
+        .join(&format!("/{owner_name}/{project_name}"))?;
     cliclack::outro(format!(
         "Project initialized successfully! You can check out your project at {}",
-        Terminal::url(frontend_url)
+        Terminal::url(&frontend_url)
     ))?;
 
     Ok(())
