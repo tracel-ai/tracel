@@ -1,5 +1,5 @@
-use crate::experiment::ExperimentRun;
-use burn::{config::Config, module::Module, tensor::backend::Backend};
+use crate::experiment::{ExperimentConfig, ExperimentRun, deserialize_and_merge_with_default};
+use burn::{module::Module, tensor::backend::Backend};
 
 #[derive(Debug, Clone)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
@@ -45,9 +45,10 @@ impl<B: Backend> std::ops::Deref for MultiDevice<B> {
     }
 }
 
-impl<'a, B: Backend, T: Config> FromTrainCommandContext<'a, B> for T {
+impl<'a, B: Backend, T: ExperimentConfig> FromTrainCommandContext<'a, B> for T {
     fn from_context(context: &'a TrainCommandContext<'a, B>) -> Self {
-        T::load_binary(context.config.as_bytes()).expect("Config should be loaded")
+        deserialize_and_merge_with_default(&context.config)
+            .expect("Failed to deserialize and merge config")
     }
 }
 

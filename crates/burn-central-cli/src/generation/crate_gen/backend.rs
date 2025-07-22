@@ -3,9 +3,10 @@ use strum::{Display, EnumString};
 use syn::Ident;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Display, EnumString)]
+#[derive(Debug, Clone, Display, EnumString, Default)]
 #[strum(serialize_all = "snake_case")]
 pub enum BackendType {
+    #[default]
     Wgpu,
     Tch,
     Ndarray,

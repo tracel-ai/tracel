@@ -293,12 +293,11 @@ fn generate_training_function(
     train_func_match: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {
-        let training_config_str = std::fs::read_to_string(&config_path).expect("Config should be read");
-        let training_config: serde_json::Value = serde_json::from_str(&training_config_str).expect("Config should be deserialized");
+        let config_json: serde_json::Value = serde_json::from_str(&config).expect("Config should be deserialized");
 
-        let experiment = client.start_experiment(project_path.owner_name(), project_path.project_name(), &training_config).expect("Experiment should be started");
+        let experiment = client.start_experiment(project_path.owner_name(), project_path.project_name(), &config_json).expect("Experiment should be started");
 
-        let mut train_cmd_context = burn_central::command::TrainCommandContext::<MyAutodiffBackend>::new(&experiment, vec![device], training_config_str);
+        let mut train_cmd_context = burn_central::command::TrainCommandContext::<MyAutodiffBackend>::new(&experiment, vec![device], config.to_string());
 
         #train_func_match;
     }
@@ -404,7 +403,7 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
                 .expect("Project path should be valid");
             if let Some(train_matches) = matches.subcommand_matches("train") {
                 let func = train_matches.get_one::<String>("func").expect("func should be set.");
-                let config_path = train_matches.get_one::<String>("config").expect("config should be set.");
+                let config = train_matches.get_one::<String>("config").expect("config should be set.");
 
                 #generated_training
             }

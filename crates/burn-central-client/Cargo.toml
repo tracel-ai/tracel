@@ -35,6 +35,7 @@ uuid = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
 crossbeam = { workspace = true, default-features = false, features = ["crossbeam-channel", "std"] }
+json-patch = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
