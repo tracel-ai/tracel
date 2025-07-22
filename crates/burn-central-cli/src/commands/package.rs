@@ -2,7 +2,7 @@ use crate::context::CliContext;
 use crate::print_success;
 use crate::registry::get_registered_functions;
 use crate::util::git::get_last_commit_hash;
-use burn_central_client::schemas::{BurnCentralCodeMetadata};
+use burn_central_client::schemas::BurnCentralCodeMetadata;
 use clap::Args;
 
 #[derive(Args, Debug)]
