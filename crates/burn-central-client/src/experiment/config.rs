@@ -38,7 +38,6 @@ mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
 
-    /// A nested struct to test deep merges.
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Nested {
         x: bool,
@@ -51,7 +50,6 @@ mod tests {
         }
     }
 
-    /// A config type covering primitives, Option, nested structs, and arrays.
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct MyConfig {
         a: i32,
@@ -91,21 +89,17 @@ mod tests {
             deserialize_and_merge_with_default(r#"{ "nested": { "y": 99 } }"#).unwrap();
         let mut expected = MyConfig::default();
         expected.nested.y = 99;
-        // nested.x stays default = true
         assert_eq!(cfg, expected);
     }
 
     #[test]
     fn null_becomes_json_null_for_optional() {
         let cfg: MyConfig = deserialize_and_merge_with_default(r#"{ "b": null }"#).unwrap();
-        // Option<String> → None
         assert_eq!(cfg.b, None);
     }
 
     #[test]
     fn null_becomes_json_null_for_required() {
-        // Setting a non-Option field to null yields literal null in JSON,
-        // which then causes a data error on deserialization.
         let err = deserialize_and_merge_with_default::<MyConfig>(r#"{ "a": null }"#).unwrap_err();
         assert!(err.is_data());
     }
@@ -124,7 +118,6 @@ mod tests {
 
     #[test]
     fn type_mismatch_in_nested_errors_data() {
-        // Trying to apply a boolean where an object is expected
         let err =
             deserialize_and_merge_with_default::<MyConfig>(r#"{ "nested": false }"#).unwrap_err();
         assert!(err.is_data());
@@ -132,12 +125,7 @@ mod tests {
 
     #[test]
     fn patch_application_error_propagates() {
-        // Create a patch that tries to remove a non-existent path
-        // by feeding a value that isn’t even an object at the root.
-        // For example, override is an array → diff/patch will still succeed,
-        // but final from_value will error for shape mismatch.
         let err = deserialize_and_merge_with_default::<MyConfig>(r#"[1,2,3]"#).unwrap_err();
-        // Should be a data error because root must be an object
         assert!(err.is_data());
     }
 }
