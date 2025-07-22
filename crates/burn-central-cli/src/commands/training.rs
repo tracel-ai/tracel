@@ -107,7 +107,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         .context("Failed to get API key")?
         .to_owned();
     let backend = args.backend.clone().unwrap_or_default();
-    let run_id = format!("{}", backend);
+    let run_id = format!("{backend}");
     let config = load_config(&args).to_string();
 
     let command_to_run: (BuildCommand, RunCommand) = (
