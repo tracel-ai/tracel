@@ -1,4 +1,3 @@
-
 [workspace]
 # Try
 # require version 2 to avoid "feature" additiveness for dev-dependencies
