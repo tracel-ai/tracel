@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
 
-use crate::commands::time::format_duration;
 use crate::config::Config;
 use crate::context::{CliContext, ProjectContext};
 use crate::terminal::Terminal;
-use crate::{cargo, cli_commands, print_err, print_info};
+use crate::util::time::format_duration;
+use crate::{cargo, commands, print_err, print_info};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -66,10 +66,8 @@ fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<
     }
 
     match command {
-        Commands::Train(run_args) => crate::commands::training::handle_command(run_args, context),
-        Commands::Package(package_args) => {
-            commands::package::handle_command(package_args, context)
-        }
+        Commands::Train(run_args) => commands::training::handle_command(run_args, context),
+        Commands::Package(package_args) => commands::package::handle_command(package_args, context),
         Commands::Login(login_args) => commands::login::handle_command(login_args, context),
         Commands::Init(init_args) => commands::init::handle_command(init_args, context),
     }
