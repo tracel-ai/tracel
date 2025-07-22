@@ -78,8 +78,10 @@ mod tests {
     #[test]
     fn override_top_level_field() {
         let cfg: MyConfig = deserialize_and_merge_with_default(r#"{ "a": 42 }"#).unwrap();
-        let mut expected = MyConfig::default();
-        expected.a = 42;
+        let expected = MyConfig {
+            a: 42,
+            ..Default::default()
+        };
         assert_eq!(cfg, expected);
     }
 

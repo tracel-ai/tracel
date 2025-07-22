@@ -242,15 +242,3 @@ pub(crate) fn execute_run_command(
 
     Ok(())
 }
-
-/// Execute all experiments sequentially.
-pub(crate) fn execute_sequentially(
-    commands: Vec<(BuildCommand, RunCommand)>,
-    context: CliContext,
-) -> anyhow::Result<()> {
-    for cmd in commands {
-        execute_experiment_command(cmd.0, cmd.1, &context)?
-    }
-
-    Ok(())
-}
