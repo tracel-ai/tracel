@@ -1,10 +1,9 @@
 use crate::context::CliContext;
 use crate::print_success;
-use crate::registry::Flag;
+use crate::registry::get_registered_functions;
 use crate::util::git::get_last_commit_hash;
-use burn_central_client::schemas::{BurnCentralCodeMetadata, RegisteredFunction};
+use burn_central_client::schemas::{BurnCentralCodeMetadata};
 use clap::Args;
-use quote::ToTokens;
 
 #[derive(Args, Debug)]
 pub struct PackageArgs {}
@@ -38,24 +37,4 @@ pub(crate) fn handle_command(_args: PackageArgs, context: CliContext) -> anyhow:
     print_success!("New project version uploaded: {}", project_version);
 
     Ok(())
-}
-
-fn get_registered_functions(flags: &[Flag]) -> Vec<RegisteredFunction> {
-    flags
-        .iter()
-        .map(|flag| {
-            // function token stream to readable string
-            let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream)
-                .expect("Should be able to parse token stream.");
-            let syn_tree: syn::File = syn::parse2(itemfn.into_token_stream())
-                .expect("Should be able to parse token stream.");
-            let code_str = prettyplease::unparse(&syn_tree);
-            RegisteredFunction {
-                mod_path: flag.mod_path.to_string(),
-                fn_name: flag.fn_name.to_string(),
-                proc_type: flag.proc_type.to_string(),
-                code: code_str,
-            }
-        })
-        .collect()
 }
