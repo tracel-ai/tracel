@@ -1,0 +1,15 @@
+[package]
+name = "burn-central-runtime"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1.0.98"
+burn-central-client = { path = "../burn-central-client" }
+burn = { workspace = true }
+
+[dev-dependencies]
+burn = { workspace = true, features = ["ndarray"] }
