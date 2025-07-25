@@ -10,6 +10,7 @@ rust-version.workspace = true
 anyhow = "1.0.98"
 burn-central-client = { path = "../burn-central-client" }
 burn = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
