@@ -1,71 +1,31 @@
 ﻿mod executor {
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use burn::prelude::{Backend, Module};
-    use burn_central_client::BurnCentral;
+    use burn::tensor::backend::AutodiffBackend;
     use burn_central_client::command::MultiDevice;
-    use burn_central_client::credentials::BurnCentralCredentials;
     use burn_central_client::experiment::{
-        ExperimentConfig, ExperimentRun, ExperimentRunHandle, deserialize_and_merge_with_default,
+        ExperimentConfig, ExperimentRun, ExperimentTrackerError, deserialize_and_merge_with_default,
     };
     use burn_central_client::record::ArtifactKind;
+    use burn_central_client::{BurnCentral, BurnCentralError};
     use std::any::{Any, TypeId};
     use std::cell::{Ref, RefCell, RefMut};
     use std::collections::HashMap;
     use std::marker::PhantomData;
     use std::ops::{Deref, DerefMut};
     use std::rc::Rc;
-    // Using anyhow for simpler error handling
-
-    // 1. Define your initial "Global" Context (if needed, can be captured by systems)
-    // For now, let's assume some global configuration is available implicitly
-    // or can be passed to the scheduler/executor.
-
-    // 2. Define your Mutable "Local" Execution Context
-    // This struct holds the data that handlers will read from and write to.
-    pub struct ExecutionContext<B: Backend> {
-        client: BurnCentral,
-        namespace: String,
-        project: String,
-        config_override: Option<String>,
-        devices: Vec<B::Device>,
-        experiment: Option<ExperimentRun>,
-        resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
-    }
-
-    impl<B: Backend> ExecutionContext<B> {
-        pub(crate) fn new(
-            client: BurnCentral,
-            namespace: String,
-            project: String,
-            devices: Vec<B::Device>,
-            config_override: Option<String>,
-        ) -> Self {
-            ExecutionContext {
-                client,
-                namespace,
-                project,
-                config_override,
-                devices,
-                experiment: None,
-                resources: HashMap::new().into(),
-            }
-        }
-
-        pub fn get_merged_config<C: ExperimentConfig>(&self) -> C {
-            match &self.config_override {
-                Some(json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
-                None => C::default(),
-            }
-        }
-    }
 
     // 3. SystemParam Trait (adapted)
     // How handlers get their arguments from the mutable ExecutionContext
     pub trait SystemParam<B: Backend> {
         type Item<'new>;
 
-        // This method will now take a mutable reference to the ExecutionContext
-        fn retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Self::Item<'r>;
+        /// This method retrieves the parameter from the context.
+        fn retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Self::Item<'r> {
+            Self::try_retrieve(ctx).unwrap()
+        }
+
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>>;
     }
 
     pub trait IntoSystem<Input, Output, B: Backend> {
@@ -78,8 +38,8 @@
     impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExecutionContext<B> {
         type Item<'new> = &'new ExecutionContext<B>;
 
-        fn retrieve(ctx: &ExecutionContext<B>) -> Self::Item<'_> {
-            ctx
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+            Ok(ctx)
         }
     }
 
@@ -96,24 +56,25 @@
     impl<'ctx, B: Backend, C: ExperimentConfig> SystemParam<B> for Config<C> {
         type Item<'new> = Config<C>;
 
-        fn retrieve(ctx: &ExecutionContext<B>) -> Self::Item<'_> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             // Assuming we have a way to get the config from the context
             // For simplicity, let's just return a default config here
-            match ctx.config_override {
-                Some(ref json) => {
-                    Config(deserialize_and_merge_with_default(json).unwrap_or_default())
-                }
-                None => Config(C::default()),
-            }
+            let cfg = match ctx.config_override {
+                Some(ref json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
+                None => C::default(),
+            };
+            Ok(Config(cfg))
         }
     }
 
     impl<B: Backend, M: Module<B> + Default> SystemParam<B> for Model<M> {
         type Item<'new> = Model<M>;
-        fn retrieve(ctx: &ExecutionContext<B>) -> Self::Item<'_> {
+
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
             // Assuming we have a way to get the model from the context
             // For simplicity, let's just return a default model here
-            Model(M::default())
+            let model = M::default();
+            Ok(Model(model))
         }
     }
 
@@ -152,56 +113,53 @@
     impl<'ctx, B: Backend, T: 'static> SystemParam<B> for Res<'ctx, T> {
         type Item<'new> = Res<'new, T>;
 
-        fn retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Self::Item<'r> {
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
             let value = ctx
                 .resources
                 .get(&TypeId::of::<T>())
-                .expect("Resource not found")
+                .context("Resource not found")?
                 .borrow();
-            Res {
+            Ok(Res {
                 value,
                 _marker: PhantomData,
-            }
+            })
         }
     }
 
     impl<'ctx, B: Backend, T: 'static> SystemParam<B> for ResMut<'ctx, T> {
         type Item<'new> = ResMut<'new, T>;
 
-        fn retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Self::Item<'r> {
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
             let value = ctx
                 .resources
                 .get(&TypeId::of::<T>())
-                .expect("Resource not found")
+                .context("Resource not found")?
                 .borrow_mut();
-            ResMut {
+            Ok(ResMut {
                 value,
                 _marker: PhantomData,
-            }
+            })
         }
     }
 
     impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExperimentRun {
         type Item<'new> = &'new ExperimentRun;
 
-        fn retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Self::Item<'r> {
-            // starts the experiment if not already started, and returns a reference to it
-            {
-                // {
-                //     let mut experiment = ctx.experiment.borrow_mut();
-                //     if experiment.is_none() {
-                //         let config = ctx.config_override.as_deref().unwrap_or(&"{}");
-                //         let run = ctx.client.start_experiment(&ctx.namespace, &ctx.project, &config).expect("Failed to start experiment");
-                //         *experiment = Some(run);
-                //     }
-                // }
-                //
-                // unsafe {
-                //     ctx.experiment.try_borrow_unguarded()
-                //         .expect("Experiment is already started").as_ref().unwrap()
-                // }
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+            ctx.experiment
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Experiment run not found"))
+                .map(|exp| exp)
+        }
+    }
 
-                ctx.experiment.as_ref().unwrap()
+    impl<'ctx, B: Backend, P: SystemParam<B>> SystemParam<B> for Option<P> {
+        type Item<'new> = Option<P::Item<'new>>;
+
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+            match P::try_retrieve(ctx) {
+                Ok(item) => Ok(Some(item)),
+                Err(_) => Ok(None), // If retrieval fails, return None
             }
         }
     }
@@ -209,8 +167,8 @@
     impl<B: Backend> SystemParam<B> for MultiDevice<B> {
         type Item<'new> = MultiDevice<B>;
 
-        fn retrieve(ctx: &ExecutionContext<B>) -> Self::Item<'_> {
-            MultiDevice(ctx.devices.clone())
+        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+            Ok(MultiDevice(vec![Default::default()]))
         }
     }
 
@@ -277,7 +235,6 @@
 
     pub struct TrainingStep<F>(pub F);
 
-
     pub struct ErasedSystem<B: Backend> {
         func: Box<
             dyn Fn(&mut ExecutionContext<B>) -> Result<Box<dyn IntoSystemOutput<B>>> + Send + Sync,
@@ -332,7 +289,7 @@
                     ErasedSystem {
                         func: Box::new(move |ctx| {
                             // retrieve params
-                            $(let $P = <$P as SystemParam<B>>::retrieve(ctx);)*
+                            $(let $P = <$P as SystemParam<B>>::try_retrieve(ctx).context("Failed to retrieve parameter")?;)*
                             let output = call_inner(&self, $($P),*);
                             Ok(Box::new(output) as Box<dyn IntoSystemOutput<B>>)
                         })
@@ -395,18 +352,87 @@
         }
     }
 
-    // 6. Executor (instead of Scheduler)
-    // Manages the chain of handlers for a single run
-    pub struct Executor<B: Backend> {
-        handlers: HashMap<String, Box<dyn System<B>>>,
+    // --- Custom Error Type ---
+    #[derive(thiserror::Error, Debug)]
+    pub enum RuntimeError {
+        #[error("Handler '{0}' not found")]
+        HandlerNotFound(String),
+        #[error("Resource of type {0} not found")]
+        ResourceNotFound(String),
+        #[error("Resource is already borrowed mutably")]
+        ResourceBorrowFailed,
+        #[error("Burn Central API call failed: {0}")]
+        BurnCentralError(#[from] BurnCentralError),
+        #[error("Experiment API call failed: {0}")]
+        ExperimentApiFailed(#[from] ExperimentTrackerError),
+        #[error("Handler execution failed: {0}")]
+        HandlerFailed(anyhow::Error),
+    }
+
+    pub struct ExecutionContext<B: Backend> {
+        client: Option<BurnCentral>,
+        namespace: String,
+        project: String,
+        config_override: Option<String>,
+        devices: Vec<B::Device>,
+        experiment: Option<ExperimentRun>,
         resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
     }
 
-    impl<B: Backend> Executor<B> {
-        pub fn new() -> Self {
-            Executor {
-                handlers: HashMap::new(),
-                resources: HashMap::new().into(),
+    impl<B: Backend> ExecutionContext<B> {
+        pub fn get_merged_config<C: ExperimentConfig>(&self) -> C {
+            match &self.config_override {
+                Some(json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
+                None => C::default(),
+            }
+        }
+
+        // Users of the context (handlers) will use these methods
+        pub fn experiment(&self) -> Option<&ExperimentRun> {
+            self.experiment.as_ref()
+        }
+
+        pub fn devices(&self) -> &[B::Device] {
+            &self.devices
+        }
+
+        pub fn resource<T: Any + 'static>(&self) -> Result<Ref<T>, RuntimeError> {
+            self.resources
+                .get(&TypeId::of::<T>())
+                .ok_or_else(|| {
+                    RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string())
+                })?
+                .try_borrow()
+                .map(|r| Ref::map(r, |b| b.downcast_ref::<T>().unwrap()))
+                .map_err(|_| RuntimeError::ResourceBorrowFailed)
+        }
+
+        pub fn resource_mut<T: Any + 'static>(&self) -> Result<RefMut<T>, RuntimeError> {
+            self.resources
+                .get(&TypeId::of::<T>())
+                .ok_or_else(|| {
+                    RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string())
+                })?
+                .try_borrow_mut()
+                .map(|r| RefMut::map(r, |b| b.downcast_mut::<T>().unwrap()))
+                .map_err(|_| RuntimeError::ResourceBorrowFailed)
+        }
+    }
+
+    pub struct ExecutorBuilder<B: Backend> {
+        executor: Executor<B>,
+    }
+
+    impl<B: Backend> ExecutorBuilder<B> {
+        fn new(client: BurnCentral, namespace: String, project: String) -> Self {
+            Self {
+                executor: Executor {
+                    client,
+                    namespace,
+                    project,
+                    handlers: HashMap::new(),
+                    resources: Rc::new(HashMap::new()),
+                },
             }
         }
 
@@ -415,13 +441,14 @@
             name: &str,
             handler: impl IntoSystem<I, O, B, System = S>,
         ) -> &mut Self {
-            self.handlers
+            self.executor
+                .handlers
                 .insert(name.to_string(), Box::new(handler.into_system()));
             self
         }
 
         pub fn add_resource<T: Any + 'static>(&mut self, resource: T) -> &mut Self {
-            Rc::get_mut(&mut self.resources)
+            Rc::get_mut(&mut self.executor.resources)
                 .unwrap()
                 .insert(TypeId::of::<T>(), RefCell::new(Box::new(resource)));
             self
@@ -429,12 +456,35 @@
 
         pub fn init_resource<T: Any + Default + 'static>(&mut self) -> &mut Self {
             let type_id = TypeId::of::<T>();
-            if !self.resources.contains_key(&type_id) {
-                Rc::get_mut(&mut self.resources)
+            if !self.executor.resources.contains_key(&type_id) {
+                Rc::get_mut(&mut self.executor.resources)
                     .unwrap()
                     .insert(type_id, RefCell::new(Box::new(T::default())));
             }
             self
+        }
+
+        pub fn build(self) -> Executor<B> {
+            self.executor
+        }
+    }
+
+    pub struct Executor<B: Backend> {
+        client: BurnCentral,
+        namespace: String,
+        project: String,
+        handlers: HashMap<String, Box<dyn System<B>>>,
+        resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
+    }
+
+    impl<B: Backend> Executor<B> {
+        // The main entry point is now a builder
+        pub fn builder(
+            client: BurnCentral,
+            namespace: impl Into<String>,
+            project: impl Into<String>,
+        ) -> ExecutorBuilder<B> {
+            ExecutorBuilder::new(client, namespace.into(), project.into())
         }
 
         pub fn targets(&self) -> Vec<String> {
@@ -442,59 +492,58 @@
         }
 
         // This runs a single chain of handlers with an initial context
-        pub fn execute(
+        pub fn run(
             &self,
             target: &str,
-            client: BurnCentral,
             devices: Vec<B::Device>,
-            config: Option<String>,
-        ) -> Result<()> {
-            let mut initial_context = ExecutionContext {
-                client,
-                namespace: "aaa".to_string(),
-                project: "aaaa".to_string(),
-                config_override: config,
-                devices,
-                experiment: None,
-                resources: self.resources.clone(),
-            };
-            println!("--- Starting Execution ---");
-            // println!("Initial Context: {:?}", initial_context.);
-
-            let config = initial_context.config_override.as_deref().unwrap_or("{}");
-            let experiment = initial_context.client.start_experiment(
-                &initial_context.namespace,
-                &initial_context.project,
-                &config,
-            )?;
-            initial_context.experiment = Some(experiment);
+            config_override: Option<String>,
+        ) -> Result<(), RuntimeError> {
+            println!("--- Starting Execution for Target: {} ---", target);
 
             let handler = self
                 .handlers
                 .get(target)
-                .ok_or_else(|| anyhow::anyhow!("Handler not found: {}", target))?;
+                .ok_or_else(|| RuntimeError::HandlerNotFound(target.to_string()))?;
 
-            // Run the handler with the initial context
-            println!("\n--- Running Handler {} ---", target);
-            match handler.run(&mut initial_context) {
-                Ok(_) => {
-                    println!("Handler {} executed successfully.", target);
-                    initial_context.experiment.take().unwrap().finish()?;
-                }
-                Err(e) => {
-                    // Handle the error, possibly logging it or cleaning up
-                    initial_context
-                        .experiment
-                        .take()
-                        .unwrap()
-                        .fail(e.to_string())?;
-                    println!("Error executing handler {}: {}", target, e);
-                    return Err(e);
-                }
+            let mut ctx = ExecutionContext {
+                client: Some(self.client.clone()),
+                namespace: self.namespace.clone(),
+                project: self.project.clone(),
+                config_override,
+                devices,
+                experiment: None,
+                resources: self.resources.clone(),
             };
 
-            println!("\n--- Execution Finished ---");
-            Ok(())
+            let config = ctx.config_override.as_deref().unwrap_or("{}");
+
+            if let Some(client) = &mut ctx.client {
+                let experiment = client.start_experiment(&ctx.namespace, &ctx.project, &config)?;
+                ctx.experiment = Some(experiment);
+            }
+
+            let result = handler.run(&mut ctx);
+
+            match result {
+                Ok(_) => {
+                    if let Some(experiment) = ctx.experiment {
+                        experiment.finish()?;
+                        println!("Experiment run completed successfully.");
+                    }
+                    println!("Handler {} executed successfully.", target);
+
+                    Ok(())
+                }
+                Err(e) => {
+                    println!("Error executing handler '{}': {}", target, e);
+                    // Handle the error, possibly logging it or cleaning up
+                    if let Some(experiment) = ctx.experiment {
+                        experiment.fail(e.to_string())?;
+                        println!("Experiment run failed: {}", e);
+                    }
+                    Err(RuntimeError::HandlerFailed(e))
+                }
+            }
         }
     }
 
@@ -503,6 +552,7 @@
     #[cfg(test)]
     mod test {
         use super::*;
+        use burn_central_client::credentials::BurnCentralCredentials;
         use serde::{Deserialize, Serialize};
 
         #[derive(Module, Debug)]
@@ -534,19 +584,13 @@
             }
         }
 
-        fn log_model<B: Backend>(devices: MultiDevice<B>) -> Result<TestModel<B>> {
-            println!("  Logging model...");
-            // Here you would typically save the model to a file or database
-            Ok(TestModel::default())
-        }
-
         fn log_model2<B: Backend>(
             experiment: &ExperimentRun,
             Model(_a): Model<TestModel<B>>,
             Config(config): Config<SomeExperimentConfig>,
-        ) -> Result<Model<TestModel<B>>> {
+            context: &ExecutionContext<B>,
+        ) -> Result<Model<TestModel<B>>, RuntimeError> {
             println!("  Logging model...");
-            // Here you would typically save the model to a file or database
 
             experiment.log_info(format!("Logging model with config: {:?}", config));
 
@@ -594,8 +638,6 @@
 
         #[test]
         fn test_executor_api() {
-
-
             // Add handlers to the executor
             // executor.add_handler(preprocess_data::<Back>);
 
@@ -616,25 +658,20 @@
             .expect("Failed to serialize config");
 
             // Create an initial context for a specific experiment run
-            let mut executor = Executor::<Back>::new();
+            let mut builder = Executor::<Back>::builder(client, "aaa", "aaaa");
 
-            build_executor(&mut executor);
+            build_executor(&mut builder);
+
+            let executor = builder.build();
 
             executor
-                .execute(
-                    "log_model2",
-                    client,
-                    vec![Default::default()],
-                    Some(override_json),
-                )
+                .run("log_model2", vec![Default::default()], Some(override_json))
                 .expect("Execution failed");
-            // Execute the chain
         }
 
         // This would be the function that the user implements to build the executor in their application
-        fn build_executor<B: Backend>(exec: &mut Executor<B>) {
-            exec
-                .add_handler("train_model", train_model)
+        fn build_executor<B: Backend>(exec: &mut ExecutorBuilder<B>) {
+            exec.add_handler("train_model", train_model)
                 .add_handler("log_model2", log_model2)
                 .init_resource::<TestModel<Back>>();
         }
