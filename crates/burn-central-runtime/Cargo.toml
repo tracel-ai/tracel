@@ -13,3 +13,5 @@ burn = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

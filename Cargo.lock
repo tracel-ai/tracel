@@ -350,6 +350,8 @@ dependencies = [
  "anyhow",
  "burn",
  "burn-central-client",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
