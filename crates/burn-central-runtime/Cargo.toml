@@ -11,8 +11,12 @@ anyhow = "1.0.98"
 burn-central-client = { path = "../burn-central-client" }
 burn = { workspace = true }
 thiserror = { workspace = true }
+variadics_please = { workspace = true }
+tynm = { workspace = true, features = ["info"] }
+syn = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+bevy_ecs = "0.16.1"

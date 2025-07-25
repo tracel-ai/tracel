@@ -1,7 +1,8 @@
-﻿mod executor {
+﻿#![allow(unused)]
+mod executor {
+    use crate::type_name::fn_type_name;
     use anyhow::{Context, Result};
     use burn::prelude::{Backend, Module};
-    use burn::tensor::backend::AutodiffBackend;
     use burn_central_client::command::MultiDevice;
     use burn_central_client::experiment::{
         ExperimentConfig, ExperimentRun, ExperimentTrackerError, deserialize_and_merge_with_default,
@@ -14,31 +15,25 @@
     use std::marker::PhantomData;
     use std::ops::{Deref, DerefMut};
     use std::rc::Rc;
+    use variadics_please::all_tuples;
 
     // 3. SystemParam Trait (adapted)
     // How handlers get their arguments from the mutable ExecutionContext
-    pub trait SystemParam<B: Backend> {
+    pub trait SystemParam<B: Backend>: Sized {
         type Item<'new>;
 
         /// This method retrieves the parameter from the context.
-        fn retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Self::Item<'r> {
+        fn retrieve(ctx: &ExecutionContext<B>) -> Self::Item<'_> {
             Self::try_retrieve(ctx).unwrap()
         }
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>>;
-    }
-
-    pub trait IntoSystem<Input, Output, B: Backend> {
-        type System: System<B>;
-
-        // This method converts a function or closure into a System
-        fn into_system(self) -> Self::System;
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>>;
     }
 
     impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExecutionContext<B> {
         type Item<'new> = &'new ExecutionContext<B>;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             Ok(ctx)
         }
     }
@@ -59,10 +54,7 @@
         fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             // Assuming we have a way to get the config from the context
             // For simplicity, let's just return a default config here
-            let cfg = match ctx.config_override {
-                Some(ref json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
-                None => C::default(),
-            };
+            let cfg = ctx.get_merged_config();
             Ok(Config(cfg))
         }
     }
@@ -70,7 +62,7 @@
     impl<B: Backend, M: Module<B> + Default> SystemParam<B> for Model<M> {
         type Item<'new> = Model<M>;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             // Assuming we have a way to get the model from the context
             // For simplicity, let's just return a default model here
             let model = M::default();
@@ -113,7 +105,7 @@
     impl<'ctx, B: Backend, T: 'static> SystemParam<B> for Res<'ctx, T> {
         type Item<'new> = Res<'new, T>;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             let value = ctx
                 .resources
                 .get(&TypeId::of::<T>())
@@ -129,7 +121,7 @@
     impl<'ctx, B: Backend, T: 'static> SystemParam<B> for ResMut<'ctx, T> {
         type Item<'new> = ResMut<'new, T>;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             let value = ctx
                 .resources
                 .get(&TypeId::of::<T>())
@@ -145,7 +137,7 @@
     impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExperimentRun {
         type Item<'new> = &'new ExperimentRun;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             ctx.experiment
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Experiment run not found"))
@@ -156,7 +148,7 @@
     impl<'ctx, B: Backend, P: SystemParam<B>> SystemParam<B> for Option<P> {
         type Item<'new> = Option<P::Item<'new>>;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             match P::try_retrieve(ctx) {
                 Ok(item) => Ok(Some(item)),
                 Err(_) => Ok(None), // If retrieval fails, return None
@@ -167,15 +159,39 @@
     impl<B: Backend> SystemParam<B> for MultiDevice<B> {
         type Item<'new> = MultiDevice<B>;
 
-        fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+        fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
             Ok(MultiDevice(vec![Default::default()]))
         }
     }
 
-    pub trait System<B: Backend>: Send + Sync {
-        // Added Send + Sync for potential threading later
-        fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<()>;
+    // for all tuples
+    macro_rules! impl_system_param_tuple {
+        ($($P:ident),*) => {
+            #[expect(
+                clippy::allow_attributes,
+                reason = "This is in a macro, and as such, the below lints may not always apply."
+            )]
+            #[allow(
+                non_snake_case,
+                reason = "Certain variable names are provided by the caller, not by us."
+            )]
+            #[allow(
+                unused_variables,
+                reason = "Zero-length tuples won't use some of the parameters."
+            )]
+            impl<B: Backend, $($P: SystemParam<B>),*> SystemParam<B> for ($($P,)*) {
+                type Item<'new> = ($($P::Item<'new>,)*);
+
+                fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
+                    Ok((
+                        $(<$P as SystemParam<B>>::try_retrieve(ctx)?,)*
+                    ))
+                }
+            }
+        };
     }
+
+    all_tuples!(impl_system_param_tuple, 0, 16, P);
 
     /// This trait defines how a specific return type (Output) from a handler
     /// is processed and potentially stored back into the ExecutionContext.
@@ -233,122 +249,257 @@
         }
     }
 
-    pub struct TrainingStep<F>(pub F);
+    // pub struct TrainingStep<F>(pub F);
+    #[diagnostic::on_unimplemented(message = "`{Self}` is not a system", label = "invalid system")]
+    pub trait System<B: Backend>: Send + Sync + 'static {
+        type Out;
 
-    pub struct ErasedSystem<B: Backend> {
-        func: Box<
-            dyn Fn(&mut ExecutionContext<B>) -> Result<Box<dyn IntoSystemOutput<B>>> + Send + Sync,
-        >,
+        fn name(&self) -> &str;
+        fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError>;
+    }
+    pub type BoxedSystem<B, Out = ()> = Box<dyn System<B, Out = Out>>;
+    pub type ExecutorSystem<B> = BoxedSystem<B, ()>;
+
+    pub type SystemParamItem<'ctx, B, P> = <P as SystemParam<B>>::Item<'ctx>;
+
+    #[diagnostic::on_unimplemented(
+        message = "`{Self}` is not a valid system",
+        label = "invalid system"
+    )]
+    pub trait SystemParamFunction<B: Backend, Marker>: Send + Sync + 'static {
+        type Out: IntoSystemOutput<B> + 'static;
+        type Param: SystemParam<B>;
+
+        fn run(
+            &self,
+            param_value: SystemParamItem<B, Self::Param>,
+        ) -> Result<Self::Out, RuntimeError>;
     }
 
-    // pub trait TrainingOutput<B: Backend>: Send + Sync + 'static {
-    //     fn apply_training(self: Box<Self>, ctx: &mut ExecutionContext<B>) -> Result<()>;
-    // }
-    //
-    // impl<M, B> TrainingOutput<B> for Result<M>
-    // where
-    //     M: Module<B> + Send + Sync + 'static,
-    //     B: Backend,
-    // {
-    //     fn apply_training(self: Box<Self>, ctx: &mut ExecutionContext<B>) -> Result<()> {
-    //         println!("Saving model in TrainingStep: {:?}", self);
-    //
-    //         Ok(())
-    //     }
-    // }
-
-    impl<B: Backend> System<B> for ErasedSystem<B> {
-        fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<()> {
-            let output = (self.func)(ctx)?;
-            output.apply_output(ctx)
-        }
-    }
-
-    macro_rules! impl_into_system {
-        ($($P:ident),*) => {
-            impl<Func, R: 'static, B, $($P: SystemParam<B>),*> IntoSystem<($($P,)*), R, B> for Func
+    macro_rules! impl_system_function {
+        ($($param: ident),*) => {
+            #[expect(
+                clippy::allow_attributes,
+                reason = "This is within a macro, and as such, the below lints may not always apply."
+            )]
+            #[allow(
+                non_snake_case,
+                reason = "Certain variable names are provided by the caller, not by us."
+            )]
+            impl<B: Backend, Out, Func, $($param: SystemParam<B>),*> SystemParamFunction<B, fn($($param,)*) -> Out> for Func
             where
-                B: Backend,
-                for<'a, 'b> &'a Func:
-                    Fn($($P),*) -> R +
-                    Fn($(<$P as SystemParam<B>>::Item<'b>),*) -> R,
-                Func: Fn($($P),*) -> R + Send + Sync + 'static,
-                R: IntoSystemOutput<B>,
+                Func: Send + Sync + 'static,
+                for <'a> &'a Func:
+                    Fn($($param),*) -> Out +
+                    Fn($(SystemParamItem<B, $param>),*) -> Out,
+                Out: IntoSystemOutput<B> + 'static,
             {
-                type System = ErasedSystem<B>;
-
-                fn into_system(self) -> Self::System {
-                    fn call_inner<R, $($P),*>(
-                        f: impl Fn($($P),*) -> R,
-                        $($P: $P),*
-                    ) -> R
-                    {
-                        f($($P),*)
+                type Out = Out;
+                type Param = ($($param,)*);
+                #[inline]
+                fn run(&self, param_value: SystemParamItem<B, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
+                    fn call_inner<Out, $($param,)*>(
+                        f: impl Fn($($param,)*)->Out,
+                        $($param: $param,)*
+                    )->Out{
+                        f($($param,)*)
                     }
-
-                    ErasedSystem {
-                        func: Box::new(move |ctx| {
-                            // retrieve params
-                            $(let $P = <$P as SystemParam<B>>::try_retrieve(ctx).context("Failed to retrieve parameter")?;)*
-                            let output = call_inner(&self, $($P),*);
-                            Ok(Box::new(output) as Box<dyn IntoSystemOutput<B>>)
-                        })
-                    }
+                    let ($($param,)*) = param_value;
+                    Ok(call_inner(self, $($param),*))
                 }
             }
-
-        //     impl<Func, R: 'static, B, $($P: SystemParam<B>),*> IntoSystem<($($P,)*), R, B> for TrainingStep<Func>
-        //     where
-        //         B: Backend,
-        //         for<'a, 'b> &'a Func:
-        //             Fn($($P),*) -> R +
-        //             Fn($(<$P as SystemParam<B>>::Item<'b>),*) -> R,
-        //         Func: Fn($($P),*) -> R + Send + Sync + 'static,
-        //         R: TrainingOutput<B>,
-        //     {
-        //         type System = ErasedSystem<B>;
-        //
-        //         fn into_system(self) -> Self::System {
-        //             fn call_inner<R, $($P),*>(
-        //                 f: impl Fn($($P),*) -> R,
-        //                 $($P: $P),*
-        //             ) -> R
-        //             {
-        //                 f($($P),*)
-        //             }
-        //
-        //             ErasedSystem {
-        //                 func: Box::new(move |ctx| {
-        //                     // retrieve params
-        //                     $(let $P = <$P as SystemParam<B>>::retrieve(ctx);)*
-        //                     let training_output = call_inner(&self.0, $($P),*);
-        //                     let output = Box::new(training_output).apply_training(ctx);
-        //                     Ok(Box::new(output) as Box<dyn IntoSystemOutput<B>>)
-        //                 })
-        //             }
-        //         }
-        //     }
         };
     }
 
-    impl_into_system!();
-    impl_into_system!(P1);
-    impl_into_system!(P1, P2);
-    impl_into_system!(P1, P2, P3);
-    impl_into_system!(P1, P2, P3, P4);
-    impl_into_system!(P1, P2, P3, P4, P5);
-    impl_into_system!(P1, P2, P3, P4, P5, P6);
+    all_tuples!(impl_system_function, 0, 16, F);
 
-    pub struct DirectSystem<S>(pub S);
+    #[doc(hidden)]
+    pub struct IsFunctionSystem;
 
-    impl<B: Backend, I, O, S> IntoSystem<I, O, B> for DirectSystem<S>
+    pub struct FunctionSystem<B, Marker, F>
+    where
+        F: SystemParamFunction<B, Marker>,
+        B: Backend,
+    {
+        func: F,
+        name: String,
+        _marker: PhantomData<fn() -> (B, Marker)>,
+    }
+
+    impl<B, Marker, F> FunctionSystem<B, Marker, F>
+    where
+        F: SystemParamFunction<B, Marker>,
+        B: Backend,
+    {
+        pub fn with_name(mut self, name: impl Into<String>) -> Self {
+            self.name = name.into();
+            self
+        }
+    }
+
+    impl<B, Marker, F> Clone for FunctionSystem<B, Marker, F>
+    where
+        F: SystemParamFunction<B, Marker> + Clone,
+        B: Backend,
+    {
+        fn clone(&self) -> Self {
+            FunctionSystem {
+                func: self.func.clone(),
+                name: self.name.clone(),
+                _marker: PhantomData,
+            }
+        }
+    }
+
+    impl<B, Marker, F> IntoSystem<B, (), (IsFunctionSystem, Marker)> for F
+    where
+        B: Backend,
+        Marker: 'static,
+        F: SystemParamFunction<B, Marker>,
+    {
+        type System = FunctionSystem<B, Marker, F>;
+
+        fn into_system(func: Self) -> Self::System {
+            FunctionSystem {
+                func,
+                name: fn_type_name::<F>(),
+                _marker: PhantomData,
+            }
+        }
+    }
+
+    impl<B: Backend, T: System<B>> IntoSystem<B, T::Out, ()> for T {
+        type System = T;
+        fn into_system(this: Self) -> Self::System {
+            this
+        }
+    }
+
+    impl<B, Marker, F> System<B> for FunctionSystem<B, Marker, F>
+    where
+        B: Backend,
+        Marker: 'static,
+        F: SystemParamFunction<B, Marker>,
+    {
+        type Out = ();
+
+        fn name(&self) -> &str {
+            self.name.as_str()
+        }
+
+        fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
+            let params = F::Param::try_retrieve(ctx).map_err(|e| {
+                RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to retrieve parameters: {}", e))
+            })?;
+            let output = self.func.run(params)?;
+            Box::new(output).apply_output(ctx).map_err(|e| {
+                RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
+            })
+        }
+    }
+
+    #[diagnostic::on_unimplemented(
+        message = "`{Self}` is not a valid system with output `{Output}`",
+        label = "invalid system"
+    )]
+    pub trait IntoSystem<B: Backend, Output, Marker>: Sized {
+        type System: System<B, Out = Output>;
+
+        #[allow(clippy::wrong_self_convention)]
+        fn into_system(this: Self) -> Self::System;
+    }
+
+    // --- System modifiers ---
+
+    /// An extension trait for `IntoSystem` that provides system-modifying methods.
+    pub trait IntoSystemExt<B: Backend, O, M>: IntoSystem<B, O, M> {
+        /// Assigns a custom name to a system, overriding the default.
+        ///
+        /// The default name for a function system is derived from its type, which is unique.
+        /// This modifier allows you to register the same system function multiple times
+        /// under different names, which can be useful for creating distinct stages in a
+        /// workflow that use the same logic.
+        ///
+        /// # Example
+        ///
+        /// ```ignore
+        /// fn my_system_logic() {}
+        ///
+        /// let mut builder = Executor::builder(...);
+        /// builder.add_handler(my_system_logic.with_name("stage_one"));
+        /// builder.add_handler(my_system_logic.with_name("stage_two"));
+        ///
+        /// let executor = builder.build();
+        /// executor.run("stage_one", ...)?;
+        /// ```
+        fn with_name(self, name: impl Into<String>) -> Named<Self> {
+            Named {
+                system: self,
+                name: name.into(),
+            }
+        }
+    }
+
+    // Blanket implementation for any type that can be turned into a system.
+    impl<B: Backend, O, M, T> IntoSystemExt<B, O, M> for T where T: IntoSystem<B, O, M> {}
+
+    /// A wrapper for an `IntoSystem`-implementing type that holds a custom name.
+    /// This is constructed by the `.with_name()` method from the `IntoSystemExt` trait.
+    pub struct Named<S> {
+        system: S,
+        name: String,
+    }
+
+    impl<S: Clone> Clone for Named<S> {
+        fn clone(&self) -> Self {
+            Self {
+                system: self.system.clone(),
+                name: self.name.clone(),
+            }
+        }
+    }
+
+    /// A `System` that wraps another `System` to override its name.
+    /// This is the final system type that the executor interacts with.
+    pub struct NamedSystem<S, B: Backend> {
+        inner: S,
+        name: String,
+        _marker: PhantomData<B>,
+    }
+
+    impl<S, B> System<B> for NamedSystem<S, B>
     where
         S: System<B>,
+        B: Backend,
     {
-        type System = S;
+        type Out = S::Out;
 
-        fn into_system(self) -> Self::System {
-            self.0
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
+            // Delegate the `run` call to the inner system.
+            self.inner.run(ctx)
+        }
+    }
+
+    pub struct IsNamedSystem;
+    // Implements `IntoSystem` for the `Named` wrapper. This allows a named system to be
+    // passed to methods like `add_handler`.
+    impl<B, O, M, S> IntoSystem<B, O, (IsNamedSystem, M)> for Named<S>
+    where
+        B: Backend,
+        S: IntoSystem<B, O, M, System: System<B, Out = O>>,
+    {
+        type System = NamedSystem<S::System, B>;
+
+        fn into_system(this: Self) -> Self::System {
+            NamedSystem {
+                inner: IntoSystem::into_system(this.system),
+                name: this.name,
+                _marker: PhantomData,
+            }
         }
     }
 
@@ -396,23 +547,23 @@
             &self.devices
         }
 
-        pub fn resource<T: Any + 'static>(&self) -> Result<Ref<T>, RuntimeError> {
+        fn get_res_cell<T: Any + 'static>(&self) -> Result<&RefCell<Box<dyn Any>>, RuntimeError> {
             self.resources
                 .get(&TypeId::of::<T>())
                 .ok_or_else(|| {
                     RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string())
-                })?
+                })
+        }
+
+        pub fn resource<T: Any + 'static>(&self) -> Result<Ref<T>, RuntimeError> {
+            self.get_res_cell::<T>()?
                 .try_borrow()
                 .map(|r| Ref::map(r, |b| b.downcast_ref::<T>().unwrap()))
                 .map_err(|_| RuntimeError::ResourceBorrowFailed)
         }
 
         pub fn resource_mut<T: Any + 'static>(&self) -> Result<RefMut<T>, RuntimeError> {
-            self.resources
-                .get(&TypeId::of::<T>())
-                .ok_or_else(|| {
-                    RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string())
-                })?
+            self.get_res_cell::<T>()?
                 .try_borrow_mut()
                 .map(|r| RefMut::map(r, |b| b.downcast_mut::<T>().unwrap()))
                 .map_err(|_| RuntimeError::ResourceBorrowFailed)
@@ -436,14 +587,12 @@
             }
         }
 
-        pub fn add_handler<I, O, S: System<B> + 'static>(
-            &mut self,
-            name: &str,
-            handler: impl IntoSystem<I, O, B, System = S>,
-        ) -> &mut Self {
-            self.executor
-                .handlers
-                .insert(name.to_string(), Box::new(handler.into_system()));
+        pub fn add_handler<M>(&mut self, handler: impl IntoSystem<B, (), M>) -> &mut Self
+        {
+            let system = Box::new(IntoSystem::into_system(handler));
+            let name = system.name();
+            println!("Adding handler: {}", name);
+            self.executor.handlers.insert(name.to_string(), system);
             self
         }
 
@@ -473,7 +622,7 @@
         client: BurnCentral,
         namespace: String,
         project: String,
-        handlers: HashMap<String, Box<dyn System<B>>>,
+        handlers: HashMap<String, ExecutorSystem<B>>,
         resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
     }
 
@@ -541,7 +690,7 @@
                         experiment.fail(e.to_string())?;
                         println!("Experiment run failed: {}", e);
                     }
-                    Err(RuntimeError::HandlerFailed(e))
+                    Err(e)
                 }
             }
         }
@@ -569,6 +718,49 @@
             }
         }
 
+        mod derive_api {
+            use crate::workflow::executor::{ExecutionContext, IntoSystem};
+            use burn::prelude::Backend;
+            use serde::{Deserialize, Serialize};
+
+            // #[derive(Experiment)]
+            #[derive(Serialize, Deserialize, Debug)]
+            pub struct DerivedExperimentConfig {
+                pub param1: f32,
+                pub param2: String,
+            }
+
+            impl Default for DerivedExperimentConfig {
+                fn default() -> Self {
+                    DerivedExperimentConfig {
+                        param1: 0.0,
+                        param2: "default".to_string(),
+                    }
+                }
+            }
+
+            // #[experiment_impl]
+            impl DerivedExperimentConfig {
+                // #[experiment(name = "test_associated_system")]
+                pub fn test_associated_system<B: Backend>(
+                    self,
+                    ctx: &ExecutionContext<B>,
+                ) -> anyhow::Result<()> {
+                    // Example of using the context to log something
+                    if let Some(experiment) = ctx.experiment() {
+                        experiment.log_info(format!(
+                            "Running test_associated_system with param1: {}",
+                            self.param1
+                        ));
+                    }
+                    Ok(())
+                }
+            }
+            // generated code by the #[experiment_impl] macro
+            // ...
+        }
+
+        // #[derive(Experiment)]
         #[derive(Serialize, Deserialize, Debug)]
         pub struct SomeExperimentConfig {
             pub param1: f32,
@@ -669,10 +861,38 @@
                 .expect("Execution failed");
         }
 
+
+        pub struct CustomSystemStruct<B: Backend> {
+            _marker: PhantomData<B>,
+        }
+
+        impl<B: Backend> CustomSystemStruct<B> {
+            pub fn new() -> Self {
+                CustomSystemStruct {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<B: Backend> System<B> for CustomSystemStruct<B> {
+            type Out = ();
+
+            fn name(&self) -> &str {
+                "CustomSystemStruct"
+            }
+
+            fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
+                // Example logic for the system
+                println!("Running CustomSystemStruct with context: {:?}", ctx.project);
+                Ok(())
+            }
+        }
+
         // This would be the function that the user implements to build the executor in their application
         fn build_executor<B: Backend>(exec: &mut ExecutorBuilder<B>) {
-            exec.add_handler("train_model", train_model)
-                .add_handler("log_model2", log_model2)
+            exec.add_handler(train_model)
+                .add_handler(log_model2)
+                .add_handler(CustomSystemStruct::new().with_name("CustomSystem"))
                 .init_resource::<TestModel<Back>>();
         }
     }
