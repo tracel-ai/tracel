@@ -3,6 +3,8 @@ mod executor {
     use crate::type_name::fn_type_name;
     use anyhow::{Context, Result};
     use burn::prelude::{Backend, Module};
+
+    use burn::tensor::backend::AutodiffBackend;
     use burn_central_client::command::MultiDevice;
     use burn_central_client::experiment::{
         ExperimentConfig, ExperimentRun, ExperimentTrackerError, deserialize_and_merge_with_default,
@@ -160,7 +162,7 @@ mod executor {
         type Item<'new> = MultiDevice<B>;
 
         fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-            Ok(MultiDevice(vec![Default::default()]))
+            Ok(MultiDevice(ctx.devices.clone()))
         }
     }
 
@@ -368,13 +370,6 @@ mod executor {
         }
     }
 
-    impl<B: Backend, T: System<B>> IntoSystem<B, T::Out, ()> for T {
-        type System = T;
-        fn into_system(this: Self) -> Self::System {
-            this
-        }
-    }
-
     impl<B, Marker, F> System<B> for FunctionSystem<B, Marker, F>
     where
         B: Backend,
@@ -395,6 +390,13 @@ mod executor {
             Box::new(output).apply_output(ctx).map_err(|e| {
                 RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
             })
+        }
+    }
+
+    impl<B: Backend, T: System<B>> IntoSystem<B, T::Out, ()> for T {
+        type System = T;
+        fn into_system(this: Self) -> Self::System {
+            this
         }
     }
 
@@ -461,7 +463,7 @@ mod executor {
 
     /// A `System` that wraps another `System` to override its name.
     /// This is the final system type that the executor interacts with.
-    pub struct NamedSystem<S, B: Backend> {
+    pub struct NamedSystem<S, B> {
         inner: S,
         name: String,
         _marker: PhantomData<B>,
@@ -643,23 +645,23 @@ mod executor {
         // This runs a single chain of handlers with an initial context
         pub fn run(
             &self,
-            target: &str,
-            devices: Vec<B::Device>,
+            target: impl AsRef<str>,
+            devices: impl IntoIterator<Item = B::Device>,
             config_override: Option<String>,
         ) -> Result<(), RuntimeError> {
-            println!("--- Starting Execution for Target: {} ---", target);
+            println!("--- Starting Execution for Target: {} ---", target.as_ref());
 
             let handler = self
                 .handlers
-                .get(target)
-                .ok_or_else(|| RuntimeError::HandlerNotFound(target.to_string()))?;
+                .get(target.as_ref())
+                .ok_or_else(|| RuntimeError::HandlerNotFound(target.as_ref().to_string()))?;
 
             let mut ctx = ExecutionContext {
                 client: Some(self.client.clone()),
                 namespace: self.namespace.clone(),
                 project: self.project.clone(),
                 config_override,
-                devices,
+                devices: devices.into_iter().collect(),
                 experiment: None,
                 resources: self.resources.clone(),
             };
@@ -679,12 +681,12 @@ mod executor {
                         experiment.finish()?;
                         println!("Experiment run completed successfully.");
                     }
-                    println!("Handler {} executed successfully.", target);
+                    println!("Handler {} executed successfully.", target.as_ref());
 
                     Ok(())
                 }
                 Err(e) => {
-                    println!("Error executing handler '{}': {}", target, e);
+                    println!("Error executing handler '{}': {}", target.as_ref(), e);
                     // Handle the error, possibly logging it or cleaning up
                     if let Some(experiment) = ctx.experiment {
                         experiment.fail(e.to_string())?;
@@ -700,6 +702,8 @@ mod executor {
 
     #[cfg(test)]
     mod test {
+        use burn::backend::{Autodiff, NdArray};
+        use burn::prelude::Backend;
         use super::*;
         use burn_central_client::credentials::BurnCentralCredentials;
         use serde::{Deserialize, Serialize};
@@ -719,8 +723,8 @@ mod executor {
         }
 
         mod derive_api {
-            use crate::workflow::executor::{ExecutionContext, IntoSystem};
             use burn::prelude::Backend;
+            use crate::workflow::executor::{ExecutionContext, IntoSystem};
             use serde::{Deserialize, Serialize};
 
             // #[derive(Experiment)]
@@ -776,17 +780,31 @@ mod executor {
             }
         }
 
-        fn log_model2<B: Backend>(
+        fn log_model2<B: AutodiffBackend>(
             experiment: &ExperimentRun,
-            Model(_a): Model<TestModel<B>>,
             Config(config): Config<SomeExperimentConfig>,
             context: &ExecutionContext<B>,
-        ) -> Result<Model<TestModel<B>>, RuntimeError> {
+        ) -> Result<Model<TestModel<B>>> {
             println!("  Logging model...");
 
             experiment.log_info(format!("Logging model with config: {:?}", config));
 
-            Ok(_a.into())
+            // Ok(_a.into())
+            anyhow::bail!("Not implemented")
+        }
+
+        fn test_model_validation<B: Backend>(
+            config: Config<SomeExperimentConfig>,
+            _model: Model<TestModel<B>>,
+            _context: &ExecutionContext<B>,
+        ) -> Result<(), RuntimeError> {
+            println!("  Validating config: {:?}", *config);
+            if config.param1 < 0.0 {
+                return Err(RuntimeError::HandlerFailed(anyhow::anyhow!(
+                    "param1 must be non-negative"
+                )));
+            }
+            Ok(())
         }
 
         // Handler that modifies experiment_data
@@ -825,8 +843,7 @@ mod executor {
             Ok(())
         }
 
-        type Back = burn::backend::NdArray;
-        type Device = <Back as Backend>::Device;
+        type Back = Autodiff<NdArray>;
 
         #[test]
         fn test_executor_api() {
@@ -862,11 +879,11 @@ mod executor {
         }
 
 
-        pub struct CustomSystemStruct<B: Backend> {
+        pub struct CustomSystemStruct<B: AutodiffBackend> {
             _marker: PhantomData<B>,
         }
 
-        impl<B: Backend> CustomSystemStruct<B> {
+        impl<B: AutodiffBackend> CustomSystemStruct<B> {
             pub fn new() -> Self {
                 CustomSystemStruct {
                     _marker: PhantomData,
@@ -874,7 +891,7 @@ mod executor {
             }
         }
 
-        impl<B: Backend> System<B> for CustomSystemStruct<B> {
+        impl<B: AutodiffBackend> System<B> for CustomSystemStruct<B> {
             type Out = ();
 
             fn name(&self) -> &str {
@@ -889,9 +906,10 @@ mod executor {
         }
 
         // This would be the function that the user implements to build the executor in their application
-        fn build_executor<B: Backend>(exec: &mut ExecutorBuilder<B>) {
-            exec.add_handler(train_model)
+        fn build_executor<B: AutodiffBackend>(exec: &mut ExecutorBuilder<B>) {
+            exec.add_handler(train_model.with_name("a"))
                 .add_handler(log_model2)
+                .add_handler(test_model_validation)
                 .add_handler(CustomSystemStruct::new().with_name("CustomSystem"))
                 .init_resource::<TestModel<Back>>();
         }
