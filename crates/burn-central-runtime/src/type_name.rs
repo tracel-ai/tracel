@@ -1,5 +1,5 @@
-﻿use syn::{parse_str, Expr, ExprPath};
 use syn::GenericArgument::Type;
+use syn::{Expr, ExprPath, parse_str};
 use tynm::TypeParamsFmtOpts;
 
 /// Extracts the base name of a function's type (as seen in `std::any::type_name`)
@@ -27,11 +27,11 @@ pub fn fn_type_name<T>() -> String {
     }
     let path = path.unwrap();
 
-    path.path.segments.last()
+    path.path
+        .segments
+        .last()
         .map(|segment| segment.ident.to_string())
-        .unwrap_or_else(|| {
-            panic!("Failed to extract function name from type: {}", type_name)
-        })
+        .unwrap_or_else(|| panic!("Failed to extract function name from type: {}", type_name))
 }
 
 pub fn fn_type_name_by_val<T>(_: T) -> String {
@@ -72,5 +72,4 @@ mod tests {
         let name = fn_type_name_by_val(f);
         assert_eq!(name, "fn");
     }
-
 }

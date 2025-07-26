@@ -15,7 +15,6 @@ mod websocket;
 
 pub use crate::client::*;
 
-
 mod api_test {
     use burn::prelude::Backend;
 
@@ -29,7 +28,9 @@ mod api_test {
     }
 
     impl<B: Backend> BurnCentralApp<B> {
-        pub fn new() -> Self { Self { workflows: vec![] } }
+        pub fn new() -> Self {
+            Self { workflows: vec![] }
+        }
 
         pub fn add<W: ExperimentWorkflow<B> + 'static>(mut self, w: W) -> Self {
             self.workflows.push(Box::new(w));
@@ -64,5 +65,4 @@ mod api_test {
             self.workflows.iter().map(|w| w.name())
         }
     }
-
 }
