@@ -91,3 +91,103 @@ fn main() {
 
     schedule.run(&mut world);
 }
+
+mod backend_test {
+    use burn::prelude::Backend;
+    use burn::tensor::backend::AutodiffBackend;
+
+    pub trait ExperimentHandler<B: Backend> {
+        fn run(&self, backend: B::Device);
+    }
+
+    pub trait AutodiffExperimentHandler<B: AutodiffBackend> {
+        fn run_autodiff(&self, backend: B::Device);
+    }
+
+
+    pub trait HandlerMarker {}
+    pub struct Base;
+    pub struct RequiresAutodiff;
+
+    impl HandlerMarker for Base {}
+    impl HandlerMarker for RequiresAutodiff {}
+
+
+    pub struct HandlerWrapper<T, M> {
+        inner: T,
+        _marker: std::marker::PhantomData<M>,
+    }
+
+    impl<T, M> HandlerWrapper<T, M> {
+        pub fn new(inner: T) -> Self {
+            Self { inner, _marker: std::marker::PhantomData }
+        }
+    }
+
+    pub trait RunHandler<B: Backend> {
+        fn run(&self, backend: B::Device);
+    }
+
+    impl<T, B> RunHandler<B> for HandlerWrapper<T, Base>
+    where
+        B: Backend,
+        T: ExperimentHandler<B>,
+    {
+        fn run(&self, backend: B::Device) {
+            self.inner.run(backend)
+        }
+    }
+
+    impl<T, B> RunHandler<B> for HandlerWrapper<T, RequiresAutodiff>
+    where
+        B: AutodiffBackend,
+        T: AutodiffExperimentHandler<B>,
+    {
+        fn run(&self, backend: B::Device) {
+            self.inner.run_autodiff(backend)
+        }
+    }
+
+
+    use std::collections::HashMap;
+
+    pub struct HandlerRegistry<B: Backend> {
+        handlers: HashMap<String, Box<dyn RunHandler<B>>>,
+    }
+
+    impl<B: Backend> HandlerRegistry<B> {
+        pub fn new() -> Self {
+            Self {
+                handlers: HashMap::new(),
+            }
+        }
+
+        pub fn register<H>(&mut self, name: &str, handler: H)
+        where
+            H: RunHandler<B> + 'static,
+        {
+            self.handlers.insert(
+                name.to_string(),
+                Box::new(handler)
+            );
+        }
+
+        pub fn run(&self, name: &str, backend: B::Device) {
+            if let Some(func) = self.handlers.get(name) {
+                func.run(backend);
+            } else {
+                println!("No handler found for name: {name}");
+            }
+        }
+    }
+
+
+    mod test_api {
+        use burn::backend::{Autodiff, NdArray};
+        use burn::prelude::Backend;
+        use crate::backend_test::{AutodiffExperimentHandler, ExperimentHandler};
+
+
+    }
+
+}
