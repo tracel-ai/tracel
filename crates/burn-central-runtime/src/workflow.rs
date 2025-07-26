@@ -550,11 +550,9 @@ mod executor {
         }
 
         fn get_res_cell<T: Any + 'static>(&self) -> Result<&RefCell<Box<dyn Any>>, RuntimeError> {
-            self.resources
-                .get(&TypeId::of::<T>())
-                .ok_or_else(|| {
-                    RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string())
-                })
+            self.resources.get(&TypeId::of::<T>()).ok_or_else(|| {
+                RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string())
+            })
         }
 
         pub fn resource<T: Any + 'static>(&self) -> Result<Ref<T>, RuntimeError> {
@@ -589,8 +587,7 @@ mod executor {
             }
         }
 
-        pub fn add_handler<M>(&mut self, handler: impl IntoSystem<B, (), M>) -> &mut Self
-        {
+        pub fn add_handler<M>(&mut self, handler: impl IntoSystem<B, (), M>) -> &mut Self {
             let system = Box::new(IntoSystem::into_system(handler));
             let name = system.name();
             println!("Adding handler: {}", name);
@@ -702,9 +699,9 @@ mod executor {
 
     #[cfg(test)]
     mod test {
+        use super::*;
         use burn::backend::{Autodiff, NdArray};
         use burn::prelude::Backend;
-        use super::*;
         use burn_central_client::credentials::BurnCentralCredentials;
         use serde::{Deserialize, Serialize};
 
@@ -723,8 +720,8 @@ mod executor {
         }
 
         mod derive_api {
-            use burn::prelude::Backend;
             use crate::workflow::executor::{ExecutionContext, IntoSystem};
+            use burn::prelude::Backend;
             use serde::{Deserialize, Serialize};
 
             // #[derive(Experiment)]
@@ -877,7 +874,6 @@ mod executor {
                 .run("log_model2", vec![Default::default()], Some(override_json))
                 .expect("Execution failed");
         }
-
 
         pub struct CustomSystemStruct<B: AutodiffBackend> {
             _marker: PhantomData<B>,
