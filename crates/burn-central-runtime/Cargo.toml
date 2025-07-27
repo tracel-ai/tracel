@@ -6,6 +6,9 @@ readme.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+ndarray-stub = ["burn/ndarray"]
+
 [dependencies]
 anyhow = "1.0.98"
 burn-central-client = { path = "../burn-central-client" }
