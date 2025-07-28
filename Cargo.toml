@@ -48,6 +48,7 @@ crossbeam = { version = "0.8.4", default-features = false, features = ["crossbea
 json-patch = { version = "*", default-features = false }
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0" }
+derive_more = { version = "2.0.1", default-features = false }
 
 ### For xtask crate ###
 tracel-xtask = { version = "=1.1.8" }
