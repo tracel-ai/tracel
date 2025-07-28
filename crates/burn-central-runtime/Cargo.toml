@@ -17,6 +17,8 @@ thiserror = { workspace = true }
 variadics_please = { workspace = true }
 tynm = { workspace = true, features = ["info"] }
 syn = { workspace = true }
+strum = { workspace = true }
+derive_more = { workspace = true, features = ["deref", "from", "display"] }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

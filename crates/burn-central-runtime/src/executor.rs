@@ -10,6 +10,7 @@ use burn_central_client::experiment::{
 };
 use burn_central_client::record::ArtifactKind;
 use burn_central_client::{BurnCentral, BurnCentralError};
+use derive_more::{Deref, From};
 use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
@@ -18,7 +19,8 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use variadics_please::all_tuples;
 
-pub trait SystemParam<B: Backend>: Sized {
+/// This trait defines how parameters for a routine are retrieved from the execution context.
+pub trait RoutineParam<B: Backend>: Sized {
     type Item<'new>;
 
     /// This method retrieves the parameter from the context.
@@ -30,7 +32,7 @@ pub trait SystemParam<B: Backend>: Sized {
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>>;
 }
 
-impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExecutionContext<B> {
+impl<'ctx, B: Backend> RoutineParam<B> for &'ctx ExecutionContext<B> {
     type Item<'new> = &'new ExecutionContext<B>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -38,17 +40,10 @@ impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExecutionContext<B> {
     }
 }
 
+#[derive(From, Deref)]
 pub struct Config<T>(pub T);
 
-impl<T> Deref for Config<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'ctx, B: Backend, C: ExperimentConfig> SystemParam<B> for Config<C> {
+impl<'ctx, B: Backend, C: ExperimentConfig> RoutineParam<B> for Config<C> {
     type Item<'new> = Config<C>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -57,7 +52,7 @@ impl<'ctx, B: Backend, C: ExperimentConfig> SystemParam<B> for Config<C> {
     }
 }
 
-impl<B: Backend, M: Module<B> + Default> SystemParam<B> for Model<M> {
+impl<B: Backend, M: Module<B> + Default> RoutineParam<B> for Model<M> {
     type Item<'new> = Model<M>;
 
     fn try_retrieve(_ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -100,7 +95,7 @@ impl<T: 'static> DerefMut for ResMut<'_, T> {
     }
 }
 
-impl<'ctx, B: Backend, T: 'static> SystemParam<B> for Res<'ctx, T> {
+impl<'ctx, B: Backend, T: 'static> RoutineParam<B> for Res<'ctx, T> {
     type Item<'new> = Res<'new, T>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -116,7 +111,7 @@ impl<'ctx, B: Backend, T: 'static> SystemParam<B> for Res<'ctx, T> {
     }
 }
 
-impl<'ctx, B: Backend, T: 'static> SystemParam<B> for ResMut<'ctx, T> {
+impl<'ctx, B: Backend, T: 'static> RoutineParam<B> for ResMut<'ctx, T> {
     type Item<'new> = ResMut<'new, T>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -132,7 +127,7 @@ impl<'ctx, B: Backend, T: 'static> SystemParam<B> for ResMut<'ctx, T> {
     }
 }
 
-impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExperimentRun {
+impl<'ctx, B: Backend> RoutineParam<B> for &'ctx ExperimentRun {
     type Item<'new> = &'new ExperimentRun;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -143,18 +138,18 @@ impl<'ctx, B: Backend> SystemParam<B> for &'ctx ExperimentRun {
     }
 }
 
-impl<'ctx, B: Backend, P: SystemParam<B>> SystemParam<B> for Option<P> {
+impl<'ctx, B: Backend, P: RoutineParam<B>> RoutineParam<B> for Option<P> {
     type Item<'new> = Option<P::Item<'new>>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
         match P::try_retrieve(ctx) {
             Ok(item) => Ok(Some(item)),
-            Err(_) => Ok(None), // If retrieval fails, return None
+            Err(_) => Ok(None),
         }
     }
 }
 
-impl<B: Backend> SystemParam<B> for MultiDevice<B> {
+impl<B: Backend> RoutineParam<B> for MultiDevice<B> {
     type Item<'new> = MultiDevice<B>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -163,7 +158,7 @@ impl<B: Backend> SystemParam<B> for MultiDevice<B> {
 }
 
 // for all tuples
-macro_rules! impl_system_param_tuple {
+macro_rules! impl_routine_param_tuple {
     ($($P:ident),*) => {
         #[expect(
             clippy::allow_attributes,
@@ -177,101 +172,104 @@ macro_rules! impl_system_param_tuple {
             unused_variables,
             reason = "Zero-length tuples won't use some of the parameters."
         )]
-        impl<B: Backend, $($P: SystemParam<B>),*> SystemParam<B> for ($($P,)*) {
+        impl<B: Backend, $($P: RoutineParam<B>),*> RoutineParam<B> for ($($P,)*) {
             type Item<'new> = ($($P::Item<'new>,)*);
 
             fn try_retrieve<'r>(ctx: &'r ExecutionContext<B>) -> Result<Self::Item<'r>> {
                 Ok((
-                    $(<$P as SystemParam<B>>::try_retrieve(ctx)?,)*
+                    $(<$P as RoutineParam<B>>::try_retrieve(ctx)?,)*
                 ))
             }
         }
     };
 }
 
-all_tuples!(impl_system_param_tuple, 0, 16, P);
+all_tuples!(impl_routine_param_tuple, 0, 16, P);
 
 /// This trait defines how a specific return type (Output) from a handler
 /// is processed and potentially stored back into the ExecutionContext.
-pub trait IntoSystemOutput<B: Backend>: Send + Sync + 'static {
+pub trait RoutineOutput<B: Backend>: Sized + Send + Sync + 'static {
     /// This method takes the owned output and the mutable ExecutionContext,
     /// allowing the output to modify the context.
-    fn apply_output(self: Box<Self>, ctx: &mut ExecutionContext<B>) -> Result<()>;
+    fn apply_output(self, ctx: &mut ExecutionContext<B>) -> Result<Self>;
 }
+/// This trait is a marker for outputs that are specifically related to training routines.
+pub trait TrainOutput<B: Backend>: RoutineOutput<B> {}
 
-impl<B: Backend> IntoSystemOutput<B> for () {
-    fn apply_output(self: Box<Self>, _ctx: &mut ExecutionContext<B>) -> Result<()> {
-        Ok(()) // Do nothing, successful operation.
-    }
-}
-
-impl<T, E, B: Backend> IntoSystemOutput<B> for core::result::Result<T, E>
-where
-    T: IntoSystemOutput<B>,
-    E: std::fmt::Display + Send + Sync + 'static,
-{
-    fn apply_output(self: Box<Self>, ctx: &mut ExecutionContext<B>) -> Result<()> {
-        match *self {
-            Ok(output) => Box::new(output).apply_output(ctx),
-            Err(e) => Err(anyhow::anyhow!("Error applying output: {}", e)),
-        }
-    }
-}
-
-pub struct Model<M>(pub M);
-
-impl<M> Deref for Model<M> {
-    type Target = M;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<M> From<M> for Model<M> {
-    fn from(model: M) -> Self {
-        Model(model)
-    }
-}
-
-impl<B: Backend, M: Module<B> + Sync + 'static> IntoSystemOutput<B> for Model<M> {
-    fn apply_output(self: Box<Self>, ctx: &mut ExecutionContext<B>) -> Result<()> {
-        // Here we could save the model to a file or update the context
-        // For simplicity, let's just print a message
-        if let Some(experiment) = ctx.experiment.as_ref() {
-            experiment.try_log_artifact("model", ArtifactKind::Model, self.0.into_record())?;
-        } else {
-            println!("No experiment run to log the model.");
-        }
+impl<B: Backend> RoutineOutput<B> for () {
+    fn apply_output(self, _ctx: &mut ExecutionContext<B>) -> Result<Self> {
         Ok(())
     }
 }
 
-// pub struct TrainingStep<F>(pub F);
-#[diagnostic::on_unimplemented(message = "`{Self}` is not a system", label = "invalid system")]
-pub trait System<B: Backend>: Send + Sync + 'static {
+impl<T, E, B: Backend> TrainOutput<B> for core::result::Result<T, E>
+where
+    T: RoutineOutput<B>,
+    E: std::fmt::Display + Send + Sync + 'static,
+{
+}
+
+impl<T, E, B: Backend> RoutineOutput<B> for core::result::Result<T, E>
+where
+    T: RoutineOutput<B>,
+    E: std::fmt::Display + Send + Sync + 'static,
+{
+    fn apply_output(self, ctx: &mut ExecutionContext<B>) -> Result<Self> {
+        match self {
+            Ok(output) => Ok(Ok(output.apply_output(ctx)?)),
+            Err(e) => {
+                // Log the error or handle it as needed
+                Err(anyhow::anyhow!(e.to_string()))
+            }
+        }
+    }
+}
+
+#[derive(Clone, From, Deref)]
+pub struct Model<M>(M);
+impl<B: Backend, M: Module<B> + Sync + 'static> TrainOutput<B> for Model<M> {}
+impl<B: Backend, M: Module<B> + Sync + 'static> RoutineOutput<B> for Model<M> {
+    fn apply_output(self, ctx: &mut ExecutionContext<B>) -> Result<Self> {
+        // Here we could save the model to a file or update the context
+        // For simplicity, let's just print a message
+        if let Some(experiment) = ctx.experiment.as_ref() {
+            experiment.try_log_artifact(
+                "model",
+                ArtifactKind::Model,
+                self.0.clone().into_record(),
+            )?;
+        } else {
+            println!("No experiment run to log the model.");
+        }
+        Ok(self)
+    }
+}
+
+#[diagnostic::on_unimplemented(message = "`{Self}` is not a routine", label = "invalid routine")]
+pub trait Routine<B: Backend>: Send + Sync + 'static {
     type Out;
 
     fn name(&self) -> &str;
     fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError>;
 }
-pub type BoxedSystem<B, Out = ()> = Box<dyn System<B, Out = Out>>;
-pub type ExecutorSystem<B> = BoxedSystem<B, ()>;
 
-pub type SystemParamItem<'ctx, B, P> = <P as SystemParam<B>>::Item<'ctx>;
+pub type BoxedRoutine<B, Out> = Box<dyn Routine<B, Out = Out>>;
+pub type ExecutorRoutine<B> = BoxedRoutine<B, ()>;
+
+pub type RoutineParamItem<'ctx, B, P> = <P as RoutineParam<B>>::Item<'ctx>;
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a valid system",
-    label = "invalid system"
+    message = "`{Self}` is not a valid routine",
+    label = "invalid routine"
 )]
-pub trait SystemParamFunction<B: Backend, Marker>: Send + Sync + 'static {
-    type Out: IntoSystemOutput<B> + 'static;
-    type Param: SystemParam<B>;
+pub trait RoutineParamFunction<B: Backend, Marker>: Send + Sync + 'static {
+    type Out;
+    type Param: RoutineParam<B>;
 
-    fn run(&self, param_value: SystemParamItem<B, Self::Param>) -> Result<Self::Out, RuntimeError>;
+    fn run(&self, param_value: RoutineParamItem<B, Self::Param>) -> Result<Self::Out, RuntimeError>;
 }
 
-macro_rules! impl_system_function {
+macro_rules! impl_routine_function {
     ($($param: ident),*) => {
         #[expect(
             clippy::allow_attributes,
@@ -281,18 +279,18 @@ macro_rules! impl_system_function {
             non_snake_case,
             reason = "Certain variable names are provided by the caller, not by us."
         )]
-        impl<B: Backend, Out, Func, $($param: SystemParam<B>),*> SystemParamFunction<B, fn($($param,)*) -> Out> for Func
+        impl<B: Backend, Out, Func, $($param: RoutineParam<B>),*> RoutineParamFunction<B, fn($($param,)*) -> Out> for Func
         where
             Func: Send + Sync + 'static,
             for <'a> &'a Func:
                 Fn($($param),*) -> Out +
-                Fn($(SystemParamItem<B, $param>),*) -> Out,
-            Out: IntoSystemOutput<B> + 'static,
+                Fn($(RoutineParamItem<B, $param>),*) -> Out,
+            Out: 'static,
         {
             type Out = Out;
             type Param = ($($param,)*);
             #[inline]
-            fn run(&self, param_value: SystemParamItem<B, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
+            fn run(&self, param_value: RoutineParamItem<B, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
                 fn call_inner<Out, $($param,)*>(
                     f: impl Fn($($param,)*)->Out,
                     $($param: $param,)*
@@ -306,27 +304,27 @@ macro_rules! impl_system_function {
     };
 }
 
-all_tuples!(impl_system_function, 0, 16, F);
+all_tuples!(impl_routine_function, 0, 16, F);
 
 #[doc(hidden)]
-pub struct IsFunctionSystem;
+pub struct IsFunctionRoutine;
 
-pub struct FunctionSystem<Marker, F> {
+pub struct FunctionRoutine<Marker, F> {
     func: F,
     name: String,
     _marker: PhantomData<fn() -> (Marker)>,
 }
 
-impl<Marker, F> FunctionSystem<Marker, F> {
+impl<Marker, F> FunctionRoutine<Marker, F> {
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 }
 
-impl<Marker, F: Clone> Clone for FunctionSystem<Marker, F> {
+impl<Marker, F: Clone> Clone for FunctionRoutine<Marker, F> {
     fn clone(&self) -> Self {
-        FunctionSystem {
+        FunctionRoutine {
             func: self.func.clone(),
             name: self.name.clone(),
             _marker: PhantomData,
@@ -334,16 +332,16 @@ impl<Marker, F: Clone> Clone for FunctionSystem<Marker, F> {
     }
 }
 
-impl<B, Marker, F> IntoSystem<B, (), (IsFunctionSystem, B, Marker)> for F
+impl<B, Marker, F> IntoRoutine<B, F::Out, (IsFunctionRoutine, B, Marker)> for F
 where
     B: Backend,
     Marker: 'static,
-    F: SystemParamFunction<B, Marker>,
+    F: RoutineParamFunction<B, Marker>,
 {
-    type System = FunctionSystem<Marker, F>;
+    type Routine = FunctionRoutine<Marker, F>;
 
-    fn into_system(func: Self) -> Self::System {
-        FunctionSystem {
+    fn into_routine(func: Self) -> Self::Routine {
+        FunctionRoutine {
             func,
             name: fn_type_name::<F>(),
             _marker: PhantomData,
@@ -351,13 +349,13 @@ where
     }
 }
 
-impl<B, Marker, F> System<B> for FunctionSystem<Marker, F>
+impl<B, Marker, F> Routine<B> for FunctionRoutine<Marker, F>
 where
     B: Backend,
     Marker: 'static,
-    F: SystemParamFunction<B, Marker>,
+    F: RoutineParamFunction<B, Marker>,
 {
-    type Out = ();
+    type Out = F::Out;
 
     fn name(&self) -> &str {
         self.name.as_str()
@@ -368,51 +366,36 @@ where
             RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to retrieve parameters: {}", e))
         })?;
         let output = self.func.run(params)?;
-        Box::new(output).apply_output(ctx).map_err(|e| {
-            RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
-        })
+        Ok(output)
     }
 }
 
-impl<B: Backend, T: System<B>> IntoSystem<B, T::Out, ()> for T {
-    type System = T;
-    fn into_system(this: Self) -> Self::System {
+impl<B: Backend, T: Routine<B>> IntoRoutine<B, T::Out, ()> for T {
+    type Routine = T;
+    fn into_routine(this: Self) -> Self::Routine {
         this
     }
 }
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a valid system with output `{Output}`",
-    label = "invalid system"
+    message = "`{Self}` is not a valid routine with output `{Output}`",
+    label = "invalid routine"
 )]
-pub trait IntoSystem<B: Backend, Output, Marker>: Sized {
-    type System: System<B, Out = Output>;
+pub trait IntoRoutine<B: Backend, Output, Marker>: Sized {
+    type Routine: Routine<B, Out = Output>;
 
     #[allow(clippy::wrong_self_convention)]
-    fn into_system(this: Self) -> Self::System;
+    fn into_routine(this: Self) -> Self::Routine;
 
-    /// Assigns a custom name to a system, overriding the default.
+    /// Assigns a custom name to a routine, overriding the default.
     ///
-    /// The default name for a function system is derived from its type, which is unique.
-    /// This modifier allows you to register the same system function multiple times
+    /// The default name for a function routine is derived from its type, which is unique.
+    /// This modifier allows you to register the same routine function multiple times
     /// under different names, which can be useful for creating distinct stages in a
     /// workflow that use the same logic.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// fn my_system_logic() {}
-    ///
-    /// let mut builder = Executor::builder(...);
-    /// builder.add_handler(my_system_logic.with_name("stage_one"));
-    /// builder.add_handler(my_system_logic.with_name("stage_two"));
-    ///
-    /// let executor = builder.build();
-    /// executor.run("stage_one", ...)?;
-    /// ```
-    fn with_name(self, name: impl Into<String>) -> IntoNamedSystem<Self> {
-        IntoNamedSystem {
-            system: self,
+    fn with_name(self, name: impl Into<String>) -> IntoNamedRoutine<Self> {
+        IntoNamedRoutine {
+            routine: self,
             name: name.into(),
         }
     }
@@ -420,24 +403,23 @@ pub trait IntoSystem<B: Backend, Output, Marker>: Sized {
 
 // --- System modifiers ---
 
-/// A wrapper for an `IntoSystem`-implementing type that holds a custom name.
-/// This is constructed by the `.with_name()` method from the `IntoSystemExt` trait.
+/// A wrapper for an `IntoRoutine`-implementing type that holds a custom name.
+/// This is constructed by the `.with_name()` method from the `IntoRoutine` trait.
 #[derive(Clone)]
-pub struct IntoNamedSystem<S> {
-    system: S,
+pub struct IntoNamedRoutine<S> {
+    routine: S,
     name: String,
 }
 
-/// A `System` that wraps another `System` to override its name.
-/// This is the final system type that the executor interacts with.
-pub struct NamedSystem<S> {
+/// A `Routine` that wraps another `Routine` to override its name.
+pub struct NamedRoutine<S> {
     inner: S,
     name: String,
 }
 
-impl<S, B> System<B> for NamedSystem<S>
+impl<S, B> Routine<B> for NamedRoutine<S>
 where
-    S: System<B>,
+    S: Routine<B>,
     B: Backend,
 {
     type Out = S::Out;
@@ -447,75 +429,81 @@ where
     }
 
     fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
-        // Delegate the `run` call to the inner system.
         self.inner.run(ctx)
     }
 }
 
 #[doc(hidden)]
-pub struct IsNamedSystem;
-// Implements `IntoSystem` for the `Named` wrapper. This allows a named system to be
+pub struct IsNamedRoutine;
+// Implements `IntoRoutine` for the `Named` wrapper. This allows a named routines to be
 // passed to methods like `add_handler`.
-impl<B, O, M, S> IntoSystem<B, O, (IsNamedSystem, B, O, M)> for IntoNamedSystem<S>
+impl<B, O, M, S> IntoRoutine<B, O, (IsNamedRoutine, B, O, M)> for IntoNamedRoutine<S>
 where
     B: Backend,
-    S: IntoSystem<B, O, M>,
+    S: IntoRoutine<B, O, M>,
 {
-    type System = NamedSystem<S::System>;
+    type Routine = NamedRoutine<S::Routine>;
 
-    fn into_system(this: Self) -> Self::System {
-        NamedSystem {
-            inner: IntoSystem::into_system(this.system),
+    fn into_routine(this: Self) -> Self::Routine {
+        NamedRoutine {
+            inner: IntoRoutine::into_routine(this.routine),
             name: this.name,
         }
     }
 }
 
-impl<B, O, M, S, N> IntoSystem<B, O, (IsNamedSystem, B, O, M, N)> for (N, S)
+impl<B, O, M, S, N> IntoRoutine<B, O, (IsNamedRoutine, B, O, M, N)> for (N, S)
 where
     B: Backend,
-    S: IntoSystem<B, O, M>,
+    S: IntoRoutine<B, O, M>,
     N: Into<String>,
 {
-    type System = NamedSystem<S::System>;
+    type Routine = NamedRoutine<S::Routine>;
 
-    fn into_system(this: Self) -> Self::System {
-        let (name, system) = this;
-        NamedSystem {
-            inner: IntoSystem::into_system(system),
+    fn into_routine(this: Self) -> Self::Routine {
+        let (name, routines) = this;
+        NamedRoutine {
+            inner: IntoRoutine::into_routine(routines),
             name: name.into(),
         }
     }
 }
 
-#[macro_export]
-macro_rules! sys {
-    ($system:expr) => {
-        (stringify!($system), $system)
-    };
+struct ExecutorRoutineWrapper<S, B>(S, PhantomData<fn() -> B>);
+impl<S, B, Output> ExecutorRoutineWrapper<S, B>
+where
+    S: Routine<B, Out = Output>,
+    B: Backend,
+    Output: RoutineOutput<B>,
+{
+    pub fn new(routine: S) -> Self {
+        ExecutorRoutineWrapper(routine, PhantomData)
+    }
 }
 
-#[macro_export]
-macro_rules! register_handlers {
-    ($builder:expr) => {};
+impl<B, S, Output> Routine<B> for ExecutorRoutineWrapper<S, B>
+where
+    B: Backend,
+    S: Routine<B, Out = Output>,
+    Output: RoutineOutput<B>,
+{
+    type Out = ();
 
-    ($builder:expr, $handler:expr => $name:expr, $($rest:tt)*) => {
-        $builder.add_handler(($name, $handler));
-        register_handlers!($builder, $($rest)*);
-    };
+    fn name(&self) -> &str {
+        self.0.name()
+    }
 
-    ($builder:expr, $handler:expr => $name:expr) => {
-        $builder.add_handler(($name, $handler));
-    };
-
-    ($builder:expr, $handler:expr, $($rest:tt)*) => {
-        $builder.add_handler((stringify!($handler), $handler));
-        register_handlers!($builder, $($rest)*);
-    };
-
-    ($builder:expr, $handler:expr) => {
-        $builder.add_handler((stringify!($handler), $handler));
-    };
+    fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
+        match self.0.run(ctx) {
+            Ok(output) => {
+                output.apply_output(ctx).map_err(|e| {
+                    RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
+                })?;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 // --- Custom Error Type ---
@@ -592,9 +580,31 @@ pub trait StaticPlugin<B: Backend> {
     fn build(builder: &mut ExecutorBuilder<B>);
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum ActionKind {
+    Train,
+    Eval,
+    Test,
+    Predict,
+    #[strum(serialize = "custom({0})")]
+    Custom(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TargetId {
+    kind: ActionKind,
+    name: String,
+}
+
+impl std::fmt::Display for TargetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.kind, self.name)
+    }
+}
+
 pub struct ExecutorBuilder<B: Backend> {
     executor: Executor<B>,
-    scope_stack: Vec<String>,
 }
 
 impl<B: Backend> ExecutorBuilder<B> {
@@ -606,46 +616,37 @@ impl<B: Backend> ExecutorBuilder<B> {
                 project: None,
                 handlers: HashMap::new(),
                 resources: Rc::new(HashMap::new()),
-                handler_tags: HashMap::new(),
             },
-            scope_stack: Vec::new(),
         }
     }
 
-    pub fn add_handler<M>(&mut self, handler: impl IntoSystem<B, (), M>) -> &mut Self {
-        let system = Box::new(IntoSystem::into_system(handler));
-        let name = system.name().to_string();
+    pub fn register<M, O: RoutineOutput<B>>(
+        &mut self,
+        kind: ActionKind,
+        name: impl Into<String>,
+        handler: impl IntoRoutine<B, O, M>,
+    ) -> &mut Self {
+        let wrapper = ExecutorRoutineWrapper::new(IntoRoutine::into_routine(handler));
+        let routine = Box::new(wrapper);
+        let routine_name = routine.name();
 
-        let full_name = if self.scope_stack.is_empty() {
-            name.clone()
-        } else {
-            format!("{}/{}", self.scope_stack.join("/"), &name)
+        let target_id = TargetId {
+            kind,
+            name: name.into(),
         };
 
-        println!(
-            "Adding handler: {} (base name tag: '{}')",
-            &full_name, &name
-        );
-        self.executor
-            .handler_tags
-            .entry(name)
-            .or_default()
-            .push(full_name.clone());
+        println!("Registering handler '{routine_name}' for target: {target_id}");
 
-        self.executor.handlers.insert(full_name, system);
+        self.executor.handlers.insert(target_id, routine);
         self
     }
 
-    pub fn add_handler_if<M>(
+    pub fn train<M, O: TrainOutput<B>>(
         &mut self,
-        handler: impl IntoSystem<B, (), M>,
-        condition: bool,
+        name: impl Into<String>,
+        handler: impl IntoRoutine<B, O, M>,
     ) -> &mut Self {
-        if condition {
-            self.add_handler(handler);
-        } else {
-            println!("Skipping handler: {}", fn_type_name::<M>());
-        }
+        self.register(ActionKind::Train, name, handler);
         self
     }
 
@@ -656,16 +657,6 @@ impl<B: Backend> ExecutorBuilder<B> {
 
     pub fn add_static_plugin<P: StaticPlugin<B>>(&mut self) -> &mut Self {
         P::build(self);
-        self
-    }
-
-    pub fn scope<F>(&mut self, prefix: &str, add_scoped_handlers: F) -> &mut Self
-    where
-        F: FnOnce(&mut Self),
-    {
-        self.scope_stack.push(prefix.to_string());
-        add_scoped_handlers(self);
-        self.scope_stack.pop();
         self
     }
 
@@ -709,9 +700,8 @@ pub struct Executor<B: Backend> {
     client: Option<BurnCentral>,
     namespace: Option<String>,
     project: Option<String>,
-    handlers: HashMap<String, ExecutorSystem<B>>,
+    handlers: HashMap<TargetId, ExecutorRoutine<B>>,
     resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
-    handler_tags: HashMap<String, Vec<String>>,
 }
 
 impl<B: Backend> Executor<B> {
@@ -720,32 +710,30 @@ impl<B: Backend> Executor<B> {
         ExecutorBuilder::new()
     }
 
-    pub fn targets(&self) -> Vec<String> {
+    pub fn targets(&self) -> Vec<TargetId> {
         self.handlers.keys().cloned().collect()
     }
 
     // This runs a single chain of handlers with an initial context
     pub fn run(
         &self,
-        target: impl AsRef<str>,
+        kind: ActionKind,
+        name: impl AsRef<str>,
         devices: impl IntoIterator<Item = B::Device>,
         config_override: Option<String>,
     ) -> Result<(), RuntimeError> {
-        let target = target.as_ref();
+        let target = name.as_ref();
+
+        let target_id = TargetId {
+            kind,
+            name: target.to_string(),
+        };
 
         println!("--- Starting Execution for Target: {} ---", target);
 
         // 1. First, try to find the handler by its full name.
-        let handler = if self.handlers.contains_key(target) {
-            self.handlers.get(target)
-        } else if let Some(tagged_names) = self.handler_tags.get(target) {
-            if tagged_names.len() > 1 {
-                return Err(RuntimeError::AmbiguousHandlerName(
-                    target.to_string(),
-                    tagged_names.clone(),
-                ));
-            }
-            tagged_names.get(0).and_then(|name| self.handlers.get(name))
+        let handler = if self.handlers.contains_key(&target_id) {
+            self.handlers.get(&target_id)
         } else {
             None
         };
@@ -824,7 +812,9 @@ mod test {
     }
 
     mod derive_api {
-        use crate::executor::{Config, ExecutionContext, ExecutorBuilder, StaticPlugin};
+        use crate::executor::{
+            ActionKind, Config, ExecutionContext, ExecutorBuilder, StaticPlugin,
+        };
         use burn::prelude::Backend;
         use serde::{Deserialize, Serialize};
 
@@ -846,7 +836,7 @@ mod test {
 
         // #[experiment_impl]
         impl DerivedExperimentConfig {
-            // #[experiment(name = "test_associated_system")]
+            // #[experiment(ActionKind::Train, "test_associated_system")]
             pub fn test_associated_system<B: Backend>(
                 &self,
                 ctx: &ExecutionContext<B>,
@@ -872,7 +862,7 @@ mod test {
                 ) -> anyhow::Result<()> {
                     DerivedExperimentConfig::test_associated_system(&config, ctx)
                 }
-                builder.add_handler(("test_associated_system", wrapped_test_associated_system));
+                // builder.register(ActionKind::Train, "test_associated_system", ("test_associated_system", wrapped_test_associated_system));
             }
         }
     }
@@ -893,31 +883,19 @@ mod test {
         }
     }
 
-    fn log_model2<B: AutodiffBackend>(
+    fn finetune_model<B: AutodiffBackend>(
         experiment: &ExperimentRun,
+        Model(_a): Model<TestModel<B>>,
         Config(config): Config<SomeExperimentConfig>,
         _context: &ExecutionContext<B>,
     ) -> Result<Model<TestModel<B>>> {
-        println!("  Logging model...");
+        if config.param1 < 0.0 {
+            return Err(anyhow::anyhow!("param1 must be non-negative"));
+        }
 
         experiment.log_info(format!("Logging model with config: {:?}", config));
 
-        // Ok(_a.into())
-        anyhow::bail!("Not implemented")
-    }
-
-    fn test_model_validation<B: Backend>(
-        config: Config<SomeExperimentConfig>,
-        _model: Model<TestModel<B>>,
-        _context: &ExecutionContext<B>,
-    ) -> Result<(), RuntimeError> {
-        println!("  Validating config: {:?}", *config);
-        if config.param1 < 0.0 {
-            return Err(RuntimeError::HandlerFailed(anyhow::anyhow!(
-                "param1 must be non-negative"
-            )));
-        }
-        Ok(())
+        Ok(_a.into())
     }
 
     // Handler that modifies experiment_data
@@ -926,13 +904,14 @@ mod test {
     //     Ok(())
     // }
 
-    // Handler that reads data and writes a model path
-    fn train_model<B: Backend>(config: Config<SomeExperimentConfig>, _model: Model<TestModel<B>>) {
+    fn train_model<B: Backend>(config: Config<SomeExperimentConfig>) -> Model<TestModel<B>> {
         println!("  Training model with data: {:?}", *config);
         // Simulate some training logic
         // *model_path = Some(format!("/models/{}-v1.pkl", data));
 
-        println!("  Model trained. Path: {:?}", config.param1);
+        println!("Model trained. Path: {:?}", config.param1);
+
+        TestModel::default().into() // Return a dummy model
     }
 
     // // Handler that uses the model path to evaluate
@@ -948,9 +927,9 @@ mod test {
     // }
 
     // Handler that takes no arguments
-    fn log_completion() -> Result<()> {
+    fn log_completion() -> i32 {
         println!("  Experiment run completed!");
-        Ok(())
+        32
     }
 
     type Back = Autodiff<NdArray>;
@@ -978,7 +957,12 @@ mod test {
         .expect("Failed to serialize config");
 
         executor
-            .run("log_model2", vec![Default::default()], Some(override_json))
+            .run(
+                ActionKind::Train,
+                "log_model2",
+                vec![Default::default()],
+                Some(override_json),
+            )
             .expect("Execution failed");
     }
 
@@ -998,41 +982,29 @@ mod test {
         }
     }
 
-    pub struct CustomSystemStruct;
+    pub struct CustomRoutine;
 
-    impl<B: AutodiffBackend> System<B> for CustomSystemStruct {
-        type Out = ();
+    impl<B: AutodiffBackend> Routine<B> for CustomRoutine {
+        type Out = Model<i32>;
 
         fn name(&self) -> &str {
-            "CustomSystemStruct"
+            "custom_system_struct"
         }
 
         fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
             // Example logic for the system
             println!("Running CustomSystemStruct with context: {:?}", ctx.project);
-            Ok(())
+            Ok(Model(42)) // Return a dummy model
         }
     }
 
     // This would be the function that the user implements to build the executor in their application
     fn build_executor<B: AutodiffBackend>(exec: &mut ExecutorBuilder<B>) {
-        exec.add_handler(sys!(train_model))
-            .add_handler(("log_model2", log_model2))
-            .add_handler(("Some_name", log_completion))
-            .add_handler(CustomSystemStruct)
+        exec.train("model", train_model)
+            .train("model2", finetune_model)
+            // This handler fails as it does not return a `TrainOutput`
+            // .train("log", log_completion)
+            .train("custom", CustomRoutine)
             .init_resource::<TestModel<Back>>();
-    }
-
-    // This would be the function that the user implements to build the executor in their application
-    fn build_executor2<B: AutodiffBackend>(exec: &mut ExecutorBuilder<B>) {
-        register_handlers!(exec,
-            train_model => "train_model",
-            log_model2 => "log_model2",
-            log_completion => "log_completion",
-            CustomSystemStruct => "custom_system_struct",
-            |config: Config<SomeExperimentConfig>, _model: Model<TestModel<B>>, ctx: &ExecutionContext<B>| {
-                log_model2(ctx.experiment().unwrap(), config, ctx)
-            } => "as"
-        );
     }
 }
