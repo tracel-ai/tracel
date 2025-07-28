@@ -2,8 +2,7 @@
 use anyhow::{Context, Result};
 use burn::prelude::{Backend, Module};
 
-use crate::backend::{AutodiffBackendStub, BackendStub};
-use burn::backend::Autodiff;
+use crate::backend::AutodiffBackendStub;
 use burn_central_client::command::MultiDevice;
 use burn_central_client::experiment::{
     ExperimentConfig, ExperimentRun, ExperimentTrackerError, deserialize_and_merge_with_default,
@@ -204,7 +203,7 @@ impl<B: Backend> RoutineOutput<B> for () {
 
 impl<T, E, B: Backend> TrainOutput<B> for core::result::Result<T, E>
 where
-    T: RoutineOutput<B>,
+    T: TrainOutput<B>,
     E: std::fmt::Display + Send + Sync + 'static,
 {
 }
@@ -266,7 +265,8 @@ pub trait RoutineParamFunction<B: Backend, Marker>: Send + Sync + 'static {
     type Out;
     type Param: RoutineParam<B>;
 
-    fn run(&self, param_value: RoutineParamItem<B, Self::Param>) -> Result<Self::Out, RuntimeError>;
+    fn run(&self, param_value: RoutineParamItem<B, Self::Param>)
+    -> Result<Self::Out, RuntimeError>;
 }
 
 macro_rules! impl_routine_function {
@@ -312,7 +312,7 @@ pub struct IsFunctionRoutine;
 pub struct FunctionRoutine<Marker, F> {
     func: F,
     name: String,
-    _marker: PhantomData<fn() -> (Marker)>,
+    _marker: PhantomData<fn() -> Marker>,
 }
 
 impl<Marker, F> FunctionRoutine<Marker, F> {
@@ -401,7 +401,7 @@ pub trait IntoRoutine<B: Backend, Output, Marker>: Sized {
     }
 }
 
-// --- System modifiers ---
+// --- Routine modifiers ---
 
 /// A wrapper for an `IntoRoutine`-implementing type that holds a custom name.
 /// This is constructed by the `.with_name()` method from the `IntoRoutine` trait.
@@ -620,7 +620,7 @@ impl<B: Backend> ExecutorBuilder<B> {
         }
     }
 
-    pub fn register<M, O: RoutineOutput<B>>(
+    fn register<M, O: RoutineOutput<B>>(
         &mut self,
         kind: ActionKind,
         name: impl Into<String>,
@@ -812,9 +812,7 @@ mod test {
     }
 
     mod derive_api {
-        use crate::executor::{
-            ActionKind, Config, ExecutionContext, ExecutorBuilder, StaticPlugin,
-        };
+        use crate::executor::{Config, ExecutionContext, ExecutorBuilder, Model, StaticPlugin};
         use burn::prelude::Backend;
         use serde::{Deserialize, Serialize};
 
@@ -840,7 +838,7 @@ mod test {
             pub fn test_associated_system<B: Backend>(
                 &self,
                 ctx: &ExecutionContext<B>,
-            ) -> anyhow::Result<()> {
+            ) -> anyhow::Result<Model<i32>> {
                 // Example of using the context to log something
                 if let Some(experiment) = ctx.experiment() {
                     experiment.log_info(format!(
@@ -848,7 +846,7 @@ mod test {
                         self.param1
                     ));
                 }
-                Ok(())
+                Ok(Model(42)) // Return a dummy model
             }
         }
 
@@ -859,10 +857,13 @@ mod test {
                 fn wrapped_test_associated_system<B: Backend>(
                     Config(config): Config<DerivedExperimentConfig>,
                     ctx: &ExecutionContext<B>,
-                ) -> anyhow::Result<()> {
+                ) -> anyhow::Result<Model<i32>> {
                     DerivedExperimentConfig::test_associated_system(&config, ctx)
                 }
-                // builder.register(ActionKind::Train, "test_associated_system", ("test_associated_system", wrapped_test_associated_system));
+                builder.train(
+                    "test_associated_system",
+                    ("test_associated_system", wrapped_test_associated_system),
+                );
             }
         }
     }
@@ -906,26 +907,14 @@ mod test {
 
     fn train_model<B: Backend>(config: Config<SomeExperimentConfig>) -> Model<TestModel<B>> {
         println!("  Training model with data: {:?}", *config);
+
         // Simulate some training logic
-        // *model_path = Some(format!("/models/{}-v1.pkl", data));
 
         println!("Model trained. Path: {:?}", config.param1);
 
         TestModel::default().into() // Return a dummy model
     }
-
-    // // Handler that uses the model path to evaluate
-    // fn evaluate_model(model_path: &Option<String>, results: &Vec<f32>) -> Result<()> {
-    //     if let Some(path) = model_path {
-    //         println!("  Evaluating model from path: {}", path);
-    //         // results.push(0.95); // Add a metric
-    //     } else {
-    //         println!("  No model path to evaluate.");
-    //     }
-    //     println!("  Results after evaluation: {:?}", results);
-    //     Ok(())
-    // }
-
+    
     // Handler that takes no arguments
     fn log_completion() -> i32 {
         println!("  Experiment run completed!");
