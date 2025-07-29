@@ -10,12 +10,18 @@ pub use burn_central_client::*;
 /// Burn Central macros
 #[cfg(feature = "client")]
 pub mod macros {
-    pub use burn_central_cli_macros::burn;
     pub use burn_central_cli_macros::burn_central_main;
+    pub use burn_central_cli_macros::register;
 }
 
 /// Burn Central CLI
 #[cfg(feature = "cli")]
 pub mod cli {
     pub use burn_central_cli::*;
+}
+
+/// Burn Central Runtime
+#[cfg(feature = "runtime")]
+pub mod runtime {
+    pub use burn_central_runtime::*;
 }

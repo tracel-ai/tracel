@@ -49,6 +49,7 @@ json-patch = { version = "*", default-features = false }
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0" }
 derive_more = { version = "2.0.1", default-features = false }
+env_logger = "0.11.8"
 
 ### For xtask crate ###
 tracel-xtask = { version = "=1.1.8" }

@@ -7,7 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
+default = []
 ndarray-stub = ["burn/ndarray"]
+cli = ["dep:clap"]
 
 [dependencies]
 anyhow = "1.0.98"
@@ -19,9 +21,11 @@ tynm = { workspace = true, features = ["info"] }
 syn = { workspace = true }
 strum = { workspace = true }
 derive_more = { workspace = true, features = ["deref", "from", "display"] }
+clap = { workspace = true, features = ["derive"], optional = true }
+log = { workspace = true, features = ["std"] }
+env_logger = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-bevy_ecs = "0.16.1"
