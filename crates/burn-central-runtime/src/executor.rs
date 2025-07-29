@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 use burn::prelude::Backend;
 
 use crate::error::RuntimeError;
@@ -196,7 +196,8 @@ impl<B: AutodiffBackend> Executor<B> {
                 ctx.namespace,
                 ctx.project
             );
-            let experiment = client.start_experiment(&ctx.namespace, &ctx.project, &parsed_config)?;
+            let experiment =
+                client.start_experiment(&ctx.namespace, &ctx.project, &parsed_config)?;
             ctx.experiment = Some(experiment);
         }
 
