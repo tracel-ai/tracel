@@ -13,4 +13,6 @@ pub enum RuntimeError {
     HandlerFailed(anyhow::Error),
     #[error("Ambiguous target '{0}'. Found multiple handlers: {1:?}")]
     AmbiguousHandlerName(String, Vec<String>),
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 }
