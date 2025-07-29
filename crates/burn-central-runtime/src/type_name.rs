@@ -1,12 +1,8 @@
-use syn::GenericArgument::Type;
-use syn::{Expr, ExprPath, parse_str};
+use syn::{ExprPath, parse_str};
 use tynm::TypeParamsFmtOpts;
 
-/// Extracts the base name of a function's type (as seen in `std::any::type_name`)
-/// using robust parsing via `syn`.
-///
-/// # Panics
-/// Panics if the type name is not a valid Rust path (e.g. closures or anonymous types).
+/// This is not a very robust way to get the function name from a type, and may fail in various ways
+/// (i.e. closures), but this is mostly for diagnostic purposes.
 pub fn fn_type_name<T>() -> String {
     // Get the type name as a string
     let type_name = &tynm::type_namen_opts::<T>(99, TypeParamsFmtOpts::Std);
@@ -18,9 +14,6 @@ pub fn fn_type_name<T>() -> String {
         type_name
     };
 
-    println!("type_name: {}", type_name);
-
-    // Parse the type name into a syn ItemFn
     let path: Result<ExprPath, _> = parse_str(type_name);
     if let Err(_) = path {
         return type_name.to_string();
@@ -34,13 +27,13 @@ pub fn fn_type_name<T>() -> String {
         .unwrap_or_else(|| panic!("Failed to extract function name from type: {}", type_name))
 }
 
-pub fn fn_type_name_by_val<T>(_: T) -> String {
-    fn_type_name::<T>()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    pub fn fn_type_name_by_val<T>(_: T) -> String {
+        fn_type_name::<T>()
+    }
 
     fn plain_func(t: i32) {}
     fn generic_func<T>(_x: T) {}

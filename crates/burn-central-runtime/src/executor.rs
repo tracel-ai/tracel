@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use burn::prelude::{Backend, Module};
 
 use crate::backend::AutodiffBackendStub;
-use burn_central_client::command::MultiDevice;
+use burn::tensor::backend::AutodiffBackend;
 use burn_central_client::experiment::{
     ExperimentConfig, ExperimentRun, ExperimentTrackerError, deserialize_and_merge_with_default,
 };
@@ -40,14 +40,14 @@ impl<'ctx, B: Backend> RoutineParam<B> for &'ctx ExecutionContext<B> {
 }
 
 #[derive(From, Deref)]
-pub struct Config<T>(pub T);
+pub struct Cfg<T>(pub T);
 
-impl<'ctx, B: Backend, C: ExperimentConfig> RoutineParam<B> for Config<C> {
-    type Item<'new> = Config<C>;
+impl<'ctx, B: Backend, C: ExperimentConfig> RoutineParam<B> for Cfg<C> {
+    type Item<'new> = Cfg<C>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
         let cfg = ctx.get_merged_config();
-        Ok(Config(cfg))
+        Ok(Cfg(cfg))
     }
 }
 
@@ -59,6 +59,17 @@ impl<B: Backend, M: Module<B> + Default> RoutineParam<B> for Model<M> {
         // For simplicity, let's just return a default model here
         let model = M::default();
         Ok(Model(model))
+    }
+}
+
+#[derive(Clone, Debug, Deref, From)]
+pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
+
+impl<B: Backend> RoutineParam<B> for MultiDevice<B> {
+    type Item<'new> = MultiDevice<B>;
+
+    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
+        Ok(MultiDevice(ctx.devices.clone()))
     }
 }
 
@@ -148,14 +159,6 @@ impl<'ctx, B: Backend, P: RoutineParam<B>> RoutineParam<B> for Option<P> {
     }
 }
 
-impl<B: Backend> RoutineParam<B> for MultiDevice<B> {
-    type Item<'new> = MultiDevice<B>;
-
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        Ok(MultiDevice(ctx.devices.clone()))
-    }
-}
-
 // for all tuples
 macro_rules! impl_routine_param_tuple {
     ($($P:ident),*) => {
@@ -187,7 +190,7 @@ all_tuples!(impl_routine_param_tuple, 0, 16, P);
 
 /// This trait defines how a specific return type (Output) from a handler
 /// is processed and potentially stored back into the ExecutionContext.
-pub trait RoutineOutput<B: Backend>: Sized + Send + Sync + 'static {
+pub trait RoutineOutput<B: Backend>: Sized + Send + 'static {
     /// This method takes the owned output and the mutable ExecutionContext,
     /// allowing the output to modify the context.
     fn apply_output(self, ctx: &mut ExecutionContext<B>) -> Result<Self>;
@@ -226,19 +229,15 @@ where
 
 #[derive(Clone, From, Deref)]
 pub struct Model<M>(M);
-impl<B: Backend, M: Module<B> + Sync + 'static> TrainOutput<B> for Model<M> {}
-impl<B: Backend, M: Module<B> + Sync + 'static> RoutineOutput<B> for Model<M> {
+impl<B: Backend, M: Module<B> + 'static> TrainOutput<B> for Model<M> {}
+impl<B: Backend, M: Module<B> + 'static> RoutineOutput<B> for Model<M> {
     fn apply_output(self, ctx: &mut ExecutionContext<B>) -> Result<Self> {
-        // Here we could save the model to a file or update the context
-        // For simplicity, let's just print a message
         if let Some(experiment) = ctx.experiment.as_ref() {
             experiment.try_log_artifact(
                 "model",
                 ArtifactKind::Model,
                 self.0.clone().into_record(),
             )?;
-        } else {
-            println!("No experiment run to log the model.");
         }
         Ok(self)
     }
@@ -497,6 +496,7 @@ where
         match self.0.run(ctx) {
             Ok(output) => {
                 output.apply_output(ctx).map_err(|e| {
+                    log::error!("Failed to apply output: {}", e);
                     RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
                 })?;
                 Ok(())
@@ -572,15 +572,15 @@ impl<B: Backend> ExecutionContext<B> {
     }
 }
 
-pub trait Plugin<B: Backend> {
+pub trait Plugin<B: AutodiffBackend> {
     fn build(&self, builder: &mut ExecutorBuilder<B>);
 }
 
-pub trait StaticPlugin<B: Backend> {
+pub trait StaticPlugin<B: AutodiffBackend> {
     fn build(builder: &mut ExecutorBuilder<B>);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, strum::Display)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum ActionKind {
     Train,
@@ -603,11 +603,11 @@ impl std::fmt::Display for TargetId {
     }
 }
 
-pub struct ExecutorBuilder<B: Backend> {
+pub struct ExecutorBuilder<B: AutodiffBackend> {
     executor: Executor<B>,
 }
 
-impl<B: Backend> ExecutorBuilder<B> {
+impl<B: AutodiffBackend> ExecutorBuilder<B> {
     fn new() -> Self {
         Self {
             executor: Executor {
@@ -635,7 +635,7 @@ impl<B: Backend> ExecutorBuilder<B> {
             name: name.into(),
         };
 
-        println!("Registering handler '{routine_name}' for target: {target_id}");
+        log::debug!("Registering handler '{routine_name}' for target: {target_id}");
 
         self.executor.handlers.insert(target_id, routine);
         self
@@ -691,7 +691,7 @@ impl<B: Backend> ExecutorBuilder<B> {
         executor
     }
 
-    fn build_stub(self) -> Executor<B> {
+    pub fn build_stub(self) -> Executor<B> {
         self.executor
     }
 }
@@ -704,8 +704,7 @@ pub struct Executor<B: Backend> {
     resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
 }
 
-impl<B: Backend> Executor<B> {
-    // The main entry point is now a builder
+impl<B: AutodiffBackend> Executor<B> {
     pub fn builder() -> ExecutorBuilder<B> {
         ExecutorBuilder::new()
     }
@@ -714,7 +713,6 @@ impl<B: Backend> Executor<B> {
         self.handlers.keys().cloned().collect()
     }
 
-    // This runs a single chain of handlers with an initial context
     pub fn run(
         &self,
         kind: ActionKind,
@@ -729,9 +727,8 @@ impl<B: Backend> Executor<B> {
             name: target.to_string(),
         };
 
-        println!("--- Starting Execution for Target: {} ---", target);
+        log::debug!("--- Starting Execution for Target: {} ---", target);
 
-        // 1. First, try to find the handler by its full name.
         let handler = if self.handlers.contains_key(&target_id) {
             self.handlers.get(&target_id)
         } else {
@@ -753,6 +750,20 @@ impl<B: Backend> Executor<B> {
         let config = ctx.config_override.as_deref().unwrap_or("{}");
 
         if let Some(client) = &mut ctx.client {
+            let code_version = option_env!("BURN_CENTRAL_CODE_VERSION")
+                .unwrap_or("unknown")
+                .to_string();
+            log::debug!(
+                "Using Burn Central client with code version: {}",
+                code_version
+            );
+
+            log::info!(
+                "Starting experiment for target: {} in namespace: {}, project: {}",
+                target,
+                ctx.namespace,
+                ctx.project
+            );
             let experiment = client.start_experiment(&ctx.namespace, &ctx.project, &config)?;
             ctx.experiment = Some(experiment);
         }
@@ -763,18 +774,17 @@ impl<B: Backend> Executor<B> {
             Ok(_) => {
                 if let Some(experiment) = ctx.experiment {
                     experiment.finish()?;
-                    println!("Experiment run completed successfully.");
+                    log::info!("Experiment run completed successfully.");
                 }
-                println!("Handler {} executed successfully.", target);
+                log::debug!("Handler {} executed successfully.", target);
 
                 Ok(())
             }
             Err(e) => {
-                println!("Error executing handler '{}': {}", target, e);
-                // Handle the error, possibly logging it or cleaning up
+                log::error!("Error executing handler '{}': {}", target, e);
                 if let Some(experiment) = ctx.experiment {
                     experiment.fail(e.to_string())?;
-                    println!("Experiment run failed: {}", e);
+                    log::error!("Experiment run failed: {}", e);
                 }
                 Err(e)
             }
@@ -812,8 +822,9 @@ mod test {
     }
 
     mod derive_api {
-        use crate::executor::{Config, ExecutionContext, ExecutorBuilder, Model, StaticPlugin};
+        use crate::executor::{Cfg, ExecutionContext, ExecutorBuilder, Model, StaticPlugin};
         use burn::prelude::Backend;
+        use burn::tensor::backend::AutodiffBackend;
         use serde::{Deserialize, Serialize};
 
         // #[derive(Experiment)]
@@ -852,10 +863,10 @@ mod test {
 
         // generated code by the #[experiment_impl] macro
         // ...
-        impl<B: Backend> StaticPlugin<B> for DerivedExperimentConfig {
+        impl<B: AutodiffBackend> StaticPlugin<B> for DerivedExperimentConfig {
             fn build(builder: &mut ExecutorBuilder<B>) {
                 fn wrapped_test_associated_system<B: Backend>(
-                    Config(config): Config<DerivedExperimentConfig>,
+                    Cfg(config): Cfg<DerivedExperimentConfig>,
                     ctx: &ExecutionContext<B>,
                 ) -> anyhow::Result<Model<i32>> {
                     DerivedExperimentConfig::test_associated_system(&config, ctx)
@@ -887,7 +898,7 @@ mod test {
     fn finetune_model<B: AutodiffBackend>(
         experiment: &ExperimentRun,
         Model(_a): Model<TestModel<B>>,
-        Config(config): Config<SomeExperimentConfig>,
+        Cfg(config): Cfg<SomeExperimentConfig>,
         _context: &ExecutionContext<B>,
     ) -> Result<Model<TestModel<B>>> {
         if config.param1 < 0.0 {
@@ -905,7 +916,7 @@ mod test {
     //     Ok(())
     // }
 
-    fn train_model<B: Backend>(config: Config<SomeExperimentConfig>) -> Model<TestModel<B>> {
+    fn train_model<B: Backend>(config: Cfg<SomeExperimentConfig>) -> Model<TestModel<B>> {
         println!("  Training model with data: {:?}", *config);
 
         // Simulate some training logic
@@ -914,7 +925,7 @@ mod test {
 
         TestModel::default().into() // Return a dummy model
     }
-    
+
     // Handler that takes no arguments
     fn log_completion() -> i32 {
         println!("  Experiment run completed!");
@@ -937,7 +948,7 @@ mod test {
         .build()
         .expect("Failed to build BurnCentral client");
 
-        let executor = builder.build(client, "test_namespace", "test_project");
+        let executor = builder.build(client, "aaa", "aaaa");
 
         let override_json = serde_json::to_string(&SomeExperimentConfig {
             param1: 42.0,
@@ -948,7 +959,7 @@ mod test {
         executor
             .run(
                 ActionKind::Train,
-                "log_model2",
+                "model",
                 vec![Default::default()],
                 Some(override_json),
             )
@@ -994,6 +1005,6 @@ mod test {
             // This handler fails as it does not return a `TrainOutput`
             // .train("log", log_completion)
             .train("custom", CustomRoutine)
-            .init_resource::<TestModel<Back>>();
+            .init_resource::<TestModel<B>>();
     }
 }

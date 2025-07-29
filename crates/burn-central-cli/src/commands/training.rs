@@ -3,7 +3,7 @@ use clap::Parser;
 use clap::ValueHint;
 use colored::Colorize;
 
-use crate::execution::execute_experiment_command;
+use crate::execution::{RunKind, execute_experiment_command};
 use crate::{
     context::CliContext,
     execution::{BuildCommand, RunCommand, RunParams},
@@ -98,10 +98,12 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let flags = crate::registry::get_flags();
     print_available_training_functions(&flags);
 
-    check_function_registered(&args.function, &flags)?;
+    // check_function_registered(&args.function, &flags)?;
 
+    let kind = RunKind::Training;
     let function = args.function.clone();
-    let project = context.get_project_path()?.to_string();
+    let namespace = context.get_project_path()?.owner_name;
+    let project = context.get_project_path()?.project_name;
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
@@ -117,9 +119,11 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         },
         RunCommand {
             run_id: run_id.clone(),
-            run_params: RunParams::Training {
+            run_params: RunParams {
+                kind,
                 function,
                 config,
+                namespace,
                 project,
                 key,
             },

@@ -1,5 +1,6 @@
-﻿#![allow(unused)]
+#![allow(unused)]
 
+use burn::backend::Autodiff;
 use burn::prelude::{Backend, Device, Shape, TensorData};
 use burn::tensor::backend::{DeviceId, DeviceOps};
 use burn::tensor::ops::{
@@ -8,10 +9,12 @@ use burn::tensor::ops::{
     IntTensor, IntTensorOps, InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices,
     ModuleOps, QTensorOps, QuantizedTensor, TransactionOps,
 };
-use burn::tensor::quantization::{QTensorPrimitive, QuantizationMode, QuantizationParametersPrimitive, QuantizationScheme, QuantizationType};
+use burn::tensor::quantization::{
+    QTensorPrimitive, QuantizationMode, QuantizationParametersPrimitive, QuantizationScheme,
+    QuantizationType,
+};
 use burn::tensor::{DType, Distribution, FloatDType, TensorMetadata};
 use std::ops::Range;
-use burn::backend::Autodiff;
 
 #[cfg(not(feature = "ndarray-stub"))]
 pub type AutodiffBackendStub = Autodiff<BackendStub>;
@@ -123,10 +126,7 @@ impl FloatTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    fn float_remainder_scalar(
-        lhs: FloatTensor<Self>,
-        rhs: FloatElem<Self>,
-    ) -> FloatTensor<Self> {
+    fn float_remainder_scalar(lhs: FloatTensor<Self>, rhs: FloatElem<Self>) -> FloatTensor<Self> {
         TensorStub
     }
 
@@ -138,11 +138,7 @@ impl FloatTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    fn float_swap_dims(
-        tensor: FloatTensor<Self>,
-        dim1: usize,
-        dim2: usize,
-    ) -> FloatTensor<Self> {
+    fn float_swap_dims(tensor: FloatTensor<Self>, dim1: usize, dim2: usize) -> FloatTensor<Self> {
         TensorStub
     }
 
@@ -240,10 +236,7 @@ impl FloatTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    fn float_greater_equal_elem(
-        lhs: FloatTensor<Self>,
-        rhs: FloatElem<Self>,
-    ) -> BoolTensor<Self> {
+    fn float_greater_equal_elem(lhs: FloatTensor<Self>, rhs: FloatElem<Self>) -> BoolTensor<Self> {
         TensorStub
     }
 
@@ -259,10 +252,7 @@ impl FloatTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    fn float_lower_equal_elem(
-        lhs: FloatTensor<Self>,
-        rhs: FloatElem<Self>,
-    ) -> BoolTensor<Self> {
+    fn float_lower_equal_elem(lhs: FloatTensor<Self>, rhs: FloatElem<Self>) -> BoolTensor<Self> {
         TensorStub
     }
 
@@ -432,9 +422,7 @@ impl IntTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    fn int_into_data(
-        tensor: IntTensor<Self>,
-    ) -> impl Future<Output = TensorData> + 'static + Send {
+    fn int_into_data(tensor: IntTensor<Self>) -> impl Future<Output = TensorData> + 'static + Send {
         async { TensorData::new::<<Self as Backend>::IntElem, _>(Default::default(), []) }
     }
 
@@ -880,10 +868,7 @@ impl QTensorOps<Self> for BackendStub {
         DeviceStub
     }
 
-    fn q_to_device(
-        tensor: QuantizedTensor<Self>,
-        device: &Device<Self>,
-    ) -> QuantizedTensor<Self> {
+    fn q_to_device(tensor: QuantizedTensor<Self>, device: &Device<Self>) -> QuantizedTensor<Self> {
         TensorStub
     }
 
@@ -921,10 +906,7 @@ impl QTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    fn q_slice(
-        tensor: QuantizedTensor<Self>,
-        ranges: &[Range<usize>],
-    ) -> QuantizedTensor<Self> {
+    fn q_slice(tensor: QuantizedTensor<Self>, ranges: &[Range<usize>]) -> QuantizedTensor<Self> {
         TensorStub
     }
 
