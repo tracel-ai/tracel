@@ -1,5 +1,5 @@
 ﻿use crate::type_name::fn_type_name;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use burn::prelude::{Backend, Module};
 
 use crate::backend::AutodiffBackendStub;
@@ -10,12 +10,8 @@ use burn_central_client::experiment::{
 use burn_central_client::record::ArtifactKind;
 use burn_central_client::{BurnCentral, BurnCentralError};
 use derive_more::{Deref, From};
-use std::any::{Any, TypeId};
-use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 use variadics_please::all_tuples;
 
 /// This trait defines how parameters for a routine are retrieved from the execution context.
@@ -73,76 +69,11 @@ impl<B: Backend> RoutineParam<B> for MultiDevice<B> {
     }
 }
 
-pub struct Res<'a, T: 'static> {
-    value: Ref<'a, Box<dyn Any>>,
-    _marker: PhantomData<&'a T>,
-}
-
-impl<T: 'static> Deref for Res<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.value.downcast_ref().unwrap()
-    }
-}
-
-pub struct ResMut<'a, T: 'static> {
-    value: RefMut<'a, Box<dyn Any>>,
-    _marker: PhantomData<&'a mut T>,
-}
-
-impl<T: 'static> Deref for ResMut<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.value.downcast_ref().unwrap()
-    }
-}
-
-impl<T: 'static> DerefMut for ResMut<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.value.downcast_mut().unwrap()
-    }
-}
-
-impl<'ctx, B: Backend, T: 'static> RoutineParam<B> for Res<'ctx, T> {
-    type Item<'new> = Res<'new, T>;
-
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        let value = ctx
-            .resources
-            .get(&TypeId::of::<T>())
-            .context("Resource not found")?
-            .borrow();
-        Ok(Res {
-            value,
-            _marker: PhantomData,
-        })
-    }
-}
-
-impl<'ctx, B: Backend, T: 'static> RoutineParam<B> for ResMut<'ctx, T> {
-    type Item<'new> = ResMut<'new, T>;
-
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        let value = ctx
-            .resources
-            .get(&TypeId::of::<T>())
-            .context("Resource not found")?
-            .borrow_mut();
-        Ok(ResMut {
-            value,
-            _marker: PhantomData,
-        })
-    }
-}
-
 impl<B: Backend> RoutineParam<B> for &ExperimentRun {
     type Item<'new> = &'new ExperimentRun;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        ctx.experiment
-            .as_ref()
+        ctx.experiment()
             .ok_or_else(|| anyhow::anyhow!("Experiment run not found"))
     }
 }
@@ -404,8 +335,6 @@ pub trait IntoRoutine<B: Backend, Output, Marker>: Sized {
     }
 }
 
-// --- Routine modifiers ---
-
 /// A wrapper for an `IntoRoutine`-implementing type that holds a custom name.
 /// This is constructed by the `.with_name()` method from the `IntoRoutine` trait.
 #[derive(Clone)]
@@ -515,10 +444,6 @@ where
 pub enum RuntimeError {
     #[error("Handler '{0}' not found")]
     HandlerNotFound(String),
-    #[error("Resource of type {0} not found")]
-    ResourceNotFound(String),
-    #[error("Resource is already borrowed mutably")]
-    ResourceBorrowFailed,
     #[error("Burn Central API call failed: {0}")]
     BurnCentralError(#[from] BurnCentralError),
     #[error("Experiment API call failed: {0}")]
@@ -536,7 +461,6 @@ pub struct ExecutionContext<B: Backend> {
     config_override: Option<String>,
     devices: Vec<B::Device>,
     experiment: Option<ExperimentRun>,
-    resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
 }
 
 impl<B: Backend> ExecutionContext<B> {
@@ -554,34 +478,6 @@ impl<B: Backend> ExecutionContext<B> {
     pub fn devices(&self) -> &[B::Device] {
         &self.devices
     }
-
-    fn get_res_cell<T: Any + 'static>(&self) -> Result<&RefCell<Box<dyn Any>>, RuntimeError> {
-        self.resources
-            .get(&TypeId::of::<T>())
-            .ok_or_else(|| RuntimeError::ResourceNotFound(std::any::type_name::<T>().to_string()))
-    }
-
-    pub fn resource<T: Any + 'static>(&self) -> Result<Ref<T>, RuntimeError> {
-        self.get_res_cell::<T>()?
-            .try_borrow()
-            .map(|r| Ref::map(r, |b| b.downcast_ref::<T>().unwrap()))
-            .map_err(|_| RuntimeError::ResourceBorrowFailed)
-    }
-
-    pub fn resource_mut<T: Any + 'static>(&self) -> Result<RefMut<T>, RuntimeError> {
-        self.get_res_cell::<T>()?
-            .try_borrow_mut()
-            .map(|r| RefMut::map(r, |b| b.downcast_mut::<T>().unwrap()))
-            .map_err(|_| RuntimeError::ResourceBorrowFailed)
-    }
-}
-
-pub trait Plugin<B: AutodiffBackend> {
-    fn build(&self, builder: &mut ExecutorBuilder<B>);
-}
-
-pub trait StaticPlugin<B: AutodiffBackend> {
-    fn build(builder: &mut ExecutorBuilder<B>);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, strum::Display, strum::EnumString)]
@@ -619,7 +515,6 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
                 namespace: None,
                 project: None,
                 handlers: HashMap::new(),
-                resources: Rc::new(HashMap::new()),
             },
         }
     }
@@ -654,33 +549,6 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
         self
     }
 
-    pub fn add_plugin(&mut self, plugin: impl Plugin<B>) -> &mut Self {
-        plugin.build(self);
-        self
-    }
-
-    pub fn add_static_plugin<P: StaticPlugin<B>>(&mut self) -> &mut Self {
-        P::build(self);
-        self
-    }
-
-    pub fn add_resource<T: Any + 'static>(&mut self, resource: T) -> &mut Self {
-        Rc::get_mut(&mut self.executor.resources)
-            .unwrap()
-            .insert(TypeId::of::<T>(), RefCell::new(Box::new(resource)));
-        self
-    }
-
-    pub fn init_resource<T: Any + Default + 'static>(&mut self) -> &mut Self {
-        let type_id = TypeId::of::<T>();
-        if !self.executor.resources.contains_key(&type_id) {
-            Rc::get_mut(&mut self.executor.resources)
-                .unwrap()
-                .insert(type_id, RefCell::new(Box::new(T::default())));
-        }
-        self
-    }
-
     pub fn build(
         self,
         client: BurnCentral,
@@ -705,7 +573,6 @@ pub struct Executor<B: Backend> {
     namespace: Option<String>,
     project: Option<String>,
     handlers: HashMap<TargetId, ExecutorRoutine<B>>,
-    resources: Rc<HashMap<TypeId, RefCell<Box<dyn Any>>>>,
 }
 
 impl<B: AutodiffBackend> Executor<B> {
@@ -745,7 +612,6 @@ impl<B: AutodiffBackend> Executor<B> {
             config_override,
             devices: devices.into_iter().collect(),
             experiment: None,
-            resources: self.resources.clone(),
         };
 
         let config = ctx.config_override.as_deref().unwrap_or("{}");
