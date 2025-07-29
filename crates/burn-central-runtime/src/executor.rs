@@ -735,7 +735,10 @@ impl<B: AutodiffBackend> Executor<B> {
             None
         };
 
-        let handler = handler.ok_or_else(|| RuntimeError::HandlerNotFound(target.to_string()))?;
+        let handler = handler.ok_or_else(|| {
+            log::error!("Handler not found for target: {}", target);
+            RuntimeError::HandlerNotFound(target.to_string())
+        })?;
 
         let mut ctx = ExecutionContext {
             client: Some(self.client.clone().unwrap()),
