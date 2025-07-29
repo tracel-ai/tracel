@@ -15,7 +15,7 @@ pub fn fn_type_name<T>() -> String {
     };
 
     let path: Result<ExprPath, _> = parse_str(type_name);
-    if let Err(_) = path {
+    if path.is_err() {
         return type_name.to_string();
     }
     let path = path.unwrap();
@@ -24,7 +24,7 @@ pub fn fn_type_name<T>() -> String {
         .segments
         .last()
         .map(|segment| segment.ident.to_string())
-        .unwrap_or_else(|| panic!("Failed to extract function name from type: {}", type_name))
+        .unwrap_or_else(|| panic!("Failed to extract function name from type: {type_name}"))
 }
 
 #[cfg(test)]
@@ -35,7 +35,7 @@ mod tests {
         fn_type_name::<T>()
     }
 
-    fn plain_func(t: i32) {}
+    fn plain_func(_t: i32) {}
     fn generic_func<T>(_x: T) {}
     mod nested {
         pub fn inner_func() {}

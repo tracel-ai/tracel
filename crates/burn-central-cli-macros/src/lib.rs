@@ -84,7 +84,7 @@ fn get_string_arg(
                 _ => {
                     errors.push(Error::new(
                         value.value.span(),
-                        &format!("Expected a string literal for the `{}` argument.", arg_name),
+                        format!("Expected a string literal for the `{arg_name}` argument."),
                     ));
                     None
                 }
@@ -128,7 +128,7 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
     let fn_name = &item.sig.ident;
 
-    if args.len() < 1 {
+    if args.is_empty() {
         errors.push(Error::new(
             args.span(),
             "Expected one argument for the #[register] attribute. Please provide the procedure type (training or inference) as the first argument.",
@@ -148,14 +148,11 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    match procedure_type {
-        ProcedureType::Inference => {
-            errors.push(Error::new_spanned(
-                &args.first().unwrap().path(),
-                "Inference procedures are not supported yet. Please use training procedures.",
-            ));
-        }
-        _ => (),
+    if procedure_type == ProcedureType::Inference {
+        errors.push(Error::new_spanned(
+            args.first().unwrap().path(),
+            "Inference procedures are not supported yet. Please use training procedures.",
+        ));
     }
 
     let maybe_registered_name = get_string_arg(&args, "name", &mut errors);
@@ -164,13 +161,13 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
         if let Err(err) = validate_registered_name(&name.value()) {
             errors.push(Error::new_spanned(
                 name,
-                format!("Invalid registered name: {}", err),
+                format!("Invalid registered name: {err}"),
             ));
         }
     }
 
     let builder_fn_name = syn::Ident::new(
-        &format!("__{}_builder", fn_name),
+        &format!("__{fn_name}_builder"),
         proc_macro2::Span::call_site(),
     );
 

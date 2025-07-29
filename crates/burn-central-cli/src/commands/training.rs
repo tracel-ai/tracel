@@ -157,6 +157,7 @@ fn print_available_training_functions(flags: &[Flag]) {
     }
 }
 
+#[allow(dead_code)]
 fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<()> {
     let function_flags: Vec<&Flag> = flags
         .iter()

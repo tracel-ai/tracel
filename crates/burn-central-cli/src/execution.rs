@@ -137,7 +137,7 @@ pub fn make_build_command(
         ])
         .args(["--message-format", "short"]);
     if let Some(target_dir) = &new_target_dir {
-        build_command.args(["--target-dir", &target_dir]);
+        build_command.args(["--target-dir", target_dir]);
     }
 
     print_info!(
