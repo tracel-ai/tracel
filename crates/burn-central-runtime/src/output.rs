@@ -1,4 +1,4 @@
-﻿use crate::ExecutionContext;
+use crate::ExecutionContext;
 use crate::types::Model;
 use burn::module::Module;
 use burn::prelude::Backend;
@@ -30,9 +30,7 @@ where
     fn apply_output(self, ctx: &mut ExecutionContext<B>) -> anyhow::Result<Self> {
         match self {
             Ok(output) => Ok(Ok(output.apply_output(ctx)?)),
-            Err(e) => {
-                Err(anyhow::anyhow!(e.to_string()))
-            }
+            Err(e) => Err(anyhow::anyhow!(e.to_string())),
         }
     }
 }
