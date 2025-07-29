@@ -1,4 +1,4 @@
-﻿use burn_central_client::BurnCentralError;
+use burn_central_client::BurnCentralError;
 use burn_central_client::experiment::ExperimentTrackerError;
 
 #[derive(thiserror::Error, Debug)]

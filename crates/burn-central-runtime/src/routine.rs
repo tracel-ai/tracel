@@ -1,11 +1,11 @@
-﻿use crate::ExecutionContext;
+use crate::ExecutionContext;
 use crate::error::RuntimeError;
+use crate::output::RoutineOutput;
 use crate::param::RoutineParam;
 use crate::type_name::fn_type_name;
 use burn::prelude::Backend;
 use std::marker::PhantomData;
 use variadics_please::all_tuples;
-use crate::output::RoutineOutput;
 
 #[diagnostic::on_unimplemented(message = "`{Self}` is not a routine", label = "invalid routine")]
 pub trait Routine<B: Backend>: Send + Sync + 'static {
