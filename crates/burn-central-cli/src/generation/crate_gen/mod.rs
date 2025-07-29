@@ -268,14 +268,11 @@ fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String
         proc_macro2::Span::call_site(),
     );
 
-    let crate_entrypoint =
-        syn::parse_str::<syn::ExprPath>(&format!("{crate_name_str}::main::<MyAutodiffBackend>"))
-            .expect("Failed to parse crate entrypoint.");
-
     let bin_content: proc_macro2::TokenStream = quote! {
         #recursion_limit
         #backend_types
 
+        use #crate_name_str::*;
         use burn::prelude::*;
 
         fn main() -> Result<(), String> {

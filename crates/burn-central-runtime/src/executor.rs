@@ -31,7 +31,7 @@ pub trait RoutineParam<B: Backend>: Sized {
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>>;
 }
 
-impl<'ctx, B: Backend> RoutineParam<B> for &'ctx ExecutionContext<B> {
+impl<B: Backend> RoutineParam<B> for &ExecutionContext<B> {
     type Item<'new> = &'new ExecutionContext<B>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -42,7 +42,7 @@ impl<'ctx, B: Backend> RoutineParam<B> for &'ctx ExecutionContext<B> {
 #[derive(From, Deref)]
 pub struct Cfg<T>(pub T);
 
-impl<'ctx, B: Backend, C: ExperimentConfig> RoutineParam<B> for Cfg<C> {
+impl<B: Backend, C: ExperimentConfig> RoutineParam<B> for Cfg<C> {
     type Item<'new> = Cfg<C>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -137,18 +137,17 @@ impl<'ctx, B: Backend, T: 'static> RoutineParam<B> for ResMut<'ctx, T> {
     }
 }
 
-impl<'ctx, B: Backend> RoutineParam<B> for &'ctx ExperimentRun {
+impl<B: Backend> RoutineParam<B> for &ExperimentRun {
     type Item<'new> = &'new ExperimentRun;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
         ctx.experiment
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Experiment run not found"))
-            .map(|exp| exp)
     }
 }
 
-impl<'ctx, B: Backend, P: RoutineParam<B>> RoutineParam<B> for Option<P> {
+impl<B: Backend, P: RoutineParam<B>> RoutineParam<B> for Option<P> {
     type Item<'new> = Option<P::Item<'new>>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
@@ -290,6 +289,11 @@ macro_rules! impl_routine_function {
             type Param = ($($param,)*);
             #[inline]
             fn run(&self, param_value: RoutineParamItem<B, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
+                #[expect(
+                    clippy::allow_attributes,
+                    reason = "This is within a macro, and as such, the below lints may not always apply."
+                )]
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<Out, $($param,)*>(
                     f: impl Fn($($param,)*)->Out,
                     $($param: $param,)*
@@ -496,7 +500,7 @@ where
         match self.0.run(ctx) {
             Ok(output) => {
                 output.apply_output(ctx).map_err(|e| {
-                    log::error!("Failed to apply output: {}", e);
+                    log::error!("Failed to apply output: {e}");
                     RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
                 })?;
                 Ok(())
@@ -727,7 +731,7 @@ impl<B: AutodiffBackend> Executor<B> {
             name: target.to_string(),
         };
 
-        log::debug!("--- Starting Execution for Target: {} ---", target);
+        log::debug!("--- Starting Execution for Target: {target} ---");
 
         let handler = if self.handlers.contains_key(&target_id) {
             self.handlers.get(&target_id)
@@ -736,7 +740,7 @@ impl<B: AutodiffBackend> Executor<B> {
         };
 
         let handler = handler.ok_or_else(|| {
-            log::error!("Handler not found for target: {}", target);
+            log::error!("Handler not found for target: {target}");
             RuntimeError::HandlerNotFound(target.to_string())
         })?;
 
@@ -757,8 +761,7 @@ impl<B: AutodiffBackend> Executor<B> {
                 .unwrap_or("unknown")
                 .to_string();
             log::debug!(
-                "Using Burn Central client with code version: {}",
-                code_version
+                "Using Burn Central client with code version: {code_version}"
             );
 
             log::info!(
@@ -779,15 +782,15 @@ impl<B: AutodiffBackend> Executor<B> {
                     experiment.finish()?;
                     log::info!("Experiment run completed successfully.");
                 }
-                log::debug!("Handler {} executed successfully.", target);
+                log::debug!("Handler {target} executed successfully.");
 
                 Ok(())
             }
             Err(e) => {
-                log::error!("Error executing handler '{}': {}", target, e);
+                log::error!("Error executing handler '{target}': {e}");
                 if let Some(experiment) = ctx.experiment {
                     experiment.fail(e.to_string())?;
-                    log::error!("Experiment run failed: {}", e);
+                    log::error!("Experiment run failed: {e}");
                 }
                 Err(e)
             }
@@ -908,7 +911,7 @@ mod test {
             return Err(anyhow::anyhow!("param1 must be non-negative"));
         }
 
-        experiment.log_info(format!("Logging model with config: {:?}", config));
+        experiment.log_info(format!("Logging model with config: {config:?}"));
 
         Ok(_a.into())
     }
@@ -927,12 +930,6 @@ mod test {
         println!("Model trained. Path: {:?}", config.param1);
 
         TestModel::default().into() // Return a dummy model
-    }
-
-    // Handler that takes no arguments
-    fn log_completion() -> i32 {
-        println!("  Experiment run completed!");
-        32
     }
 
     type Back = Autodiff<NdArray>;
@@ -981,7 +978,7 @@ mod test {
         let executor = builder.build_stub();
 
         for target in executor.targets() {
-            println!("Registered target: {}", target);
+            println!("Registered target: {target}");
         }
     }
 
