@@ -1,18 +1,16 @@
 mod error;
-mod routine;
-mod param;
-mod types;
-mod output;
 mod executor;
+mod output;
+mod param;
+mod routine;
 mod type_name;
-
-mod backend;
+mod types;
 
 #[cfg(feature = "cli")]
 pub mod cli;
 
-pub use executor::{ExecutorBuilder, Executor, ExecutionContext};
 pub use error::RuntimeError;
+pub use executor::{ExecutionContext, Executor, ExecutorBuilder};
 pub use routine::{IntoRoutine, Routine};
 pub use types::*;
 
