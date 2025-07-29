@@ -179,6 +179,11 @@ impl<B: AutodiffBackend> Executor<B> {
 
         let config = ctx.config_override.as_deref().unwrap_or("{}");
 
+        let parsed_config = serde_json::from_str::<serde_json::Value>(config).map_err(|e| {
+            log::error!("Failed to parse configuration: {e}");
+            RuntimeError::InvalidConfig(e.to_string())
+        })?;
+
         if let Some(client) = &mut ctx.client {
             let code_version = option_env!("BURN_CENTRAL_CODE_VERSION")
                 .unwrap_or("unknown")
@@ -191,7 +196,7 @@ impl<B: AutodiffBackend> Executor<B> {
                 ctx.namespace,
                 ctx.project
             );
-            let experiment = client.start_experiment(&ctx.namespace, &ctx.project, &config)?;
+            let experiment = client.start_experiment(&ctx.namespace, &ctx.project, &parsed_config)?;
             ctx.experiment = Some(experiment);
         }
 
