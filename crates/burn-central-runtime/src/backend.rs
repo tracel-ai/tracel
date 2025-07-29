@@ -68,9 +68,9 @@ impl FloatTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    async fn float_into_data(
-        tensor: FloatTensor<Self>,
-    ) -> TensorData { TensorData::new::<<Self as Backend>::FloatElem, _>(Default::default(), []) }
+    async fn float_into_data(tensor: FloatTensor<Self>) -> TensorData {
+        TensorData::new::<<Self as Backend>::FloatElem, _>(Default::default(), [])
+    }
 
     fn float_device(tensor: &FloatTensor<Self>) -> Device<Self> {
         DeviceStub
@@ -340,9 +340,9 @@ impl BoolTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    async fn bool_into_data(
-        tensor: BoolTensor<Self>,
-    ) -> TensorData { TensorData::new::<<Self as Backend>::BoolElem, _>(Default::default(), []) }
+    async fn bool_into_data(tensor: BoolTensor<Self>) -> TensorData {
+        TensorData::new::<<Self as Backend>::BoolElem, _>(Default::default(), [])
+    }
 
     fn bool_from_data(data: TensorData, device: &Device<Self>) -> BoolTensor<Self> {
         TensorStub
@@ -418,7 +418,9 @@ impl IntTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    async fn int_into_data(tensor: IntTensor<Self>) -> TensorData { TensorData::new::<<Self as Backend>::IntElem, _>(Default::default(), []) }
+    async fn int_into_data(tensor: IntTensor<Self>) -> TensorData {
+        TensorData::new::<<Self as Backend>::IntElem, _>(Default::default(), [])
+    }
 
     fn int_from_data(data: TensorData, device: &Device<Self>) -> IntTensor<Self> {
         TensorStub
@@ -870,9 +872,9 @@ impl QTensorOps<Self> for BackendStub {
         TensorStub
     }
 
-    async fn q_into_data(
-        tensor: QuantizedTensor<Self>,
-    ) -> TensorData { TensorData::new::<<Self as Backend>::QuantizedEncoding, _>(Default::default(), []) }
+    async fn q_into_data(tensor: QuantizedTensor<Self>) -> TensorData {
+        TensorData::new::<<Self as Backend>::QuantizedEncoding, _>(Default::default(), [])
+    }
 
     fn q_swap_dims(
         tensor: QuantizedTensor<Self>,
