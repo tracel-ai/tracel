@@ -45,7 +45,7 @@ uuid = { version = "1.17.0", features = [
     "serde",
 ] }
 crossbeam = { version = "0.8.4", default-features = false, features = ["crossbeam-channel"]}
-json-patch = { version = "*", default-features = false }
+json-patch = { version = "4.0.0", default-features = false }
 
 ### For xtask crate ###
 tracel-xtask = { version = "=1.1.8" }
