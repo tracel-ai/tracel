@@ -588,11 +588,11 @@ pub trait StaticPlugin<B: AutodiffBackend> {
 #[strum(serialize_all = "snake_case")]
 pub enum ActionKind {
     Train,
-    Eval,
-    Test,
-    Predict,
-    #[strum(serialize = "custom({0})")]
-    Custom(String),
+    // Infer,
+    // Eval,
+    // Test,
+    // #[strum(serialize = "custom({0})")]
+    // Custom(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -731,18 +731,12 @@ impl<B: AutodiffBackend> Executor<B> {
             name: target.to_string(),
         };
 
-        log::debug!("--- Starting Execution for Target: {target} ---");
-
-        let handler = if self.handlers.contains_key(&target_id) {
-            self.handlers.get(&target_id)
-        } else {
-            None
-        };
-
-        let handler = handler.ok_or_else(|| {
+        let handler = self.handlers.get(&target_id).ok_or_else(|| {
             log::error!("Handler not found for target: {target}");
             RuntimeError::HandlerNotFound(target.to_string())
         })?;
+
+        log::debug!("Starting Execution for Target: {target}");
 
         let mut ctx = ExecutionContext {
             client: Some(self.client.clone().unwrap()),
@@ -760,9 +754,7 @@ impl<B: AutodiffBackend> Executor<B> {
             let code_version = option_env!("BURN_CENTRAL_CODE_VERSION")
                 .unwrap_or("unknown")
                 .to_string();
-            log::debug!(
-                "Using Burn Central client with code version: {code_version}"
-            );
+            log::debug!("Using Burn Central client with code version: {code_version}");
 
             log::info!(
                 "Starting experiment for target: {} in namespace: {}, project: {}",
@@ -800,211 +792,4 @@ impl<B: AutodiffBackend> Executor<B> {
 
 pub fn create_stub_builder() -> ExecutorBuilder<AutodiffBackendStub> {
     ExecutorBuilder::new()
-}
-
-// --- Example Handlers ---
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use burn::backend::{Autodiff, NdArray};
-    use burn::prelude::Backend;
-    use burn::tensor::backend::AutodiffBackend;
-    use burn_central_client::credentials::BurnCentralCredentials;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Module, Debug)]
-    pub struct TestModel<B: Backend> {
-        // Define your model parameters here
-        _backend: PhantomData<B>,
-    }
-
-    impl<B: Backend> Default for TestModel<B> {
-        fn default() -> Self {
-            TestModel {
-                _backend: PhantomData,
-            }
-        }
-    }
-
-    mod derive_api {
-        use crate::executor::{Cfg, ExecutionContext, ExecutorBuilder, Model, StaticPlugin};
-        use burn::prelude::Backend;
-        use burn::tensor::backend::AutodiffBackend;
-        use serde::{Deserialize, Serialize};
-
-        // #[derive(Experiment)]
-        #[derive(Serialize, Deserialize, Debug)]
-        pub struct DerivedExperimentConfig {
-            pub param1: f32,
-            pub param2: String,
-        }
-
-        impl Default for DerivedExperimentConfig {
-            fn default() -> Self {
-                DerivedExperimentConfig {
-                    param1: 0.0,
-                    param2: "default".to_string(),
-                }
-            }
-        }
-
-        // #[experiment_impl]
-        impl DerivedExperimentConfig {
-            // #[experiment(ActionKind::Train, "test_associated_system")]
-            pub fn test_associated_system<B: Backend>(
-                &self,
-                ctx: &ExecutionContext<B>,
-            ) -> anyhow::Result<Model<i32>> {
-                // Example of using the context to log something
-                if let Some(experiment) = ctx.experiment() {
-                    experiment.log_info(format!(
-                        "Running test_associated_system with param1: {}",
-                        self.param1
-                    ));
-                }
-                Ok(Model(42)) // Return a dummy model
-            }
-        }
-
-        // generated code by the #[experiment_impl] macro
-        // ...
-        impl<B: AutodiffBackend> StaticPlugin<B> for DerivedExperimentConfig {
-            fn build(builder: &mut ExecutorBuilder<B>) {
-                fn wrapped_test_associated_system<B: Backend>(
-                    Cfg(config): Cfg<DerivedExperimentConfig>,
-                    ctx: &ExecutionContext<B>,
-                ) -> anyhow::Result<Model<i32>> {
-                    DerivedExperimentConfig::test_associated_system(&config, ctx)
-                }
-                builder.train(
-                    "test_associated_system",
-                    ("test_associated_system", wrapped_test_associated_system),
-                );
-            }
-        }
-    }
-
-    // #[derive(Experiment)]
-    #[derive(Serialize, Deserialize, Debug)]
-    pub struct SomeExperimentConfig {
-        pub param1: f32,
-        pub param2: String,
-    }
-
-    impl Default for SomeExperimentConfig {
-        fn default() -> Self {
-            SomeExperimentConfig {
-                param1: 0.0,
-                param2: "default".to_string(),
-            }
-        }
-    }
-
-    fn finetune_model<B: AutodiffBackend>(
-        experiment: &ExperimentRun,
-        Model(_a): Model<TestModel<B>>,
-        Cfg(config): Cfg<SomeExperimentConfig>,
-        _context: &ExecutionContext<B>,
-    ) -> Result<Model<TestModel<B>>> {
-        if config.param1 < 0.0 {
-            return Err(anyhow::anyhow!("param1 must be non-negative"));
-        }
-
-        experiment.log_info(format!("Logging model with config: {config:?}"));
-
-        Ok(_a.into())
-    }
-
-    // Handler that modifies experiment_data
-    // fn preprocess_data<B: Backend>(config: Config<SomeExperimentConfig>) -> Result<()> {
-    //     println!("  Preprocessed data. New data: {}", data);
-    //     Ok(())
-    // }
-
-    fn train_model<B: Backend>(config: Cfg<SomeExperimentConfig>) -> Model<TestModel<B>> {
-        println!("  Training model with data: {:?}", *config);
-
-        // Simulate some training logic
-
-        println!("Model trained. Path: {:?}", config.param1);
-
-        TestModel::default().into() // Return a dummy model
-    }
-
-    type Back = Autodiff<NdArray>;
-
-    #[test]
-    fn test_executor_api() {
-        // Create an initial context for a specific experiment run
-        let mut builder = Executor::<Back>::builder();
-
-        build_executor(&mut builder);
-
-        let client = BurnCentral::builder(BurnCentralCredentials::new(
-            "8543d2e1-1b48-4205-9d5e-3cd282126ec1",
-        ))
-        .with_endpoint("http://localhost:9001")
-        .build()
-        .expect("Failed to build BurnCentral client");
-
-        let executor = builder.build(client, "aaa", "aaaa");
-
-        let override_json = serde_json::to_string(&SomeExperimentConfig {
-            param1: 42.0,
-            param2: "example".to_string(),
-        })
-        .expect("Failed to serialize config");
-
-        executor
-            .run(
-                ActionKind::Train,
-                "model",
-                vec![Default::default()],
-                Some(override_json),
-            )
-            .expect("Execution failed");
-    }
-
-    #[test]
-    fn test_stub_executor() {
-        // Create a stub executor builder
-        let mut builder = create_stub_builder();
-
-        // Add handlers to the stub executor
-        build_executor(&mut builder);
-
-        // Build the stub executor
-        let executor = builder.build_stub();
-
-        for target in executor.targets() {
-            println!("Registered target: {target}");
-        }
-    }
-
-    pub struct CustomRoutine;
-
-    impl<B: AutodiffBackend> Routine<B> for CustomRoutine {
-        type Out = Model<i32>;
-
-        fn name(&self) -> &str {
-            "custom_system_struct"
-        }
-
-        fn run(&self, ctx: &mut ExecutionContext<B>) -> Result<Self::Out, RuntimeError> {
-            // Example logic for the system
-            println!("Running CustomSystemStruct with context: {:?}", ctx.project);
-            Ok(Model(42)) // Return a dummy model
-        }
-    }
-
-    // This would be the function that the user implements to build the executor in their application
-    fn build_executor<B: AutodiffBackend>(exec: &mut ExecutorBuilder<B>) {
-        exec.train("model", train_model)
-            .train("model2", finetune_model)
-            // This handler fails as it does not return a `TrainOutput`
-            // .train("log", log_completion)
-            .train("custom", CustomRoutine)
-            .init_resource::<TestModel<B>>();
-    }
 }

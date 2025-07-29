@@ -41,8 +41,6 @@ mod test {
             "burn-central-runtime",
             "train",
             "my_routine",
-            "--config",
-            "config.yaml",
             "--namespace",
             "my_namespace",
             "--project",
