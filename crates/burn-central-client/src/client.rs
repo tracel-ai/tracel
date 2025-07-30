@@ -104,6 +104,7 @@ impl BurnCentralBuilder {
 }
 
 /// This struct provides the main interface to interact with Burn Central.
+#[derive(Clone)]
 pub struct BurnCentral {
     client: Client,
 }
