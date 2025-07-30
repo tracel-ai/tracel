@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
 
-use crate::commands::time::format_duration;
 use crate::config::Config;
 use crate::context::{CliContext, ProjectContext};
 use crate::terminal::Terminal;
-use crate::{cargo, cli_commands, print_err, print_info};
+use crate::util::time::format_duration;
+use crate::{cargo, commands, print_err, print_info};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -16,15 +16,14 @@ pub struct CliArgs {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Run a training or inference locally or trigger a remote run.
-    #[command(subcommand)]
-    Run(cli_commands::run::RunLocationType),
+    Train(commands::training::TrainingArgs),
 
     /// Package your project for running on a remote machine.
-    Package(cli_commands::package::PackageArgs),
+    Package(commands::package::PackageArgs),
     /// Log in to the Burn Central server.
-    Login(cli_commands::login::LoginArgs),
+    Login(commands::login::LoginArgs),
     /// Initialize a new project or reinitialize an existing one.
-    Init(cli_commands::init::InitArgs),
+    Init(commands::init::InitArgs),
 }
 
 pub fn cli_main(config: Config) {
@@ -60,32 +59,30 @@ pub fn cli_main(config: Config) {
 }
 
 fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<()> {
-    if matches!(command, Commands::Run(..) | Commands::Package(..)) {
+    if matches!(command, Commands::Train(..) | Commands::Package(..)) {
         if let Err(e) = context.load_project() {
             return Err(anyhow::anyhow!("Failed to load project metadata: {}.", e));
         }
     }
 
     match command {
-        Commands::Run(run_args) => cli_commands::run::handle_command(run_args, context),
-        Commands::Package(package_args) => {
-            cli_commands::package::handle_command(package_args, context)
-        }
-        Commands::Login(login_args) => cli_commands::login::handle_command(login_args, context),
-        Commands::Init(init_args) => cli_commands::init::handle_command(init_args, context),
+        Commands::Train(run_args) => crate::commands::training::handle_command(run_args, context),
+        Commands::Package(package_args) => commands::package::handle_command(package_args, context),
+        Commands::Login(login_args) => commands::login::handle_command(login_args, context),
+        Commands::Init(init_args) => commands::init::handle_command(init_args, context),
     }
 }
 
 fn default_command(mut context: CliContext) -> anyhow::Result<()> {
     let project_loaded = context.load_project().is_ok();
 
-    let client = cli_commands::login::get_client_and_login_if_needed(&mut context)?;
+    let client = commands::login::get_client_and_login_if_needed(&mut context)?;
 
     if !project_loaded {
         print_info!("No project loaded. Running initialization sequence.");
-        cli_commands::init::prompt_init(&context, &client)?;
+        commands::init::prompt_init(&context, &client)?;
 
-        cli_commands::package::handle_command(cli_commands::package::PackageArgs {}, context)?;
+        commands::package::handle_command(commands::package::PackageArgs {}, context)?;
     } else {
         print_info!("No command provided. Please specify a command to run.");
     }
