@@ -52,7 +52,7 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     let project_name = prompt_project_name(context)?;
 
     let owner_name = match &project_owner {
-        ProjectKind::User => user.username.as_str(),
+        ProjectKind::User => user.namespace.as_str(),
         ProjectKind::Organization(org_name) => org_name.as_str(),
     };
     let project_path = match client.find_project(owner_name, &project_name) {
@@ -89,7 +89,7 @@ fn prompt_owner_name(user_name: &str, client: &BurnCentral) -> anyhow::Result<Pr
     let mut namespaces = vec![(ProjectKind::User, format!("[user] {user_name}"), "")];
     namespaces.extend(organizations.into_iter().map(|org| {
         (
-            ProjectKind::Organization(org.name.clone()),
+            ProjectKind::Organization(org.namespace.clone()),
             format!("[org] {}", org.name),
             "",
         )
