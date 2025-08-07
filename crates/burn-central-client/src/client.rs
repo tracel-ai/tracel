@@ -238,6 +238,7 @@ impl BurnCentral {
         Ok(User {
             username: user.username,
             email: user.email,
+            namespace: user.namespace,
         })
     }
 
