@@ -275,6 +275,7 @@ pub struct Experiment {
 pub struct User {
     pub username: String,
     pub email: String,
+    pub namespace: String,
 }
 
 #[derive(Debug, Clone)]
