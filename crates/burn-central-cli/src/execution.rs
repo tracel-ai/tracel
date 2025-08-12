@@ -140,21 +140,6 @@ pub fn make_build_command(
         build_command.args(["--target-dir", target_dir]);
     }
 
-    print_info!(
-        "Building experiment project with command: cargo build {} --no-default-features --manifest-path {} --target-dir {}",
-        profile_arg,
-        context
-            .burn_dir()
-            .crates_dir()
-            .join(context.generated_crate_name())
-            .join("Cargo.toml")
-            .to_str()
-            .unwrap(),
-        new_target_dir
-            .as_deref()
-            .unwrap_or("default target directory")
-    );
-
     Ok(build_command)
 }
 
