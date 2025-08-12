@@ -374,11 +374,21 @@ impl Client {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{file_name}"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts"
         ));
 
+        #[derive(Serialize)]
+        struct ArtifactUploadParamsSchema {
+            file_name: String,
+        }
+
         let save_url = self
-            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
+            .post_json::<ArtifactUploadParamsSchema, URLSchema>(
+                url,
+                Some(ArtifactUploadParamsSchema {
+                    file_name: file_name.to_string(),
+                }),
+            )
             .map(|res| res.url)?;
 
         Ok(save_url)
