@@ -36,7 +36,6 @@ pub const fn make_static_lazy<T: 'static>(func: fn() -> T) -> LazyValue<T> {
 
 use burn_central_client::schemas::RegisteredFunction;
 pub use inventory;
-pub use paste;
 use quote::ToTokens;
 
 // macro that generates a flag with a given type and arbitrary parameters and submits it to the inventory

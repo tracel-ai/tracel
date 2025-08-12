@@ -282,7 +282,6 @@ dependencies = [
  "inventory",
  "lazycell",
  "once_cell",
- "paste",
  "pathdiff",
  "prettyplease",
  "proc-macro2",
@@ -310,7 +309,6 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde",
  "strum 0.27.1",
  "syn",
  "syn-serde",
