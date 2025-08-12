@@ -65,7 +65,7 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
 
         let upload_url = self
             .client
-            .request_checkpoint_save_url(
+            .request_artifact_save_url(
                 args.experiment_path.owner_name(),
                 args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
@@ -86,7 +86,7 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
     {
         let download_url = self
             .client
-            .request_checkpoint_load_url(
+            .request_artifact_load_url(
                 args.experiment_path.owner_name(),
                 args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),

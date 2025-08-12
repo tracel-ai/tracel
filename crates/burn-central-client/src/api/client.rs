@@ -364,7 +364,7 @@ impl Client {
     /// Save the checkpoint data to the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
-    pub fn request_checkpoint_save_url(
+    pub fn request_artifact_save_url(
         &self,
         owner_name: &str,
         project_name: &str,
@@ -374,7 +374,7 @@ impl Client {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/checkpoints/{file_name}"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{file_name}"
         ));
 
         let save_url = self
@@ -387,7 +387,7 @@ impl Client {
     /// Request a URL to load the checkpoint data from the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
-    pub fn request_checkpoint_load_url(
+    pub fn request_artifact_load_url(
         &self,
         owner_name: &str,
         project_name: &str,
@@ -397,7 +397,7 @@ impl Client {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/checkpoints/{file_name}"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{file_name}"
         ));
 
         let load_url = self.get_json::<URLSchema>(url).map(|res| res.url)?;
