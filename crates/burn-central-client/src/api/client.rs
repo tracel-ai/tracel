@@ -103,6 +103,20 @@ impl Client {
         Ok(json)
     }
 
+    pub fn get_json_with_body<T, R>(
+        &self,
+        path: impl AsRef<str>,
+        body: Option<T>,
+    ) -> Result<R, ClientError>
+    where
+        T: serde::Serialize,
+        R: for<'de> serde::Deserialize<'de>,
+    {
+        let response = self.req(reqwest::Method::GET, path, body)?;
+        let json = response.json::<R>()?;
+        Ok(json)
+    }
+
     pub fn post_json<T, R>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<R, ClientError>
     where
         T: serde::Serialize,
@@ -378,14 +392,14 @@ impl Client {
         ));
 
         #[derive(Serialize)]
-        struct ArtifactUploadParamsSchema {
+        struct ArtifactUploadParams {
             file_name: String,
         }
 
         let save_url = self
-            .post_json::<ArtifactUploadParamsSchema, URLSchema>(
+            .post_json::<ArtifactUploadParams, URLSchema>(
                 url,
-                Some(ArtifactUploadParamsSchema {
+                Some(ArtifactUploadParams {
                     file_name: file_name.to_string(),
                 }),
             )
@@ -410,7 +424,19 @@ impl Client {
             "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{file_name}"
         ));
 
-        let load_url = self.get_json::<URLSchema>(url).map(|res| res.url)?;
+        #[derive(Serialize)]
+        struct ArtifactRetrieveParams {
+            file_name: String,
+        }
+
+        let load_url = self
+            .get_json_with_body::<ArtifactRetrieveParams, URLSchema>(
+                url,
+                Some(ArtifactRetrieveParams {
+                    file_name: file_name.to_string(),
+                }),
+            )
+            .map(|res| res.url)?;
 
         Ok(load_url)
     }
