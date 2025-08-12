@@ -66,6 +66,7 @@ pub struct UserResponseSchema {
     pub _id: i32,
     pub username: String,
     pub email: String,
+    pub namespace: String,
 }
 
 #[derive(Deserialize, Debug)]
