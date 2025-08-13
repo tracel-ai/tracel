@@ -421,7 +421,7 @@ impl Client {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{file_name}"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts:download"
         ));
 
         #[derive(Serialize)]
