@@ -51,7 +51,7 @@ fn read_toml_string(path: &Path) -> CargoResult<String> {
 
 /// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L163
 fn deserialize_toml(
-    document: &toml_edit::ImDocument<String>,
+    document: &toml_edit::Document<String>,
 ) -> Result<manifest::TomlManifest, toml_edit::de::Error> {
     let mut unused = BTreeSet::new();
     let deserializer = toml_edit::de::Deserializer::from(document.clone());
@@ -91,8 +91,8 @@ fn stringify(dst: &mut String, path: &serde_ignored::Path<'_>) {
 }
 
 /// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L158
-fn parse_document(contents: &str) -> Result<toml_edit::ImDocument<String>, toml_edit::de::Error> {
-    toml_edit::ImDocument::parse(contents.to_owned()).map_err(Into::into)
+fn parse_document(contents: &str) -> Result<toml_edit::Document<String>, toml_edit::de::Error> {
+    toml_edit::Document::parse(contents.to_owned()).map_err(Into::into)
 }
 
 /// From Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/util/toml/mod.rs#L58

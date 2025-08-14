@@ -32,7 +32,7 @@ toml = "0.8.22"
 proc-macro2 = { workspace = true }
 syn-serde = { version = "0.3.1", features = ["json"] }
 url = "2.5.4"
-cargo_metadata = "0.20.0"
+cargo_metadata = "0.21.0"
 gix = { version = "0.72.1", default-features = false, features = ["dirwalk", "status"]}
 directories = "6"
 chrono = "0.4.41"

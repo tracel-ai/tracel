@@ -101,7 +101,7 @@ fn check_package(root_dir: &Path, package: &cargo_metadata::Package) -> anyhow::
         let pkg_manifest_dir = pkg_manifest_dir.canonicalize().unwrap();
 
         let is_in_root = pkg_manifest_dir.starts_with(root_dir);
-        if true {
+        if is_in_root {
             // check if file exists
             let file_exists = file_path.exists();
             if file_exists {
