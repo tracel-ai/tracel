@@ -59,7 +59,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
                 ArtifactKind::Checkpoint,
                 record,
             )
-            .map_err(|_| RecorderError::Unknown("Failed to record artifact".to_string()))
+            .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))
     }
 
     fn load<R>(&self, args: Self::LoadArgs, device: &B::Device) -> Result<R, RecorderError>
@@ -78,7 +78,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
                     ))?,
                 device,
             )
-            .map_err(|_| RecorderError::Unknown("Failed to load artifact".to_string()))
+            .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))
     }
 
     fn save_item<I: Serialize>(
