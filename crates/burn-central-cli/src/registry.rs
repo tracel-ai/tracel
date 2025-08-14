@@ -3,6 +3,7 @@ pub struct Flag {
     pub mod_path: &'static str,
     pub fn_name: &'static str,
     pub builder_fn_name: &'static str,
+    pub routine_name: &'static str,
     pub proc_type: &'static str,
     pub token_stream: &'static [u8],
 }
@@ -12,6 +13,7 @@ impl Flag {
         mod_path: &'static str,
         fn_name: &'static str,
         builder_fn_name: &'static str,
+        routine_name: &'static str,
         proc_type: &'static str,
         token_stream: &'static [u8],
     ) -> Self {
@@ -19,6 +21,7 @@ impl Flag {
             mod_path,
             fn_name,
             builder_fn_name,
+            routine_name,
             proc_type,
             token_stream,
         }

@@ -98,8 +98,6 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let flags = crate::registry::get_flags();
     print_available_training_functions(&flags);
 
-    // check_function_registered(&args.function, &flags)?;
-
     let kind = RunKind::Training;
     let function = args.function.clone();
     let namespace = context.get_project_path()?.owner_name;
@@ -188,9 +186,9 @@ fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<(
 
 fn format_function_flag(flag: &Flag) -> String {
     format!(
-        "  {} {}::{}",
-        "-".custom_color(BURN_ORANGE),
+        "  - {}::{} as {}",
         flag.mod_path.bold(),
-        flag.fn_name.bold()
+        flag.fn_name.bold(),
+        flag.routine_name.custom_color(BURN_ORANGE).bold()
     )
 }

@@ -47,12 +47,13 @@ pub(crate) fn generate_flag_register_stream(
     item: &ItemFn,
     builder_fn_ident: &Ident,
     procedure_type: &ProcedureType,
+    routine_name: &syn::LitStr,
 ) -> proc_macro2::TokenStream {
     let fn_name = &item.sig.ident;
     let builder_fn_name = &builder_fn_ident;
     let serialized_fn_item = syn_serde::json::to_string(item);
     let serialized_lit_arr = syn::LitByteStr::new(serialized_fn_item.as_bytes(), item.span());
-    let proc_type_str = syn::Ident::new(
+    let proc_type_str = Ident::new(
         &procedure_type.to_string().to_lowercase(),
         proc_macro2::Span::call_site(),
     );
@@ -63,6 +64,7 @@ pub(crate) fn generate_flag_register_stream(
                 module_path!(),
                 stringify!(#fn_name),
                 stringify!(#builder_fn_name),
+                #routine_name,
                 stringify!(#proc_type_str),
                 #serialized_lit_arr));
     }
@@ -113,16 +115,6 @@ fn validate_registered_name(name: &str) -> Result<(), String> {
 
 #[proc_macro_attribute]
 pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
-    // let project_dir = std::env::var("BURN_PROJECT_DIR");
-    // if project_dir.is_ok() {
-    //     let item: proc_macro2::TokenStream = item.into();
-    //     return quote! {
-    //         #[allow(dead_code)]
-    //         #item
-    //     }
-    //     .into();
-    // }
-
     let mut errors = Vec::<Error>::new();
     let args = parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);
     let item = parse_macro_input!(item as ItemFn);
@@ -196,7 +188,7 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let flag_register = if cfg!(feature = "build-cli") {
-        generate_flag_register_stream(&item, &builder_fn_name, &procedure_type)
+        generate_flag_register_stream(&item, &builder_fn_name, &procedure_type, &registered_name_str)
     } else {
         quote! {}
     };
