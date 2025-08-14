@@ -65,9 +65,9 @@ fn find_pkg_all_local_dependencies_pkgs(
                 // only collect deps that are local (path)
                 if let Err(e) = check_package(root_dir, dep_pkg) {
                     print_err!("Error checking package: {:?}", e);
-                    return Err(e);
+                    // return Err(e);
                 }
-                if matches!(
+                else if matches!(
                     cargo_util_schemas::core::PackageIdSpec::parse(&dep_pkg.id.repr)
                         .unwrap()
                         .kind()
@@ -184,31 +184,56 @@ pub fn package(
 
     print_info!("{}", "Archiving project".green().bold());
 
+    let mut package_cmd = std::process::Command::new("cargo");
+    package_cmd
+        .arg("package")
+        .arg("-Zpackage-workspace")
+        .arg("--no-metadata")
+        .args(["--no-verify", "--allow-dirty"])
+        .args(["--target-dir", artifacts_dir.to_str().unwrap()])
+        .args(pkgs.iter().map(|pkg| format!("-p{}", pkg.name)))
+        .env("RUSTC_BOOTSTRAP", "1");
+
+    let package_status = package_cmd
+        .status()
+        .expect("Failed to run cargo package command");
+
+    if !package_status.success() {
+        print_err!("Failed to run cargo package command");
+        return Err(anyhow::anyhow!("Failed to run cargo package command"));
+    }
+
+    let packaged_artifacts_dir = artifacts_dir.join("package");
+    // get all .crate files in the artifacts directory
+    let tarballs = std::fs::read_dir(&packaged_artifacts_dir)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension()?.to_str()? == "crate" {
+                let filename = path.file_name()?.to_str()?.to_string();
+                let path = packaged_artifacts_dir.join(&filename);
+                let dst_path = artifacts_dir.join(&filename);
+                std::fs::rename(&path, &dst_path).ok()?;
+                let data = std::fs::read(&dst_path).ok()?;
+                let checksum = format!("{:x}", Sha256::digest(data));
+                Some((filename, dst_path, checksum))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // delete the original package directory
+    std::fs::remove_dir_all(&packaged_artifacts_dir)
+        .expect("Failed to remove packaged artifacts directory");
+
     for pkg in &pkgs {
         print_info!("  {} {}", "Packaging".green().bold(), pkg.name);
-        let pkg_dir = pkg.manifest_path.parent().unwrap();
-        let archive_files = prepare_archive(pkg_dir.as_std_path())?;
-        for file in &archive_files {
-            print_info!("    {}", file.rel_path.display());
-        }
-
-        let resolved_manifest = util::cargo::toml::read_manifest(
-            pkg.manifest_path.as_std_path(),
-            Some(&workspace_toml_path),
-        )?;
-
-        let loaded_package = Package {
-            package: pkg.clone(),
-            manifest: resolved_manifest,
-            manifest_path: pkg.manifest_path.clone().into_std_path_buf(),
-        };
-
-        let tarball = create_package(
-            loaded_package,
-            archive_files,
-            artifacts_dir,
-            &workspace_toml.resolved_toml,
-        )?;
+        // let pkg_dir = pkg.manifest_path.parent().unwrap();
+        // let archive_files = prepare_archive(pkg_dir.as_std_path())?;
+        // for file in &archive_files {
+        //     print_info!("    {}", file.rel_path.display());
+        // }
 
         let crate_deps = pkg
             .dependencies
@@ -269,6 +294,16 @@ pub fn package(
             BTreeMap::new(),
             pkg.links.clone(),
         );
+
+        let tarball = tarballs.iter().find(|f| {
+            f.0.starts_with(pkg.name.as_str())
+        }).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to find tarball for package {} in {}",
+                pkg.name,
+                packaged_artifacts_dir.display()
+            )
+        })?.clone();
 
         dsts.push(PackagedCrateData {
             name: tarball.0,
