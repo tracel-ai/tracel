@@ -197,7 +197,7 @@ impl<B: AutodiffBackend> Executor<B> {
                 ctx.project
             );
             let experiment =
-                client.start_experiment(&ctx.namespace, &ctx.project, &parsed_config)?;
+                client.start_experiment(&ctx.namespace, &ctx.project, &parsed_config, code_version)?;
             ctx.experiment = Some(experiment);
         }
 

@@ -10,7 +10,7 @@ use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{CreateProjectSchema, GetUserOrganizationsResponseSchema};
 use crate::schemas::BurnCentralCodeMetadata;
 use crate::{
-    api::schemas::StartExperimentSchema,
+    api::schemas::CreateExperimentSchema,
     credentials::BurnCentralCredentials,
     schemas::{CrateVersionMetadata, Experiment},
 };
@@ -302,6 +302,9 @@ impl Client {
         &self,
         owner_name: &str,
         project_name: &str,
+        description: Option<String>,
+        config: serde_json::Value,
+        code_version_digest: String,
     ) -> Result<Experiment, ClientError> {
         self.validate_session_cookie()?;
 
@@ -309,9 +312,13 @@ impl Client {
 
         // Create a new experiment
         let experiment_response = self
-            .post_json::<serde_json::Value, CreateExperimentResponseSchema>(
+            .post_json::<CreateExperimentSchema, CreateExperimentResponseSchema>(
                 url,
-                Some(serde_json::json!({})),
+                Some(CreateExperimentSchema {
+                    description,
+                    config,
+                    code_version_digest,
+                }),
             )?;
 
         let experiment = Experiment {
@@ -325,30 +332,6 @@ impl Client {
         };
 
         Ok(experiment)
-    }
-
-    /// Start the experiment with the given configuration.
-    ///
-    /// The client must be logged in before calling this method.
-    pub fn start_experiment(
-        &self,
-        owner_name: &str,
-        project_name: &str,
-        exp_num: i32,
-        config: &impl Serialize,
-    ) -> Result<(), ClientError> {
-        self.validate_session_cookie()?;
-
-        let json = StartExperimentSchema {
-            config: serde_json::to_value(config)?,
-        };
-
-        let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/start"
-        ));
-
-        // Start the experiment
-        self.put::<StartExperimentSchema>(url, Some(json))
     }
 
     /// End the experiment with the given status.
@@ -528,7 +511,7 @@ impl Client {
         target_package_name: &str,
         code_metadata: BurnCentralCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
-        last_commit: &str,
+        digest: &str,
     ) -> Result<CodeUploadUrlsSchema, ClientError> {
         self.validate_session_cookie()?;
 
@@ -540,7 +523,7 @@ impl Client {
                 target_package_name: target_package_name.to_string(),
                 burn_central_metadata: code_metadata,
                 crates: crates_metadata,
-                version: last_commit.to_string(),
+                digest: digest.to_string(),
             }),
         )
     }

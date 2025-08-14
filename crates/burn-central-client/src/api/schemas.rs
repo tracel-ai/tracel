@@ -16,8 +16,10 @@ pub enum EndExperimentSchema {
 }
 
 #[derive(Serialize)]
-pub struct StartExperimentSchema {
+pub struct CreateExperimentSchema {
+    pub description: Option<String>,
     pub config: serde_json::Value,
+    pub code_version_digest: String,
 }
 
 #[derive(Serialize)]
@@ -42,7 +44,7 @@ pub struct CodeUploadParamsSchema {
     pub target_package_name: String,
     pub burn_central_metadata: BurnCentralCodeMetadata,
     pub crates: Vec<CrateVersionMetadata>,
-    pub version: String,
+    pub digest: String,
 }
 
 #[derive(Debug, Deserialize)]
