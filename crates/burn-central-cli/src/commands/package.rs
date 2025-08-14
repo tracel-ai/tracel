@@ -1,8 +1,9 @@
 use crate::context::CliContext;
 use crate::print_success;
 use crate::registry::get_registered_functions;
-use crate::util::git::{get_last_commit_hash, is_repo_dirty};
-use burn_central_client::schemas::{BurnCentralCodeMetadata, PackagedCrateData};
+use crate::util::cargo::package::package;
+use crate::util::git::is_repo_dirty;
+use burn_central_client::schemas::BurnCentralCodeMetadata;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -13,17 +14,19 @@ pub struct PackageArgs {
 }
 
 pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
+    let version = package_sequence(&context, args.allow_dirty)?;
+    print_success!("New project version uploaded: {version}");
 
-    if is_repo_dirty()? && !args.allow_dirty {
+    Ok(())
+}
+
+pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Result<String> {
+    if is_repo_dirty()? && !allow_dirty {
         anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
     }
-    let last_commit_hash = get_last_commit_hash()?;
 
     let client = context.create_client()?;
-    let crates = package(
-        &context.get_artifacts_dir_path(),
-        context.package_name(),
-    )?;
+    let package = package(&context.get_artifacts_dir_path(), context.package_name())?;
 
     let flags = crate::registry::get_flags();
     let registered_functions = get_registered_functions(&flags);
@@ -38,16 +41,9 @@ pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::
         project_path.project_name(),
         context.package_name(),
         code_metadata,
-        crates,
-        &last_commit_hash,
+        package.crate_metadata,
+        &package.digest,
     )?;
 
-    print_success!("New project version uploaded: {}", project_version);
-
-    Ok(())
-}
-
-pub fn package(artifacts_dir: &std::path::Path, package_name: &str) -> anyhow::Result<Vec<PackagedCrateData>> {
-    let crates = crate::util::cargo::package::package(artifacts_dir, package_name)?;
-    Ok(crates)
+    Ok(project_version)
 }

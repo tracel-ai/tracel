@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::schemas::{BurnCentralCodeMetadata, CrateVersionMetadata};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -27,16 +27,24 @@ pub struct BurnCentralCredentialsSchema {
     pub api_key: String,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
-pub struct CreateExperimentResponseSchema {
+pub struct ExperimentResponse {
+    pub id: i32,
     pub experiment_num: i32,
-    pub project_name: String,
+    pub project_id: i32,
     pub status: String,
     pub description: String,
     pub config: serde_json::Value,
-    pub created_by: String,
+    pub created_by: CreatedByUserResponse,
     pub created_at: String,
+    pub code_version_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+pub struct CreatedByUserResponse {
+    pub id: i32,
+    pub username: String,
+    pub namespace: String,
 }
 
 #[derive(Debug, Serialize)]

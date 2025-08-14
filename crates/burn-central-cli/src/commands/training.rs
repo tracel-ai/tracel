@@ -3,6 +3,7 @@ use clap::Parser;
 use clap::ValueHint;
 use colored::Colorize;
 
+use crate::commands::package::package_sequence;
 use crate::execution::{RunKind, execute_experiment_command};
 use crate::{
     context::CliContext,
@@ -110,10 +111,13 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let run_id = format!("{backend}");
     let config = load_config(&args).to_string();
 
+    let code_version_digest = package_sequence(&context, false)?;
+
     let command_to_run: (BuildCommand, RunCommand) = (
         BuildCommand {
             run_id: run_id.clone(),
             backend,
+            code_version_digest,
         },
         RunCommand {
             run_id: run_id.clone(),

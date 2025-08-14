@@ -268,8 +268,15 @@ pub struct Experiment {
     pub status: String,
     pub description: String,
     pub config: serde_json::Value,
-    pub created_by: String,
+    pub created_by: CreatedByUser,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreatedByUser {
+    pub id: i32,
+    pub username: String,
+    pub namespace: String,
 }
 
 pub struct User {

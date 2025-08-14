@@ -3,12 +3,12 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
 use super::schemas::{
-    CodeUploadParamsSchema, CodeUploadUrlsSchema, CreateExperimentResponseSchema,
-    EndExperimentSchema, ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
+    CodeUploadParamsSchema, CodeUploadUrlsSchema, EndExperimentSchema, ExperimentResponse,
+    ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{CreateProjectSchema, GetUserOrganizationsResponseSchema};
-use crate::schemas::BurnCentralCodeMetadata;
+use crate::schemas::{BurnCentralCodeMetadata, CreatedByUser};
 use crate::{
     api::schemas::CreateExperimentSchema,
     credentials::BurnCentralCredentials,
@@ -311,15 +311,14 @@ impl Client {
         let url = self.join(&format!("projects/{owner_name}/{project_name}/experiments"));
 
         // Create a new experiment
-        let experiment_response = self
-            .post_json::<CreateExperimentSchema, CreateExperimentResponseSchema>(
-                url,
-                Some(CreateExperimentSchema {
-                    description,
-                    config,
-                    code_version_digest,
-                }),
-            )?;
+        let experiment_response = self.post_json::<CreateExperimentSchema, ExperimentResponse>(
+            url,
+            Some(CreateExperimentSchema {
+                description,
+                config,
+                code_version_digest,
+            }),
+        )?;
 
         let experiment = Experiment {
             experiment_num: experiment_response.experiment_num,
@@ -327,7 +326,11 @@ impl Client {
             status: experiment_response.status,
             description: experiment_response.description,
             config: experiment_response.config,
-            created_by: experiment_response.created_by,
+            created_by: CreatedByUser {
+                id: experiment_response.created_by.id,
+                username: experiment_response.created_by.username,
+                namespace: experiment_response.created_by.namespace,
+            },
             created_at: experiment_response.created_at,
         };
 

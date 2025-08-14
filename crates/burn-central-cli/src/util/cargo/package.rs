@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::{
     collections::{BTreeMap, HashMap},
     io::Seek,
@@ -66,8 +68,7 @@ fn find_pkg_all_local_dependencies_pkgs(
                 if let Err(e) = check_package(root_dir, dep_pkg) {
                     print_err!("Error checking package: {:?}", e);
                     // return Err(e);
-                }
-                else if matches!(
+                } else if matches!(
                     cargo_util_schemas::core::PackageIdSpec::parse(&dep_pkg.id.repr)
                         .unwrap()
                         .kind()
@@ -136,10 +137,12 @@ pub struct Package {
     pub manifest_path: PathBuf,
 }
 
-pub fn package(
-    artifacts_dir: &Path,
-    target_package_name: &str,
-) -> anyhow::Result<Vec<PackagedCrateData>> {
+pub struct PackageResult {
+    pub crate_metadata: Vec<PackagedCrateData>,
+    pub digest: String,
+}
+
+pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Result<PackageResult> {
     let cmd = cargo_metadata::MetadataCommand::new();
 
     let metadata = cmd.exec().expect("Failed to get cargo metadata");
@@ -295,15 +298,17 @@ pub fn package(
             pkg.links.clone(),
         );
 
-        let tarball = tarballs.iter().find(|f| {
-            f.0.starts_with(pkg.name.as_str())
-        }).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Failed to find tarball for package {} in {}",
-                pkg.name,
-                packaged_artifacts_dir.display()
-            )
-        })?.clone();
+        let tarball = tarballs
+            .iter()
+            .find(|f| f.0.starts_with(pkg.name.as_str()))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Failed to find tarball for package {} in {}",
+                    pkg.name,
+                    packaged_artifacts_dir.display()
+                )
+            })?
+            .clone();
 
         dsts.push(PackagedCrateData {
             name: tarball.0,
@@ -313,7 +318,19 @@ pub fn package(
         });
     }
 
-    Ok(dsts)
+    let final_checksum = {
+        let mut hasher = Sha256::new();
+        for dst in &dsts {
+            hasher.update(dst.checksum.as_bytes());
+        }
+        format!("{:x}", hasher.finalize())
+    };
+    let result = PackageResult {
+        crate_metadata: dsts,
+        digest: final_checksum,
+    };
+
+    Ok(result)
 }
 
 /// Heavily based on cargo's prepare_archive function: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L220
