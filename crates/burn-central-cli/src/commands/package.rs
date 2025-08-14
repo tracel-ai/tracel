@@ -9,7 +9,6 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct PackageArgs {
-    /// Name of the package to upload
     #[arg(long, action)]
     pub allow_dirty: bool,
 }
