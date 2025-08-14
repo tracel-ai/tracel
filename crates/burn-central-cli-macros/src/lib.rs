@@ -188,7 +188,12 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let flag_register = if cfg!(feature = "build-cli") {
-        generate_flag_register_stream(&item, &builder_fn_name, &procedure_type, &registered_name_str)
+        generate_flag_register_stream(
+            &item,
+            &builder_fn_name,
+            &procedure_type,
+            &registered_name_str,
+        )
     } else {
         quote! {}
     };
