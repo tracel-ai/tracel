@@ -81,8 +81,6 @@ fn default_command(mut context: CliContext) -> anyhow::Result<()> {
     if !project_loaded {
         print_info!("No project loaded. Running initialization sequence.");
         commands::init::prompt_init(&context, &client)?;
-
-        commands::package::handle_command(commands::package::PackageArgs {}, context)?;
     } else {
         print_info!("No command provided. Please specify a command to run.");
     }

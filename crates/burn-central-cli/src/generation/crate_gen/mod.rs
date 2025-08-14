@@ -223,88 +223,8 @@ fn find_required_dependencies(req_deps: Vec<&str>) -> Vec<Dependency> {
     req_deps_metadata.iter().map(get_cargo_dependency).collect()
 }
 
-fn generate_clap_cli() -> proc_macro2::TokenStream {
-    quote! {
-        fn generate_clap() -> clap::Command
-        {
-            let train_command = clap::command!()
-            .name("train")
-            .about("Train a model.")
-            .arg(clap::Arg::new("func")
-                .help("The training function to use.")
-                .required(true)
-                .index(1)
-            )
-            .arg(clap::Arg::new("config")
-                .short('c')
-                .long("config")
-                .help("The training configuration to use.")
-                .required(true)
-                .index(2)
-            );
-
-        let infer_command = clap::command!()
-            .name("infer")
-            .about("Infer using a model.")
-            .arg(clap::Arg::new("func")
-                .help("The inference function to use.")
-                .required(true)
-                .index(1)
-            )
-            .arg(clap::Arg::new("model")
-                .short('m')
-                .long("model")
-                .help("The model to use for inference.")
-                .required(true)
-                .index(2)
-            );
-
-        let command = clap::command!()
-            .subcommands(
-                vec![
-                    train_command,
-                    infer_command
-                ]
-            )
-            .args([
-                clap::Arg::new("project")
-                    .short('p')
-                    .long("project")
-                    .help("The project path")
-                    .required(true),
-                clap::Arg::new("key")
-                    .short('k')
-                    .long("key")
-                    .help("The API key")
-                    .required(true),
-                clap::Arg::new("api-endpoint")
-                    .short('e')
-                    .long("api-endpoint")
-                    .help("The Burn Central endpoint")
-                    .required(true),
-            ]);
-
-            command
-        }
-    }
-}
-
-fn generate_training_function(
-    train_func_match: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    quote! {
-        let config_json: serde_json::Value = serde_json::from_str(&config).expect("Config should be deserialized");
-
-        let experiment = client.start_experiment(project_path.owner_name(), project_path.project_name(), &config_json).expect("Experiment should be started");
-
-        let mut train_cmd_context = burn_central::command::TrainCommandContext::<MyAutodiffBackend>::new(&experiment, vec![device], config.to_string());
-
-        #train_func_match;
-    }
-}
-
-fn generate_proc_call(
-    _item: syn::ItemFn,
+fn generate_builder_call(
+    builder_ident: &syn::Ident,
     mod_path: &str,
     fn_name: &str,
 ) -> proc_macro2::TokenStream {
@@ -312,56 +232,28 @@ fn generate_proc_call(
         .expect("Failed to parse path.");
 
     quote! {
-        burn_central::command::TrainCommandHandler::call(#syn_func_path, &train_cmd_context)
+        #syn_func_path(&mut #builder_ident);
     }
 }
 
-fn generate_main_rs(main_backend: &BackendType) -> String {
+fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String {
     let flags = crate::registry::get_flags();
 
     let backend_types = backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, _autodiff_backend_type_name) = backend::get_backend_type_names();
     let backend_default_device = main_backend.default_device_stream();
 
-    let train_match_arms: Vec<proc_macro2::TokenStream> = flags
+    let builder_ident = syn::Ident::new("builder", proc_macro2::Span::call_site());
+    let builder_registration: Vec<proc_macro2::TokenStream> = flags
         .iter()
-        .filter(|flag| flag.proc_type == "training")
         .map(|flag| {
-            let item_fn =
-                syn_serde::json::from_slice(flag.token_stream).expect("Failed to parse item fn.");
-            let proc_call = generate_proc_call(item_fn, flag.mod_path, flag.fn_name);
-
-            let fn_name = flag.fn_name;
-
+            let proc_call =
+                generate_builder_call(&builder_ident, flag.mod_path, flag.builder_fn_name);
             quote! {
-                 #fn_name => {
-                    match #proc_call {
-                        Ok(model) => {
-                            experiment.log_artifact(
-                                "model",
-                                burn_central::record::ArtifactKind::Model,
-                                model.into_record(),
-                            );
-                            experiment.finish().expect("Experiment should finish successfully");
-                        }
-                        Err(e) => {
-                            experiment.fail(e.to_string()).expect("Experiment should fail successfully");
-                        }
-                    }
-                }
+                #proc_call
             }
         })
         .collect();
-
-    let train_func_match = quote! {
-        match func.as_str() {
-            #(#train_match_arms)*
-            _ => panic!("Unknown training function: {}", func),
-        }
-    };
-
-    let clap_cli = generate_clap_cli();
-    let generated_training = generate_training_function(&train_func_match);
 
     let recursion_limit = if matches!(main_backend, BackendType::Wgpu) {
         quote! {
@@ -371,49 +263,54 @@ fn generate_main_rs(main_backend: &BackendType) -> String {
         quote! {}
     };
 
+    let crate_name_str = syn::Ident::new(
+        &user_crate_name.to_lowercase().replace('-', "_"),
+        proc_macro2::Span::call_site(),
+    );
+
     let bin_content: proc_macro2::TokenStream = quote! {
         #recursion_limit
         #backend_types
-        #clap_cli
 
-        use burn_central::command::train::*;
+        use #crate_name_str::*;
         use burn::prelude::*;
 
-        fn create_client(
-            api_key: &str,
-            url: &str,
-        ) -> burn_central::BurnCentral {
-            let creds = burn_central::credentials::BurnCentralCredentials::new(api_key.to_owned());
-            burn_central::BurnCentral::builder(creds)
-                .with_endpoint(url)
-                .build().expect("Burn Central client should be created")
-        }
+        fn main() -> Result<(), String> {
+            use burn_central::runtime::Executor;
 
-        fn main() {
-            let matches = generate_clap().get_matches();
+            burn_central::runtime::setup_logging();
+
+            let runtime_args = burn_central::runtime::cli::parse_runtime_args();
 
             let device = #backend_default_device;
 
-            let key = matches.get_one::<String>("key").expect("key should be set.");
-            let endpoint = matches.get_one::<String>("api-endpoint").expect("api-endpoint should be set.");
-            let project = matches.get_one::<String>("project").expect("project should be set.");
+            let key = runtime_args.burn_central.api_key;
+            let endpoint = runtime_args.burn_central.endpoint;
+            let namespace = runtime_args.burn_central.namespace;
+            let project = runtime_args.burn_central.project;
 
-            let client = create_client(&key, &endpoint);
-            let project_path = burn_central::schemas::ProjectPath::try_from(project.to_string())
+            let creds = burn_central::credentials::BurnCentralCredentials::new(key);
+            let client = burn_central::BurnCentral::builder(creds)
+                .with_endpoint(endpoint)
+                .build()
+                .map_err(|e| e.to_string())?;
+
+            let project_path = burn_central::schemas::ProjectPath::try_from(format!("{}/{}", namespace, project))
                 .expect("Project path should be valid");
-            if let Some(train_matches) = matches.subcommand_matches("train") {
-                let func = train_matches.get_one::<String>("func").expect("func should be set.");
-                let config = train_matches.get_one::<String>("config").expect("config should be set.");
 
-                #generated_training
-            }
-            else if let Some(infer_matches) = matches.subcommand_matches("infer") {
-                let _func = infer_matches.get_one::<String>("func").expect("func should be set.");
-                let _model = infer_matches.get_one::<String>("model").expect("model should be set.");
-            }
-            else {
-                panic!("Should have a train|infer subcommand.");
-            }
+            let mut #builder_ident = Executor::<MyAutodiffBackend>::builder();
+            #(#builder_registration)*
+            // #crate_entrypoint(&mut #builder_ident);
+
+            #builder_ident
+                .build(client, namespace, project)
+                .run(
+                    runtime_args.kind.parse().unwrap(),
+                    runtime_args.routine,
+                    [device],
+                    Some(runtime_args.config),
+                )
+                .map_err(|e| e.to_string())
         }
     };
 
@@ -462,14 +359,16 @@ pub fn create_crate(
             }
             if dep.name == "burn-central" {
                 dep.add_feature("client".to_string());
+                dep.add_feature("runtime".to_string());
             }
             generated_crate.add_dependency(dep);
         });
 
     // Generate source files
-    generated_crate
-        .src_mut()
-        .insert(FileTree::new_file("main.rs", generate_main_rs(backend)));
+    generated_crate.src_mut().insert(FileTree::new_file(
+        "main.rs",
+        generate_main_rs(user_project_name, backend),
+    ));
 
     generated_crate
 }

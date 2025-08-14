@@ -1,6 +1,5 @@
 pub mod api;
 mod client;
-pub mod command;
 pub mod credentials;
 pub mod error;
 

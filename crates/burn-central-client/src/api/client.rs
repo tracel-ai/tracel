@@ -103,6 +103,20 @@ impl Client {
         Ok(json)
     }
 
+    pub fn get_json_with_body<T, R>(
+        &self,
+        path: impl AsRef<str>,
+        body: Option<T>,
+    ) -> Result<R, ClientError>
+    where
+        T: serde::Serialize,
+        R: for<'de> serde::Deserialize<'de>,
+    {
+        let response = self.req(reqwest::Method::GET, path, body)?;
+        let json = response.json::<R>()?;
+        Ok(json)
+    }
+
     pub fn post_json<T, R>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<R, ClientError>
     where
         T: serde::Serialize,
@@ -364,7 +378,7 @@ impl Client {
     /// Save the checkpoint data to the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
-    pub fn request_checkpoint_save_url(
+    pub fn request_artifact_save_url(
         &self,
         owner_name: &str,
         project_name: &str,
@@ -374,11 +388,21 @@ impl Client {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/checkpoints/{file_name}"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts"
         ));
 
+        #[derive(Serialize)]
+        struct ArtifactUploadParams {
+            file_name: String,
+        }
+
         let save_url = self
-            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
+            .post_json::<ArtifactUploadParams, URLSchema>(
+                url,
+                Some(ArtifactUploadParams {
+                    file_name: file_name.to_string(),
+                }),
+            )
             .map(|res| res.url)?;
 
         Ok(save_url)
@@ -387,7 +411,7 @@ impl Client {
     /// Request a URL to load the checkpoint data from the Burn Central server.
     ///
     /// The client must be logged in before calling this method.
-    pub fn request_checkpoint_load_url(
+    pub fn request_artifact_load_url(
         &self,
         owner_name: &str,
         project_name: &str,
@@ -397,10 +421,22 @@ impl Client {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/checkpoints/{file_name}"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts:download"
         ));
 
-        let load_url = self.get_json::<URLSchema>(url).map(|res| res.url)?;
+        #[derive(Serialize)]
+        struct ArtifactRetrieveParams {
+            file_name: String,
+        }
+
+        let load_url = self
+            .get_json_with_body::<ArtifactRetrieveParams, URLSchema>(
+                url,
+                Some(ArtifactRetrieveParams {
+                    file_name: file_name.to_string(),
+                }),
+            )
+            .map(|res| res.url)?;
 
         Ok(load_url)
     }

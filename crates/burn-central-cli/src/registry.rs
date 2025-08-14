@@ -2,6 +2,8 @@
 pub struct Flag {
     pub mod_path: &'static str,
     pub fn_name: &'static str,
+    pub builder_fn_name: &'static str,
+    pub routine_name: &'static str,
     pub proc_type: &'static str,
     pub token_stream: &'static [u8],
 }
@@ -10,12 +12,16 @@ impl Flag {
     pub fn new(
         mod_path: &'static str,
         fn_name: &'static str,
+        builder_fn_name: &'static str,
+        routine_name: &'static str,
         proc_type: &'static str,
         token_stream: &'static [u8],
     ) -> Self {
         Flag {
             mod_path,
             fn_name,
+            builder_fn_name,
+            routine_name,
             proc_type,
             token_stream,
         }
@@ -33,7 +39,6 @@ pub const fn make_static_lazy<T: 'static>(func: fn() -> T) -> LazyValue<T> {
 
 use burn_central_client::schemas::RegisteredFunction;
 pub use inventory;
-pub use paste;
 use quote::ToTokens;
 
 // macro that generates a flag with a given type and arbitrary parameters and submits it to the inventory

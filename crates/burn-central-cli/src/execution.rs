@@ -13,14 +13,18 @@ pub struct RunCommand {
 }
 
 #[derive(Debug, Clone)]
-pub enum RunParams {
-    Training {
-        function: String,
-        config: String,
-        project: String,
-        key: String,
-    },
-    // Inference
+pub enum RunKind {
+    Training,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunParams {
+    pub kind: RunKind,
+    pub function: String,
+    pub config: String,
+    pub namespace: String,
+    pub project: String,
+    pub key: String,
 }
 
 /// Contains the data necessary to build an experiment.
@@ -132,8 +136,8 @@ pub fn make_build_command(
                 .unwrap(),
         ])
         .args(["--message-format", "short"]);
-    if let Some(target_dir) = new_target_dir {
-        build_command.args(["--target-dir", &target_dir]);
+    if let Some(target_dir) = &new_target_dir {
+        build_command.args(["--target-dir", target_dir]);
     }
 
     Ok(build_command)
@@ -190,26 +194,31 @@ pub(crate) fn execute_build_command(
 }
 
 pub fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process::Command {
-    match &cmd_desc.run_params {
-        RunParams::Training {
-            function,
-            config,
-            project,
-            key,
-        } => {
-            let bin_name = bin_name_from_run_id(context, &cmd_desc.run_id);
-            let bin_exe_path = context.burn_dir().bin_dir().join(&bin_name);
-            let mut command = std::process::Command::new(bin_exe_path);
-            command
-                .current_dir(context.cwd())
-                .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
-                .args(["--project", project])
-                .args(["--key", key])
-                .args(["--api-endpoint", context.get_api_endpoint().as_str()])
-                .args(["train", function, config]);
-            command
-        }
-    }
+    let RunParams {
+        kind,
+        function,
+        config,
+        namespace,
+        project,
+        key,
+    } = &cmd_desc.run_params;
+
+    let kind_str = match kind {
+        RunKind::Training => "train",
+    };
+    let bin_name = bin_name_from_run_id(context, &cmd_desc.run_id);
+    let bin_exe_path = context.burn_dir().bin_dir().join(&bin_name);
+    let mut command = std::process::Command::new(bin_exe_path);
+    command
+        .current_dir(context.cwd())
+        .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
+        .args(["--namespace", namespace])
+        .args(["--project", project])
+        .args(["--api-key", key])
+        .args(["--endpoint", context.get_api_endpoint().as_str()])
+        .args(["--config", config])
+        .args([kind_str, function]);
+    command
 }
 
 /// Execute the run command for an experiment.
