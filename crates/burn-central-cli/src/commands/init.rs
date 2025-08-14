@@ -256,18 +256,17 @@ pub fn commit_sequence() -> anyhow::Result<()> {
                     cliclack::outro_cancel("Cancelled")?;
                     return Err(anyhow::anyhow!("Manual commit cancelled"));
                 }
-                Ok(console::Key::Enter) => {
-                    if git::is_repo_dirty().is_err() {
-                        spinner.stop("Manual commit");
-                        break;
-                    }
-                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
                     spinner.error("Manual commit");
                     cliclack::outro_cancel("Interrupted")?;
                     return Err(anyhow::anyhow!("Manual commit interrupted"));
                 }
-                _ => continue,
+                _ => {
+                    if let Ok(false) | Err(_) = git::is_repo_dirty() {
+                        spinner.stop("Manual commit");
+                        break;
+                    }
+                },
             }
         }
     }

@@ -5,6 +5,7 @@ use crate::util::cargo::package::package;
 use crate::util::git::is_repo_dirty;
 use burn_central_client::schemas::BurnCentralCodeMetadata;
 use clap::Args;
+use crate::commands::init::ensure_git_repo_clean;
 
 #[derive(Args, Debug)]
 pub struct PackageArgs {
@@ -22,7 +23,7 @@ pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::
 
 pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Result<String> {
     if is_repo_dirty()? && !allow_dirty {
-        anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
+        ensure_git_repo_clean()?;
     }
 
     let client = context.create_client()?;
