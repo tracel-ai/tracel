@@ -1,9 +1,10 @@
-﻿use crate::api::Client;
+use crate::api::Client;
 use crate::schemas::ExperimentPath;
 use burn::prelude::Backend;
 use burn::record::{FullPrecisionSettings, Recorder, RecorderError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use sha2::Digest;
 use strum::Display;
 
 #[derive(Clone, Display)]
@@ -63,6 +64,9 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
             args.experiment_path
         );
 
+        let size = serialized_bytes.len();
+        let checksum = sha2::Sha256::new_with_prefix(&serialized_bytes).finalize();
+
         let upload_url = self
             .client
             .request_artifact_save_url(
@@ -70,6 +74,8 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
                 args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
                 &args.name,
+                size,
+                &format!("{:x}", checksum),
             )
             .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {e}")))?;
 

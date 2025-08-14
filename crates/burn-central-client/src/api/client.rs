@@ -384,6 +384,8 @@ impl Client {
         project_name: &str,
         exp_num: i32,
         file_name: &str,
+        size: usize,
+        checksum: &str,
     ) -> Result<String, ClientError> {
         self.validate_session_cookie()?;
 
@@ -394,6 +396,8 @@ impl Client {
         #[derive(Serialize)]
         struct ArtifactUploadParams {
             file_name: String,
+            size: usize,
+            checksum: String,
         }
 
         let save_url = self
@@ -401,6 +405,8 @@ impl Client {
                 url,
                 Some(ArtifactUploadParams {
                     file_name: file_name.to_string(),
+                    size,
+                    checksum: checksum.to_string(),
                 }),
             )
             .map(|res| res.url)?;

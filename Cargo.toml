@@ -34,6 +34,7 @@ serde = { version = "1.0.219", default-features = false, features = [
     "alloc",
 ] } # alloc is for no_std, derive is needed
 serde_json = "1.0.140"
+sha2 = { version = "0.10.9" }
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.101", features = ["extra-traits", "full"] }
 thiserror = "2.0.12"
@@ -43,7 +44,9 @@ uuid = { version = "1.17.0", features = [
     "macro-diagnostics",
     "serde",
 ] }
-crossbeam = { version = "0.8.4", default-features = false, features = ["crossbeam-channel"]}
+crossbeam = { version = "0.8.4", default-features = false, features = [
+    "crossbeam-channel",
+] }
 json-patch = { version = "4.0.0", default-features = false }
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0" }
