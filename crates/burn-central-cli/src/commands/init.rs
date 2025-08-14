@@ -266,7 +266,7 @@ pub fn commit_sequence() -> anyhow::Result<()> {
                         spinner.stop("Manual commit");
                         break;
                     }
-                },
+                }
             }
         }
     }

@@ -1,3 +1,4 @@
+use crate::commands::init::ensure_git_repo_clean;
 use crate::context::CliContext;
 use crate::print_success;
 use crate::registry::get_registered_functions;
@@ -5,7 +6,6 @@ use crate::util::cargo::package::package;
 use crate::util::git::is_repo_dirty;
 use burn_central_client::schemas::BurnCentralCodeMetadata;
 use clap::Args;
-use crate::commands::init::ensure_git_repo_clean;
 
 #[derive(Args, Debug)]
 pub struct PackageArgs {
