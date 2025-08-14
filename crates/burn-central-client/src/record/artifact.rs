@@ -64,8 +64,8 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
             args.experiment_path
         );
 
-        let mut checksum = sha2::Sha256::new();
-        checksum.update(&serialized_bytes);
+        let size = serialized_bytes.len();
+        let checksum = sha2::Sha256::new_with_prefix(&serialized_bytes).finalize();
 
         let upload_url = self
             .client
@@ -74,8 +74,8 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
                 args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
                 &args.name,
-                serialized_bytes.len(),
-                &format!("{:x}", checksum.finalize()),
+                size,
+                &format!("{:x}", checksum),
             )
             .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {e}")))?;
 
