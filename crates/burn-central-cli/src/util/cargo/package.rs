@@ -232,11 +232,6 @@ pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Resul
 
     for pkg in &pkgs {
         print_info!("  {} {}", "Packaging".green().bold(), pkg.name);
-        // let pkg_dir = pkg.manifest_path.parent().unwrap();
-        // let archive_files = prepare_archive(pkg_dir.as_std_path())?;
-        // for file in &archive_files {
-        //     print_info!("    {}", file.rel_path.display());
-        // }
 
         let crate_deps = pkg
             .dependencies
