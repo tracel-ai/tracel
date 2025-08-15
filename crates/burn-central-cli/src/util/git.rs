@@ -10,10 +10,6 @@ use std::path::Path;
 pub fn get_last_commit_hash() -> anyhow::Result<String> {
     let repo = gix::discover(".")?;
     let last_commit = repo.head()?.peel_to_commit_in_place()?.id();
-    if repo.is_dirty()? {
-        print_err!("Latest git commit: {}", last_commit);
-        anyhow::bail!("Repo is dirty. Please commit or stash your changes before packaging.");
-    }
 
     Ok(last_commit.to_string())
 }

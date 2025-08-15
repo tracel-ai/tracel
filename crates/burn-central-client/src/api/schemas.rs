@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::schemas::{BurnCentralCodeMetadata, CrateVersionMetadata};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -16,8 +16,10 @@ pub enum EndExperimentSchema {
 }
 
 #[derive(Serialize)]
-pub struct StartExperimentSchema {
+pub struct CreateExperimentSchema {
+    pub description: Option<String>,
     pub config: serde_json::Value,
+    pub code_version_digest: String,
 }
 
 #[derive(Serialize)]
@@ -25,16 +27,24 @@ pub struct BurnCentralCredentialsSchema {
     pub api_key: String,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
-pub struct CreateExperimentResponseSchema {
+pub struct ExperimentResponse {
+    pub id: i32,
     pub experiment_num: i32,
-    pub project_name: String,
+    pub project_id: i32,
     pub status: String,
     pub description: String,
     pub config: serde_json::Value,
-    pub created_by: String,
+    pub created_by: CreatedByUserResponse,
     pub created_at: String,
+    pub code_version_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+pub struct CreatedByUserResponse {
+    pub id: i32,
+    pub username: String,
+    pub namespace: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +52,7 @@ pub struct CodeUploadParamsSchema {
     pub target_package_name: String,
     pub burn_central_metadata: BurnCentralCodeMetadata,
     pub crates: Vec<CrateVersionMetadata>,
-    pub version: String,
+    pub digest: String,
 }
 
 #[derive(Debug, Deserialize)]

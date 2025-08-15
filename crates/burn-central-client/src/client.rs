@@ -248,10 +248,22 @@ impl BurnCentral {
         namespace: &str,
         project_name: &str,
         config: &impl Serialize,
+        digest: String,
     ) -> Result<ExperimentRun, BurnCentralError> {
         let experiment = self
             .client
-            .create_experiment(namespace, project_name)
+            .create_experiment(
+                namespace,
+                project_name,
+                None,
+                serde_json::to_value(config).map_err(|e| {
+                    BurnCentralError::Internal(format!(
+                        "Failed to serialize config for {namespace}/{project_name}: {}",
+                        e
+                    ))
+                })?,
+                digest,
+            )
             .map_err(|e| BurnCentralError::Client {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,
@@ -260,18 +272,6 @@ impl BurnCentral {
             "{}/{}/{}",
             namespace, project_name, experiment.experiment_num
         ))?;
-
-        self.client
-            .start_experiment(
-                namespace,
-                &experiment.project_name,
-                experiment.experiment_num,
-                config,
-            )
-            .map_err(|e| BurnCentralError::Client {
-                context: format!("Failed to start experiment {namespace}/{project_name}"),
-                source: e,
-            })?;
 
         println!("Experiment num: {}", experiment.experiment_num);
 

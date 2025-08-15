@@ -32,6 +32,7 @@ pub struct RunParams {
 pub struct BuildCommand {
     pub run_id: String,
     pub backend: BackendType,
+    pub code_version_digest: String,
 }
 
 /// Execute the build and run commands for an experiment.
@@ -125,6 +126,10 @@ pub fn make_build_command(
         .arg(profile_arg)
         .arg("--no-default-features")
         .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
+        .env(
+            "BURN_CENTRAL_CODE_VERSION",
+            _cmd_desc.code_version_digest.as_str(),
+        )
         .args([
             "--manifest-path",
             context
