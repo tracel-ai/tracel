@@ -16,5 +16,6 @@ fn main() -> anyhow::Result<()> {
         "\x1B[32;1mTime elapsed for the current execution: {}\x1B[0m",
         format_duration(&duration)
     );
+    
     Ok(())
 }
