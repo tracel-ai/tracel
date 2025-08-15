@@ -17,7 +17,6 @@ jobs:
         with:
           rust-toolchain: stable
           cache-key: stable-linux
-          shared-key: burn-central-ci
       # --------------------------------------------------------------------------------
       - name: Audit
         run: cargo xtask check audit
