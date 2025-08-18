@@ -463,6 +463,8 @@ impl Client {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
+        size: usize,
+        checksum: &str,
     ) -> Result<String, ClientError> {
         self.validate_session_cookie()?;
 
@@ -470,8 +472,20 @@ impl Client {
             "projects/{owner_name}/{project_name}/experiments/{exp_num}/logs"
         ));
 
+        #[derive(Serialize)]
+        struct LogsUploadParams {
+            size: usize,
+            checksum: String,
+        }
+
         let logs_upload_url = self
-            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
+            .post_json::<LogsUploadParams, URLSchema>(
+                url,
+                Some(LogsUploadParams {
+                    size,
+                    checksum: checksum.to_string(),
+                }),
+            )
             .map(|res| res.url)?;
         Ok(logs_upload_url)
     }
