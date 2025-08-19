@@ -1,4 +1,6 @@
-﻿use crate::api::Client;
+use sha2::Digest;
+
+use crate::api::Client;
 use crate::api::ClientError;
 use crate::schemas::ExperimentPath;
 
@@ -36,13 +38,19 @@ impl TempLogStore {
 
     pub fn flush(&mut self) -> Result<(), ClientError> {
         if !self.logs.is_empty() {
+            let data = self.logs.join("").into_bytes();
+
+            let size = data.len();
+            let checksum = sha2::Sha256::new_with_prefix(&data).finalize();
+
             let logs_upload_url = self.client.request_logs_upload_url(
                 self.experiment_path.owner_name(),
                 self.experiment_path.project_name(),
                 self.experiment_path.experiment_num(),
+                size,
+                &format!("{:x}", checksum),
             )?;
-            self.client
-                .upload_bytes_to_url(&logs_upload_url, self.logs.join("").into_bytes())?;
+            self.client.upload_bytes_to_url(&logs_upload_url, data)?;
 
             self.logs.clear();
             self.bytes = 0;
