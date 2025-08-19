@@ -531,28 +531,6 @@ impl Client {
         )
     }
 
-    pub fn check_project_version_exists(
-        &self,
-        owner_name: &str,
-        project_name: &str,
-        project_version: &str,
-    ) -> Result<bool, ClientError> {
-        self.validate_session_cookie()?;
-
-        let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/code/{project_version}"
-        ));
-
-        match self.get_json::<serde_json::Value>(url) {
-            Ok(_) => Ok(true),
-            Err(ClientError::ApiError {
-                status: reqwest::StatusCode::NOT_FOUND,
-                ..
-            }) => Ok(false),
-            Err(e) => Err(e),
-        }
-    }
-
     pub fn start_remote_job(
         &self,
         runner_group_name: &str,
