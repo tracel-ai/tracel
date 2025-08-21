@@ -1,4 +1,4 @@
-use burn_central_domain::projects::ProjectContext;
+use crate::entity::projects::ProjectContext;
 use clap::{Parser, Subcommand};
 
 use crate::commands::default_command;

@@ -1,5 +1,7 @@
 use crate::app_config::{AppConfig, Credentials};
 use crate::config::Config;
+use crate::entity::projects::ProjectContext;
+use crate::entity::projects::burn_dir::BurnDir;
 use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
@@ -7,8 +9,6 @@ use anyhow::Context;
 use burn_central_client::BurnCentral;
 use burn_central_client::credentials::BurnCentralCredentials;
 use burn_central_client::schemas::ProjectPath;
-use burn_central_domain::projects::ProjectContext;
-use burn_central_domain::projects::burn_dir::BurnDir;
 use std::path::PathBuf;
 
 #[derive(thiserror::Error, Debug)]

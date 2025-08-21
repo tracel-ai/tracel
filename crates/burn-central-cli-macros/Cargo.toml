@@ -20,7 +20,7 @@ syn = { workspace = true }
 proc-macro2 = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 uuid = { workspace = true }
-syn-serde = { version = "0.3.1", features = ["json"] }
+syn-serde = { workspace = true }
 
 [features]
 build-cli = []

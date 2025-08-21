@@ -1,7 +1,7 @@
 pub mod backend;
 mod cargo_toml;
 
-use burn_central_domain::projects::burn_dir::{BurnDir, cache::CacheState};
+use crate::entity::projects::burn_dir::{BurnDir, cache::CacheState};
 use quote::quote;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};

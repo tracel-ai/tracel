@@ -1,9 +1,9 @@
 use crate::context::CliContext;
+use crate::entity::projects::burn_dir::project::BurnCentralProject;
 use crate::tools::git;
 use anyhow::Context;
 use burn_central_client::BurnCentral;
 use burn_central_client::schemas::{ProjectPath, ProjectSchema};
-use burn_central_domain::projects::burn_dir::project::BurnCentralProject;
 use clap::Args;
 
 #[derive(Args, Debug)]

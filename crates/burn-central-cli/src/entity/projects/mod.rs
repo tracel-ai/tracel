@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::projects::burn_dir::{BurnDir, project::BurnCentralProject};
+use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
 
 pub mod burn_dir;
 

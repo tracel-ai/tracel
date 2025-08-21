@@ -1,5 +1,5 @@
+use crate::entity::experiments::config::ModelConfig;
 use anyhow::Context;
-use burn_central_domain::experiments::config::ModelConfig;
 use clap::Parser;
 use clap::ValueHint;
 use colored::Colorize;
