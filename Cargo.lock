@@ -268,6 +268,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "burn-central-client",
+ "burn-central-domain",
  "cargo-util-schemas 0.8.2",
  "cargo_metadata",
  "chrono",
@@ -341,6 +342,14 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite",
  "uuid",
+]
+
+[[package]]
+name = "burn-central-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

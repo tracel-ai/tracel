@@ -13,6 +13,7 @@ rust-version.workspace = true
 
 [dependencies]
 burn-central-client = { path = "../burn-central-client", version = "0.1.0" }
+burn-central-domain = { path = "../burn-central-domain", version = "0.1.0" }
 
 anyhow = { workspace = true }
 
