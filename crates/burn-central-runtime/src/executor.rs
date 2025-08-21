@@ -201,6 +201,7 @@ impl<B: AutodiffBackend> Executor<B> {
                 &ctx.project,
                 &parsed_config,
                 code_version,
+                target.to_string(),
             )?;
             ctx.experiment = Some(experiment);
         }

@@ -294,6 +294,7 @@ impl Client {
         description: Option<String>,
         config: serde_json::Value,
         code_version_digest: String,
+        training_function: String,
     ) -> Result<Experiment, ClientError> {
         self.validate_session_cookie()?;
 
@@ -306,6 +307,7 @@ impl Client {
                 description,
                 config,
                 code_version_digest,
+                training_function,
             }),
         )?;
 

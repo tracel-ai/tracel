@@ -20,6 +20,7 @@ pub struct CreateExperimentSchema {
     pub description: Option<String>,
     pub config: serde_json::Value,
     pub code_version_digest: String,
+    pub training_function: String,
 }
 
 #[derive(Serialize)]
