@@ -1,7 +1,8 @@
-﻿use crate::burn_dir::cache::CacheState;
-use crate::burn_dir::project::BurnCentralProject;
-use std::path::{Path, PathBuf};
+﻿use std::path::{Path, PathBuf};
 use std::{fs, io};
+
+use crate::projects::burn_dir::cache::CacheState;
+use crate::projects::burn_dir::project::BurnCentralProject;
 
 pub mod cache;
 pub mod project;

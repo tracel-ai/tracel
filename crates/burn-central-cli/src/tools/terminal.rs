@@ -45,7 +45,7 @@ impl Terminal {
         Ok(password)
     }
 
-    pub fn url(url: &url::Url) -> String {
+    pub fn url(&self, url: &url::Url) -> String {
         format!("\x1b[1;34m{url}\x1b[0m")
     }
 }

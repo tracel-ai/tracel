@@ -25,7 +25,7 @@ fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
 #[derive(Parser, Debug)]
 pub struct TrainingArgs {
     /// The training function to run. Annotate a training function with #[burn(training)] to register it.
-    function: Option<String>,
+    function: String,
     /// Backend to use
     #[clap(short = 'b', long = "backend")]
     backend: Option<BackendType>,
@@ -75,13 +75,6 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
 
     let code_version_digest = package_sequence(&context, false)?;
 
-    let function = match args.function.clone() {
-        Some(function) => function,
-        None => context.function_registry.get_registered_functions()[0]
-            .fn_name
-            .clone(),
-    };
-
     let command_to_run: (BuildCommand, RunCommand) = (
         BuildCommand {
             run_id: run_id.clone(),
@@ -92,7 +85,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
             run_id: run_id.clone(),
             run_params: RunParams {
                 kind,
-                function: function.clone(),
+                function: args.function.clone(),
                 config: config.data.to_string(),
                 namespace,
                 project,
@@ -107,13 +100,13 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         Ok(()) => {
             print_info!(
                 "Training function `{}` executed successfully.",
-                function.custom_color(BURN_ORANGE).bold()
+                args.function.custom_color(BURN_ORANGE).bold()
             );
         }
         Err(e) => {
             return Err(anyhow::anyhow!(format!(
                 "Failed to execute training function `{}`: {}",
-                function.custom_color(BURN_ORANGE).bold(),
+                args.function.custom_color(BURN_ORANGE).bold(),
                 e
             )));
         }

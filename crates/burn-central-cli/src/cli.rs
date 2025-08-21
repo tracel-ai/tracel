@@ -1,12 +1,14 @@
+use burn_central_domain::projects::ProjectContext;
 use clap::{Parser, Subcommand};
 
 use crate::commands::default_command;
 use crate::config::Config;
-use crate::context::{CliContext, ProjectContext};
-use crate::discovery::functions::FunctionRegistry;
-use crate::terminal::Terminal;
-use crate::util::time::format_duration;
-use crate::{cargo, commands, print_err, print_info};
+use crate::context::CliContext;
+use crate::tools::cargo;
+use crate::tools::functions_registry::FunctionRegistry;
+use crate::tools::terminal::Terminal;
+use crate::tools::time::format_duration;
+use crate::{commands, print_err, print_info};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]

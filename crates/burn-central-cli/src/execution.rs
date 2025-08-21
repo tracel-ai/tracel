@@ -1,7 +1,6 @@
 use anyhow::Context as _;
+use burn_central_domain::projects::burn_dir::{BurnDir, cache::CacheState};
 
-use crate::burn_dir::BurnDir;
-use crate::burn_dir::cache::CacheState;
 use crate::{context::CliContext, generation::crate_gen::backend::BackendType, print_info};
 use std::path::PathBuf;
 

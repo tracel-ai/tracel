@@ -1,6 +1,7 @@
 pub mod backend;
 mod cargo_toml;
 
+use burn_central_domain::projects::burn_dir::{BurnDir, cache::CacheState};
 use quote::quote;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -8,9 +9,7 @@ use std::hash::{Hash, Hasher};
 use crate::generation::{FileTree, crate_gen::cargo_toml::FeatureFlag};
 
 use super::backend::BackendType;
-use crate::burn_dir::BurnDir;
-use crate::burn_dir::cache::CacheState;
-use crate::discovery::functions::FunctionRegistry;
+use crate::tools::functions_registry::FunctionRegistry;
 use cargo_toml::{CargoToml, Dependency, QueryType};
 
 pub struct GeneratedCrate {

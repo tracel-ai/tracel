@@ -271,7 +271,6 @@ dependencies = [
  "burn-central-domain",
  "cargo-util-schemas 0.8.2",
  "cargo_metadata",
- "chrono",
  "clap",
  "cliclack",
  "colored",
@@ -348,8 +347,11 @@ dependencies = [
 name = "burn-central-domain"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

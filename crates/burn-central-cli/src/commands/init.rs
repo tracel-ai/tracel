@@ -1,10 +1,9 @@
-use crate::burn_dir::project::BurnCentralProject;
 use crate::context::CliContext;
-use crate::terminal::Terminal;
-use crate::util::git;
+use crate::tools::git;
 use anyhow::Context;
 use burn_central_client::BurnCentral;
 use burn_central_client::schemas::{ProjectPath, ProjectSchema};
+use burn_central_domain::projects::burn_dir::project::BurnCentralProject;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -78,7 +77,7 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         .join(&format!("/{owner_name}/{project_name}"))?;
     cliclack::outro(format!(
         "Project initialized successfully! You can check out your project at {}",
-        Terminal::url(&frontend_url)
+        context.terminal().url(&frontend_url)
     ))?;
 
     Ok(())
