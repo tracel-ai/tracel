@@ -7,6 +7,7 @@ pub struct FunctionMetadata {
     pub mod_path: &'static str,
     pub fn_name: &'static str,
     pub builder_fn_name: &'static str,
+    pub routine_name: &'static str,
     pub proc_type: &'static str,
     pub token_stream: &'static [u8],
 }
@@ -16,18 +17,45 @@ pub struct Plugin<T: 'static>(pub &'static LazyValue<T>);
 
 inventory::collect!(Plugin<FunctionMetadata>);
 
+pub const fn make_static_lazy<T>(init: fn() -> T) -> LazyValue<T> {
+    once_cell::sync::Lazy::new(init)
+}
+
 // macro that generates a flag with a given type and arbitrary parameters and submits it to the inventory
 #[macro_export]
-macro_rules! register_flag {
+macro_rules! register_functions {
     ($type:ty, $init:expr) => {
         const _: () = {
             #[allow(non_upper_case_globals)]
-            static FLAG: $crate::registry::LazyValue<$type> =
-                $crate::registry::make_static_lazy(|| $init);
+            static FLAG: $crate::tools::functions_registry::LazyValue<$type> =
+                $crate::tools::functions_registry::make_static_lazy(|| $init);
 
-            $crate::registry::inventory::submit!($crate::registry::Plugin(&FLAG));
+            $crate::tools::functions_registry::inventory::submit!(
+                $crate::tools::functions_registry::Plugin(&FLAG)
+            );
         };
     };
+}
+
+/// Need it for the macro to work
+impl FunctionMetadata {
+    pub fn new(
+        mod_path: &'static str,
+        fn_name: &'static str,
+        builder_fn_name: &'static str,
+        routine_name: &'static str,
+        proc_type: &'static str,
+        token_stream: &'static [u8],
+    ) -> Self {
+        Self {
+            mod_path,
+            fn_name,
+            builder_fn_name,
+            routine_name,
+            proc_type,
+            token_stream,
+        }
+    }
 }
 
 pub struct FunctionRegistry {

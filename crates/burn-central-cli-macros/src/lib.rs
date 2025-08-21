@@ -58,9 +58,9 @@ pub(crate) fn generate_flag_register_stream(
         proc_macro2::Span::call_site(),
     );
     quote! {
-        burn_central::cli::register_flag!(
-            burn_central::cli::registry::Flag,
-            burn_central::cli::registry::Flag::new(
+        burn_central::cli::register_functions!(
+            burn_central::cli::tools::functions_registry::FunctionMetadata,
+            burn_central::cli::tools::functions_registry::FunctionMetadata::new(
                 module_path!(),
                 stringify!(#fn_name),
                 stringify!(#builder_fn_name),
