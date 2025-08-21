@@ -238,7 +238,7 @@ fn generate_builder_call(
 
 fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String {
     let function_registry = FunctionRegistry::new();
-    let flags = function_registry.get_flags();
+    let flags = function_registry.get_function_references();
 
     let backend_types = backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, _autodiff_backend_type_name) = backend::get_backend_type_names();

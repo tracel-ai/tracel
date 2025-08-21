@@ -46,7 +46,7 @@ impl FunctionRegistry {
         }
     }
 
-    pub fn get_flags(&self) -> &[FunctionMetadata] {
+    pub fn get_function_references(&self) -> &[FunctionMetadata] {
         &self.flags
     }
 
