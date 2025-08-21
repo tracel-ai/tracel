@@ -1,4 +1,4 @@
-use crate::entity::experiments::config::ModelConfig;
+use crate::entity::experiments::config::ExperimentConfig;
 use anyhow::Context;
 use clap::Parser;
 use clap::ValueHint;
@@ -71,7 +71,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         .to_owned();
     let backend = args.backend.clone().unwrap_or_default();
     let run_id = format!("{backend}");
-    let config = ModelConfig::load_config(args.config, args.overrides);
+    let config = ExperimentConfig::load_config(args.config, args.overrides);
 
     let code_version_digest = package_sequence(&context, false)?;
 

@@ -1,8 +1,8 @@
-pub struct ModelConfig {
+pub struct ExperimentConfig {
     pub data: serde_json::Value,
 }
 
-impl ModelConfig {
+impl ExperimentConfig {
     fn new(value: serde_json::Value) -> Self {
         Self { data: value }
     }
@@ -35,7 +35,7 @@ impl ModelConfig {
             serde_json::json!({})
         };
 
-        let mut config = ModelConfig::new(base_json);
+        let mut config = ExperimentConfig::new(base_json);
 
         for (key, val) in &overrides {
             config.apply_override(key, val.clone());
