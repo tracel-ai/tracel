@@ -53,22 +53,36 @@ fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
 #[derive(Parser, Debug)]
 pub struct TrainingArgs {
     /// The training function to run. Annotate a training function with #[burn(training)] to register it.
-    pub function: Option<String>,
+    function: Option<String>,
     /// Backend to use
     #[clap(short = 'b', long = "backend")]
-    pub backend: Option<BackendType>,
+    backend: Option<BackendType>,
     /// Config file path
     #[clap(short = 'c', long = "config")]
-    pub config: Option<String>,
+    config: Option<String>,
     /// Batch override: e.g. --overrides a.b=3 x.y.z=true
     #[clap(long = "overrides", value_parser = parse_key_val, value_hint = ValueHint::Other, value_delimiter = ' ', num_args = 1..)]
-    pub overrides: Vec<(String, serde_json::Value)>,
+    overrides: Vec<(String, serde_json::Value)>,
     /// Project version
     #[clap(long = "version", help = "The project version.")]
-    pub project_version: Option<String>,
+    project_version: Option<String>,
     /// The runner group name
     #[clap(long = "runner", help = "The runner group name.")]
-    pub runner: Option<String>,
+    runner: Option<String>,
+}
+
+impl Default for TrainingArgs {
+    /// Default config when running the cargo run command
+    fn default() -> Self {
+        Self {
+            function: None,
+            config: None,
+            overrides: vec![],
+            project_version: None,
+            runner: None,
+            backend: None,
+        }
+    }
 }
 
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {

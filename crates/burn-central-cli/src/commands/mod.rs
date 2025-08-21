@@ -16,17 +16,7 @@ pub fn default_command(mut context: CliContext) -> anyhow::Result<()> {
         print_info!("No project loaded. Running initialization sequence.");
         prompt_init(&context, &client)?;
     } else {
-        training::handle_command(
-            TrainingArgs {
-                function: None,
-                config: None,
-                overrides: vec![],
-                project_version: None,
-                runner: None,
-                backend: None,
-            },
-            context,
-        )?;
+        training::handle_command(TrainingArgs::default(), context)?;
     }
 
     Ok(())
