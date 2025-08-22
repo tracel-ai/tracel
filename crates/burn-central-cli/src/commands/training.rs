@@ -128,12 +128,22 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let run_id = format!("{backend}");
     let config = ExperimentConfig::load_config(args.config, args.overrides);
 
-    let code_version_digest = package_sequence(&context, false)?;
-
     let function = match args.function {
-        Some(function) => function,
+        Some(function) => {
+            let available_functions = context.function_registry.get_training_routine();
+            if !available_functions.contains(&function) {
+                return Err(anyhow::anyhow!(
+                    "Function `{}` is not available. Available functions are: {:?}",
+                    function,
+                    available_functions
+                ));
+            }
+            function
+        }
         None => prompt_function(context.function_registry.get_training_routine())?,
     };
+
+    let code_version_digest = package_sequence(&context, false)?;
 
     let res = {
         execute_build_command(
