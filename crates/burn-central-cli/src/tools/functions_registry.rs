@@ -24,6 +24,7 @@ impl From<FunctionMetadata> for RegisteredFunction {
             fn_name: val.fn_name.to_string(),
             proc_type: val.proc_type.to_string(),
             code: code_str,
+            routine: val.routine_name.to_string(),
         }
     }
 }

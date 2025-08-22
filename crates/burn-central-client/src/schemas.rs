@@ -113,6 +113,7 @@ pub struct RegisteredFunction {
     pub fn_name: String,
     pub proc_type: String,
     pub code: String,
+    pub routine: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -154,19 +154,19 @@ impl<B: AutodiffBackend> Executor<B> {
         devices: impl IntoIterator<Item = B::Device>,
         config_override: Option<String>,
     ) -> Result<(), RuntimeError> {
-        let target = name.as_ref();
+        let routine = name.as_ref();
 
         let target_id = TargetId {
             kind,
-            name: target.to_string(),
+            name: routine.to_string(),
         };
 
         let handler = self.handlers.get(&target_id).ok_or_else(|| {
-            log::error!("Handler not found for target: {target}");
-            RuntimeError::HandlerNotFound(target.to_string())
+            log::error!("Handler not found for target: {routine}");
+            RuntimeError::HandlerNotFound(routine.to_string())
         })?;
 
-        log::debug!("Starting Execution for Target: {target}");
+        log::debug!("Starting Execution for Target: {routine}");
 
         let mut ctx = ExecutionContext {
             client: self.client.clone(),
@@ -192,7 +192,7 @@ impl<B: AutodiffBackend> Executor<B> {
 
             log::info!(
                 "Starting experiment for target: {} in namespace: {}, project: {}",
-                target,
+                routine,
                 ctx.namespace,
                 ctx.project
             );
@@ -201,7 +201,7 @@ impl<B: AutodiffBackend> Executor<B> {
                 &ctx.project,
                 &parsed_config,
                 code_version,
-                target.to_string(),
+                routine.to_string(),
             )?;
             ctx.experiment = Some(experiment);
         }
@@ -214,12 +214,12 @@ impl<B: AutodiffBackend> Executor<B> {
                     experiment.finish()?;
                     log::info!("Experiment run completed successfully.");
                 }
-                log::debug!("Handler {target} executed successfully.");
+                log::debug!("Handler {routine} executed successfully.");
 
                 Ok(())
             }
             Err(e) => {
-                log::error!("Error executing handler '{target}': {e}");
+                log::error!("Error executing handler '{routine}': {e}");
                 if let Some(experiment) = ctx.experiment {
                     experiment.fail(e.to_string())?;
                     log::error!("Experiment run failed: {e}");

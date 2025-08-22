@@ -249,7 +249,7 @@ impl BurnCentral {
         project_name: &str,
         config: &impl Serialize,
         digest: String,
-        training_function: String,
+        routine: String,
     ) -> Result<ExperimentRun, BurnCentralError> {
         let experiment = self
             .client
@@ -264,7 +264,7 @@ impl BurnCentral {
                     ))
                 })?,
                 digest,
-                training_function,
+                routine,
             )
             .map_err(|e| BurnCentralError::Client {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
