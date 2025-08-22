@@ -107,7 +107,7 @@ pub struct CrateVersionMetadata {
     pub metadata: CrateMetadata,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RegisteredFunction {
     pub mod_path: String,
     pub fn_name: String,
@@ -115,7 +115,7 @@ pub struct RegisteredFunction {
     pub code: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BurnCentralCodeMetadata {
     pub functions: Vec<RegisteredFunction>,
 }

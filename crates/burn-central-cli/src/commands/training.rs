@@ -1,3 +1,4 @@
+use crate::entity::experiments::config::ExperimentConfig;
 use anyhow::Context;
 use clap::Parser;
 use clap::ValueHint;
@@ -5,6 +6,7 @@ use colored::Colorize;
 
 use crate::commands::package::package_sequence;
 use crate::execution::{RunKind, execute_experiment_command};
+use crate::print_warn;
 use crate::{
     context::CliContext,
     execution::{BuildCommand, RunCommand, RunParams},
@@ -12,7 +14,13 @@ use crate::{
     logging::BURN_ORANGE,
     print_info,
 };
-use crate::{print_warn, registry::Flag};
+
+fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
+    let (key, value) = s.split_once('=').ok_or("Must be key=value")?;
+    let json_value = serde_json::from_str(value)
+        .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+    Ok((key.to_string(), json_value))
+}
 
 #[derive(Parser, Debug)]
 pub struct TrainingArgs {
@@ -35,48 +43,6 @@ pub struct TrainingArgs {
     runner: Option<String>,
 }
 
-fn apply_override(obj: &mut serde_json::Value, key_path: &str, value: serde_json::Value) {
-    let mut parts = key_path.split('.').peekable();
-    let mut target = obj;
-
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            // Last part, set value
-            if let serde_json::Value::Object(map) = target {
-                map.insert(part.to_string(), value.clone());
-            }
-        } else {
-            target = target
-                .as_object_mut()
-                .unwrap()
-                .entry(part)
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        }
-    }
-}
-
-fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
-    let (key, value) = s.split_once('=').ok_or("Must be key=value")?;
-    let json_value = serde_json::from_str(value)
-        .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
-    Ok((key.to_string(), json_value))
-}
-
-fn load_config(args: &TrainingArgs) -> serde_json::Value {
-    let mut base_json = if let Some(path) = &args.config {
-        let text = std::fs::read_to_string(path).expect("failed to read config file");
-        serde_json::from_str(&text).expect("failed to parse config file")
-    } else {
-        serde_json::json!({})
-    };
-
-    for (key, val) in &args.overrides {
-        apply_override(&mut base_json, key, val.clone());
-    }
-
-    serde_json::from_value(base_json).expect("final deserialization failed")
-}
-
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => Err(anyhow::anyhow!(
@@ -96,11 +62,7 @@ pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow:
 }
 
 fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
-    let flags = crate::registry::get_flags();
-    print_available_training_functions(&flags);
-
     let kind = RunKind::Training;
-    let function = args.function.clone();
     let namespace = context.get_project_path()?.owner_name;
     let project = context.get_project_path()?.project_name;
     let key = context
@@ -109,7 +71,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         .to_owned();
     let backend = args.backend.clone().unwrap_or_default();
     let run_id = format!("{backend}");
-    let config = load_config(&args).to_string();
+    let config = ExperimentConfig::load_config(args.config, args.overrides);
 
     let code_version_digest = package_sequence(&context, false)?;
 
@@ -123,8 +85,8 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
             run_id: run_id.clone(),
             run_params: RunParams {
                 kind,
-                function,
-                config,
+                function: args.function.clone(),
+                config: config.data.to_string(),
                 namespace,
                 project,
                 key,
@@ -151,48 +113,4 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn print_available_training_functions(flags: &[Flag]) {
-    for function in flags.iter().filter(|flag| flag.proc_type == "training") {
-        print_info!("{}", format_function_flag(function));
-    }
-}
-
-#[allow(dead_code)]
-fn check_function_registered(function: &str, flags: &[Flag]) -> anyhow::Result<()> {
-    let function_flags: Vec<&Flag> = flags
-        .iter()
-        .filter(|flag| flag.fn_name == function)
-        .collect();
-
-    match function_flags.len() {
-        0 => Err(anyhow::anyhow!(format!(
-            "Function `{}` is not registered as a training function. Annotate a training function with #[burn(training)] to register it.",
-            function
-        ))),
-        1 => Ok(()),
-        _ => {
-            let function_strings: String = function_flags
-                .iter()
-                .map(|flag| format_function_flag(flag))
-                .collect::<Vec<String>>()
-                .join("\n");
-
-            Err(anyhow::anyhow!(format!(
-                "Function `{}` is registered multiple times. Please provide the fully qualified function name by writing the entire module path of the function:\n{}",
-                function.custom_color(BURN_ORANGE).bold(),
-                function_strings
-            )))
-        }
-    }
-}
-
-fn format_function_flag(flag: &Flag) -> String {
-    format!(
-        "  - {}::{} as {}",
-        flag.mod_path.bold(),
-        flag.fn_name.bold(),
-        flag.routine_name.custom_color(BURN_ORANGE).bold()
-    )
 }

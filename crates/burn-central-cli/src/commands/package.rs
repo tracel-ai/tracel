@@ -1,9 +1,8 @@
 use crate::commands::init::ensure_git_repo_clean;
 use crate::context::CliContext;
 use crate::print_success;
-use crate::registry::get_registered_functions;
-use crate::util::cargo::package::package;
-use crate::util::git::is_repo_dirty;
+use crate::tools::cargo::package::package;
+use crate::tools::git::is_repo_dirty;
 use burn_central_client::schemas::BurnCentralCodeMetadata;
 use clap::Args;
 
@@ -28,8 +27,7 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
     let client = context.create_client()?;
     let package = package(&context.get_artifacts_dir_path(), context.package_name())?;
 
-    let flags = crate::registry::get_flags();
-    let registered_functions = get_registered_functions(&flags);
+    let registered_functions = context.function_registry.get_registered_functions();
 
     let code_metadata = BurnCentralCodeMetadata {
         functions: registered_functions,

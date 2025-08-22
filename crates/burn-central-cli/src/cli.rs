@@ -1,10 +1,14 @@
+use crate::entity::projects::ProjectContext;
 use clap::{Parser, Subcommand};
 
+use crate::commands::default_command;
 use crate::config::Config;
-use crate::context::{CliContext, ProjectContext};
-use crate::terminal::Terminal;
-use crate::util::time::format_duration;
-use crate::{cargo, commands, print_err, print_info};
+use crate::context::CliContext;
+use crate::tools::cargo;
+use crate::tools::functions_registry::FunctionRegistry;
+use crate::tools::terminal::Terminal;
+use crate::tools::time::format_duration;
+use crate::{commands, print_err, print_info};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -35,7 +39,8 @@ pub fn cli_main(config: Config) {
 
     let terminal = Terminal::new();
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
-    let context = CliContext::new(terminal, &config, crate_context).init();
+    let function_registry = FunctionRegistry::new();
+    let context = CliContext::new(terminal, &config, crate_context, function_registry).init();
 
     let cli_res = match args.command {
         Some(command) => handle_command(command, context),
@@ -71,19 +76,4 @@ fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<
         Commands::Login(login_args) => commands::login::handle_command(login_args, context),
         Commands::Init(init_args) => commands::init::handle_command(init_args, context),
     }
-}
-
-fn default_command(mut context: CliContext) -> anyhow::Result<()> {
-    let project_loaded = context.load_project().is_ok();
-
-    let client = commands::login::get_client_and_login_if_needed(&mut context)?;
-
-    if !project_loaded {
-        print_info!("No project loaded. Running initialization sequence.");
-        commands::init::prompt_init(&context, &client)?;
-    } else {
-        print_info!("No command provided. Please specify a command to run.");
-    }
-
-    Ok(())
 }

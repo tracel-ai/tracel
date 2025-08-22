@@ -1,6 +1,7 @@
 pub mod backend;
 mod cargo_toml;
 
+use crate::entity::projects::burn_dir::{BurnDir, cache::CacheState};
 use quote::quote;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -8,8 +9,7 @@ use std::hash::{Hash, Hasher};
 use crate::generation::{FileTree, crate_gen::cargo_toml::FeatureFlag};
 
 use super::backend::BackendType;
-use crate::burn_dir::BurnDir;
-use crate::burn_dir::cache::CacheState;
+use crate::tools::functions_registry::FunctionRegistry;
 use cargo_toml::{CargoToml, Dependency, QueryType};
 
 pub struct GeneratedCrate {
@@ -237,7 +237,8 @@ fn generate_builder_call(
 }
 
 fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String {
-    let flags = crate::registry::get_flags();
+    let function_registry = FunctionRegistry::new();
+    let flags = function_registry.get_function_references();
 
     let backend_types = backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, _autodiff_backend_type_name) = backend::get_backend_type_names();

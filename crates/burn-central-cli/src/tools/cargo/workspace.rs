@@ -7,7 +7,7 @@ type CargoResult<T> = anyhow::Result<T>;
 use anyhow::anyhow;
 
 use crate::print_debug;
-use crate::util::cargo::paths;
+use crate::tools::cargo::paths;
 
 use super::paths::normalize_path;
 

@@ -17,6 +17,7 @@ rust-version = "1.87.0"
 burn = { version = "0.17.1", default-features = false }
 
 anyhow = "1.0.98"
+toml = "0.8.22"
 clap = { version = "4.5.39", features = ["derive"] }
 colored = "3.0.0"
 derive-new = { version = "0.7.0", default-features = false }
@@ -34,6 +35,7 @@ serde = { version = "1.0.219", default-features = false, features = [
     "alloc",
 ] } # alloc is for no_std, derive is needed
 serde_json = "1.0.140"
+syn-serde = { version = "0.3.1", features = ["json"] }
 sha2 = { version = "0.10.9" }
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.101", features = ["extra-traits", "full"] }

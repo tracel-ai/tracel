@@ -165,17 +165,6 @@ impl Client {
         Ok(response)
     }
 
-    /// Check if the Burn Central server is reachable.
-    #[allow(dead_code)]
-    pub fn health_check(&self) -> Result<(), ClientError> {
-        let url = self.join("health");
-        self.http_client
-            .get(url)
-            .send()?
-            .map_to_burn_central_err()?;
-        Ok(())
-    }
-
     /// Get the session cookie if it exists.
     pub fn get_session_cookie(&self) -> Option<&String> {
         self.session_cookie.as_ref()

@@ -1,6 +1,5 @@
 use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
-use crate::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::BurnCentral;
 use clap::Args;
@@ -14,7 +13,9 @@ pub struct LoginArgs {
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
     let prompt = format!(
         "Enter your API key found on {} below.",
-        Terminal::url(&context.get_frontend_endpoint().join("/settings/api-keys")?),
+        context
+            .terminal()
+            .url(&context.get_frontend_endpoint().join("/settings/api-keys")?),
     );
     context.terminal().print(&prompt);
     let api_key = context.terminal_mut().read_password("Key")?;

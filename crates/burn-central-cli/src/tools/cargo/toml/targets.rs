@@ -21,9 +21,9 @@ use cargo_util_schemas::manifest::{
 
 use super::CargoResult;
 
-use crate::util::cargo::features::Edition;
-use crate::util::cargo::restricted_names;
-use crate::util::cargo::toml::deprecated_underscore;
+use crate::tools::cargo::features::Edition;
+use crate::tools::cargo::restricted_names;
+use crate::tools::cargo::toml::deprecated_underscore;
 
 const DEFAULT_TEST_DIR_NAME: &str = "tests";
 const DEFAULT_BENCH_DIR_NAME: &str = "benches";

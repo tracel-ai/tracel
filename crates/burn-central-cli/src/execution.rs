@@ -1,7 +1,6 @@
+use crate::entity::projects::burn_dir::{BurnDir, cache::CacheState};
 use anyhow::Context as _;
 
-use crate::burn_dir::BurnDir;
-use crate::burn_dir::cache::CacheState;
 use crate::{context::CliContext, generation::crate_gen::backend::BackendType, print_info};
 use std::path::PathBuf;
 
@@ -104,7 +103,7 @@ fn generate_crate(context: &CliContext, build_command: &BuildCommand) -> anyhow:
 }
 
 pub fn make_build_command(
-    _cmd_desc: &BuildCommand,
+    cmd_desc: &BuildCommand,
     context: &CliContext,
 ) -> anyhow::Result<std::process::Command> {
     let profile_arg = match context.metadata().build_profile.as_str() {
@@ -128,7 +127,7 @@ pub fn make_build_command(
         .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
         .env(
             "BURN_CENTRAL_CODE_VERSION",
-            _cmd_desc.code_version_digest.as_str(),
+            cmd_desc.code_version_digest.as_str(),
         )
         .args([
             "--manifest-path",

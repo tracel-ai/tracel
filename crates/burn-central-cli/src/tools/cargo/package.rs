@@ -10,7 +10,7 @@ use burn_central_client::schemas::{CrateMetadata, Dep, PackagedCrateData};
 use colored::Colorize;
 
 use super::paths;
-use crate::{print_err, print_info, print_warn, util};
+use crate::{print_err, print_info, print_warn, tools};
 use sha2::Digest as _;
 use sha2::Sha256;
 
@@ -133,7 +133,7 @@ fn check_package(root_dir: &Path, package: &cargo_metadata::Package) -> anyhow::
 
 pub struct Package {
     pub package: cargo_metadata::Package,
-    pub manifest: util::cargo::toml::Manifest,
+    pub manifest: tools::cargo::toml::Manifest,
     pub manifest_path: PathBuf,
 }
 
@@ -162,7 +162,7 @@ pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Resul
         .expect("Failed to find own package");
 
     let workspace_toml =
-        util::cargo::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
+        tools::cargo::toml::read_manifest(&workspace_toml_path, Some(&workspace_toml_path))?;
 
     print_info!("{}", "Checking local packages".green().bold());
 

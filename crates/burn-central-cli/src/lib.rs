@@ -1,16 +1,12 @@
 pub mod cli;
 pub mod config;
-pub mod registry;
+pub mod tools;
 
+mod app_config;
 mod commands;
+mod context;
 mod execution;
 mod logging;
 
-mod context;
+mod entity;
 mod generation;
-
-mod app_config;
-mod burn_dir;
-mod cargo;
-mod terminal;
-mod util;

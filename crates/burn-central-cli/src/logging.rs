@@ -66,9 +66,6 @@ pub fn print_debug(debug_message: &str) {
     );
 }
 
-#[cfg(not(debug_assertions))]
-pub fn print_debug(_debug_message: &str) {}
-
 #[macro_export]
 macro_rules! print_debug {
     ($($arg:tt)*) => {

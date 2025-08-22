@@ -1,13 +1,15 @@
 use crate::app_config::{AppConfig, Credentials};
-use crate::burn_dir::BurnDir;
-use crate::burn_dir::project::BurnCentralProject;
-use crate::terminal::Terminal;
-use crate::{cargo, config::Config};
+use crate::config::Config;
+use crate::entity::projects::ProjectContext;
+use crate::entity::projects::burn_dir::BurnDir;
+use crate::tools::cargo;
+use crate::tools::functions_registry::FunctionRegistry;
+use crate::tools::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::BurnCentral;
 use burn_central_client::credentials::BurnCentralCredentials;
 use burn_central_client::schemas::ProjectPath;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
@@ -24,10 +26,16 @@ pub struct CliContext {
     api_endpoint: url::Url,
     creds: Option<Credentials>,
     project_metadata: ProjectContext,
+    pub function_registry: FunctionRegistry,
 }
 
 impl CliContext {
-    pub fn new(terminal: Terminal, config: &Config, project_metadata: ProjectContext) -> Self {
+    pub fn new(
+        terminal: Terminal,
+        config: &Config,
+        project_metadata: ProjectContext,
+        function_registry: FunctionRegistry,
+    ) -> Self {
         Self {
             terminal,
             api_endpoint: config
@@ -36,6 +44,7 @@ impl CliContext {
                 .expect("API endpoint should be valid"),
             creds: None,
             project_metadata,
+            function_registry,
         }
     }
 
@@ -163,55 +172,5 @@ impl CliContext {
 
     pub fn terminal_mut(&mut self) -> &mut Terminal {
         &mut self.terminal
-    }
-}
-
-pub struct ProjectContext {
-    pub user_crate_name: String,
-    pub user_crate_dir: PathBuf,
-    pub generated_crate_name: String,
-    pub build_profile: String,
-    pub burn_dir: BurnDir,
-    pub project: Option<BurnCentralProject>,
-}
-
-impl ProjectContext {
-    pub fn load_from_manifest(manifest_path: &Path) -> Self {
-        // assert that the manifest path is a file
-        assert!(manifest_path.is_file());
-        assert!(manifest_path.ends_with("Cargo.toml"));
-        // get the project name from the Cargo.toml
-        let toml_str = std::fs::read_to_string(manifest_path).expect("Cargo.toml should exist");
-        let manifest_document =
-            toml::de::from_str::<toml::Value>(&toml_str).expect("Cargo.toml should be valid");
-
-        let user_crate_name = manifest_document["package"]["name"]
-            .as_str()
-            .expect("Package name should exist")
-            .to_string();
-        let generated_crate_name = format!("{user_crate_name}_gen");
-
-        let user_crate_dir = manifest_path
-            .parent()
-            .expect("Project directory should exist")
-            .to_path_buf();
-        let burn_dir = BurnDir::new(&user_crate_dir);
-        burn_dir
-            .init()
-            .expect("Burn directory should be initialized");
-
-        Self {
-            user_crate_name,
-            user_crate_dir,
-            generated_crate_name,
-            build_profile: "release".to_string(),
-            burn_dir,
-            project: None,
-        }
-    }
-
-    pub fn load_project(&mut self) -> anyhow::Result<()> {
-        self.project = Some(self.burn_dir.load_project()?);
-        Ok(())
     }
 }
