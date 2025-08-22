@@ -12,6 +12,23 @@ pub struct FunctionMetadata {
     pub token_stream: &'static [u8],
 }
 
+impl From<FunctionMetadata> for RegisteredFunction {
+    fn from(val: FunctionMetadata) -> Self {
+        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(val.token_stream)
+            .expect("Should be able to parse token stream.");
+        let syn_tree: syn::File =
+            syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
+        let code_str = prettyplease::unparse(&syn_tree);
+        RegisteredFunction {
+            mod_path: val.mod_path.to_string(),
+            fn_name: val.fn_name.to_string(),
+            proc_type: val.proc_type.to_string(),
+            code: code_str,
+            routine: val.routine_name.to_string(),
+        }
+    }
+}
+
 pub type LazyValue<T> = once_cell::sync::Lazy<T>;
 pub struct Plugin<T: 'static>(pub &'static LazyValue<T>);
 
@@ -59,13 +76,13 @@ impl FunctionMetadata {
 }
 
 pub struct FunctionRegistry {
-    flags: LazyValue<Vec<FunctionMetadata>>,
+    functions: LazyValue<Vec<FunctionMetadata>>,
 }
 
 impl FunctionRegistry {
     pub fn new() -> Self {
         Self {
-            flags: LazyValue::new(|| {
+            functions: LazyValue::new(|| {
                 inventory::iter::<Plugin<FunctionMetadata>>
                     .into_iter()
                     .map(|plugin| (*plugin.0).to_owned())
@@ -75,26 +92,21 @@ impl FunctionRegistry {
     }
 
     pub fn get_function_references(&self) -> &[FunctionMetadata] {
-        &self.flags
+        &self.functions
     }
 
     pub fn get_registered_functions(&self) -> Vec<RegisteredFunction> {
-        self.flags
+        self.functions
             .iter()
-            .map(|flag| {
-                // function token stream to readable string
-                let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(flag.token_stream)
-                    .expect("Should be able to parse token stream.");
-                let syn_tree: syn::File = syn::parse2(itemfn.into_token_stream())
-                    .expect("Should be able to parse token stream.");
-                let code_str = prettyplease::unparse(&syn_tree);
-                RegisteredFunction {
-                    mod_path: flag.mod_path.to_string(),
-                    fn_name: flag.fn_name.to_string(),
-                    proc_type: flag.proc_type.to_string(),
-                    code: code_str,
-                }
-            })
+            .map(|function| function.clone().into())
+            .collect()
+    }
+
+    pub fn get_training_routine(&self) -> Vec<String> {
+        self.functions
+            .iter()
+            .filter(|function| function.proc_type == "training")
+            .map(|function| function.routine_name.to_string())
             .collect()
     }
 }

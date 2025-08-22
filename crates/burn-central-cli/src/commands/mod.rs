@@ -1,4 +1,5 @@
 use crate::commands::init::prompt_init;
+use crate::commands::training::TrainingArgs;
 use crate::print_info;
 use crate::{commands::login::get_client_and_login_if_needed, context::CliContext};
 pub mod init;
@@ -15,7 +16,7 @@ pub fn default_command(mut context: CliContext) -> anyhow::Result<()> {
         print_info!("No project loaded. Running initialization sequence.");
         prompt_init(&context, &client)?;
     } else {
-        print_info!("No command provided. Please specify a command to run.");
+        training::handle_command(TrainingArgs::default(), context)?;
     }
 
     Ok(())
