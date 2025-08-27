@@ -354,7 +354,7 @@ impl BurnCentral {
         project_name: &str,
         runner_group_name: String,
         project_version: &str,
-        command: String,
+        command: &str,
     ) -> Result<(), BurnCentralError> {
         self.client
             .start_remote_job(

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::entity::experiments::config::ExperimentConfig;
 use crate::entity::projects::burn_dir::BurnDir;
 use crate::entity::projects::burn_dir::cache::CacheState;
+use crate::runner::RunnerTrainingArgs;
 use anyhow::Context;
 use clap::Parser;
 use clap::ValueHint;
@@ -135,6 +136,21 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     };
 
     let code_version_digest = package_sequence(&context, false)?;
+    let key = context
+        .get_api_key()
+        .context("Failed to get API key")?
+        .to_owned();
+
+    let command = RunnerTrainingArgs {
+        function,
+        backend: args.backend,
+        config: args.config,
+        overrides: args.overrides,
+        project_version: code_version_digest.clone(),
+        namespace: namespace.clone(),
+        project: project.clone(),
+        key,
+    };
 
     let client = context.create_client()?;
     client.start_remote_job(
@@ -142,7 +158,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         &project,
         args.runner.expect("Runner should be provided"),
         &code_version_digest,
-        format!("train {function}"),
+        &serde_json::to_string(&command)?,
     )?;
 
     Ok(())

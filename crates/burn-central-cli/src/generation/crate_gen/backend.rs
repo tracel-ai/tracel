@@ -1,10 +1,10 @@
 use quote::quote;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 use syn::Ident;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Display, EnumString, Default, Deserialize)]
+#[derive(Debug, Clone, Display, EnumString, Default, Deserialize, Serialize)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum BackendType {
