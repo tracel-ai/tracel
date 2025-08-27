@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(serde::Deserialize)]
-pub struct BUUU {
+pub struct TrainingArgs {
     /// The training function to run. Annotate a training function with #[burn(training)] to register it.
     function: String,
     /// Backend to use
@@ -26,18 +26,24 @@ pub struct BUUU {
     key: String,
 }
 
-pub fn runner_main(config: Config) -> anyhow::Result<()> {
-    let stdin = std::io::stdin();
-    let buf = BufReader::new(stdin);
-
-    let payload: BUUU = serde_json::from_reader(buf)?;
-
-    let manifest_path = cargo::try_locate_manifest().expect("Failed to locate manifest");
+pub fn runner_main(config: Config) {
+    let manifest_path = cargo::try_locate_manifest().expect("Should be able to locate manifest.");
 
     let terminal = Terminal::new();
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry);
+
+    let stdin = std::io::stdin();
+    let buf = BufReader::new(stdin);
+
+    let payload: TrainingArgs = serde_json::from_reader(buf)
+        .inspect_err(|err| {
+            context
+                .terminal()
+                .print(&format!("Should be able to run training function: {err}"));
+        })
+        .unwrap();
 
     local_run_internal(
         payload.backend,
@@ -48,8 +54,12 @@ pub fn runner_main(config: Config) -> anyhow::Result<()> {
         payload.project,
         payload.project_version,
         payload.key,
-        context,
-    )?;
-
-    Ok(())
+        &context,
+    )
+    .inspect_err(|err| {
+        context
+            .terminal()
+            .print(&format!("Should be able to run training function: {err}"));
+    })
+    .unwrap();
 }

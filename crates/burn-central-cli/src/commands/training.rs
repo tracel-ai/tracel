@@ -157,7 +157,7 @@ pub fn local_run_internal(
     project: String,
     code_version_digest: String,
     key: String,
-    context: CliContext,
+    context: &CliContext,
 ) -> anyhow::Result<()> {
     let kind = RunKind::Training;
     let config = ExperimentConfig::load_config(config, overrides);
@@ -170,7 +170,7 @@ pub fn local_run_internal(
                 backend,
                 code_version_digest,
             },
-            &context,
+            context,
         )?;
         execute_run_command(
             RunCommand {
@@ -184,7 +184,7 @@ pub fn local_run_internal(
                     key,
                 },
             },
-            &context,
+            context,
         )
     };
 
@@ -242,7 +242,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         project,
         code_version_digest,
         key,
-        context,
+        &context,
     )?;
 
     Ok(())
