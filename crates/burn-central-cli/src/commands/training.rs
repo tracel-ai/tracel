@@ -88,15 +88,14 @@ impl Default for TrainingArgs {
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => Err(anyhow::anyhow!(
-            "Remote training is not currently supported."
-        )), // remote_run(args, context),
-        (None, None) => local_run(args, context),
-        (Some(_), None) => Err(anyhow::anyhow!(
             "You must provide the project version to run on the runner with --version argument"
         )),
+        // remote_run(args, context),
+        (None, None) => local_run(args, context),
+        (Some(_), None) => remote_run(args, context),
         (None, Some(_)) => {
             print_warn!(
-                "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument"
+                "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument)"
             );
             local_run(args, context)
         }
@@ -114,6 +113,39 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
         )
         .interact()
         .map_err(anyhow::Error::from)
+}
+
+fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+    let namespace = context.get_project_path()?.owner_name;
+    let project = context.get_project_path()?.project_name;
+
+    let function = match args.function {
+        Some(function) => {
+            let available_functions = context.function_registry.get_training_routine();
+            if !available_functions.contains(&function) {
+                return Err(anyhow::anyhow!(
+                    "Function `{}` is not available. Available functions are: {:?}",
+                    function,
+                    available_functions
+                ));
+            }
+            function
+        }
+        None => prompt_function(context.function_registry.get_training_routine())?,
+    };
+
+    let code_version_digest = package_sequence(&context, false)?;
+
+    let client = context.create_client()?;
+    client.start_remote_job(
+        &namespace,
+        &project,
+        args.runner.expect("Runner should be provided"),
+        &code_version_digest,
+        format!("train {function}"),
+    )?;
+
+    Ok(())
 }
 
 fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
