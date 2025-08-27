@@ -148,34 +148,20 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+pub fn local_run_internal(
+    backend: BackendType,
+    config: Option<String>,
+    overrides: Vec<(String, serde_json::Value)>,
+    function: String,
+    namespace: String,
+    project: String,
+    code_version_digest: String,
+    key: String,
+    context: CliContext,
+) -> anyhow::Result<()> {
     let kind = RunKind::Training;
-    let namespace = context.get_project_path()?.owner_name;
-    let project = context.get_project_path()?.project_name;
-    let key = context
-        .get_api_key()
-        .context("Failed to get API key")?
-        .to_owned();
-    let backend = args.backend.clone().unwrap_or_default();
+    let config = ExperimentConfig::load_config(config, overrides);
     let run_id = format!("{backend}");
-    let config = ExperimentConfig::load_config(args.config, args.overrides);
-
-    let function = match args.function {
-        Some(function) => {
-            let available_functions = context.function_registry.get_training_routine();
-            if !available_functions.contains(&function) {
-                return Err(anyhow::anyhow!(
-                    "Function `{}` is not available. Available functions are: {:?}",
-                    function,
-                    available_functions
-                ));
-            }
-            function
-        }
-        None => prompt_function(context.function_registry.get_training_routine())?,
-    };
-
-    let code_version_digest = package_sequence(&context, false)?;
 
     let res = {
         execute_build_command(
@@ -217,6 +203,47 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
             )));
         }
     }
+
+    Ok(())
+}
+
+fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+    let namespace = context.get_project_path()?.owner_name;
+    let project = context.get_project_path()?.project_name;
+    let key = context
+        .get_api_key()
+        .context("Failed to get API key")?
+        .to_owned();
+    let backend = args.backend.clone().unwrap_or_default();
+
+    let function = match args.function {
+        Some(function) => {
+            let available_functions = context.function_registry.get_training_routine();
+            if !available_functions.contains(&function) {
+                return Err(anyhow::anyhow!(
+                    "Function `{}` is not available. Available functions are: {:?}",
+                    function,
+                    available_functions
+                ));
+            }
+            function
+        }
+        None => prompt_function(context.function_registry.get_training_routine())?,
+    };
+
+    let code_version_digest = package_sequence(&context, false)?;
+
+    local_run_internal(
+        backend,
+        args.config,
+        args.overrides,
+        function,
+        namespace,
+        project,
+        code_version_digest,
+        key,
+        context,
+    )?;
 
     Ok(())
 }
