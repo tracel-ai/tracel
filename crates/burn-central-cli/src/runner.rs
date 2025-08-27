@@ -1,4 +1,7 @@
-use std::io::BufReader;
+use std::{
+    io::{BufRead, BufReader},
+    time::{Duration, Instant},
+};
 
 use crate::{
     commands::training::local_run_internal,
@@ -8,6 +11,8 @@ use crate::{
     generation::backend::BackendType,
     tools::{cargo, functions_registry::FunctionRegistry, terminal::Terminal},
 };
+
+const INPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct RunnerTrainingArgs {
@@ -34,16 +39,43 @@ pub fn runner_main(config: Config) {
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry);
 
+    let start_time = Instant::now();
     let stdin = std::io::stdin();
-    let buf = BufReader::new(stdin);
+    let mut buf = BufReader::new(stdin);
+    let mut accumulated_input = String::new();
 
-    let payload: RunnerTrainingArgs = serde_json::from_reader(buf)
-        .inspect_err(|err| {
-            context
-                .terminal()
-                .print(&format!("Should be able to run training function: {err}"));
-        })
-        .unwrap();
+    let payload = loop {
+        if start_time.elapsed() > INPUT_TIMEOUT {
+            context.terminal().print("Timeout waiting for valid input");
+            std::process::exit(1);
+        }
+
+        let mut line = String::new();
+        match buf.read_line(&mut line) {
+            Ok(0) => {
+                context.terminal().print("EOF reached without valid input");
+                std::process::exit(1);
+            }
+            Ok(_) => {
+                accumulated_input.push_str(&line);
+
+                // Try to parse the accumulated input
+                match serde_json::from_str::<RunnerTrainingArgs>(&accumulated_input) {
+                    Ok(payload) => break payload,
+                    Err(_) => {
+                        // Continue reading more lines
+                        continue;
+                    }
+                }
+            }
+            Err(err) => {
+                context
+                    .terminal()
+                    .print(&format!("Error reading input: {err}"));
+                std::process::exit(1);
+            }
+        }
+    };
 
     let backend = payload.backend.unwrap_or_default();
 
