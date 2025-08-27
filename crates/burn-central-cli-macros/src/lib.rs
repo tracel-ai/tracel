@@ -254,7 +254,7 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
         proc_macro2::Span::call_site(),
     );
 
-    let main_function = if option_env!("COMPUTE_PROVIDER_RUNTIME").is_some() {
+    let main_call = if option_env!("COMPUTE_PROVIDER_RUNTIME").is_some() {
         quote! {
             burn_central::cli::runner::runner_main(config);
         }
@@ -273,7 +273,7 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
         #item_sig {
             #config_block
 
-            #main_function
+            #main_call
         }
     };
 
