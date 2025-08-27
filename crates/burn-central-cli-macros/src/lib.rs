@@ -253,6 +253,17 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
         &format!("__{}", uuid::Uuid::new_v4().simple()),
         proc_macro2::Span::call_site(),
     );
+
+    let main_function = if option_env!("COMPUTE_PROVIDER_RUNTIME").is_some() {
+        quote! {
+            burn_central::cli::runner::runner_main(config);
+        }
+    } else {
+        quote! {
+            burn_central::cli::cli::cli_main(config);
+        }
+    };
+
     let item = quote! {
         mod #mod_tokens {
             #[allow(unused_imports)]
@@ -261,7 +272,8 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
 
         #item_sig {
             #config_block
-            burn_central::cli::cli::cli_main(config);
+
+            #main_function
         }
     };
 

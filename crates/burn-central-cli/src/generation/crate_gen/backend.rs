@@ -1,10 +1,12 @@
 use quote::quote;
+use serde::Deserialize;
 use strum::{Display, EnumString};
 use syn::Ident;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Display, EnumString, Default)]
+#[derive(Debug, Clone, Display, EnumString, Default, Deserialize)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum BackendType {
     #[default]
     Wgpu,
