@@ -1,8 +1,3 @@
-use std::{
-    io::{BufRead, BufReader},
-    time::{Duration, Instant},
-};
-
 use crate::{
     commands::training::local_run_internal,
     config::Config,
@@ -11,8 +6,6 @@ use crate::{
     generation::backend::BackendType,
     tools::{cargo, functions_registry::FunctionRegistry, terminal::Terminal},
 };
-
-const INPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct RunnerTrainingArgs {
@@ -39,43 +32,12 @@ pub fn runner_main(config: Config) {
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry);
 
-    let start_time = Instant::now();
-    let stdin = std::io::stdin();
-    let mut buf = BufReader::new(stdin);
-    let mut accumulated_input = String::new();
-
-    let payload = loop {
-        if start_time.elapsed() > INPUT_TIMEOUT {
-            context.terminal().print("Timeout waiting for valid input");
-            std::process::exit(1);
-        }
-
-        let mut line = String::new();
-        match buf.read_line(&mut line) {
-            Ok(0) => {
-                context.terminal().print("EOF reached without valid input");
-                std::process::exit(1);
-            }
-            Ok(_) => {
-                accumulated_input.push_str(&line);
-
-                // Try to parse the accumulated input
-                match serde_json::from_str::<RunnerTrainingArgs>(&accumulated_input) {
-                    Ok(payload) => break payload,
-                    Err(_) => {
-                        // Continue reading more lines
-                        continue;
-                    }
-                }
-            }
-            Err(err) => {
-                context
-                    .terminal()
-                    .print(&format!("Error reading input: {err}"));
-                std::process::exit(1);
-            }
-        }
-    };
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 2 {
+        panic!("Expected exactly one argument");
+    }
+    let payload: RunnerTrainingArgs =
+        serde_json::from_str(&args[1]).expect("Should be able to parse payload");
 
     let backend = payload.backend.unwrap_or_default();
 
