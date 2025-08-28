@@ -91,9 +91,8 @@ impl Default for TrainingArgs {
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => Err(anyhow::anyhow!(
-            "You must provide the project version to run on the runner with --version argument"
+            "Running remotely on a specific code version is not currently supported."
         )),
-        // remote_run(args, context),
         (None, None) => local_run(args, context),
         (Some(_), None) => remote_run(args, context),
         (None, Some(_)) => {
