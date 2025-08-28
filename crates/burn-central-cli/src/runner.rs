@@ -9,7 +9,7 @@ use crate::{
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct RunnerTrainingArgs {
-    /// The training function to run. Annotate a training function with #[burn(training)] to register it.
+    /// The training function to run.
     pub function: String,
     /// Backend to use
     pub backend: Option<BackendType>,
@@ -32,24 +32,19 @@ pub fn runner_main(config: Config) {
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry);
 
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        panic!("Expected exactly one argument");
-    }
-    let payload: RunnerTrainingArgs =
-        serde_json::from_str(&args[1]).expect("Should be able to parse payload");
+    let args = get_args();
 
-    let backend = payload.backend.unwrap_or_default();
+    let backend = args.backend.unwrap_or_default();
 
     local_run_internal(
         backend,
-        payload.config,
-        payload.overrides,
-        payload.function,
-        payload.namespace,
-        payload.project,
-        payload.project_version,
-        payload.key,
+        args.config,
+        args.overrides,
+        args.function,
+        args.namespace,
+        args.project,
+        args.project_version,
+        args.key,
         &context,
     )
     .inspect_err(|err| {
@@ -58,4 +53,13 @@ pub fn runner_main(config: Config) {
             .print(&format!("Should be able to run training function: {err}"));
     })
     .unwrap();
+}
+
+fn get_args() -> RunnerTrainingArgs {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 2 {
+        panic!("Expected exactly one argument");
+    }
+
+    serde_json::from_str(&args[1]).expect("Should be able to parse payload")
 }
