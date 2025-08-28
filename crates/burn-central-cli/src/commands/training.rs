@@ -164,6 +164,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn local_run_internal(
     backend: BackendType,
     config: Option<String>,
