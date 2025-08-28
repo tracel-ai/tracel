@@ -5,6 +5,7 @@ use crate::api::ClientError;
 use crate::api::OrganizationSchema;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
+use crate::model::ModelRegistry;
 use crate::schemas::{
     BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
     ProjectSchema, User,
@@ -382,5 +383,9 @@ impl BurnCentral {
                 source: e,
             })
             .map(|response| response.organizations)
+    }
+
+    pub fn model_registry(&self, namespace: &str, project_name: &str) -> ModelRegistry {
+        ModelRegistry::new(self.client.clone(), namespace.into(), project_name.into())
     }
 }
