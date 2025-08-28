@@ -1,8 +1,9 @@
-﻿use crate::param::RoutineParam;
-use crate::{IntoRoutine, Model, MultiDevice, Routine};
+use crate::input::RoutineInput;
+use crate::param::RoutineParam;
+use crate::{In, IntoRoutine, Model, MultiDevice, Routine};
 use burn::prelude::Backend;
-use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
 use burn_central_client::BurnCentral;
+use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use thiserror::Error;
@@ -57,25 +58,32 @@ impl<B: Backend, M> RoutineParam<InferenceContext<B, M>> for MultiDevice<B> {
     }
 }
 
-type ArcInferenceHandler<B, M> = Arc<dyn Routine<InferenceContext<B, M>, Out = ()>>;
+type ArcInferenceHandler<B, M, I> = Arc<dyn Routine<InferenceContext<B, M>, In = I, Out = ()>>;
 
 pub struct InferenceState<M> {
     model: M,
 }
 
-pub struct Inference<B: Backend, M> {
+pub struct Inference<B: Backend, M, I, O> {
     pub id: String,
     state: Arc<InferenceState<M>>,
-    handler: ArcInferenceHandler<B, M>,
+    handler: ArcInferenceHandler<B, M, I>,
     burn_central: BurnCentral,
     namespace: String,
     project: String,
+    phantom_data: PhantomData<O>,
 }
 
-impl<B: Backend, M: 'static> Inference<B, M> {
+impl<'i, B, M, I, O> Inference<B, M, I, O>
+where
+    B: Backend,
+    M: 'static,
+    I: RoutineInput + 'static,
+    O: 'static,
+{
     fn new(
         id: String,
-        handler: ArcInferenceHandler<B, M>,
+        handler: ArcInferenceHandler<B, M, I>,
         model: M,
         client: BurnCentral,
         namespace: String,
@@ -88,16 +96,22 @@ impl<B: Backend, M: 'static> Inference<B, M> {
             burn_central: client,
             namespace,
             project,
+            phantom_data: Default::default(),
         }
     }
 
-    pub fn infer(&self, devices: Vec<B::Device>) -> Result<(), InferenceError> {
+    pub fn infer(
+        &self,
+        input: I::Inner<'_>,
+        devices: Vec<B::Device>,
+    ) -> Result<(), InferenceError> {
         let mut ctx = InferenceContext {
             devices,
             state: self.state.clone(),
         };
-        self.handler
-            .run(&mut ctx)
+        let output = self
+            .handler
+            .run(input, &mut ctx)
             .map_err(|e| InferenceError::HandlerExecutionFailed(e.into()))?;
 
         Ok(())
@@ -155,9 +169,10 @@ pub struct LoadedInferenceBuilder<B: Backend, M> {
 }
 
 impl<B: Backend, M: 'static> LoadedInferenceBuilder<B, M> {
-    pub fn build<F, Marker>(self, handler: F) -> Inference<B, M>
+    pub fn build<'a, F, I, Marker>(self, handler: F) -> Inference<B, M, I, ()>
     where
-        F: IntoRoutine<InferenceContext<B, M>, (), Marker>,
+        F: IntoRoutine<InferenceContext<B, M>, I, (), Marker>,
+        I: RoutineInput + 'static,
     {
         Inference::new(
             crate::type_name::fn_type_name::<F>(),
@@ -173,10 +188,11 @@ impl<B: Backend, M: 'static> LoadedInferenceBuilder<B, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MultiDevice;
+    use crate::{In, MultiDevice};
     use burn::backend::NdArray;
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::{Backend, Module};
+    use burn::tensor::Tensor;
     use burn_central_client::credentials::BurnCentralCredentials;
     use std::str::FromStr;
 
@@ -215,9 +231,14 @@ mod tests {
         }
     }
 
-    fn my_inference_function<B: Backend>(model: Model<MyNnModel<B>>, devices: MultiDevice<B>) {
+    fn my_inference_function<B: Backend>(
+        input: In<Tensor<B, 2>>,
+        model: Model<MyNnModel<B>>,
+        devices: MultiDevice<B>,
+    ) {
         println!("Running inference with model: {:?}", *model);
         println!("Using devices: {:?}", devices[0]);
+        println!("Input tensor: {}", *input);
     }
 
     #[test]
@@ -240,6 +261,7 @@ mod tests {
             .unwrap()
             .build(my_inference_function);
 
-        inference.infer(vec![device]).unwrap();
+        let input = Tensor::<TestBackend, 2>::ones([1, 10], &device);
+        inference.infer(input, vec![device]).unwrap();
     }
 }

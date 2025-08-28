@@ -25,7 +25,6 @@ clap = { workspace = true, features = ["derive"], optional = true }
 log = { workspace = true, features = ["std"] }
 env_logger = { workspace = true }
 serde_json = { workspace = true }
-arc-swap = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

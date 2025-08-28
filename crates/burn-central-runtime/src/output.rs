@@ -1,5 +1,5 @@
-use crate::types::Model;
 use crate::ExecutionContext;
+use crate::types::Model;
 use burn::module::Module;
 use burn::prelude::Backend;
 use burn_central_client::record::ArtifactKind;

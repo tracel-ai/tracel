@@ -1,8 +1,9 @@
 mod error;
 mod executor;
+mod inference;
+mod input;
 mod output;
 mod param;
-mod routine;
 mod service;
 mod type_name;
 mod types;
@@ -12,7 +13,7 @@ pub mod cli;
 
 pub use error::RuntimeError;
 pub use executor::{ExecutionContext, Executor, ExecutorBuilder};
-pub use routine::{IntoRoutine, Routine};
+pub use inference::{IntoRoutine, Routine};
 pub use types::*;
 
 pub fn setup_logging() {

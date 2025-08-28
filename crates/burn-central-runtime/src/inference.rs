@@ -1,4 +1,5 @@
 use crate::error::RuntimeError;
+use crate::input::{RoutineIn, RoutineInput};
 use crate::output::RoutineOutput;
 use crate::param::RoutineParam;
 use crate::type_name::fn_type_name;
@@ -7,10 +8,15 @@ use variadics_please::all_tuples;
 
 #[diagnostic::on_unimplemented(message = "`{Self}` is not a routine", label = "invalid routine")]
 pub trait Routine<Ctx>: Send + Sync + 'static {
+    type In: RoutineInput;
     type Out;
 
     fn name(&self) -> &str;
-    fn run(&self, ctx: &mut Ctx) -> anyhow::Result<Self::Out, RuntimeError>;
+    fn run(
+        &self,
+        input: RoutineIn<'_, Ctx, Self>,
+        ctx: &mut Ctx,
+    ) -> anyhow::Result<Self::Out, RuntimeError>;
 }
 
 pub type RoutineParamItem<'ctx, Ctx, P> = <P as RoutineParam<Ctx>>::Item<'ctx>;
@@ -20,14 +26,19 @@ pub type RoutineParamItem<'ctx, Ctx, P> = <P as RoutineParam<Ctx>>::Item<'ctx>;
     label = "invalid routine"
 )]
 pub trait RoutineParamFunction<Ctx, Marker>: Send + Sync + 'static {
+    type In: RoutineInput;
     type Out;
     type Param: RoutineParam<Ctx>;
 
     fn run(
         &self,
+        input: <Self::In as RoutineInput>::Inner<'_>,
         param_value: RoutineParamItem<Ctx, Self::Param>,
     ) -> anyhow::Result<Self::Out, RuntimeError>;
 }
+
+#[doc(hidden)]
+pub struct HasRoutineInput;
 
 macro_rules! impl_routine_function {
     ($($param: ident),*) => {
@@ -48,10 +59,11 @@ macro_rules! impl_routine_function {
             Out: 'static,
             Ctx: 'static,
         {
+            type In = ();
             type Out = Out;
             type Param = ($($param,)*);
             #[inline]
-            fn run(&self, param_value: RoutineParamItem<Ctx, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
+            fn run(&self, _input: (), param_value: RoutineParamItem<Ctx, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
                 #[expect(
                     clippy::allow_attributes,
                     reason = "This is within a macro, and as such, the below lints may not always apply."
@@ -65,6 +77,42 @@ macro_rules! impl_routine_function {
                 }
                 let ($($param,)*) = param_value;
                 Ok(call_inner(self, $($param),*))
+            }
+        }
+
+        #[expect(
+            clippy::allow_attributes,
+            reason = "This is within a macro, and as such, the below lints may not always apply."
+        )]
+        #[allow(
+            non_snake_case,
+            reason = "Certain variable names are provided by the caller, not by us."
+        )]
+        impl<Ctx, In, Out, Func, $($param: RoutineParam<Ctx>),*> RoutineParamFunction<Ctx, (HasRoutineInput, fn(In, $($param,)*) -> Out)> for Func
+        where
+            Func: Send + Sync + 'static,
+            for <'a> &'a Func:
+                Fn(In, $($param),*) -> Out +
+                Fn(In::Param<'_>, $(RoutineParamItem<Ctx, $param>),*) -> Out,
+            In: RoutineInput + 'static,
+            Out: 'static,
+            Ctx: 'static,
+        {
+            type In = In;
+            type Out = Out;
+            type Param = ($($param,)*);
+            #[inline]
+            fn run(&self, input: In::Inner<'_>, param_value: RoutineParamItem<Ctx, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
+                fn call_inner<In: RoutineInput, Out, $($param,)*>(
+                    _: PhantomData<In>,
+                    f: impl Fn(In::Param<'_>, $($param,)*)->Out,
+                    input: In::Inner<'_>,
+                    $($param: $param,)*
+                )->Out{
+                    f(In::wrap(input), $($param,)*)
+                }
+                let ($($param,)*) = param_value;
+                Ok(call_inner(PhantomData::<In>, self, input, $($param),*))
             }
         }
     };
@@ -98,7 +146,7 @@ impl<Marker, F: Clone> Clone for FunctionRoutine<Marker, F> {
     }
 }
 
-impl<Ctx, Marker, F> IntoRoutine<Ctx, F::Out, (IsFunctionRoutine, Marker)> for F
+impl<Ctx, Marker, F> IntoRoutine<Ctx, F::In, F::Out, (IsFunctionRoutine, Marker)> for F
 where
     Marker: 'static,
     F: RoutineParamFunction<Ctx, Marker>,
@@ -119,22 +167,27 @@ where
     Marker: 'static,
     F: RoutineParamFunction<Ctx, Marker>,
 {
+    type In = F::In;
     type Out = F::Out;
 
     fn name(&self) -> &str {
         self.name.as_str()
     }
 
-    fn run(&self, ctx: &mut Ctx) -> anyhow::Result<Self::Out, RuntimeError> {
+    fn run(
+        &self,
+        input: RoutineIn<'_, Ctx, Self>,
+        ctx: &mut Ctx,
+    ) -> anyhow::Result<Self::Out, RuntimeError> {
         let params = <F::Param as RoutineParam<Ctx>>::try_retrieve(ctx).map_err(|e| {
             RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to retrieve parameters: {}", e))
         })?;
-        let output = self.func.run(params)?;
+        let output = self.func.run(input, params)?;
         Ok(output)
     }
 }
 
-impl<Ctx, T: Routine<Ctx>> IntoRoutine<Ctx, T::Out, ()> for T {
+impl<Ctx, T: Routine<Ctx>> IntoRoutine<Ctx, T::In, T::Out, ()> for T {
     type Routine = T;
     fn into_routine(this: Self) -> Self::Routine {
         this
@@ -145,8 +198,8 @@ impl<Ctx, T: Routine<Ctx>> IntoRoutine<Ctx, T::Out, ()> for T {
     message = "`{Self}` is not a valid routine with output `{Output}`",
     label = "invalid routine"
 )]
-pub trait IntoRoutine<Ctx, Output, Marker>: Sized {
-    type Routine: Routine<Ctx, Out = Output>;
+pub trait IntoRoutine<Ctx, Input, Output, Marker>: Sized {
+    type Routine: Routine<Ctx, In = Input, Out = Output>;
 
     #[allow(clippy::wrong_self_convention)]
     fn into_routine(this: Self) -> Self::Routine;
@@ -176,22 +229,27 @@ impl<Ctx, S> Routine<Ctx> for NamedRoutine<S>
 where
     S: Routine<Ctx>,
 {
+    type In = S::In;
     type Out = S::Out;
 
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn run(&self, ctx: &mut Ctx) -> anyhow::Result<Self::Out, RuntimeError> {
-        self.inner.run(ctx)
+    fn run(
+        &self,
+        input: RoutineIn<'_, Ctx, Self>,
+        ctx: &mut Ctx,
+    ) -> anyhow::Result<Self::Out, RuntimeError> {
+        self.inner.run(input, ctx)
     }
 }
 
 #[doc(hidden)]
 pub struct IsNamedRoutine;
-impl<Ctx, O, M, S> IntoRoutine<Ctx, O, (IsNamedRoutine, O, M)> for IntoNamedRoutine<Ctx, S>
+impl<Ctx, I, O, M, S> IntoRoutine<Ctx, I, O, (IsNamedRoutine, M)> for IntoNamedRoutine<Ctx, S>
 where
-    S: IntoRoutine<Ctx, O, M>,
+    S: IntoRoutine<Ctx, I, O, M>,
 {
     type Routine = NamedRoutine<S::Routine>;
 
@@ -203,9 +261,9 @@ where
     }
 }
 
-impl<Ctx, O, M, S, N> IntoRoutine<Ctx, O, (IsNamedRoutine, O, N, M)> for (N, S)
+impl<Ctx, I, O, M, S, N> IntoRoutine<Ctx, I, O, (IsNamedRoutine, N, M)> for (N, S)
 where
-    S: IntoRoutine<Ctx, O, M>,
+    S: IntoRoutine<Ctx, I, O, M>,
     N: Into<String>,
 {
     type Routine = NamedRoutine<S::Routine>;
@@ -223,9 +281,7 @@ pub struct ExecutorRoutineWrapper<S, Ctx>(S, PhantomData<Ctx>);
 
 impl<S, Ctx, Output> ExecutorRoutineWrapper<S, Ctx>
 where
-    S: Routine<Ctx, Out = Output>,
-    // This assumes `RoutineOutput` is also made generic over `Ctx`.
-    Output: RoutineOutput<Ctx>,
+    S: Routine<Ctx, In = (), Out = Output>,
 {
     pub fn new(routine: S) -> Self {
         ExecutorRoutineWrapper(routine, PhantomData)
@@ -234,19 +290,24 @@ where
 
 impl<Ctx, S, Output> Routine<Ctx> for ExecutorRoutineWrapper<S, Ctx>
 where
-    S: Routine<Ctx, Out = Output>,
+    S: Routine<Ctx, In = (), Out = Output>,
     // This assumes `RoutineOutput` is also made generic over `Ctx`.
     Output: RoutineOutput<Ctx>,
-    Ctx: std::marker::Send + std::marker::Sync + 'static,
+    Ctx: Send + Sync + 'static,
 {
+    type In = ();
     type Out = ();
 
     fn name(&self) -> &str {
         self.0.name()
     }
 
-    fn run(&self, ctx: &mut Ctx) -> anyhow::Result<Self::Out, RuntimeError> {
-        match self.0.run(ctx) {
+    fn run(
+        &self,
+        input: RoutineIn<'_, Ctx, Self>,
+        ctx: &mut Ctx,
+    ) -> anyhow::Result<Self::Out, RuntimeError> {
+        match self.0.run(input, ctx) {
             Ok(output) => {
                 output.apply_output(ctx).map_err(|e| {
                     // Assuming a logger is available, e.g., from the `log` crate.
@@ -261,4 +322,4 @@ where
 }
 
 /// The boxed routine type alias is updated to include `Ctx`.
-pub type BoxedRoutine<Ctx, Out> = Box<dyn Routine<Ctx, Out = Out>>;
+pub type BoxedRoutine<Ctx, In, Out> = Box<dyn Routine<Ctx, In = In, Out = Out>>;

@@ -2,16 +2,16 @@ use anyhow::Result;
 use burn::prelude::Backend;
 
 use crate::error::RuntimeError;
+use crate::inference::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use crate::output::{ExperimentOutput, TrainOutput};
-use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use burn::tensor::backend::AutodiffBackend;
-use burn_central_client::experiment::{
-    deserialize_and_merge_with_default, ExperimentConfig, ExperimentRun,
-};
 use burn_central_client::BurnCentral;
+use burn_central_client::experiment::{
+    ExperimentConfig, ExperimentRun, deserialize_and_merge_with_default,
+};
 use std::collections::HashMap;
 
-type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, ()>;
+type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
 
 /// The execution context for a routine, containing the necessary information to run it.
 pub struct ExecutionContext<B: Backend> {
@@ -86,7 +86,7 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
         &mut self,
         kind: ActionKind,
         name: impl Into<String>,
-        handler: impl IntoRoutine<ExecutionContext<B>, O, M>,
+        handler: impl IntoRoutine<ExecutionContext<B>, (), O, M>,
     ) -> &mut Self {
         let wrapper = ExecutorRoutineWrapper::new(IntoRoutine::into_routine(handler));
         let routine = Box::new(wrapper);
@@ -106,7 +106,7 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
     pub fn train<M, O: TrainOutput<B>>(
         &mut self,
         name: impl Into<String>,
-        handler: impl IntoRoutine<ExecutionContext<B>, O, M>,
+        handler: impl IntoRoutine<ExecutionContext<B>, (), O, M>,
     ) -> &mut Self {
         self.register(ActionKind::Train, name, handler);
         self
@@ -206,7 +206,7 @@ impl<B: AutodiffBackend> Executor<B> {
             ctx.experiment = Some(experiment);
         }
 
-        let result = handler.run(&mut ctx);
+        let result = handler.run((), &mut ctx);
 
         match result {
             Ok(_) => {

@@ -8,3 +8,5 @@ pub struct Cfg<T: ExperimentConfig>(pub T);
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 #[derive(Clone, From, Deref)]
 pub struct Model<M>(pub M);
+#[derive(Debug, Deref, From)]
+pub struct In<T>(pub T);
