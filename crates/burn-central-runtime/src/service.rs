@@ -3,11 +3,12 @@ use crate::{IntoRoutine, Model, MultiDevice, Routine};
 use burn::prelude::Backend;
 use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
 use burn_central_client::BurnCentral;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum InferenceServiceError {
+pub enum InferenceError {
     #[error("Model loading failed: {0}")]
     ModelLoadingFailed(#[from] ModelProviderError),
     #[error("Inference handler execution failed: {0}")]
@@ -16,7 +17,7 @@ pub enum InferenceServiceError {
 
 pub struct InferenceContext<B: Backend, M> {
     pub devices: Vec<B::Device>,
-    pub model: Arc<M>,
+    pub state: Arc<InferenceState<M>>,
 }
 
 #[derive(Debug, Error)]
@@ -25,18 +26,22 @@ pub enum ModelProviderError {
     ModelLoadingFailed(#[from] ModelRegistryError),
 }
 type ModelProviderResult<M> = Result<M, ModelProviderError>;
-pub trait ModelProvider: Sized {
-    fn get_model(registry: &ModelRegistry, model_spec: ModelSpec) -> ModelProviderResult<Self>;
+pub trait ModelProvider<B: Backend>: Sized {
+    fn get_model(
+        registry: &ModelRegistry,
+        model_spec: ModelSpec,
+        device: &B::Device,
+    ) -> ModelProviderResult<Self>;
 }
 
-impl<B: Backend, M: Clone> RoutineParam<InferenceContext<B, M>> for Model<M> {
+impl<B: Backend, M: Clone + ModelProvider<B>> RoutineParam<InferenceContext<B, M>> for Model<M> {
     type Item<'new>
         = Model<M>
     where
         M: 'new;
 
     fn try_retrieve(ctx: &InferenceContext<B, M>) -> anyhow::Result<Self::Item<'_>> {
-        Ok(Model((*ctx.model).clone()))
+        Ok(Model(ctx.state.model.clone()))
     }
 }
 
@@ -54,61 +59,21 @@ impl<B: Backend, M> RoutineParam<InferenceContext<B, M>> for MultiDevice<B> {
 
 type ArcInferenceHandler<B, M> = Arc<dyn Routine<InferenceContext<B, M>, Out = ()>>;
 
-pub struct ServiceState<M> {
+pub struct InferenceState<M> {
     model: M,
 }
 
-pub struct InferenceService<B: Backend, M> {
+pub struct Inference<B: Backend, M> {
     pub id: String,
-    state: Arc<ServiceState<M>>,
+    state: Arc<InferenceState<M>>,
     handler: ArcInferenceHandler<B, M>,
-
+    burn_central: BurnCentral,
     namespace: String,
     project: String,
-    burn_central: BurnCentral,
 }
 
-pub struct ModelStoreKey {
-    id: String,
-}
-
-pub trait IntoService<B: Backend, M, Marker> {
-    fn into_service(
-        self,
-        id: String,
-        model_spec: ModelSpec,
-        client: BurnCentral,
-        namespace: String,
-        project: String,
-    ) -> Result<InferenceService<B, M>, InferenceServiceError>;
-}
-
-impl<B, M, F, Marker> IntoService<B, M, Marker> for F
-where
-    B: Backend,
-    M: ModelProvider,
-    F: IntoRoutine<InferenceContext<B, M>, (), Marker>,
-{
-    fn into_service(
-        self,
-        id: String,
-        model_spec: ModelSpec,
-        client: BurnCentral,
-        namespace: String,
-        project: String,
-    ) -> Result<InferenceService<B, M>, InferenceServiceError> {
-        let registry = client.model_registry(&namespace, &project);
-        let model = M::get_model(&registry, model_spec)?;
-
-        let handler = Arc::new(IntoRoutine::into_routine(self));
-        let svc = InferenceService::new(id, handler, model, client, namespace, project);
-
-        Ok(svc)
-    }
-}
-
-impl<B: Backend, M> InferenceService<B, M> {
-    pub fn new(
+impl<B: Backend, M: 'static> Inference<B, M> {
+    fn new(
         id: String,
         handler: ArcInferenceHandler<B, M>,
         model: M,
@@ -118,12 +83,90 @@ impl<B: Backend, M> InferenceService<B, M> {
     ) -> Self {
         Self {
             id,
-            state: Arc::new(ServiceState { model }),
+            state: Arc::new(InferenceState { model }),
             handler,
+            burn_central: client,
             namespace,
             project,
-            burn_central: client,
         }
+    }
+
+    pub fn infer(&self, devices: Vec<B::Device>) -> Result<(), InferenceError> {
+        let mut ctx = InferenceContext {
+            devices,
+            state: self.state.clone(),
+        };
+        self.handler
+            .run(&mut ctx)
+            .map_err(|e| InferenceError::HandlerExecutionFailed(e.into()))?;
+
+        Ok(())
+    }
+}
+
+pub struct InferenceBuilder<B> {
+    client: BurnCentral,
+    registry: ModelRegistry,
+    namespace: String,
+    project: String,
+    phantom_data: PhantomData<B>,
+}
+
+impl<B: Backend> InferenceBuilder<B> {
+    pub fn new(
+        client: BurnCentral,
+        namespace: impl Into<String>,
+        project: impl Into<String>,
+    ) -> Self {
+        let namespace = namespace.into();
+        let project = project.into();
+        let registry = client.model_registry(&namespace, &project);
+        Self {
+            client,
+            registry,
+            namespace,
+            project,
+            phantom_data: Default::default(),
+        }
+    }
+
+    pub fn load<M: ModelProvider<B>>(
+        self,
+        model_spec: ModelSpec,
+        device: &B::Device,
+    ) -> Result<LoadedInferenceBuilder<B, M>, InferenceError> {
+        let model = M::get_model(&self.registry, model_spec, device)
+            .map_err(InferenceError::ModelLoadingFailed)?;
+        Ok(LoadedInferenceBuilder {
+            client: self.client,
+            model,
+            namespace: self.namespace,
+            project: self.project,
+            phantom_data: Default::default(),
+        })
+    }
+}
+pub struct LoadedInferenceBuilder<B: Backend, M> {
+    client: BurnCentral,
+    model: M,
+    namespace: String,
+    project: String,
+    phantom_data: PhantomData<B>,
+}
+
+impl<B: Backend, M: 'static> LoadedInferenceBuilder<B, M> {
+    pub fn build<F, Marker>(self, handler: F) -> Inference<B, M>
+    where
+        F: IntoRoutine<InferenceContext<B, M>, (), Marker>,
+    {
+        Inference::new(
+            crate::type_name::fn_type_name::<F>(),
+            Arc::new(IntoRoutine::into_routine(handler)),
+            self.model,
+            self.client,
+            self.namespace,
+            self.project,
+        )
     }
 }
 
@@ -152,13 +195,21 @@ mod tests {
         }
     }
 
-    impl<B: Backend> ModelProvider for MyNnModel<B> {
-        fn get_model(registry: &ModelRegistry, model_spec: ModelSpec) -> ModelProviderResult<Self> {
+    impl<B: Backend> ModelProvider<B> for MyNnModel<B> {
+        fn get_model(
+            registry: &ModelRegistry,
+            model_spec: ModelSpec,
+            device: &B::Device,
+        ) -> ModelProviderResult<Self> {
             println!("Fetching model from registry with spec: {model_spec}");
 
             let model_artifact = registry.get_model(model_spec)?;
-            // Here you would implement the logic to fetch and load the model from the registry
-            // For testing purposes, we will just create a new model instance
+
+            println!("Model artifact fetched: {:?}", model_artifact);
+
+            // let config = model_artifact.get_config();
+            // let weights = model_artifact.get_weights();
+
             let device = &Default::default();
             Ok(MyNnModel::new(device))
         }
@@ -170,26 +221,25 @@ mod tests {
     }
 
     #[test]
-    fn test_inference_service_creation() {
+    fn test_inference_creation() {
         let creds = BurnCentralCredentials::from_str("16336384-9c97-4981-a7c6-5ad80f0e70ea")
             .expect("Should be able to create credentials");
 
-        let burn_central = BurnCentral::builder(creds)
+        let client = BurnCentral::builder(creds)
             .with_endpoint("http://localhost:9001")
             .build()
             .expect("Should be able to login");
-        let model_spec = ModelSpec::new("my_nn_model".to_string(), 1);
 
-        let service = my_inference_function::<TestBackend>.into_service(
-            "test-service".to_string(),
-            model_spec,
-            burn_central,
-            "default-namespace".to_string(),
-            "default-project".to_string(),
-        );
+        let namespace = "default-namespace";
+        let project = "default-project";
 
-        assert!(service.is_ok());
-        let service = service.unwrap();
-        assert_eq!(service.id, "test-service");
+        let device = Device::default();
+
+        let inference = InferenceBuilder::<TestBackend>::new(client, namespace, project)
+            .load::<MyNnModel<TestBackend>>("my_nn_model:1".parse().unwrap(), &device)
+            .unwrap()
+            .build(my_inference_function);
+
+        inference.infer(vec![device]).unwrap();
     }
 }

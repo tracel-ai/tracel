@@ -14,6 +14,7 @@ pub enum ModelRegistryError {
     Client(#[from] ClientError),
 }
 
+#[derive(Debug, Clone)]
 pub struct ModelArtifact {
     namespace: String,
     project_name: String,
