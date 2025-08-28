@@ -70,7 +70,7 @@ fn get_procedure_type(arg: &str) -> ProcedureType {
     let proc_type = serde_json::from_str::<ProcedureTypeArg>(arg)
         .expect("Should be able to deserialize the arg as ProcedureTypeArg");
 
-    return proc_type.procedure_type;
+    proc_type.procedure_type
 }
 
 fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext) {
@@ -85,7 +85,7 @@ fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext) {
         args.project,
         args.project_version,
         args.key,
-        &context,
+        context,
     )
     .inspect_err(|err| {
         context
