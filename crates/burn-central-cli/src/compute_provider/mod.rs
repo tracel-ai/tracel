@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[derive(serde::Deserialize, serde::Serialize)]
-pub struct RunnerTrainingArgs {
+pub struct ComputeProviderTrainingArgs {
     /// The training function to run.
     pub function: String,
     /// Backend to use
@@ -24,7 +24,7 @@ pub struct RunnerTrainingArgs {
     pub key: String,
 }
 
-pub fn runner_main(config: Config) {
+pub fn compute_provider_main(config: Config) {
     let manifest_path = cargo::try_locate_manifest().expect("Should be able to locate manifest.");
 
     let terminal = Terminal::new();
@@ -55,7 +55,7 @@ pub fn runner_main(config: Config) {
     .unwrap();
 }
 
-fn get_args() -> RunnerTrainingArgs {
+fn get_args() -> ComputeProviderTrainingArgs {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
         panic!("Expected exactly one argument");

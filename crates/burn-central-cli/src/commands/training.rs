@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
+use crate::compute_provider::ComputeProviderTrainingArgs;
 use crate::entity::experiments::config::ExperimentConfig;
 use crate::entity::projects::burn_dir::BurnDir;
 use crate::entity::projects::burn_dir::cache::CacheState;
-use crate::runner::RunnerTrainingArgs;
 use anyhow::Context;
 use clap::Parser;
 use clap::ValueHint;
@@ -141,7 +141,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         .context("Failed to get API key")?
         .to_owned();
 
-    let command = RunnerTrainingArgs {
+    let command = ComputeProviderTrainingArgs {
         function,
         backend: args.backend,
         config: args.config,

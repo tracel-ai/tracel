@@ -256,7 +256,7 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let main_call = if option_env!("COMPUTE_PROVIDER_RUNTIME").is_some() {
         quote! {
-            burn_central::cli::runner::runner_main(config);
+            burn_central::cli::compute_provider::compute_provider_main(config);
         }
     } else {
         quote! {
