@@ -8,6 +8,18 @@ use crate::{
 };
 
 #[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcedureType {
+    Training,
+    Inference,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct ProcedureTypeArg {
+    pub procedure_type: ProcedureType,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct ComputeProviderTrainingArgs {
     /// The training function to run.
     pub function: String,
@@ -22,6 +34,8 @@ pub struct ComputeProviderTrainingArgs {
     pub namespace: String,
     pub project: String,
     pub key: String,
+    #[serde(flatten)]
+    pub procedure_type: ProcedureTypeArg,
 }
 
 pub fn compute_provider_main(config: Config) {
@@ -32,8 +46,34 @@ pub fn compute_provider_main(config: Config) {
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry);
 
-    let args = get_args();
+    let arg = get_arg();
+    match get_procedure_type(&arg) {
+        ProcedureType::Training => {
+            let args = serde_json::from_str::<ComputeProviderTrainingArgs>(&arg)
+                .expect("Should be able to deserialize the arg as ComputeProviderTrainingArgs");
 
+            run_training(args, &context);
+        }
+        _ => {
+            panic!("Only training is supported for now")
+        }
+    }
+}
+
+fn get_arg() -> String {
+    std::env::args()
+        .nth(1)
+        .expect("Expected exactly one argument")
+}
+
+fn get_procedure_type(arg: &str) -> ProcedureType {
+    let proc_type = serde_json::from_str::<ProcedureTypeArg>(arg)
+        .expect("Should be able to deserialize the arg as ProcedureTypeArg");
+
+    return proc_type.procedure_type;
+}
+
+fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext) {
     let backend = args.backend.unwrap_or_default();
 
     local_run_internal(
@@ -53,13 +93,4 @@ pub fn compute_provider_main(config: Config) {
             .print(&format!("Should be able to run training function: {err}"));
     })
     .unwrap();
-}
-
-fn get_args() -> ComputeProviderTrainingArgs {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        panic!("Expected exactly one argument");
-    }
-
-    serde_json::from_str(&args[1]).expect("Should be able to parse payload")
 }

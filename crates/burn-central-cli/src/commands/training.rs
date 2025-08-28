@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use crate::compute_provider::ComputeProviderTrainingArgs;
+use crate::compute_provider::ProcedureType;
+use crate::compute_provider::ProcedureTypeArg;
 use crate::entity::experiments::config::ExperimentConfig;
 use crate::entity::projects::burn_dir::BurnDir;
 use crate::entity::projects::burn_dir::cache::CacheState;
@@ -150,6 +152,9 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         namespace: namespace.clone(),
         project: project.clone(),
         key,
+        procedure_type: ProcedureTypeArg {
+            procedure_type: ProcedureType::Training,
+        },
     };
 
     let client = context.create_client()?;
