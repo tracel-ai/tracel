@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+use crate::compute_provider::ComputeProviderTrainingArgs;
+use crate::compute_provider::ProcedureType;
+use crate::compute_provider::ProcedureTypeArg;
 use crate::entity::experiments::config::ExperimentConfig;
 use crate::entity::projects::burn_dir::BurnDir;
 use crate::entity::projects::burn_dir::cache::CacheState;
@@ -88,15 +91,13 @@ impl Default for TrainingArgs {
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
         (Some(_), Some(_)) => Err(anyhow::anyhow!(
-            "Remote training is not currently supported."
-        )), // remote_run(args, context),
-        (None, None) => local_run(args, context),
-        (Some(_), None) => Err(anyhow::anyhow!(
-            "You must provide the project version to run on the runner with --version argument"
+            "Running remotely on a specific code version is not currently supported."
         )),
+        (None, None) => local_run(args, context),
+        (Some(_), None) => remote_run(args, context),
         (None, Some(_)) => {
             print_warn!(
-                "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument"
+                "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument)"
             );
             local_run(args, context)
         }
@@ -116,17 +117,9 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
         .map_err(anyhow::Error::from)
 }
 
-fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
-    let kind = RunKind::Training;
+fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let namespace = context.get_project_path()?.owner_name;
     let project = context.get_project_path()?.project_name;
-    let key = context
-        .get_api_key()
-        .context("Failed to get API key")?
-        .to_owned();
-    let backend = args.backend.clone().unwrap_or_default();
-    let run_id = format!("{backend}");
-    let config = ExperimentConfig::load_config(args.config, args.overrides);
 
     let function = match args.function {
         Some(function) => {
@@ -144,6 +137,52 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     };
 
     let code_version_digest = package_sequence(&context, false)?;
+    let key = context
+        .get_api_key()
+        .context("Failed to get API key")?
+        .to_owned();
+
+    let command = ComputeProviderTrainingArgs {
+        function,
+        backend: args.backend,
+        config: args.config,
+        overrides: args.overrides,
+        project_version: code_version_digest.clone(),
+        namespace: namespace.clone(),
+        project: project.clone(),
+        key,
+        procedure_type: ProcedureTypeArg {
+            procedure_type: ProcedureType::Training,
+        },
+    };
+
+    let client = context.create_client()?;
+    client.start_remote_job(
+        &namespace,
+        &project,
+        args.runner.expect("Runner should be provided"),
+        &code_version_digest,
+        &serde_json::to_string(&command)?,
+    )?;
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn local_run_internal(
+    backend: BackendType,
+    config: Option<String>,
+    overrides: Vec<(String, serde_json::Value)>,
+    function: String,
+    namespace: String,
+    project: String,
+    code_version_digest: String,
+    key: String,
+    context: &CliContext,
+) -> anyhow::Result<()> {
+    let kind = RunKind::Training;
+    let config = ExperimentConfig::load_config(config, overrides);
+    let run_id = format!("{backend}");
 
     let res = {
         execute_build_command(
@@ -152,7 +191,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
                 backend,
                 code_version_digest,
             },
-            &context,
+            context,
         )?;
         execute_run_command(
             RunCommand {
@@ -166,7 +205,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
                     key,
                 },
             },
-            &context,
+            context,
         )
     };
 
@@ -185,6 +224,47 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
             )));
         }
     }
+
+    Ok(())
+}
+
+fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+    let namespace = context.get_project_path()?.owner_name;
+    let project = context.get_project_path()?.project_name;
+    let key = context
+        .get_api_key()
+        .context("Failed to get API key")?
+        .to_owned();
+    let backend = args.backend.clone().unwrap_or_default();
+
+    let function = match args.function {
+        Some(function) => {
+            let available_functions = context.function_registry.get_training_routine();
+            if !available_functions.contains(&function) {
+                return Err(anyhow::anyhow!(
+                    "Function `{}` is not available. Available functions are: {:?}",
+                    function,
+                    available_functions
+                ));
+            }
+            function
+        }
+        None => prompt_function(context.function_registry.get_training_routine())?,
+    };
+
+    let code_version_digest = package_sequence(&context, false)?;
+
+    local_run_internal(
+        backend,
+        args.config,
+        args.overrides,
+        function,
+        namespace,
+        project,
+        code_version_digest,
+        key,
+        &context,
+    )?;
 
     Ok(())
 }

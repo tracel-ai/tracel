@@ -1,10 +1,12 @@
 use quote::quote;
+use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 use syn::Ident;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Display, EnumString, Default)]
+#[derive(Debug, Clone, Display, EnumString, Default, Deserialize, Serialize)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum BackendType {
     #[default]
     Wgpu,
@@ -15,22 +17,8 @@ pub enum BackendType {
 impl BackendType {
     /// Returns the token stream for the default device for the backend.
     pub fn default_device_stream(&self) -> proc_macro2::TokenStream {
-        match self {
-            BackendType::Wgpu => {
-                quote! {
-                    burn::backend::wgpu::WgpuDevice::default()
-                }
-            }
-            BackendType::Tch => {
-                quote! {
-                    burn::backend::libtorch::LibTorchDevice::default()
-                }
-            }
-            BackendType::Ndarray => {
-                quote! {
-                    burn::backend::ndarray::NdArrayDevice::default()
-                }
-            }
+        quote! {
+            Default::default()
         }
     }
 

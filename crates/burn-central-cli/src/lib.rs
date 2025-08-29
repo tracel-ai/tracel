@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod compute_provider;
 pub mod config;
 pub mod tools;
 

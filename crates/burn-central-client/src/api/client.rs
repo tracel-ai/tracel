@@ -542,7 +542,7 @@ impl Client {
         owner_name: &str,
         project_name: &str,
         project_version: &str,
-        command: String,
+        command: &str,
     ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
 
@@ -551,7 +551,7 @@ impl Client {
         let body = RunnerQueueJobParamsSchema {
             runner_group_name: runner_group_name.to_string(),
             project_version: project_version.to_string(),
-            command,
+            command: command.to_string(),
         };
 
         self.post(url, Some(body))
