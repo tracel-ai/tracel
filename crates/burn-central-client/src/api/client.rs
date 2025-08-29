@@ -541,7 +541,7 @@ impl Client {
         runner_group_name: &str,
         owner_name: &str,
         project_name: &str,
-        project_version: &str,
+        code_version: &str,
         command: &str,
     ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
@@ -550,7 +550,7 @@ impl Client {
 
         let body = RunnerQueueJobParamsSchema {
             runner_group_name: runner_group_name.to_string(),
-            project_version: project_version.to_string(),
+            code_version: code_version.to_string(),
             command: command.to_string(),
         };
 

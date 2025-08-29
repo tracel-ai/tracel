@@ -66,9 +66,12 @@ pub struct TrainingArgs {
     /// Batch override: e.g. --overrides a.b=3 x.y.z=true
     #[clap(long = "overrides", value_parser = parse_key_val, value_hint = ValueHint::Other, value_delimiter = ' ', num_args = 1..)]
     overrides: Vec<(String, serde_json::Value)>,
-    /// Project version
-    #[clap(long = "version", help = "The project version.")]
-    project_version: Option<String>,
+    /// Code version
+    #[clap(
+        long = "version",
+        help = "The code version on which to run the training. (if unspecified, the current version will be packaged and used)"
+    )]
+    code_version: Option<String>,
     /// The runner group name
     #[clap(long = "runner", help = "The runner group name.")]
     runner: Option<String>,
@@ -81,7 +84,7 @@ impl Default for TrainingArgs {
             function: None,
             config: None,
             overrides: vec![],
-            project_version: None,
+            code_version: None,
             runner: None,
             backend: None,
         }
@@ -89,12 +92,12 @@ impl Default for TrainingArgs {
 }
 
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
-    match (&args.runner, &args.project_version) {
+    match (&args.runner, &args.code_version) {
         (Some(_), _) => remote_run(args, context),
         (None, None) => local_run(args, context),
         (None, Some(_)) => {
             print_warn!(
-                "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument)"
+                "Code version is ignored when executing locally (i.e. no runner is defined with --runner argument). The current code will always be packaged and used."
             );
             local_run(args, context)
         }
@@ -117,23 +120,12 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
 fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let namespace = context.get_project_path()?.owner_name;
     let project = context.get_project_path()?.project_name;
-
-    let function = match args.function {
-        Some(function) => {
-            let available_functions = context.function_registry.get_training_routine();
-            if !available_functions.contains(&function) {
-                return Err(anyhow::anyhow!(
-                    "Function `{}` is not available. Available functions are: {:?}",
-                    function,
-                    available_functions
-                ));
-            }
-            function
-        }
-        None => prompt_function(context.function_registry.get_training_routine())?,
-    };
-
-    let code_version_digest = match args.project_version {
+    let function = get_function_to_run(args.function, &context)?;
+    let key = context
+        .get_api_key()
+        .context("Failed to get API key")?
+        .to_owned();
+    let code_version_digest = match args.code_version {
         Some(version) => {
             print_info!("Using code version: {}", version);
             version
@@ -143,11 +135,6 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
             package_sequence(&context, false)?
         }
     };
-
-    let key = context
-        .get_api_key()
-        .context("Failed to get API key")?
-        .to_owned();
 
     let command = ComputeProviderTrainingArgs {
         function,
@@ -236,29 +223,14 @@ pub fn local_run_internal(
 }
 
 fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+    let backend = args.backend.clone().unwrap_or_default();
     let namespace = context.get_project_path()?.owner_name;
     let project = context.get_project_path()?.project_name;
+    let function = get_function_to_run(args.function, &context)?;
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
         .to_owned();
-    let backend = args.backend.clone().unwrap_or_default();
-
-    let function = match args.function {
-        Some(function) => {
-            let available_functions = context.function_registry.get_training_routine();
-            if !available_functions.contains(&function) {
-                return Err(anyhow::anyhow!(
-                    "Function `{}` is not available. Available functions are: {:?}",
-                    function,
-                    available_functions
-                ));
-            }
-            function
-        }
-        None => prompt_function(context.function_registry.get_training_routine())?,
-    };
-
     let code_version_digest = package_sequence(&context, false)?;
 
     local_run_internal(
@@ -476,4 +448,21 @@ fn make_build_command(
     }
 
     Ok(build_command)
+}
+
+fn get_function_to_run(function: Option<String>, context: &CliContext) -> anyhow::Result<String> {
+    match function {
+        Some(function) => {
+            let available_functions = context.function_registry.get_training_routine();
+            if !available_functions.contains(&function) {
+                return Err(anyhow::anyhow!(
+                    "Function `{}` is not available. Available functions are: {:?}",
+                    function,
+                    available_functions
+                ));
+            }
+            Ok(function)
+        }
+        None => prompt_function(context.function_registry.get_training_routine()),
+    }
 }

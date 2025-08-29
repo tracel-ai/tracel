@@ -67,7 +67,7 @@ type RunnerJobCommand = String;
 #[derive(Debug, Serialize)]
 pub struct RunnerQueueJobParamsSchema {
     pub runner_group_name: String,
-    pub project_version: String,
+    pub code_version: String,
     pub command: RunnerJobCommand,
 }
 
