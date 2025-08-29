@@ -2,8 +2,8 @@ use anyhow::Result;
 use burn::prelude::Backend;
 
 use crate::error::RuntimeError;
-use crate::inference::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use crate::output::{ExperimentOutput, TrainOutput};
+use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use burn::tensor::backend::AutodiffBackend;
 use burn_central_client::BurnCentral;
 use burn_central_client::experiment::{

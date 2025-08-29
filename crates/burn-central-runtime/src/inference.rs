@@ -1,325 +1,274 @@
-use crate::error::RuntimeError;
-use crate::input::{RoutineIn, RoutineInput};
-use crate::output::RoutineOutput;
+use crate::input::RoutineInput;
 use crate::param::RoutineParam;
-use crate::type_name::fn_type_name;
+use crate::{In, IntoRoutine, Model, MultiDevice, Routine};
+use burn::prelude::Backend;
+use burn_central_client::BurnCentral;
+use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
 use std::marker::PhantomData;
-use variadics_please::all_tuples;
+use std::sync::Arc;
+use thiserror::Error;
 
-#[diagnostic::on_unimplemented(message = "`{Self}` is not a routine", label = "invalid routine")]
-pub trait Routine<Ctx>: Send + Sync + 'static {
-    type In: RoutineInput;
-    type Out;
+#[derive(Debug, Error)]
+pub enum InferenceError {
+    #[error("Model loading failed: {0}")]
+    ModelLoadingFailed(#[from] ModelProviderError),
+    #[error("Inference handler execution failed: {0}")]
+    HandlerExecutionFailed(anyhow::Error),
+}
 
-    fn name(&self) -> &str;
-    fn run(
+pub struct InferenceContext<B: Backend, M> {
+    pub devices: Vec<B::Device>,
+    pub state: Arc<InferenceState<M>>,
+}
+
+#[derive(Debug, Error)]
+pub enum ModelProviderError {
+    #[error("Model registry error: {0}")]
+    ModelLoadingFailed(#[from] ModelRegistryError),
+}
+type ModelProviderResult<M> = Result<M, ModelProviderError>;
+pub trait ModelProvider<B: Backend>: Sized {
+    fn get_model(
+        registry: &ModelRegistry,
+        model_spec: ModelSpec,
+        device: &B::Device,
+    ) -> ModelProviderResult<Self>;
+}
+
+impl<B: Backend, M: Clone + ModelProvider<B>> RoutineParam<InferenceContext<B, M>> for Model<M> {
+    type Item<'new>
+        = Model<M>
+    where
+        M: 'new;
+
+    fn try_retrieve(ctx: &InferenceContext<B, M>) -> anyhow::Result<Self::Item<'_>> {
+        Ok(Model(ctx.state.model.clone()))
+    }
+}
+
+impl<B: Backend, M> RoutineParam<InferenceContext<B, M>> for MultiDevice<B> {
+    type Item<'new>
+        = MultiDevice<B>
+    where
+        B: 'new,
+        M: 'new;
+
+    fn try_retrieve(ctx: &InferenceContext<B, M>) -> anyhow::Result<Self::Item<'_>> {
+        Ok(MultiDevice(ctx.devices.clone()))
+    }
+}
+
+type ArcInferenceHandler<B, M, I> = Arc<dyn Routine<InferenceContext<B, M>, In = I, Out = ()>>;
+
+pub struct InferenceState<M> {
+    model: M,
+}
+
+pub struct Inference<B: Backend, M, I, O> {
+    pub id: String,
+    state: Arc<InferenceState<M>>,
+    handler: ArcInferenceHandler<B, M, I>,
+    burn_central: BurnCentral,
+    namespace: String,
+    project: String,
+    phantom_data: PhantomData<O>,
+}
+
+impl<'i, B, M, I, O> Inference<B, M, I, O>
+where
+    B: Backend,
+    M: 'static,
+    I: RoutineInput + 'static,
+    O: 'static,
+{
+    fn new(
+        id: String,
+        handler: ArcInferenceHandler<B, M, I>,
+        model: M,
+        client: BurnCentral,
+        namespace: String,
+        project: String,
+    ) -> Self {
+        Self {
+            id,
+            state: Arc::new(InferenceState { model }),
+            handler,
+            burn_central: client,
+            namespace,
+            project,
+            phantom_data: Default::default(),
+        }
+    }
+
+    pub fn infer(
         &self,
-        input: RoutineIn<'_, Ctx, Self>,
-        ctx: &mut Ctx,
-    ) -> anyhow::Result<Self::Out, RuntimeError>;
-}
+        input: I::Inner<'_>,
+        devices: Vec<B::Device>,
+    ) -> Result<(), InferenceError> {
+        let mut ctx = InferenceContext {
+            devices,
+            state: self.state.clone(),
+        };
+        let output = self
+            .handler
+            .run(input, &mut ctx)
+            .map_err(|e| InferenceError::HandlerExecutionFailed(e.into()))?;
 
-pub type RoutineParamItem<'ctx, Ctx, P> = <P as RoutineParam<Ctx>>::Item<'ctx>;
-
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a valid routine",
-    label = "invalid routine"
-)]
-pub trait RoutineParamFunction<Ctx, Marker>: Send + Sync + 'static {
-    type In: RoutineInput;
-    type Out;
-    type Param: RoutineParam<Ctx>;
-
-    fn run(
-        &self,
-        input: <Self::In as RoutineInput>::Inner<'_>,
-        param_value: RoutineParamItem<Ctx, Self::Param>,
-    ) -> anyhow::Result<Self::Out, RuntimeError>;
-}
-
-#[doc(hidden)]
-pub struct HasRoutineInput;
-
-macro_rules! impl_routine_function {
-    ($($param: ident),*) => {
-        #[expect(
-            clippy::allow_attributes,
-            reason = "This is within a macro, and as such, the below lints may not always apply."
-        )]
-        #[allow(
-            non_snake_case,
-            reason = "Certain variable names are provided by the caller, not by us."
-        )]
-        impl<Ctx, Out, Func, $($param: RoutineParam<Ctx>),*> RoutineParamFunction<Ctx, fn($($param,)*) -> Out> for Func
-        where
-            Func: Send + Sync + 'static,
-            for <'a> &'a Func:
-                Fn($($param),*) -> Out +
-                Fn($(RoutineParamItem<Ctx, $param>),*) -> Out,
-            Out: 'static,
-            Ctx: 'static,
-        {
-            type In = ();
-            type Out = Out;
-            type Param = ($($param,)*);
-            #[inline]
-            fn run(&self, _input: (), param_value: RoutineParamItem<Ctx, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
-                #[expect(
-                    clippy::allow_attributes,
-                    reason = "This is within a macro, and as such, the below lints may not always apply."
-                )]
-                #[allow(clippy::too_many_arguments)]
-                fn call_inner<Out, $($param,)*>(
-                    f: impl Fn($($param,)*)->Out,
-                    $($param: $param,)*
-                )->Out{
-                    f($($param,)*)
-                }
-                let ($($param,)*) = param_value;
-                Ok(call_inner(self, $($param),*))
-            }
-        }
-
-        #[expect(
-            clippy::allow_attributes,
-            reason = "This is within a macro, and as such, the below lints may not always apply."
-        )]
-        #[allow(
-            non_snake_case,
-            reason = "Certain variable names are provided by the caller, not by us."
-        )]
-        impl<Ctx, In, Out, Func, $($param: RoutineParam<Ctx>),*> RoutineParamFunction<Ctx, (HasRoutineInput, fn(In, $($param,)*) -> Out)> for Func
-        where
-            Func: Send + Sync + 'static,
-            for <'a> &'a Func:
-                Fn(In, $($param),*) -> Out +
-                Fn(In::Param<'_>, $(RoutineParamItem<Ctx, $param>),*) -> Out,
-            In: RoutineInput + 'static,
-            Out: 'static,
-            Ctx: 'static,
-        {
-            type In = In;
-            type Out = Out;
-            type Param = ($($param,)*);
-            #[inline]
-            fn run(&self, input: In::Inner<'_>, param_value: RoutineParamItem<Ctx, ($($param,)*)>) -> Result<Self::Out, RuntimeError> {
-                fn call_inner<In: RoutineInput, Out, $($param,)*>(
-                    _: PhantomData<In>,
-                    f: impl Fn(In::Param<'_>, $($param,)*)->Out,
-                    input: In::Inner<'_>,
-                    $($param: $param,)*
-                )->Out{
-                    f(In::wrap(input), $($param,)*)
-                }
-                let ($($param,)*) = param_value;
-                Ok(call_inner(PhantomData::<In>, self, input, $($param),*))
-            }
-        }
-    };
-}
-
-all_tuples!(impl_routine_function, 0, 16, F);
-
-#[doc(hidden)]
-pub struct IsFunctionRoutine;
-
-pub struct FunctionRoutine<Marker, F> {
-    func: F,
-    name: String,
-    _marker: PhantomData<fn() -> Marker>,
-}
-
-impl<Marker, F> FunctionRoutine<Marker, F> {
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
+        Ok(())
     }
 }
 
-impl<Marker, F: Clone> Clone for FunctionRoutine<Marker, F> {
-    fn clone(&self) -> Self {
-        FunctionRoutine {
-            func: self.func.clone(),
-            name: self.name.clone(),
-            _marker: PhantomData,
+pub struct InferenceBuilder<B> {
+    client: BurnCentral,
+    registry: ModelRegistry,
+    namespace: String,
+    project: String,
+    phantom_data: PhantomData<B>,
+}
+
+impl<B: Backend> InferenceBuilder<B> {
+    pub fn new(
+        client: BurnCentral,
+        namespace: impl Into<String>,
+        project: impl Into<String>,
+    ) -> Self {
+        let namespace = namespace.into();
+        let project = project.into();
+        let registry = client.model_registry(&namespace, &project);
+        Self {
+            client,
+            registry,
+            namespace,
+            project,
+            phantom_data: Default::default(),
         }
     }
+
+    pub fn load<M: ModelProvider<B>>(
+        self,
+        model_spec: ModelSpec,
+        device: &B::Device,
+    ) -> Result<LoadedInferenceBuilder<B, M>, InferenceError> {
+        let model = M::get_model(&self.registry, model_spec, device)
+            .map_err(InferenceError::ModelLoadingFailed)?;
+        Ok(LoadedInferenceBuilder {
+            client: self.client,
+            model,
+            namespace: self.namespace,
+            project: self.project,
+            phantom_data: Default::default(),
+        })
+    }
+}
+pub struct LoadedInferenceBuilder<B: Backend, M> {
+    client: BurnCentral,
+    model: M,
+    namespace: String,
+    project: String,
+    phantom_data: PhantomData<B>,
 }
 
-impl<Ctx, Marker, F> IntoRoutine<Ctx, F::In, F::Out, (IsFunctionRoutine, Marker)> for F
-where
-    Marker: 'static,
-    F: RoutineParamFunction<Ctx, Marker>,
-{
-    type Routine = FunctionRoutine<Marker, F>;
+impl<B: Backend, M: 'static> LoadedInferenceBuilder<B, M> {
+    pub fn build<'a, F, I, Marker>(self, handler: F) -> Inference<B, M, I, ()>
+    where
+        F: IntoRoutine<InferenceContext<B, M>, I, (), Marker>,
+        I: RoutineInput + 'static,
+    {
+        Inference::new(
+            crate::type_name::fn_type_name::<F>(),
+            Arc::new(IntoRoutine::into_routine(handler)),
+            self.model,
+            self.client,
+            self.namespace,
+            self.project,
+        )
+    }
+}
 
-    fn into_routine(func: Self) -> Self::Routine {
-        FunctionRoutine {
-            func,
-            name: fn_type_name::<F>(),
-            _marker: PhantomData,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{In, MultiDevice};
+    use burn::backend::NdArray;
+    use burn::nn::{Linear, LinearConfig};
+    use burn::prelude::{Backend, Module};
+    use burn::tensor::Tensor;
+    use burn_central_client::credentials::BurnCentralCredentials;
+    use std::str::FromStr;
+
+    type TestBackend = NdArray;
+    type Device = <TestBackend as Backend>::Device;
+
+    #[derive(Module, Debug)]
+    pub struct MyNnModel<B: Backend> {
+        linear: Linear<B>,
+    }
+
+    impl<B: Backend> MyNnModel<B> {
+        fn new(device: &B::Device) -> Self {
+            let linear = LinearConfig::new(10, 5).init(device);
+            MyNnModel { linear }
         }
     }
-}
 
-impl<Ctx, Marker, F> Routine<Ctx> for FunctionRoutine<Marker, F>
-where
-    Marker: 'static,
-    F: RoutineParamFunction<Ctx, Marker>,
-{
-    type In = F::In;
-    type Out = F::Out;
+    impl<B: Backend> ModelProvider<B> for MyNnModel<B> {
+        fn get_model(
+            registry: &ModelRegistry,
+            model_spec: ModelSpec,
+            device: &B::Device,
+        ) -> ModelProviderResult<Self> {
+            println!("Fetching model from registry with spec: {model_spec}");
 
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
+            let model_artifact = registry.get_model(model_spec)?;
 
-    fn run(
-        &self,
-        input: RoutineIn<'_, Ctx, Self>,
-        ctx: &mut Ctx,
-    ) -> anyhow::Result<Self::Out, RuntimeError> {
-        let params = <F::Param as RoutineParam<Ctx>>::try_retrieve(ctx).map_err(|e| {
-            RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to retrieve parameters: {}", e))
-        })?;
-        let output = self.func.run(input, params)?;
-        Ok(output)
-    }
-}
+            println!("Model artifact fetched: {:?}", model_artifact);
 
-impl<Ctx, T: Routine<Ctx>> IntoRoutine<Ctx, T::In, T::Out, ()> for T {
-    type Routine = T;
-    fn into_routine(this: Self) -> Self::Routine {
-        this
-    }
-}
+            // let config = model_artifact.get_config();
+            // let weights = model_artifact.get_weights();
 
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a valid routine with output `{Output}`",
-    label = "invalid routine"
-)]
-pub trait IntoRoutine<Ctx, Input, Output, Marker>: Sized {
-    type Routine: Routine<Ctx, In = Input, Out = Output>;
-
-    #[allow(clippy::wrong_self_convention)]
-    fn into_routine(this: Self) -> Self::Routine;
-
-    fn with_name(self, name: impl Into<String>) -> IntoNamedRoutine<Ctx, Self> {
-        IntoNamedRoutine {
-            routine: self,
-            name: name.into(),
-            marker: Default::default(),
+            Ok(MyNnModel::new(device))
         }
     }
-}
 
-#[derive(Clone)]
-pub struct IntoNamedRoutine<Ctx, S> {
-    routine: S,
-    name: String,
-    marker: PhantomData<fn(Ctx)>,
-}
-
-pub struct NamedRoutine<S> {
-    inner: S,
-    name: String,
-}
-
-impl<Ctx, S> Routine<Ctx> for NamedRoutine<S>
-where
-    S: Routine<Ctx>,
-{
-    type In = S::In;
-    type Out = S::Out;
-
-    fn name(&self) -> &str {
-        &self.name
+    fn my_inference_function<B: Backend>(
+        input: In<Tensor<B, 2>>,
+        model: Model<MyNnModel<B>>,
+        devices: MultiDevice<B>,
+    ) {
+        println!("Running inference with model: {:?}", *model);
+        println!("Using devices: {:?}", devices[0]);
+        println!("Input tensor: {}", *input);
     }
 
-    fn run(
-        &self,
-        input: RoutineIn<'_, Ctx, Self>,
-        ctx: &mut Ctx,
-    ) -> anyhow::Result<Self::Out, RuntimeError> {
-        self.inner.run(input, ctx)
+    fn provision_client() -> BurnCentral {
+        let creds = BurnCentralCredentials::from_str("16336384-9c97-4981-a7c6-5ad80f0e70ea")
+            .expect("Should be able to create credentials");
+
+        let client = BurnCentral::builder(creds)
+            .with_endpoint("http://localhost:9001")
+            .build()
+            .expect("Should be able to login");
+        client
+    }
+
+    static NAMESPACE: &str = "default-namespace";
+    static PROJECT: &str = "default-project";
+
+    #[test]
+    fn test_inference_creation() {
+        let client = provision_client();
+        let namespace = NAMESPACE;
+        let project = PROJECT;
+
+        let device = Device::default();
+
+        let inference = InferenceBuilder::<TestBackend>::new(client, namespace, project)
+            .load::<MyNnModel<TestBackend>>("my_nn_model:1".parse().unwrap(), &device)
+            .unwrap()
+            .build(my_inference_function);
+
+        let input = Tensor::<TestBackend, 2>::ones([1, 10], &device);
+        println!("{}", serde_json::to_string(&input).unwrap());
+        inference.infer(input, vec![device]).unwrap();
     }
 }
-
-#[doc(hidden)]
-pub struct IsNamedRoutine;
-impl<Ctx, I, O, M, S> IntoRoutine<Ctx, I, O, (IsNamedRoutine, M)> for IntoNamedRoutine<Ctx, S>
-where
-    S: IntoRoutine<Ctx, I, O, M>,
-{
-    type Routine = NamedRoutine<S::Routine>;
-
-    fn into_routine(this: Self) -> Self::Routine {
-        NamedRoutine {
-            inner: IntoRoutine::into_routine(this.routine),
-            name: this.name,
-        }
-    }
-}
-
-impl<Ctx, I, O, M, S, N> IntoRoutine<Ctx, I, O, (IsNamedRoutine, N, M)> for (N, S)
-where
-    S: IntoRoutine<Ctx, I, O, M>,
-    N: Into<String>,
-{
-    type Routine = NamedRoutine<S::Routine>;
-
-    fn into_routine(this: Self) -> Self::Routine {
-        let (name, routines) = this;
-        NamedRoutine {
-            inner: IntoRoutine::into_routine(routines),
-            name: name.into(),
-        }
-    }
-}
-
-pub struct ExecutorRoutineWrapper<S, Ctx>(S, PhantomData<Ctx>);
-
-impl<S, Ctx, Output> ExecutorRoutineWrapper<S, Ctx>
-where
-    S: Routine<Ctx, In = (), Out = Output>,
-{
-    pub fn new(routine: S) -> Self {
-        ExecutorRoutineWrapper(routine, PhantomData)
-    }
-}
-
-impl<Ctx, S, Output> Routine<Ctx> for ExecutorRoutineWrapper<S, Ctx>
-where
-    S: Routine<Ctx, In = (), Out = Output>,
-    // This assumes `RoutineOutput` is also made generic over `Ctx`.
-    Output: RoutineOutput<Ctx>,
-    Ctx: Send + Sync + 'static,
-{
-    type In = ();
-    type Out = ();
-
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-
-    fn run(
-        &self,
-        input: RoutineIn<'_, Ctx, Self>,
-        ctx: &mut Ctx,
-    ) -> anyhow::Result<Self::Out, RuntimeError> {
-        match self.0.run(input, ctx) {
-            Ok(output) => {
-                output.apply_output(ctx).map_err(|e| {
-                    // Assuming a logger is available, e.g., from the `log` crate.
-                    // log::error!("Failed to apply output: {e}");
-                    RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
-                })?;
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-}
-
-/// The boxed routine type alias is updated to include `Ctx`.
-pub type BoxedRoutine<Ctx, In, Out> = Box<dyn Routine<Ctx, In = In, Out = Out>>;
