@@ -90,11 +90,8 @@ impl Default for TrainingArgs {
 
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     match (&args.runner, &args.project_version) {
-        (Some(_), Some(_)) => Err(anyhow::anyhow!(
-            "Running remotely on a specific code version is not currently supported."
-        )),
+        (Some(_), _) => remote_run(args, context),
         (None, None) => local_run(args, context),
-        (Some(_), None) => remote_run(args, context),
         (None, Some(_)) => {
             print_warn!(
                 "Project version is ignored when executing locally (i.e. no runner is defined with --runner argument)"
@@ -136,7 +133,17 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         None => prompt_function(context.function_registry.get_training_routine())?,
     };
 
-    let code_version_digest = package_sequence(&context, false)?;
+    let code_version_digest = match args.project_version {
+        Some(version) => {
+            print_info!("Using project version: {}", version);
+            version
+        }
+        None => {
+            print_info!("Packaging project and using this new version");
+            package_sequence(&context, false)?
+        }
+    };
+
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
