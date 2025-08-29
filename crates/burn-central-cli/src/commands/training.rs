@@ -135,11 +135,11 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
 
     let code_version_digest = match args.project_version {
         Some(version) => {
-            print_info!("Using project version: {}", version);
+            print_info!("Using code version: {}", version);
             version
         }
         None => {
-            print_info!("Packaging project and using this new version");
+            print_info!("Packaging project and using this new code version");
             package_sequence(&context, false)?
         }
     };
