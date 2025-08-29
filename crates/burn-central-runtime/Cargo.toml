@@ -20,7 +20,7 @@ variadics_please = { workspace = true }
 tynm = { workspace = true, features = ["info"] }
 syn = { workspace = true }
 strum = { workspace = true }
-derive_more = { workspace = true, features = ["deref", "from", "display"] }
+derive_more = { workspace = true, features = ["deref", "from", "display", "unwrap"] }
 clap = { workspace = true, features = ["derive"], optional = true }
 log = { workspace = true, features = ["std"] }
 env_logger = { workspace = true }
