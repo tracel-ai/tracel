@@ -353,7 +353,7 @@ impl BurnCentral {
         namespace: &str,
         project_name: &str,
         runner_group_name: String,
-        project_version: &str,
+        code_version: &str,
         command: &str,
     ) -> Result<(), BurnCentralError> {
         self.client
@@ -361,7 +361,7 @@ impl BurnCentral {
                 &runner_group_name,
                 namespace,
                 project_name,
-                project_version,
+                code_version,
                 command,
             )
             .map_err(|e| BurnCentralError::Client {
