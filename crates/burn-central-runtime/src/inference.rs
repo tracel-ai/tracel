@@ -1,6 +1,6 @@
 use crate::input::RoutineInput;
 use crate::param::RoutineParam;
-use crate::{In, IntoRoutine, Model, MultiDevice, Routine};
+use crate::{IntoRoutine, Model, MultiDevice, Routine};
 use burn::prelude::Backend;
 use burn_central_client::BurnCentral;
 use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
