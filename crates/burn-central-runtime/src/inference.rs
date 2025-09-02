@@ -2,8 +2,8 @@ use crate::input::RoutineInput;
 use crate::param::RoutineParam;
 use crate::{IntoRoutine, Model, MultiDevice, Routine};
 use burn::prelude::Backend;
-use burn_central_client::BurnCentral;
 use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
+use burn_central_client::BurnCentral;
 use derive_more::Deref;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -141,7 +141,7 @@ pub enum InferenceError {
 pub struct InferenceContext<B: Backend, M, S> {
     pub id: String,
     pub devices: Vec<B::Device>,
-    pub state: Arc<InferenceState<M>>,
+    pub state: InferenceState<M>,
     pub emitter: Arc<dyn Emitter<S>>,
     pub cancel_token: Arc<AtomicBool>,
 }
@@ -225,12 +225,12 @@ type ArcInferenceHandler<B, M, I, S> =
     Arc<dyn Routine<InferenceContext<B, M, S>, In = I, Out = ()>>;
 
 pub struct InferenceState<M> {
-    model: Mutex<M>,
+    model: Arc<Mutex<M>>,
 }
 
 pub struct Inference<B: Backend, M, I, O> {
     pub id: String,
-    state: Arc<InferenceState<M>>,
+    model: Arc<Mutex<M>>,
     handler: ArcInferenceHandler<B, M, I, O>,
     burn_central: BurnCentral,
     namespace: String,
@@ -255,9 +255,7 @@ where
     ) -> Self {
         Self {
             id,
-            state: Arc::new(InferenceState {
-                model: model.into(),
-            }),
+            model: Arc::new(Mutex::new(model)),
             handler,
             burn_central: client,
             namespace,
@@ -276,7 +274,9 @@ where
             let mut ctx = InferenceContext {
                 id: self.id.clone(),
                 devices: devices.into_iter().collect(),
-                state: self.state.clone(),
+                state: InferenceState {
+                    model: self.model.clone(),
+                },
                 emitter: collector.clone(),
                 cancel_token: Arc::new(AtomicBool::new(false)),
             };
@@ -304,7 +304,9 @@ where
         let mut ctx = InferenceContext {
             id,
             devices: devices.into_iter().collect(),
-            state: self.state.clone(),
+            state: InferenceState {
+                model: self.model.clone(),
+            },
             emitter: Arc::new(SyncChannelEmitter::new(stream_tx)),
             cancel_token: cancel_token.0.clone(),
         };
