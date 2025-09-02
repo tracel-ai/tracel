@@ -2,8 +2,8 @@ use crate::input::RoutineInput;
 use crate::param::RoutineParam;
 use crate::{IntoRoutine, Model, MultiDevice, Routine};
 use burn::prelude::Backend;
-use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
 use burn_central_client::BurnCentral;
+use burn_central_client::model::{ModelRegistry, ModelRegistryError, ModelSpec};
 use derive_more::Deref;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -490,21 +490,25 @@ mod tests {
 
     #[test]
     fn test_inference_creation() {
-        let client = provision_client();
-        let namespace = NAMESPACE;
-        let project = PROJECT;
+        fn infer<B: Backend>() {
+            let client = provision_client();
+            let namespace = NAMESPACE;
+            let project = PROJECT;
 
-        let device = Device::default();
+            let device = Default::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client, namespace, project)
-            .load::<MyNnModel<TestBackend>>("my_nn_model:1".parse().unwrap(), &device)
-            .unwrap()
-            .build(my_inference_function);
+            let inference = InferenceBuilder::new(client, namespace, project)
+                .load("my_nn_model:1".parse().unwrap(), &device)
+                .unwrap()
+                .build(my_inference_function);
 
-        let input = Tensor::<TestBackend, 2>::ones([1, 10], &device);
-        println!("{}", serde_json::to_string(&input).unwrap());
-        let output = inference.infer(input, vec![device]).unwrap();
-        println!("Inference output: {:?}", output);
+            let input = Tensor::<B, 2>::ones([1, 10], &device);
+            println!("{}", serde_json::to_string(&input.to_data()).unwrap());
+            let output = inference.infer(input, vec![device]).unwrap();
+            println!("Inference output: {:?}", output);
+        }
+
+        infer::<TestBackend>();
     }
 
     #[test]

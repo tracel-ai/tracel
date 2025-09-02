@@ -386,6 +386,6 @@ impl BurnCentral {
     }
 
     pub fn model_registry(&self, namespace: &str, project_name: &str) -> ModelRegistry {
-        ModelRegistry::new(self.client.clone(), namespace.into(), project_name.into())
+        ModelRegistry::new(self.client.clone())
     }
 }
