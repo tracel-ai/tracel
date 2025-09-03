@@ -385,7 +385,7 @@ impl BurnCentral {
             .map(|response| response.organizations)
     }
 
-    pub fn model_registry(&self, namespace: &str, project_name: &str) -> ModelRegistry {
+    pub fn model_registry(&self) -> ModelRegistry {
         ModelRegistry::new(self.client.clone())
     }
 }

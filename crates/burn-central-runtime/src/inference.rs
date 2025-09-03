@@ -1,5 +1,7 @@
 use crate::input::RoutineInput;
+use crate::output::InferenceOutput;
 use crate::param::RoutineParam;
+use crate::routine::ExecutorRoutineWrapper;
 use crate::{IntoRoutine, Model, MultiDevice, Routine};
 use burn::prelude::Backend;
 use burn_central_client::BurnCentral;
@@ -120,7 +122,7 @@ impl<T: Send + 'static> Emitter<T> for SyncChannelEmitter<T> {
 }
 
 #[derive(Clone, Deref)]
-pub struct Out<T> {
+pub struct OutStream<T> {
     emitter: Arc<dyn Emitter<T>>,
 }
 
@@ -173,16 +175,16 @@ impl<B: Backend, M, S> RoutineParam<InferenceContext<B, M, S>> for CancelToken {
         Ok(CancelToken(ctx.cancel_token.clone()))
     }
 }
-impl<B: Backend, M, S> RoutineParam<InferenceContext<B, M, S>> for Out<S> {
+impl<B: Backend, M, S> RoutineParam<InferenceContext<B, M, S>> for OutStream<S> {
     type Item<'new>
-        = Out<S>
+        = OutStream<S>
     where
         B: 'new,
         M: 'new,
         S: 'new;
 
     fn try_retrieve(ctx: &InferenceContext<B, M, S>) -> anyhow::Result<Self::Item<'_>> {
-        Ok(Out {
+        Ok(OutStream {
             emitter: ctx.emitter.clone(),
         })
     }
@@ -233,8 +235,6 @@ pub struct Inference<B: Backend, M, I, O> {
     model: Arc<Mutex<M>>,
     handler: ArcInferenceHandler<B, M, I, O>,
     burn_central: BurnCentral,
-    namespace: String,
-    project: String,
     phantom_data: PhantomData<O>,
 }
 
@@ -250,16 +250,12 @@ where
         handler: ArcInferenceHandler<B, M, I, O>,
         model: M,
         client: BurnCentral,
-        namespace: String,
-        project: String,
     ) -> Self {
         Self {
             id,
             model: Arc::new(Mutex::new(model)),
             handler,
             burn_central: client,
-            namespace,
-            project,
             phantom_data: Default::default(),
         }
     }
@@ -323,26 +319,13 @@ where
 
 pub struct InferenceBuilder<B> {
     client: BurnCentral,
-    registry: ModelRegistry,
-    namespace: String,
-    project: String,
     phantom_data: PhantomData<B>,
 }
 
 impl<B: Backend> InferenceBuilder<B> {
-    pub fn new(
-        client: BurnCentral,
-        namespace: impl Into<String>,
-        project: impl Into<String>,
-    ) -> Self {
-        let namespace = namespace.into();
-        let project = project.into();
-        let registry = client.model_registry(&namespace, &project);
+    pub fn new(client: BurnCentral) -> Self {
         Self {
             client,
-            registry,
-            namespace,
-            project,
             phantom_data: Default::default(),
         }
     }
@@ -352,13 +335,12 @@ impl<B: Backend> InferenceBuilder<B> {
         model_spec: ModelSpec,
         device: &B::Device,
     ) -> Result<LoadedInferenceBuilder<B, M>, InferenceError> {
-        let model = M::get_model(&self.registry, model_spec, device)
+        let registry = self.client.model_registry();
+        let model = M::get_model(&registry, model_spec, device)
             .map_err(InferenceError::ModelLoadingFailed)?;
         Ok(LoadedInferenceBuilder {
             client: self.client,
             model,
-            namespace: self.namespace,
-            project: self.project,
             phantom_data: Default::default(),
         })
     }
@@ -366,8 +348,6 @@ impl<B: Backend> InferenceBuilder<B> {
 pub struct LoadedInferenceBuilder<B: Backend, M> {
     client: BurnCentral,
     model: M,
-    namespace: String,
-    project: String,
     phantom_data: PhantomData<B>,
 }
 
@@ -376,19 +356,20 @@ where
     B: Backend,
     M: Send + 'static,
 {
-    pub fn build<'a, F, I, O, Marker>(self, handler: F) -> Inference<B, M, I, O>
+    pub fn build<'a, F, I, O, RO, Marker>(self, handler: F) -> Inference<B, M, I, O>
     where
-        F: IntoRoutine<InferenceContext<B, M, O>, I, (), Marker>,
+        F: IntoRoutine<InferenceContext<B, M, O>, I, RO, Marker>,
         I: RoutineInput + 'static,
         O: Send + 'static,
+        RO: InferenceOutput<B, M, O> + Sync + 'static,
     {
         Inference::new(
             crate::type_name::fn_type_name::<F>(),
-            Arc::new(IntoRoutine::into_routine(handler)),
+            Arc::new(ExecutorRoutineWrapper::new(IntoRoutine::into_routine(
+                handler,
+            ))),
             self.model,
             self.client,
-            self.namespace,
-            self.project,
         )
     }
 }
@@ -396,7 +377,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{In, MultiDevice};
+    use crate::{In, MultiDevice, Out};
     use burn::backend::NdArray;
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::{Backend, Module};
@@ -442,27 +423,40 @@ mod tests {
         In(input): In<Tensor<B, 2>>,
         model: Model<MyNnModel<B>>,
         devices: MultiDevice<B>,
-        output: Out<Tensor<B, 2>>,
-    ) {
+        output: OutStream<Tensor<B, 2>>,
+    ) -> Result<(), InferenceError> {
         println!("Running inference with model: {:?}", *model);
         println!("Using devices: {:?}", devices[0]);
         println!("Input tensor: {}", input);
-        let input = input;
+        let mut result = input;
         for i in 0..5 {
-            let result = model.0.linear.forward(input.clone());
-            if output.emit(result).is_err() {
+            result = model.0.linear.forward(result + i);
+            if output.emit(result.clone()).is_err() {
                 println!("Emitter requested to stop, exiting inference function.");
-                return;
+                return Err(InferenceError::Cancelled);
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
+
+        Ok(())
+    }
+
+    // New inference function that returns values directly
+    fn my_direct_inference_function<B: Backend>(
+        In(input): In<Tensor<B, 2>>,
+        model: Model<MyNnModel<B>>,
+        _devices: MultiDevice<B>,
+    ) -> Out<Tensor<B, 2>> {
+        println!("Running direct inference with model: {:?}", *model);
+        let result = model.0.linear.forward(input);
+        result.into()
     }
 
     fn panicking_inference_function<B: Backend>(
         input: In<Tensor<B, 2>>,
         model: Model<MyNnModel<B>>,
         devices: MultiDevice<B>,
-        output: Out<String>,
+        output: OutStream<String>,
     ) {
         for i in 0..5 {
             if output.emit(format!("Processing step {}", i)).is_err() {
@@ -485,20 +479,15 @@ mod tests {
         client
     }
 
-    static NAMESPACE: &str = "default-namespace";
-    static PROJECT: &str = "default-project";
-
     #[test]
     fn test_inference_creation() {
         fn infer<B: Backend>() {
             let client = provision_client();
-            let namespace = NAMESPACE;
-            let project = PROJECT;
 
             let device = Default::default();
 
-            let inference = InferenceBuilder::new(client, namespace, project)
-                .load("my_nn_model:1".parse().unwrap(), &device)
+            let inference = InferenceBuilder::new(client)
+                .load("test/proj/my_nn_model:1".parse().unwrap(), &device)
                 .unwrap()
                 .build(my_inference_function);
 
@@ -514,13 +503,11 @@ mod tests {
     #[test]
     fn test_inference_job_spawn() {
         let client = provision_client();
-        let namespace = NAMESPACE;
-        let project = PROJECT;
 
         let device = Device::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client, namespace, project)
-            .load::<MyNnModel<TestBackend>>("my_nn_model:1".parse().unwrap(), &device)
+        let inference = InferenceBuilder::<TestBackend>::new(client)
+            .load::<MyNnModel<TestBackend>>("test/proj/my_nn_model:1".parse().unwrap(), &device)
             .unwrap()
             .build(my_inference_function);
 
@@ -542,13 +529,11 @@ mod tests {
     #[test]
     fn test_panicking_job_spawn() {
         let client = provision_client();
-        let namespace = NAMESPACE;
-        let project = PROJECT;
 
         let device = Device::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client, namespace, project)
-            .load::<MyNnModel<TestBackend>>("my_nn_model:1".parse().unwrap(), &device)
+        let inference = InferenceBuilder::<TestBackend>::new(client)
+            .load::<MyNnModel<TestBackend>>("test/proj/my_nn_model:1".parse().unwrap(), &device)
             .unwrap()
             .build(panicking_inference_function);
 
@@ -564,5 +549,21 @@ mod tests {
         } else {
             println!("Job completed successfully");
         }
+    }
+
+    #[test]
+    fn test_inference_with_direct_return() {
+        let client = provision_client();
+
+        let device = Device::default();
+
+        let inference = InferenceBuilder::<TestBackend>::new(client)
+            .load::<MyNnModel<TestBackend>>("test/proj/my_nn_model:1".parse().unwrap(), &device)
+            .unwrap()
+            .build(my_direct_inference_function);
+
+        let input = Tensor::<TestBackend, 2>::ones([1, 10], &device);
+        let output = inference.infer(input, vec![device]).unwrap();
+        println!("Direct inference output: {:?}", output);
     }
 }

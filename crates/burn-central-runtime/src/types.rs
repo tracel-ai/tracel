@@ -10,3 +10,5 @@ pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 pub struct Model<M>(pub M);
 #[derive(Debug, Deref, From)]
 pub struct In<T>(pub T);
+#[derive(Debug, Deref, From)]
+pub struct Out<T>(pub T);

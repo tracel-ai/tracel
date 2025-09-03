@@ -279,23 +279,23 @@ where
 
 pub struct ExecutorRoutineWrapper<S, Ctx>(S, PhantomData<Ctx>);
 
-impl<S, Ctx, Output> ExecutorRoutineWrapper<S, Ctx>
+impl<S, Ctx, Input, Output> ExecutorRoutineWrapper<S, Ctx>
 where
-    S: Routine<Ctx, In = (), Out = Output>,
+    S: Routine<Ctx, In = Input, Out = Output>,
 {
     pub fn new(routine: S) -> Self {
         ExecutorRoutineWrapper(routine, PhantomData)
     }
 }
 
-impl<Ctx, S, Output> Routine<Ctx> for ExecutorRoutineWrapper<S, Ctx>
+impl<Ctx, S, Input, Output> Routine<Ctx> for ExecutorRoutineWrapper<S, Ctx>
 where
-    S: Routine<Ctx, In = (), Out = Output>,
-    // This assumes `RoutineOutput` is also made generic over `Ctx`.
+    S: Routine<Ctx, In = Input, Out = Output>,
+    Input: RoutineInput,
     Output: RoutineOutput<Ctx>,
     Ctx: Send + Sync + 'static,
 {
-    type In = ();
+    type In = Input;
     type Out = ();
 
     fn name(&self) -> &str {
@@ -310,8 +310,6 @@ where
         match self.0.run(input, ctx) {
             Ok(output) => {
                 output.apply_output(ctx).map_err(|e| {
-                    // Assuming a logger is available, e.g., from the `log` crate.
-                    // log::error!("Failed to apply output: {e}");
                     RuntimeError::HandlerFailed(anyhow::anyhow!("Failed to apply output: {}", e))
                 })?;
                 Ok(())
@@ -321,5 +319,4 @@ where
     }
 }
 
-/// The boxed routine type alias is updated to include `Ctx`.
 pub type BoxedRoutine<Ctx, In, Out> = Box<dyn Routine<Ctx, In = In, Out = Out>>;
