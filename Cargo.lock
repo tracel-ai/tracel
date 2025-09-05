@@ -351,6 +351,7 @@ dependencies = [
  "burn",
  "burn-central-client",
  "clap",
+ "crossbeam",
  "derive_more 2.0.1",
  "env_logger",
  "log",

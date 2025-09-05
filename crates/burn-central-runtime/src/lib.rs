@@ -10,6 +10,7 @@ mod types;
 
 #[cfg(feature = "cli")]
 pub mod cli;
+pub mod model;
 
 pub use error::RuntimeError;
 pub use executor::{ExecutionContext, Executor, ExecutorBuilder};

@@ -20,12 +20,20 @@ variadics_please = { workspace = true }
 tynm = { workspace = true, features = ["info"] }
 syn = { workspace = true }
 strum = { workspace = true }
-derive_more = { workspace = true, features = ["deref", "from", "display", "unwrap"] }
+derive_more = { workspace = true, features = [
+    "deref",
+    "from",
+    "display",
+    "unwrap",
+] }
 clap = { workspace = true, features = ["derive"], optional = true }
 log = { workspace = true, features = ["std"] }
 env_logger = { workspace = true }
 serde_json = { workspace = true }
-
+crossbeam = { workspace = true, default-features = false, features = [
+    "crossbeam-channel",
+    "std",
+] }
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
 serde = { workspace = true }

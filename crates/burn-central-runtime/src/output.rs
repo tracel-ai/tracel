@@ -67,21 +67,24 @@ where
 }
 
 /// This trait is used for outputs that are specifically related to inference routines.
-pub trait InferenceOutput<B: Backend, M, S>: RoutineOutput<InferenceContext<B, M, S>> {}
+pub trait InferenceOutput<B: Backend, M, O, S>:
+    RoutineOutput<InferenceContext<B, M, O, S>>
+{
+}
 
-impl<B: Backend, M, S> RoutineOutput<InferenceContext<B, M, S>> for () {
-    fn apply_output(self, _ctx: &mut InferenceContext<B, M, S>) -> anyhow::Result<Self> {
+impl<B: Backend, M, O, S> RoutineOutput<InferenceContext<B, M, O, S>> for () {
+    fn apply_output(self, _ctx: &mut InferenceContext<B, M, O, S>) -> anyhow::Result<Self> {
         Ok(())
     }
 }
 
-impl<B: Backend, M, S> InferenceOutput<B, M, S> for () {}
+impl<B: Backend, M, O, S> InferenceOutput<B, M, O, S> for () {}
 
-impl<B: Backend, M, T> RoutineOutput<InferenceContext<B, M, T>> for Out<T>
+impl<B: Backend, M, T, S> RoutineOutput<InferenceContext<B, M, T, S>> for Out<T>
 where
     T: Send + 'static,
 {
-    fn apply_output(self, ctx: &mut InferenceContext<B, M, T>) -> anyhow::Result<()> {
+    fn apply_output(self, ctx: &mut InferenceContext<B, M, T, S>) -> anyhow::Result<()> {
         use crate::inference::EmitControl;
 
         match ctx.emitter.emit(self.0) {
@@ -91,11 +94,11 @@ where
     }
 }
 
-impl<B: Backend, M, T> InferenceOutput<B, M, T> for Out<T> where T: Send + 'static {}
+impl<B: Backend, M, T, S> InferenceOutput<B, M, T, S> for Out<T> where T: Send + 'static {}
 
-impl<B: Backend, M, O, T, E> InferenceOutput<B, M, O> for Result<T, E>
+impl<B: Backend, M, O, T, E, S> InferenceOutput<B, M, O, S> for Result<T, E>
 where
-    T: InferenceOutput<B, M, O>,
+    T: InferenceOutput<B, M, O, S>,
     E: Display + Send + Sync + 'static,
 {
 }

@@ -12,3 +12,5 @@ pub struct Model<M>(pub M);
 pub struct In<T>(pub T);
 #[derive(Debug, Deref, From)]
 pub struct Out<T>(pub T);
+#[derive(Debug, Deref, From)]
+pub struct State<T>(pub T);
