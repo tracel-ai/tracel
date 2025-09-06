@@ -4,7 +4,6 @@ use crate::model::ModelAccessor;
 use crate::param::RoutineParam;
 use crate::{MultiDevice, State};
 use burn::prelude::Backend;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 pub struct InferenceContext<B: Backend, M, O, S> {
@@ -12,7 +11,7 @@ pub struct InferenceContext<B: Backend, M, O, S> {
     pub devices: Vec<B::Device>,
     pub model: ModelAccessor<M>,
     pub emitter: Arc<dyn Emitter<O>>,
-    pub cancel_token: Arc<AtomicBool>,
+    pub cancel_token: CancelToken,
     pub state: Mutex<Option<S>>,
 }
 
@@ -27,7 +26,7 @@ impl<B: Backend, M, O, S> RoutineParam<InferenceContext<B, M, O, S>> for CancelT
         S: 'new;
 
     fn try_retrieve(ctx: &InferenceContext<B, M, O, S>) -> anyhow::Result<Self::Item<'_>> {
-        Ok(CancelToken(ctx.cancel_token.clone()))
+        Ok(ctx.cancel_token.clone())
     }
 }
 

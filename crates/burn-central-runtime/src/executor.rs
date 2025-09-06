@@ -232,8 +232,9 @@ impl<B: AutodiffBackend> Executor<B> {
 
 #[cfg(test)]
 mod test {
+    use crate::{Cfg, Model, MultiDevice};
+
     use super::*;
-    use crate::*;
     use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;

@@ -18,7 +18,7 @@ pub trait Emitter<T>: Send + Sync + 'static {
 }
 
 #[derive(Clone)]
-pub struct CancelToken(pub(crate) Arc<AtomicBool>);
+pub struct CancelToken(Arc<AtomicBool>);
 
 impl CancelToken {
     pub fn new() -> Self {
@@ -87,7 +87,7 @@ impl<T: Send + 'static> Emitter<T> for SyncChannelEmitter<T> {
 
 #[derive(Clone, Deref)]
 pub struct OutStream<T> {
-    pub(crate) emitter: Arc<dyn Emitter<T>>,
+    emitter: Arc<dyn Emitter<T>>,
 }
 
 impl<T> OutStream<T> {

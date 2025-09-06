@@ -12,7 +12,6 @@ use burn::prelude::Backend;
 use burn_central_client::BurnCentral;
 use burn_central_client::model::ModelSpec;
 use std::marker::PhantomData;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 type ArcInferenceHandler<B, M, I, O, S> =
@@ -74,7 +73,7 @@ where
                 devices: devices.into_iter().collect(),
                 model: self.model.get_accessor(),
                 emitter: collector.clone(),
-                cancel_token: Arc::new(AtomicBool::new(false)),
+                cancel_token: CancelToken::new(),
                 state: Mutex::new(Some(state)),
             };
             self.handler
@@ -102,7 +101,7 @@ where
             devices: devices.into_iter().collect(),
             model: self.model.get_accessor(),
             emitter: Arc::new(SyncChannelEmitter::new(stream_tx)),
-            cancel_token: cancel_token.0.clone(),
+            cancel_token: cancel_token.clone(),
             state: Mutex::new(Some(state)),
         };
         let handler = self.handler.clone();

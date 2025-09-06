@@ -54,7 +54,7 @@ impl<M: 'static + Send> ModelHost<M> {
             m
         });
         Self {
-            accessor: ModelAccessor { tx: tx.clone() },
+            accessor: ModelAccessor { tx },
             abort_tx,
             join_handle: Some(join_handle),
         }
