@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum InferenceError {
     #[error("Model loading failed: {0}")]
-    ModelLoadingFailed(#[from] ModelProviderError),
+    ModelInitFailed(#[from] InitError),
     #[error("Inference handler execution failed: {0}")]
     HandlerExecutionFailed(anyhow::Error),
     #[error("Inference cancelled")]
@@ -16,9 +16,7 @@ pub enum InferenceError {
 }
 
 #[derive(Debug, Error)]
-pub enum ModelProviderError {
+pub enum InitError {
     #[error("Model registry error: {0}")]
     ModelLoadingFailed(#[from] ModelRegistryError),
 }
-
-pub type ModelProviderResult<M> = Result<M, ModelProviderError>;

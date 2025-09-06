@@ -60,11 +60,11 @@ impl<M: 'static + Send> ModelHost<M> {
         }
     }
 
-    pub fn get_accessor(&self) -> ModelAccessor<M> {
+    pub fn accessor(&self) -> ModelAccessor<M> {
         self.accessor.clone()
     }
 
-    pub fn kill(mut self) -> M {
+    pub fn take(mut self) -> M {
         let _ = self.abort_tx.send(());
         let m = self
             .join_handle

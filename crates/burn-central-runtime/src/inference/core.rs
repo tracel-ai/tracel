@@ -2,7 +2,7 @@ use super::context::InferenceContext;
 use super::emitter::{CancelToken, CollectEmitter, SyncChannelEmitter};
 use super::errors::InferenceError;
 use super::job::JobHandle;
-use super::provider::ModelProvider;
+use super::provider::Init;
 use crate::input::RoutineInput;
 use crate::model::ModelHost;
 use crate::output::InferenceOutput;
@@ -10,7 +10,6 @@ use crate::routine::ExecutorRoutineWrapper;
 use crate::{IntoRoutine, Routine};
 use burn::prelude::Backend;
 use burn_central_client::BurnCentral;
-use burn_central_client::model::ModelSpec;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
@@ -71,7 +70,7 @@ where
             let mut ctx = InferenceContext {
                 id: self.id.clone(),
                 devices: devices.into_iter().collect(),
-                model: self.model.get_accessor(),
+                model: self.model.accessor(),
                 emitter: collector.clone(),
                 cancel_token: CancelToken::new(),
                 state: Mutex::new(Some(state)),
@@ -99,7 +98,7 @@ where
         let mut ctx = InferenceContext {
             id: id.clone(),
             devices: devices.into_iter().collect(),
-            model: self.model.get_accessor(),
+            model: self.model.accessor(),
             emitter: Arc::new(SyncChannelEmitter::new(stream_tx)),
             cancel_token: cancel_token.clone(),
             state: Mutex::new(Some(state)),
@@ -127,19 +126,29 @@ impl<B: Backend> InferenceBuilder<B> {
         }
     }
 
-    pub fn load<M: ModelProvider<B>>(
+    pub fn init<M, InitArgs>(
         self,
-        model_spec: ModelSpec,
+        args: &InitArgs,
         device: &B::Device,
-    ) -> Result<LoadedInferenceBuilder<B, M>, InferenceError> {
-        let registry = self.client.model_registry();
-        let model = M::get_model(&registry, model_spec, device)
-            .map_err(InferenceError::ModelLoadingFailed)?;
+    ) -> Result<LoadedInferenceBuilder<B, M>, InferenceError>
+    where
+        M: Init<B, InitArgs>,
+        InitArgs: Send + 'static,
+    {
+        let model = M::init(args, device).map_err(InferenceError::ModelInitFailed)?;
         Ok(LoadedInferenceBuilder {
             client: self.client,
             model,
             phantom_data: Default::default(),
         })
+    }
+
+    pub fn with_model<M>(self, model: M) -> LoadedInferenceBuilder<B, M> {
+        LoadedInferenceBuilder {
+            client: self.client,
+            model,
+            phantom_data: Default::default(),
+        }
     }
 }
 

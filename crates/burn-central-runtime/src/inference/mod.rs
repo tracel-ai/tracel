@@ -16,6 +16,6 @@ pub use core::{Inference, InferenceBuilder, LoadedInferenceBuilder};
 pub use emitter::{
     CancelToken, CollectEmitter, EmitControl, Emitter, OutStream, SyncChannelEmitter,
 };
-pub use errors::{InferenceError, ModelProviderError, ModelProviderResult};
+pub use errors::{InferenceError, InitError};
 pub use job::JobHandle;
-pub use provider::ModelProvider;
+pub use provider::Init;

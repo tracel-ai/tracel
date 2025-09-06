@@ -2,41 +2,55 @@
 mod tests {
     use crate::inference::core::InferenceBuilder;
     use crate::inference::emitter::OutStream;
-    use crate::inference::errors::{InferenceError, ModelProviderResult};
-    use crate::inference::provider::ModelProvider;
+    use crate::inference::errors::InferenceError;
+    use crate::inference::provider::Init;
     use crate::model::ModelAccessor;
-    use crate::{In, MultiDevice, Out, State};
+    use crate::{In, InitError, MultiDevice, Out, State};
     use burn::backend::NdArray;
+    use burn::config::Config;
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::{Backend, Module};
+    use burn::record::{FullPrecisionSettings, NamedMpkBytesRecorder, Recorder};
     use burn::tensor::Tensor;
     use burn_central_client::credentials::BurnCentralCredentials;
-    use burn_central_client::model::{ModelRegistry, ModelSpec};
     use std::str::FromStr;
 
     type TestBackend = NdArray;
     type Device = <TestBackend as Backend>::Device;
+
+    #[derive(Config, Debug)]
+    pub struct TestModelConfig {
+        input_size: usize,
+        output_size: usize,
+    }
+
+    impl TestModelConfig {
+        pub fn init<B: Backend>(&self, device: &B::Device) -> TestModel<B> {
+            let linear = LinearConfig::new(self.input_size, self.output_size).init(device);
+            TestModel { linear }
+        }
+    }
 
     #[derive(Module, Debug)]
     pub struct TestModel<B: Backend> {
         linear: Linear<B>,
     }
 
-    impl<B: Backend> TestModel<B> {
-        fn new(device: &B::Device) -> Self {
-            let linear = LinearConfig::new(10, 5).init(device);
-            TestModel { linear }
-        }
+    pub struct TestModelArtifacts {
+        pub config: TestModelConfig,
+        pub weights: Vec<u8>,
     }
 
-    impl<B: Backend> ModelProvider<B> for TestModel<B> {
-        fn get_model(
-            _registry: &ModelRegistry,
-            model_spec: ModelSpec,
-            device: &B::Device,
-        ) -> ModelProviderResult<Self> {
-            println!("Loading test model with spec: {model_spec}");
-            Ok(TestModel::new(device))
+    impl<B: Backend> Init<B, TestModelArtifacts> for TestModel<B> {
+        fn init(args: &TestModelArtifacts, device: &B::Device) -> Result<Self, InitError> {
+            let config = &args.config;
+            println!("Loading test model with config: {config:?}");
+            let model = config.init(device);
+
+            let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
+            let model_record = recorder.load(args.weights.clone(), device).unwrap();
+            let model = model.load_record(model_record);
+            Ok(model)
         }
     }
 
@@ -95,13 +109,24 @@ mod tests {
             .expect("Should create test client")
     }
 
+    fn create_test_model_artifacts() -> TestModelArtifacts {
+        let config = TestModelConfig::new(10, 5);
+        let model = config.init::<TestBackend>(&Device::default());
+
+        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
+        let record = model.into_record();
+        let weights = recorder.record(record, ()).unwrap();
+        TestModelArtifacts { config, weights }
+    }
+
     #[test]
     fn test_streaming_inference() {
         let client = create_test_client();
+        let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
         let inference = InferenceBuilder::<TestBackend>::new(client)
-            .load::<TestModel<TestBackend>>("test/model:1".parse().unwrap(), &device)
+            .init(&artifacts, &device)
             .unwrap()
             .build(streaming_inference_handler);
 
@@ -118,10 +143,11 @@ mod tests {
     #[test]
     fn test_direct_inference() {
         let client = create_test_client();
+        let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
         let inference = InferenceBuilder::<TestBackend>::new(client)
-            .load::<TestModel<TestBackend>>("test/model:1".parse().unwrap(), &device)
+            .init(&artifacts, &device)
             .unwrap()
             .build(direct_inference_handler);
 
@@ -135,10 +161,11 @@ mod tests {
     #[test]
     fn test_stateful_inference() {
         let client = create_test_client();
+        let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
         let inference = InferenceBuilder::<TestBackend>::new(client)
-            .load::<TestModel<TestBackend>>("test/model:1".parse().unwrap(), &device)
+            .init(&artifacts, &device)
             .unwrap()
             .build(stateful_inference_handler);
 
@@ -157,10 +184,11 @@ mod tests {
     #[test]
     fn test_async_inference_job() {
         let client = create_test_client();
+        let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
         let inference = InferenceBuilder::<TestBackend>::new(client)
-            .load::<TestModel<TestBackend>>("test/model:1".parse().unwrap(), &device)
+            .init(&artifacts, &device)
             .unwrap()
             .build(streaming_inference_handler);
 

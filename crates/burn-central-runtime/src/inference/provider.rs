@@ -1,11 +1,13 @@
-use super::errors::ModelProviderResult;
-use burn::prelude::Backend;
-use burn_central_client::model::{ModelRegistry, ModelSpec};
+use crate::InitError;
 
-pub trait ModelProvider<B: Backend>: Sized {
-    fn get_model(
-        registry: &ModelRegistry,
-        model_spec: ModelSpec,
-        device: &B::Device,
-    ) -> ModelProviderResult<Self>;
+use burn::prelude::Backend;
+
+/// Trait for models that can be initialized from user-defined arguments.
+pub trait Init<B, InitArgs = ()>: Sized
+where
+    B: Backend,
+    InitArgs: Send + 'static,
+{
+    /// Initialize the model from the given arguments and device.
+    fn init(args: &InitArgs, device: &B::Device) -> Result<Self, InitError>;
 }

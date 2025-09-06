@@ -1,5 +1,4 @@
 use super::emitter::{CancelToken, Emitter, OutStream};
-use super::provider::ModelProvider;
 use crate::model::ModelAccessor;
 use crate::param::RoutineParam;
 use crate::{MultiDevice, State};
@@ -44,9 +43,7 @@ impl<B: Backend, M, O, S> RoutineParam<InferenceContext<B, M, O, S>> for OutStre
     }
 }
 
-impl<B: Backend, M: ModelProvider<B>, O, S> RoutineParam<InferenceContext<B, M, O, S>>
-    for ModelAccessor<M>
-{
+impl<B: Backend, M, O, S> RoutineParam<InferenceContext<B, M, O, S>> for ModelAccessor<M> {
     type Item<'new>
         = ModelAccessor<M>
     where
