@@ -9,7 +9,6 @@ use crate::output::InferenceOutput;
 use crate::routine::ExecutorRoutineWrapper;
 use crate::{IntoRoutine, Routine};
 use burn::prelude::Backend;
-use burn_central_client::BurnCentral;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
@@ -20,7 +19,6 @@ pub struct Inference<B: Backend, M, I, O, S = ()> {
     pub id: String,
     model: ModelHost<M>,
     handler: ArcInferenceHandler<B, M, I, O, S>,
-    _burn_central: BurnCentral,
     phantom_data: PhantomData<(O, S)>,
 }
 
@@ -32,17 +30,11 @@ where
     O: Send + 'static,
     S: Send + Sync + 'static,
 {
-    pub(crate) fn new(
-        id: String,
-        handler: ArcInferenceHandler<B, M, I, O, S>,
-        model: M,
-        client: BurnCentral,
-    ) -> Self {
+    pub(crate) fn new(id: String, handler: ArcInferenceHandler<B, M, I, O, S>, model: M) -> Self {
         Self {
             id,
             model: ModelHost::spawn(model),
             handler,
-            _burn_central: client,
             phantom_data: Default::default(),
         }
     }
@@ -114,14 +106,12 @@ where
 }
 
 pub struct InferenceBuilder<B> {
-    client: BurnCentral,
     phantom_data: PhantomData<B>,
 }
 
 impl<B: Backend> InferenceBuilder<B> {
-    pub fn new(client: BurnCentral) -> Self {
+    pub fn new() -> Self {
         Self {
-            client,
             phantom_data: Default::default(),
         }
     }
@@ -137,7 +127,6 @@ impl<B: Backend> InferenceBuilder<B> {
     {
         let model = M::init(args, device).map_err(InferenceError::ModelInitFailed)?;
         Ok(LoadedInferenceBuilder {
-            client: self.client,
             model,
             phantom_data: Default::default(),
         })
@@ -145,7 +134,6 @@ impl<B: Backend> InferenceBuilder<B> {
 
     pub fn with_model<M>(self, model: M) -> LoadedInferenceBuilder<B, M> {
         LoadedInferenceBuilder {
-            client: self.client,
             model,
             phantom_data: Default::default(),
         }
@@ -153,7 +141,6 @@ impl<B: Backend> InferenceBuilder<B> {
 }
 
 pub struct LoadedInferenceBuilder<B: Backend, M> {
-    client: BurnCentral,
     model: M,
     phantom_data: PhantomData<B>,
 }
@@ -177,7 +164,6 @@ where
                 handler,
             ))),
             self.model,
-            self.client,
         )
     }
 }

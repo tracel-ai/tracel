@@ -12,8 +12,6 @@ mod tests {
     use burn::prelude::{Backend, Module};
     use burn::record::{FullPrecisionSettings, NamedMpkBytesRecorder, Recorder};
     use burn::tensor::Tensor;
-    use burn_central_client::credentials::BurnCentralCredentials;
-    use std::str::FromStr;
 
     type TestBackend = NdArray;
     type Device = <TestBackend as Backend>::Device;
@@ -99,16 +97,6 @@ mod tests {
         Ok(())
     }
 
-    fn create_test_client() -> burn_central_client::BurnCentral {
-        let creds = BurnCentralCredentials::from_str("test-credentials")
-            .expect("Should create test credentials");
-
-        burn_central_client::BurnCentral::builder(creds)
-            .with_endpoint("http://localhost:9001")
-            .build()
-            .expect("Should create test client")
-    }
-
     fn create_test_model_artifacts() -> TestModelArtifacts {
         let config = TestModelConfig::new(10, 5);
         let model = config.init::<TestBackend>(&Device::default());
@@ -121,11 +109,10 @@ mod tests {
 
     #[test]
     fn test_streaming_inference() {
-        let client = create_test_client();
         let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client)
+        let inference = InferenceBuilder::<TestBackend>::new()
             .init(&artifacts, &device)
             .unwrap()
             .build(streaming_inference_handler);
@@ -142,11 +129,10 @@ mod tests {
 
     #[test]
     fn test_direct_inference() {
-        let client = create_test_client();
         let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client)
+        let inference = InferenceBuilder::<TestBackend>::new()
             .init(&artifacts, &device)
             .unwrap()
             .build(direct_inference_handler);
@@ -160,11 +146,10 @@ mod tests {
 
     #[test]
     fn test_stateful_inference() {
-        let client = create_test_client();
         let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client)
+        let inference = InferenceBuilder::<TestBackend>::new()
             .init(&artifacts, &device)
             .unwrap()
             .build(stateful_inference_handler);
@@ -183,11 +168,10 @@ mod tests {
 
     #[test]
     fn test_async_inference_job() {
-        let client = create_test_client();
         let artifacts = create_test_model_artifacts();
         let device = Device::default();
 
-        let inference = InferenceBuilder::<TestBackend>::new(client)
+        let inference = InferenceBuilder::<TestBackend>::new()
             .init(&artifacts, &device)
             .unwrap()
             .build(streaming_inference_handler);
