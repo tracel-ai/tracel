@@ -10,9 +10,7 @@ mod streaming;
 #[cfg(test)]
 mod tests;
 
-// Re-export main types for convenience
 pub use builder::*;
-pub use context::InferenceContext;
 pub use core::*;
 pub use error::InferenceError;
 pub use init::Init;

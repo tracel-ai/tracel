@@ -2,6 +2,7 @@ use super::error::InferenceError;
 use super::streaming::CancelToken;
 use std::thread::JoinHandle;
 
+/// Handle to a running inference job thread.
 pub struct JobHandle<S> {
     pub id: String,
     pub stream: crossbeam::channel::Receiver<S>,
@@ -24,17 +25,21 @@ impl<S> JobHandle<S> {
         }
     }
 
+    /// Cancel the running job. This will signal the job to stop processing as soon as possible.
+    /// Note that this does not immediately kill the thread, but rather requests it to stop.
+    /// The inference function has to use the `CancelToken` to check for cancellation.
     pub fn cancel(&self) {
         self.cancel.cancel();
     }
 
+    /// Wait for the job to finish and return the result.
     pub fn join(mut self) -> Result<(), InferenceError> {
         if let Some(join) = self.join.take() {
-            Ok(join.join().unwrap_or_else(|e| {
-                Err(InferenceError::ThreadPanicked(format!(
-                    "Inference thread panicked: {e:?}"
-                )))
-            })?)
+            let res = join.join();
+            match res {
+                Ok(r) => r,
+                Err(e) => Err(InferenceError::ThreadPanicked(format!("{e:?}"))),
+            }
         } else {
             Ok(())
         }

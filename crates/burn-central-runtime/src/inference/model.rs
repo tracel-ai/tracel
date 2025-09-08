@@ -62,9 +62,8 @@ impl<M: 'static + Send> ModelHost<M> {
 
     pub fn into_model(mut self) -> M {
         let _ = self.abort_tx.send(());
-        
-        self
-            .join_handle
+
+        self.join_handle
             .take()
             .expect("Should have join handle")
             .join()

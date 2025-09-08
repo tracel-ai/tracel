@@ -1,8 +1,10 @@
 use super::streaming::{CancelToken, Emitter, OutStream};
 use crate::inference::model::ModelAccessor;
+use crate::output::RoutineOutput;
 use crate::param::RoutineParam;
-use crate::{MultiDevice, State};
+use crate::{MultiDevice, Out, State};
 use burn::prelude::Backend;
+use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 
 pub struct InferenceContext<B: Backend, M, O, S> {
@@ -13,6 +15,8 @@ pub struct InferenceContext<B: Backend, M, O, S> {
     pub cancel_token: CancelToken,
     pub state: Mutex<Option<S>>,
 }
+
+// --- Params
 
 // Implementations for extracting parameters from InferenceContext
 impl<B: Backend, M, O, S> RoutineParam<InferenceContext<B, M, O, S>> for CancelToken {
@@ -85,4 +89,40 @@ impl<B: Backend, M, O, S> RoutineParam<InferenceContext<B, M, O, S>> for State<S
             || anyhow::anyhow!("State has already been taken or was not provided"),
         )?))
     }
+}
+
+// --- Outputs
+/// This trait is used for outputs that are specifically related to inference routines.
+pub trait InferenceOutput<B: Backend, M, O, S>:
+    RoutineOutput<InferenceContext<B, M, O, S>>
+{
+}
+
+impl<B: Backend, M, O, S> RoutineOutput<InferenceContext<B, M, O, S>> for () {
+    fn apply_output(self, _ctx: &mut InferenceContext<B, M, O, S>) -> anyhow::Result<Self> {
+        Ok(())
+    }
+}
+
+impl<B: Backend, M, O, S> InferenceOutput<B, M, O, S> for () {}
+
+impl<B: Backend, M, T, S> RoutineOutput<InferenceContext<B, M, T, S>> for Out<T>
+where
+    T: Send + 'static,
+{
+    fn apply_output(self, ctx: &mut InferenceContext<B, M, T, S>) -> anyhow::Result<()> {
+        match ctx.emitter.emit(self.0) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("Failed to emit output: {}", e.source)),
+        }
+    }
+}
+
+impl<B: Backend, M, T, S> InferenceOutput<B, M, T, S> for Out<T> where T: Send + 'static {}
+
+impl<B: Backend, M, O, T, E, S> InferenceOutput<B, M, O, S> for Result<T, E>
+where
+    T: InferenceOutput<B, M, O, S>,
+    E: Display + Send + Sync + 'static,
+{
 }

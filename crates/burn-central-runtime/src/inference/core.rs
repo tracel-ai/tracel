@@ -1,13 +1,13 @@
 use super::context::InferenceContext;
+use super::context::InferenceOutput;
 use super::error::InferenceError;
 use super::init::Init;
 use super::job::JobHandle;
 use super::streaming::{CancelToken, CollectEmitter, SyncChannelEmitter};
 use crate::inference::model::ModelHost;
 use crate::input::RoutineInput;
-use crate::output::InferenceOutput;
 use crate::routine::ExecutorRoutineWrapper;
-use crate::{IntoRoutine, Routine};
+use crate::{InferenceJob, InferenceJobBuilder, IntoRoutine, Routine, StrappedInferenceJobBuilder};
 use burn::prelude::Backend;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
@@ -38,20 +38,16 @@ where
     }
 
     pub fn infer(
-        &self,
+        &'_ self,
         input: I::Inner<'static>,
-    ) -> super::builder::StrappedInferenceJobBuilder<B, M, I, O, S, super::builder::StateMissing>
-    {
-        super::builder::StrappedInferenceJobBuilder {
+    ) -> StrappedInferenceJobBuilder<'_, B, M, I, O, S, super::builder::StateMissing> {
+        StrappedInferenceJobBuilder {
             inference: self,
-            input: super::builder::InferenceJobBuilder::new(input),
+            input: InferenceJobBuilder::new(input),
         }
     }
 
-    pub fn run(
-        &self,
-        job: super::builder::InferenceJob<B, I, S>,
-    ) -> Result<Vec<O>, InferenceError> {
+    pub fn run(&self, job: InferenceJob<B, I, S>) -> Result<Vec<O>, InferenceError> {
         let collector = Arc::new(CollectEmitter::new());
         let input = job.input;
         let devices = job.devices;
