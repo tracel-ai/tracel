@@ -30,7 +30,7 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tracing = { version = "0.1.41" }
 tracing-core = { version = "0.1.33" }
-tracing-subscriber = { version = "0.3.19" }
+tracing-subscriber = { version = "0.3.20" }
 tungstenite = { version = "0.26.2", features = ["native-tls"] }
 uuid = { workspace = true }
 regex = { workspace = true }
