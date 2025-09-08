@@ -62,13 +62,13 @@ impl<M: 'static + Send> ModelHost<M> {
 
     pub fn into_model(mut self) -> M {
         let _ = self.abort_tx.send(());
-        let m = self
+        
+        self
             .join_handle
             .take()
             .expect("Should have join handle")
             .join()
-            .expect("Thread should not panic");
-        m
+            .expect("Thread should not panic")
     }
 }
 
@@ -93,15 +93,15 @@ pub struct ModelAccessor<M> {
 
 impl<M: Debug> Debug for ModelAccessor<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let debug_str = self.with(|m| format!("{:?}", m));
-        write!(f, "{}", debug_str)
+        let debug_str = self.with(|m| format!("{m:?}"));
+        write!(f, "{debug_str}")
     }
 }
 
 impl<M: Display> Display for ModelAccessor<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let display_str = self.with(|m| format!("{}", m));
-        write!(f, "{}", display_str)
+        let display_str = self.with(|m| format!("{m}"));
+        write!(f, "{display_str}")
     }
 }
 

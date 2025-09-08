@@ -50,6 +50,7 @@ macro_rules! impl_routine_function {
             non_snake_case,
             reason = "Certain variable names are provided by the caller, not by us."
         )]
+        #[allow(clippy::too_many_arguments)]
         impl<Ctx, Out, Func, $($param: RoutineParam<Ctx>),*> RoutineParamFunction<Ctx, fn($($param,)*) -> Out> for Func
         where
             Func: Send + Sync + 'static,
@@ -88,6 +89,7 @@ macro_rules! impl_routine_function {
             non_snake_case,
             reason = "Certain variable names are provided by the caller, not by us."
         )]
+        #[allow(clippy::too_many_arguments)]
         impl<Ctx, In, Out, Func, $($param: RoutineParam<Ctx>),*> RoutineParamFunction<Ctx, (HasRoutineInput, fn(In, $($param,)*) -> Out)> for Func
         where
             Func: Send + Sync + 'static,

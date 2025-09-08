@@ -111,6 +111,12 @@ pub struct InferenceBuilder<B> {
     phantom_data: PhantomData<B>,
 }
 
+impl<B: Backend> Default for InferenceBuilder<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<B: Backend> InferenceBuilder<B> {
     pub fn new() -> Self {
         Self {
@@ -152,7 +158,7 @@ where
     B: Backend,
     M: Send + 'static,
 {
-    pub fn build<'a, F, I, O, RO, Marker, S>(self, handler: F) -> Inference<B, M, I, O, S>
+    pub fn build<F, I, O, RO, Marker, S>(self, handler: F) -> Inference<B, M, I, O, S>
     where
         F: IntoRoutine<InferenceContext<B, M, O, S>, I, RO, Marker>,
         I: RoutineInput + 'static,

@@ -193,7 +193,7 @@ fn test_async_inference_job() {
     match result {
         Ok(_) => println!("Job completed successfully"),
         Err(InferenceError::Cancelled) => println!("Job was cancelled as expected"),
-        Err(e) => panic!("Unexpected error: {}", e),
+        Err(e) => panic!("Unexpected error: {e}"),
     }
 
     assert_eq!(output_count, 2);

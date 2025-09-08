@@ -32,8 +32,7 @@ impl<S> JobHandle<S> {
         if let Some(join) = self.join.take() {
             Ok(join.join().unwrap_or_else(|e| {
                 Err(InferenceError::ThreadPanicked(format!(
-                    "Inference thread panicked: {:?}",
-                    e
+                    "Inference thread panicked: {e:?}"
                 )))
             })?)
         } else {
