@@ -2,6 +2,7 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::thread::JoinHandle;
 
+/// Dedicated host thread owning the model instance to serialize mutable access and allow cheap cloning of access handles.
 pub struct ModelHost<M> {
     accessor: ModelAccessor<M>,
     abort_tx: crossbeam::channel::Sender<()>,
@@ -10,18 +11,16 @@ pub struct ModelHost<M> {
 
 type BoxAny = Box<dyn Any + Send>;
 
+/// Internal message variants for model host thread operations.
 enum Msg<M> {
     Call {
-        f: Box<dyn FnOnce(&mut M) + Send>,
-        done: crossbeam::channel::Sender<()>,
-    },
-    CallRet {
         f: Box<dyn FnOnce(&mut M) -> BoxAny + Send>,
         ret: crossbeam::channel::Sender<BoxAny>,
     },
 }
 
 impl<M: 'static + Send> ModelHost<M> {
+    /// Spawn a background thread hosting the provided model.
     pub fn spawn(model: M) -> Self {
         let (abort_tx, abort_rx) = crossbeam::channel::unbounded::<()>();
         let (tx, rx) = crossbeam::channel::unbounded::<Msg<M>>();
@@ -31,11 +30,7 @@ impl<M: 'static + Send> ModelHost<M> {
                 crossbeam::channel::select! {
                     recv(rx) -> msg => {
                         match msg {
-                            Ok(Msg::Call { f, done }) => {
-                                f(&mut m);
-                                let _ = done.send(());
-                            }
-                            Ok(Msg::CallRet { f, ret }) => {
+                            Ok(Msg::Call { f, ret }) => {
                                 let r = f(&mut m);
                                 let _ = ret.send(r);
                             }
@@ -56,10 +51,12 @@ impl<M: 'static + Send> ModelHost<M> {
         }
     }
 
+    /// Get a cloneable accessor to interact with the hosted model.
     pub fn accessor(&self) -> ModelAccessor<M> {
         self.accessor.clone()
     }
 
+    /// Stop the host thread and return ownership of the inner model.
     pub fn into_model(mut self) -> M {
         let _ = self.abort_tx.send(());
 
@@ -86,6 +83,7 @@ impl<M> Drop for ModelHost<M> {
     }
 }
 
+/// Cloneable handle used to execute closures against the model on its host thread.
 pub struct ModelAccessor<M> {
     tx: crossbeam::channel::Sender<Msg<M>>,
 }
@@ -113,22 +111,14 @@ impl<M> Clone for ModelAccessor<M> {
 }
 
 impl<M> ModelAccessor<M> {
+    /// Run a closure that returns a value on the model thread, waiting for completion.
     pub fn with<R: Send + 'static>(&self, f: impl FnOnce(&mut M) -> R + Send + 'static) -> R {
         let (ret_tx, ret_rx) = crossbeam::channel::bounded(1);
-        let _ = self.tx.send(Msg::CallRet {
+        let _ = self.tx.send(Msg::Call {
             f: Box::new(move |m| Box::new(f(m)) as BoxAny),
             ret: ret_tx,
         });
         let r = ret_rx.recv().unwrap();
         *r.downcast::<R>().unwrap()
-    }
-
-    pub fn fire(&self, f: impl FnOnce(&mut M) + Send + 'static) {
-        let (done_tx, done_rx) = crossbeam::channel::bounded(1);
-        let _ = self.tx.send(Msg::Call {
-            f: Box::new(f),
-            done: done_tx,
-        });
-        let _ = done_rx.recv();
     }
 }

@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Errors that can occur during inference job execution.
 #[derive(Debug, Error)]
 pub enum InferenceError {
     #[error("Inference handler execution failed: {0}")]

@@ -3,6 +3,9 @@ use super::streaming::CancelToken;
 use std::thread::JoinHandle;
 
 /// Handle to a running inference job thread.
+///
+/// Provides access to the output stream (`stream`) plus cancellation (`cancel`) and
+/// a `join` method to retrieve the final result (or error) once the handler terminates.
 pub struct JobHandle<S> {
     pub id: String,
     pub stream: crossbeam::channel::Receiver<S>,

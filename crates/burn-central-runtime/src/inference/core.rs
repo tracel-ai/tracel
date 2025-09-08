@@ -12,9 +12,13 @@ use burn::prelude::Backend;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
+/// Internal type alias for a routine trait object representing the user supplied inference handler.
 type ArcInferenceHandler<B, M, I, O, S> =
     Arc<dyn Routine<InferenceContext<B, M, O, S>, In = I, Out = ()>>;
 
+/// Inference instance wrapping a single model and a handler routine.
+///
+/// An `Inference` can create multiple jobs (sequentially or concurrently) without re-loading the model.
 pub struct Inference<B: Backend, M, I, O, S = ()> {
     pub id: String,
     model: ModelHost<M>,
@@ -37,6 +41,7 @@ where
         }
     }
 
+    /// Start building an inference job for the given input payload.
     pub fn infer(
         &'_ self,
         input: I::Inner<'static>,
@@ -47,6 +52,7 @@ where
         }
     }
 
+    /// Execute the provided job synchronously and collect all emitted outputs.
     pub fn run(&self, job: InferenceJob<B, I, S>) -> Result<Vec<O>, InferenceError> {
         let collector = Arc::new(CollectEmitter::new());
         let input = job.input;
@@ -71,6 +77,7 @@ where
         Ok(stream)
     }
 
+    /// Spawn the job on a background thread returning a [`JobHandle`]. Outputs can be read from the handle's stream.
     pub fn spawn(&self, job: super::builder::InferenceJob<B, I, S>) -> JobHandle<O>
     where
         <I as RoutineInput>::Inner<'static>: Send,
@@ -98,11 +105,13 @@ where
         JobHandle::new(id, stream_rx, cancel_token, join)
     }
 
+    /// Consume the inference instance and retrieve ownership of the underlying model.
     pub fn into_model(self) -> M {
         self.model.into_model()
     }
 }
 
+/// Entry point builder for an [`Inference`] instance.
 pub struct InferenceBuilder<B> {
     phantom_data: PhantomData<B>,
 }
@@ -114,12 +123,14 @@ impl<B: Backend> Default for InferenceBuilder<B> {
 }
 
 impl<B: Backend> InferenceBuilder<B> {
+    /// Create a new inference builder.
     pub fn new() -> Self {
         Self {
             phantom_data: Default::default(),
         }
     }
 
+    /// Initialize a model implementing [`Init`] from user artifacts / arguments + target device.
     pub fn init<M, InitArgs>(
         self,
         args: &InitArgs,
@@ -136,6 +147,7 @@ impl<B: Backend> InferenceBuilder<B> {
         })
     }
 
+    /// Provide an already constructed model instance (skips the [`Init`] flow).
     pub fn with_model<M>(self, model: M) -> LoadedInferenceBuilder<B, M> {
         LoadedInferenceBuilder {
             model,
@@ -144,6 +156,7 @@ impl<B: Backend> InferenceBuilder<B> {
     }
 }
 
+/// Builder returned after a model has been loaded or supplied ready for registering a handler.
 pub struct LoadedInferenceBuilder<B: Backend, M> {
     model: M,
     phantom_data: PhantomData<B>,
@@ -154,6 +167,7 @@ where
     B: Backend,
     M: Send + 'static,
 {
+    /// Finalize the construction of an [`Inference`] by supplying a handler routine implementation.
     pub fn build<F, I, O, RO, Marker, S>(self, handler: F) -> Inference<B, M, I, O, S>
     where
         F: IntoRoutine<InferenceContext<B, M, O, S>, I, RO, Marker>,

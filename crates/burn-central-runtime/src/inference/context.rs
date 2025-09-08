@@ -7,6 +7,8 @@ use burn::prelude::Backend;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 
+/// Runtime context passed to the user handler providing access to the model, devices,
+/// streaming emitter, cancellation token and (optional) user state.
 pub struct InferenceContext<B: Backend, M, O, S> {
     pub id: String,
     pub devices: Vec<B::Device>,

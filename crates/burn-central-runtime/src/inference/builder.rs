@@ -4,6 +4,8 @@ use crate::input::RoutineInput;
 use burn::prelude::Backend;
 use std::marker::PhantomData;
 
+/// Builder returned by [`Inference::infer`] allowing configuration (devices, state) before
+/// executing the job via [`StrappedInferenceJobBuilder::run`] or spawning via [`StrappedInferenceJobBuilder::spawn`].
 pub struct StrappedInferenceJobBuilder<'a, B: Backend, M, I: RoutineInput, O, S, Flag> {
     pub(crate) inference: &'a Inference<B, M, I, O, S>,
     pub(crate) input: InferenceJobBuilder<B, I, S, Flag>,
@@ -17,6 +19,7 @@ where
     O: Send + 'static,
     S: Send + Sync + 'static,
 {
+    /// Specify the devices to be exposed to the handler (order preserved; first often primary).
     pub fn with_devices(mut self, devices: impl IntoIterator<Item = B::Device>) -> Self {
         self.input = self.input.with_devices(devices);
         self
@@ -31,6 +34,7 @@ where
     O: Send + 'static,
     S: Send + Sync + 'static,
 {
+    /// Provide state to the handler. Consumed exactly once during handler execution.
     pub fn with_state(
         self,
         state: S,
@@ -42,6 +46,7 @@ where
     }
 }
 
+/// Internal job builder accumulating input + devices + optional state before conversion to an executable job.
 pub struct InferenceJobBuilder<B: Backend, I: RoutineInput, S, Flag> {
     pub(crate) input: <I as RoutineInput>::Inner<'static>,
     pub(crate) devices: Vec<B::Device>,
@@ -55,6 +60,7 @@ where
     I: RoutineInput + 'static,
     S: Send + Sync + 'static,
 {
+    /// Create a new job builder with the provided routine input payload.
     pub fn new(input: <I as RoutineInput>::Inner<'static>) -> Self {
         Self {
             input,
@@ -64,13 +70,16 @@ where
         }
     }
 
+    /// Set the devices collection for this job.
     pub fn with_devices(mut self, devices: impl IntoIterator<Item = B::Device>) -> Self {
         self.devices = devices.into_iter().collect();
         self
     }
 }
 
+/// Marker type indicating the job state has not been supplied.
 pub struct StateMissing;
+/// Marker type indicating the job state has been supplied.
 pub struct StateProvided;
 
 impl<B, I, S> InferenceJobBuilder<B, I, S, StateMissing>
@@ -79,6 +88,7 @@ where
     I: RoutineInput + 'static,
     S: Send + Sync + 'static,
 {
+    /// Attach state to the job; transitions the builder into the `StateProvided` phase.
     pub fn with_state(self, state: S) -> InferenceJobBuilder<B, I, S, StateProvided> {
         InferenceJobBuilder {
             input: self.input,
@@ -95,6 +105,7 @@ where
     I: RoutineInput + 'static,
     S: Send + Sync + 'static,
 {
+    /// Finalize the builder into an [`InferenceJob`]. Panics if state missing (by design of type-state pattern).
     pub fn build(self) -> InferenceJob<B, I, S> {
         InferenceJob {
             input: self.input,
@@ -111,6 +122,7 @@ where
     I: RoutineInput + 'static,
     O: Send + 'static,
 {
+    /// Spawn the inference job on a background thread returning a [`JobHandle`].
     pub fn spawn(self) -> JobHandle<O>
     where
         <I as RoutineInput>::Inner<'static>: Send,
@@ -123,6 +135,7 @@ where
         self.inference.spawn(job)
     }
 
+    /// Run the inference job to completion collecting all outputs eagerly.
     pub fn run(self) -> Result<Vec<O>, super::error::InferenceError> {
         let job = InferenceJob {
             input: self.input.input,
@@ -141,6 +154,7 @@ where
     O: Send + 'static,
     S: Send + Sync + 'static,
 {
+    /// Spawn the inference job with provided user state.
     pub fn spawn(self) -> JobHandle<O>
     where
         <I as RoutineInput>::Inner<'static>: Send,
@@ -153,6 +167,7 @@ where
         self.inference.spawn(job)
     }
 
+    /// Run the inference job to completion (stateful variant) collecting all outputs.
     pub fn run(self) -> Result<Vec<O>, super::error::InferenceError> {
         let job = InferenceJob {
             input: self.input.input,
@@ -163,6 +178,7 @@ where
     }
 }
 
+/// Concrete job containing fully specified execution parameters passed to the runtime.
 pub struct InferenceJob<B: Backend, I: RoutineInput, S> {
     pub(crate) input: <I as RoutineInput>::Inner<'static>,
     pub(crate) devices: Vec<B::Device>,
@@ -175,6 +191,7 @@ where
     I: RoutineInput + 'static,
     S: Send + Sync + 'static,
 {
+    /// Create a new builder for an inference job for the given input payload.
     pub fn builder(
         input: <I as RoutineInput>::Inner<'static>,
     ) -> InferenceJobBuilder<B, I, S, StateMissing> {

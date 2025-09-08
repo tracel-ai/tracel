@@ -66,6 +66,7 @@ impl<T: Send + 'static> Emitter<T> for CollectEmitter<T> {
     }
 }
 
+/// Emitter implementation backed by a bounded (try_send) crossbeam channel allowing non-blocking emission.
 pub struct SyncChannelEmitter<T> {
     tx: crossbeam::channel::Sender<T>,
 }
@@ -92,12 +93,14 @@ impl<T: Send + 'static> Emitter<T> for SyncChannelEmitter<T> {
     }
 }
 
+/// Lightweight cloneable wrapper exposing an [`Emitter`] implementation to user handlers.
 #[derive(Clone, Deref)]
 pub struct OutStream<T> {
     emitter: Arc<dyn Emitter<T>>,
 }
 
 impl<T> OutStream<T> {
+    /// Create a new [`OutStream`] from a raw emitter trait object.
     pub fn new(emitter: Arc<dyn Emitter<T>>) -> Self {
         Self { emitter }
     }
