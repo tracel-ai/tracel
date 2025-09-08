@@ -10,8 +10,7 @@
 //! 2. Register a handler (any function/closure convertible to a routine) with `build` producing an [`Inference`].
 //! 3. Start a job with [`Inference::infer`], then either `.run()` (collect all outputs) or `.spawn()` (stream them).
 //! 4. Optionally cancel a spawned job via [`JobHandle::cancel`].
-//!
-//! Common re‑exports are provided for convenience.
+
 mod builder;
 mod context;
 mod core;
