@@ -1,5 +1,5 @@
-use super::emitter::{CancelToken, Emitter, OutStream};
-use crate::model::ModelAccessor;
+use super::streaming::{CancelToken, Emitter, OutStream};
+use crate::inference::model::ModelAccessor;
 use crate::param::RoutineParam;
 use crate::{MultiDevice, State};
 use burn::prelude::Backend;

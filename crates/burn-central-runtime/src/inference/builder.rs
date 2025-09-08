@@ -123,7 +123,7 @@ where
         self.inference.spawn(job)
     }
 
-    pub fn run(self) -> Result<Vec<O>, super::errors::InferenceError> {
+    pub fn run(self) -> Result<Vec<O>, super::error::InferenceError> {
         let job = InferenceJob {
             input: self.input.input,
             devices: self.input.devices,
@@ -153,7 +153,7 @@ where
         self.inference.spawn(job)
     }
 
-    pub fn run(self) -> Result<Vec<O>, super::errors::InferenceError> {
+    pub fn run(self) -> Result<Vec<O>, super::error::InferenceError> {
         let job = InferenceJob {
             input: self.input.input,
             devices: self.input.devices,

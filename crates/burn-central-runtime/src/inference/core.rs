@@ -1,10 +1,10 @@
 use super::context::InferenceContext;
-use super::emitter::{CancelToken, CollectEmitter, SyncChannelEmitter};
-use super::errors::InferenceError;
+use super::error::InferenceError;
+use super::init::Init;
 use super::job::JobHandle;
-use super::provider::Init;
+use super::streaming::{CancelToken, CollectEmitter, SyncChannelEmitter};
+use crate::inference::model::ModelHost;
 use crate::input::RoutineInput;
-use crate::model::ModelHost;
 use crate::output::InferenceOutput;
 use crate::routine::ExecutorRoutineWrapper;
 use crate::{IntoRoutine, Routine};
@@ -19,7 +19,6 @@ pub struct Inference<B: Backend, M, I, O, S = ()> {
     pub id: String,
     model: ModelHost<M>,
     handler: ArcInferenceHandler<B, M, I, O, S>,
-    phantom_data: PhantomData<(O, S)>,
 }
 
 impl<B, M, I, O, S> Inference<B, M, I, O, S>
@@ -35,7 +34,6 @@ where
             id,
             model: ModelHost::spawn(model),
             handler,
-            phantom_data: Default::default(),
         }
     }
 
@@ -85,7 +83,7 @@ where
         let input = job.input;
         let devices = job.devices;
         let state = job.state;
-        let (stream_tx, stream_rx) = std::sync::mpsc::sync_channel(10);
+        let (stream_tx, stream_rx) = crossbeam::channel::unbounded();
         let cancel_token = CancelToken::new();
         let mut ctx = InferenceContext {
             id: id.clone(),
@@ -102,6 +100,10 @@ where
                 .map_err(|e| InferenceError::HandlerExecutionFailed(e.into()))
         });
         JobHandle::new(id, stream_rx, cancel_token, join)
+    }
+
+    pub fn into_model(self) -> M {
+        self.model.into_model()
     }
 }
 
@@ -120,12 +122,12 @@ impl<B: Backend> InferenceBuilder<B> {
         self,
         args: &InitArgs,
         device: &B::Device,
-    ) -> Result<LoadedInferenceBuilder<B, M>, InferenceError>
+    ) -> Result<LoadedInferenceBuilder<B, M>, M::Error>
     where
         M: Init<B, InitArgs>,
         InitArgs: Send + 'static,
     {
-        let model = M::init(args, device).map_err(InferenceError::ModelInitFailed)?;
+        let model = M::init(args, device)?;
         Ok(LoadedInferenceBuilder {
             model,
             phantom_data: Default::default(),

@@ -1,22 +1,22 @@
-use super::errors::InferenceError;
 use derive_more::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::TrySendError;
 use std::sync::{Arc, Mutex};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum EmitControl {
-    Continue,
-    Stop,
+/// Error returned when emitting an item fails.
+/// The item of type [T](EmitError::item) is returned to allow for potential retries.
+#[derive(Debug, thiserror::Error)]
+pub struct EmitError<T> {
+    #[source]
+    pub source: anyhow::Error,
+    pub item: T,
 }
 
+/// The sending side of an output stream for inference outputs.
 pub trait Emitter<T>: Send + Sync + 'static {
-    fn emit(&self, item: T) -> Result<EmitControl, InferenceError>;
-    fn end(&self) -> Result<(), InferenceError> {
-        Ok(())
-    }
+    fn emit(&self, item: T) -> Result<(), EmitError<T>>;
 }
 
+/// A token that can be used to cancel an ongoing inference job.
 #[derive(Clone)]
 pub struct CancelToken(Arc<AtomicBool>);
 
@@ -34,12 +34,7 @@ impl CancelToken {
     }
 }
 
-impl Default for CancelToken {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+/// An emitter that collects all emitted items into a vector.
 pub struct CollectEmitter<T>(Mutex<Vec<T>>);
 
 impl<T> CollectEmitter<T> {
@@ -59,28 +54,34 @@ impl<T> Default for CollectEmitter<T> {
 }
 
 impl<T: Send + 'static> Emitter<T> for CollectEmitter<T> {
-    fn emit(&self, item: T) -> Result<EmitControl, InferenceError> {
+    fn emit(&self, item: T) -> Result<(), EmitError<T>> {
         self.0.lock().unwrap().push(item);
-        Ok(EmitControl::Continue)
+        Ok(())
     }
 }
 
 pub struct SyncChannelEmitter<T> {
-    tx: std::sync::mpsc::SyncSender<T>,
+    tx: crossbeam::channel::Sender<T>,
 }
 
 impl<T: Send + 'static> SyncChannelEmitter<T> {
-    pub fn new(tx: std::sync::mpsc::SyncSender<T>) -> Self {
+    pub fn new(tx: crossbeam::channel::Sender<T>) -> Self {
         Self { tx }
     }
 }
 
 impl<T: Send + 'static> Emitter<T> for SyncChannelEmitter<T> {
-    fn emit(&self, item: T) -> Result<EmitControl, InferenceError> {
+    fn emit(&self, item: T) -> Result<(), EmitError<T>> {
         match self.tx.try_send(item) {
-            Ok(_) => Ok(EmitControl::Continue),
-            Err(TrySendError::Full(_)) => Ok(EmitControl::Stop),
-            Err(TrySendError::Disconnected(_)) => Ok(EmitControl::Stop),
+            Ok(_) => Ok(()),
+            Err(crossbeam::channel::TrySendError::Full(item)) => Err(EmitError {
+                source: anyhow::anyhow!("Channel is full"),
+                item,
+            }),
+            Err(crossbeam::channel::TrySendError::Disconnected(item)) => Err(EmitError {
+                source: anyhow::anyhow!("Channel is disconnected"),
+                item,
+            }),
         }
     }
 }

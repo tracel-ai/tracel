@@ -1,11 +1,10 @@
-use super::emitter::CancelToken;
-use super::errors::InferenceError;
-use std::sync::mpsc;
+use super::error::InferenceError;
+use super::streaming::CancelToken;
 use std::thread::JoinHandle;
 
 pub struct JobHandle<S> {
     pub id: String,
-    pub stream: mpsc::Receiver<S>,
+    pub stream: crossbeam::channel::Receiver<S>,
     cancel: CancelToken,
     join: Option<JoinHandle<Result<(), InferenceError>>>,
 }
@@ -13,7 +12,7 @@ pub struct JobHandle<S> {
 impl<S> JobHandle<S> {
     pub fn new(
         id: String,
-        stream: mpsc::Receiver<S>,
+        stream: crossbeam::channel::Receiver<S>,
         cancel: CancelToken,
         join: JoinHandle<Result<(), InferenceError>>,
     ) -> Self {

@@ -85,11 +85,9 @@ where
     T: Send + 'static,
 {
     fn apply_output(self, ctx: &mut InferenceContext<B, M, T, S>) -> anyhow::Result<()> {
-        use crate::inference::EmitControl;
-
         match ctx.emitter.emit(self.0) {
-            Ok(EmitControl::Continue) | Ok(EmitControl::Stop) => Ok(()),
-            Err(e) => Err(anyhow::anyhow!("Failed to emit output: {}", e)),
+            Ok(()) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("Failed to emit output: {}", e.source)),
         }
     }
 }

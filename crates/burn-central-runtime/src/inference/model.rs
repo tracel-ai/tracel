@@ -19,7 +19,6 @@ enum Msg<M> {
         f: Box<dyn FnOnce(&mut M) -> BoxAny + Send>,
         ret: crossbeam::channel::Sender<BoxAny>,
     },
-    Swap(M),
 }
 
 impl<M: 'static + Send> ModelHost<M> {
@@ -39,9 +38,6 @@ impl<M: 'static + Send> ModelHost<M> {
                             Ok(Msg::CallRet { f, ret }) => {
                                 let r = f(&mut m);
                                 let _ = ret.send(r);
-                            }
-                            Ok(Msg::Swap(new_model)) => {
-                                m = new_model;
                             }
                             Err(_) => break,
                         }
@@ -64,7 +60,7 @@ impl<M: 'static + Send> ModelHost<M> {
         self.accessor.clone()
     }
 
-    pub fn take(mut self) -> M {
+    pub fn into_model(mut self) -> M {
         let _ = self.abort_tx.send(());
         let m = self
             .join_handle
