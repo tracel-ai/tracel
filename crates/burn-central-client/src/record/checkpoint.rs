@@ -56,7 +56,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
                     .ok_or(RecorderError::Unknown(
                         "File name should be a valid string".to_string(),
                     ))?,
-                ArtifactKind::Checkpoint,
+                ArtifactKind::Other,
                 record,
             )
             .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))

@@ -1,4 +1,4 @@
-use crate::api::Client;
+use crate::api::{ArtifactFileSpecRequest, ArtifactResponse, Client, CreateArtifactRequest};
 use crate::schemas::ExperimentPath;
 use burn::prelude::Backend;
 use burn::record::{FullPrecisionSettings, Recorder, RecorderError};
@@ -11,7 +11,8 @@ use strum::Display;
 #[strum(serialize_all = "snake_case")]
 pub enum ArtifactKind {
     Model,
-    Checkpoint,
+    Log,
+    Other,
 }
 
 #[derive(Clone)]
@@ -21,11 +22,18 @@ pub struct ArtifactRecordArgs {
     pub kind: ArtifactKind,
 }
 
-pub struct ArtifactLoadArgs {
-    pub experiment_path: ExperimentPath,
-    pub name: String,
+pub enum ArtifactQueryArgs {
+    ByName(String),
+    ById(String),
 }
 
+pub struct ArtifactLoadArgs {
+    pub experiment_path: ExperimentPath,
+    pub query: ArtifactQueryArgs,
+}
+
+/// A recorder that saves and loads single-file artifacts to/from a remote server using the [BurnCentralClient](crate::api::Client).
+/// Artifacts are serialized using `rmp_serde`.
 #[derive(Clone, Debug)]
 pub struct ArtifactRecorder {
     client: Client,
@@ -34,6 +42,52 @@ pub struct ArtifactRecorder {
 impl ArtifactRecorder {
     pub fn new(client: Client) -> Self {
         ArtifactRecorder { client }
+    }
+
+    pub fn query_artifact(
+        &self,
+        experiment_path: &ExperimentPath,
+        query: &ArtifactQueryArgs,
+    ) -> Result<ArtifactResponse, RecorderError> {
+        match query {
+            ArtifactQueryArgs::ById(artifact_id) => {
+                let _artifact = self
+                    .client
+                    .get_artifact(
+                        experiment_path.owner_name(),
+                        experiment_path.project_name(),
+                        experiment_path.experiment_num(),
+                        artifact_id,
+                    )
+                    .map_err(|e| {
+                        RecorderError::Unknown(format!("Failed to get artifact by ID: {e}"))
+                    })?;
+                Ok(_artifact)
+            }
+            ArtifactQueryArgs::ByName(artifact_name) => {
+                let _artifact = self
+                    .client
+                    .list_artifacts_by_name(
+                        experiment_path.owner_name(),
+                        experiment_path.project_name(),
+                        experiment_path.experiment_num(),
+                        artifact_name,
+                    )
+                    .map_err(|e| {
+                        RecorderError::Unknown(format!("Failed to get artifact by name: {e}"))
+                    })?
+                    .items
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        RecorderError::Unknown(format!(
+                            "No artifact found with name: {}",
+                            artifact_name
+                        ))
+                    })?;
+                Ok(_artifact)
+            }
+        }
     }
 }
 
@@ -67,17 +121,33 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
         let size = serialized_bytes.len();
         let checksum = sha2::Sha256::new_with_prefix(&serialized_bytes).finalize();
 
-        let upload_url = self
+        let req = CreateArtifactRequest {
+            name: args.name.clone(),
+            kind: args.kind.to_string(),
+            files: vec![ArtifactFileSpecRequest {
+                rel_path: args.name.clone(),
+                size_bytes: size as u64,
+                checksum: format!("{:x}", checksum),
+            }],
+        };
+
+        let mut response = self
             .client
-            .request_artifact_save_url(
+            .create_artifact(
                 args.experiment_path.owner_name(),
                 args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
-                &args.name,
-                size,
-                &format!("{:x}", checksum),
+                req,
             )
             .map_err(|e| RecorderError::Unknown(format!("Failed to get upload URL: {e}")))?;
+
+        let upload_url = response
+            .files
+            .pop()
+            .ok_or_else(|| {
+                RecorderError::Unknown("No files returned from artifact creation".to_string())
+            })?
+            .url;
 
         self.client
             .upload_bytes_to_url(&upload_url, serialized_bytes)
@@ -90,15 +160,22 @@ impl<B: Backend> Recorder<B> for ArtifactRecorder {
     where
         I: DeserializeOwned,
     {
+        let artifact = self.query_artifact(&args.experiment_path, &args.query)?;
         let download_url = self
             .client
-            .request_artifact_load_url(
+            .presign_artifact_download(
                 args.experiment_path.owner_name(),
                 args.experiment_path.project_name(),
                 args.experiment_path.experiment_num(),
-                &args.name,
+                &artifact.id,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to get download URL: {e}")))?;
+            .map_err(|e| RecorderError::Unknown(format!("Failed to get download URL: {e}")))?
+            .files
+            .pop()
+            .ok_or_else(|| {
+                RecorderError::Unknown("No files returned from artifact download".to_string())
+            })?
+            .url;
 
         let bytes = self
             .client

@@ -4,7 +4,9 @@ use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::message::ExperimentMessage;
 use crate::experiment::socket::ThreadError;
-use crate::record::{ArtifactKind, ArtifactLoadArgs, ArtifactRecordArgs, ArtifactRecorder};
+use crate::record::{
+    ArtifactKind, ArtifactLoadArgs, ArtifactQueryArgs, ArtifactRecordArgs, ArtifactRecorder,
+};
 use crate::{api::Client, schemas::ExperimentPath, websocket::WebSocketClient};
 use burn::prelude::Backend;
 use burn::record::{Record, Recorder};
@@ -148,7 +150,7 @@ impl ExperimentRunInner {
         let recorder = ArtifactRecorder::new(self.http_client.clone());
         let args = ArtifactLoadArgs {
             experiment_path: self.id.clone(),
-            name: name.into(),
+            query: ArtifactQueryArgs::ByName(name.into()),
         };
         recorder
             .load(args, device)

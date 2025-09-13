@@ -7,7 +7,10 @@ use super::schemas::{
     ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
-use crate::api::{CreateProjectSchema, GetUserOrganizationsResponseSchema};
+use crate::api::{
+    ArtifactCreationResponse, ArtifactDownloadResponse, ArtifactListResponse, ArtifactResponse,
+    CreateArtifactRequest, CreateProjectSchema, GetUserOrganizationsResponseSchema,
+};
 use crate::schemas::{BurnCentralCodeMetadata, CreatedByUser};
 use crate::{
     api::schemas::CreateExperimentSchema,
@@ -352,76 +355,99 @@ impl Client {
         self.put::<EndExperimentSchema>(url, Some(end_status))
     }
 
-    /// Save the checkpoint data to the Burn Central server.
+    /// Creates an artifact entry on the Burn Central server with the given files.
     ///
     /// The client must be logged in before calling this method.
-    pub fn request_artifact_save_url(
+    pub fn create_artifact(
         &self,
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-        file_name: &str,
-        size: usize,
-        checksum: &str,
-    ) -> Result<String, ClientError> {
+        req: CreateArtifactRequest,
+    ) -> Result<ArtifactCreationResponse, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
             "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts"
         ));
 
-        #[derive(Serialize)]
-        struct ArtifactUploadParams {
-            file_name: String,
-            size: usize,
-            checksum: String,
-        }
-
-        let save_url = self
-            .post_json::<ArtifactUploadParams, URLSchema>(
-                url,
-                Some(ArtifactUploadParams {
-                    file_name: file_name.to_string(),
-                    size,
-                    checksum: checksum.to_string(),
-                }),
-            )
-            .map(|res| res.url)?;
-
-        Ok(save_url)
+        self.post_json::<CreateArtifactRequest, ArtifactCreationResponse>(url, Some(req))
     }
 
-    /// Request a URL to load the checkpoint data from the Burn Central server.
+    /// List artifacts for the given experiment.
     ///
     /// The client must be logged in before calling this method.
-    pub fn request_artifact_load_url(
+    pub fn list_artifacts(
         &self,
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-        file_name: &str,
-    ) -> Result<String, ClientError> {
+    ) -> Result<ArtifactListResponse, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts:download"
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts"
         ));
 
-        #[derive(Serialize)]
-        struct ArtifactRetrieveParams {
-            file_name: String,
-        }
+        self.get_json::<ArtifactListResponse>(url)
+    }
 
-        let load_url = self
-            .get_json_with_body::<ArtifactRetrieveParams, URLSchema>(
-                url,
-                Some(ArtifactRetrieveParams {
-                    file_name: file_name.to_string(),
-                }),
-            )
-            .map(|res| res.url)?;
+    /// Query artifacts by name for the given experiment.
+    ///
+    /// The client must be logged in before calling this method.
+    pub fn list_artifacts_by_name(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        exp_num: i32,
+        name: &str,
+    ) -> Result<ArtifactListResponse, ClientError> {
+        self.validate_session_cookie()?;
 
-        Ok(load_url)
+        let mut url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts"
+        ));
+        url.query_pairs_mut().append_pair("name", name);
+
+        self.get_json::<ArtifactListResponse>(url)
+    }
+
+    /// Get details about a specific artifact by its ID.
+    ///
+    /// The client must be logged in before calling this method.
+    pub fn get_artifact(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        exp_num: i32,
+        artifact_id: &str,
+    ) -> Result<ArtifactResponse, ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}"
+        ));
+
+        self.get_json::<ArtifactResponse>(url)
+    }
+
+    /// Request presigned URLs to download an artifact's files from the Burn Central server.
+    ///
+    /// The client must be logged in before calling this method.
+    pub fn presign_artifact_download(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        exp_num: i32,
+        artifact_id: &str,
+    ) -> Result<ArtifactDownloadResponse, ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}/download"
+        ));
+
+        self.get_json::<ArtifactDownloadResponse>(url)
     }
 
     /// Request a URL to save the final model to the Burn Central server.
