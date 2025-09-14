@@ -13,3 +13,5 @@ pub mod experiment;
 mod websocket;
 
 pub use crate::client::*;
+
+pub mod artifacts;

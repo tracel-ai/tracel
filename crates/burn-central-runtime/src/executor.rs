@@ -1,8 +1,10 @@
 use anyhow::Result;
 use burn::prelude::Backend;
+use burn_central_client::artifacts::{ArtifactDecoder, ArtifactReadError};
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
+use crate::param::RoutineParam;
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use burn::tensor::backend::AutodiffBackend;
 use burn_central_client::BurnCentral;
@@ -10,6 +12,60 @@ use burn_central_client::experiment::{
     ExperimentConfig, ExperimentRun, deserialize_and_merge_with_default,
 };
 use std::collections::HashMap;
+
+pub struct Artifact<T: ArtifactDecoder> {
+    namespace: String,
+    project_name: String,
+    client: BurnCentral,
+    _decoder: std::marker::PhantomData<T>,
+}
+
+impl<T: ArtifactDecoder> Artifact<T> {
+    pub fn new(namespace: String, project_name: String, client: BurnCentral) -> Self {
+        Self {
+            namespace,
+            project_name,
+            client,
+            _decoder: std::marker::PhantomData,
+        }
+    }
+
+    pub fn load(
+        &self,
+        name: impl Into<String>,
+        experiment_num: i32,
+    ) -> Result<T, ArtifactReadError> {
+        let scope = self
+            .client
+            .artifacts(&self.namespace, &self.project_name, experiment_num)
+            .map_err(|e| {
+                ArtifactReadError::Internal(format!("Failed to create artifact scope: {}", e))
+            })?;
+
+        let reader = scope.fetch(name)?;
+
+        T::decode(&*reader)
+    }
+}
+
+impl<B: Backend, T: ArtifactDecoder> RoutineParam<ExecutionContext<B>> for Artifact<T> {
+    type Item<'new>
+        = Artifact<T>
+    where
+        ExecutionContext<B>: 'new;
+
+    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
+        let client = ctx.client.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Burn Central client is not configured in the execution context")
+        })?;
+
+        Ok(Artifact::new(
+            ctx.namespace.clone(),
+            ctx.project.clone(),
+            client.clone(),
+        ))
+    }
+}
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
 

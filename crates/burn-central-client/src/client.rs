@@ -3,6 +3,7 @@
 use crate::api::Client;
 use crate::api::ClientError;
 use crate::api::OrganizationSchema;
+use crate::artifacts::ArtifactScope;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::schemas::{
@@ -382,5 +383,15 @@ impl BurnCentral {
                 source: e,
             })
             .map(|response| response.organizations)
+    }
+
+    pub fn artifacts(
+        &self,
+        owner: &str,
+        project: &str,
+        exp_num: i32,
+    ) -> Result<ArtifactScope, BurnCentralError> {
+        let exp_path = ExperimentPath::try_from(format!("{}/{}/{}", owner, project, exp_num))?;
+        Ok(ArtifactScope::new(self.client.clone(), exp_path))
     }
 }

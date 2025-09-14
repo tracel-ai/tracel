@@ -1,5 +1,6 @@
 use super::socket::ExperimentSocket;
 use crate::api::EndExperimentStatus;
+use crate::artifacts::{ArtifactReader, ArtifactScope, IntoArtifactSources};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::message::ExperimentMessage;
@@ -48,6 +49,27 @@ impl ExperimentRunHandle {
         self.try_upgrade()?.log_artifact(name, kind, record)
     }
 
+    /// Logs an artifact with the given name and kind.
+    pub fn log_artifact2(
+        &self,
+        name: impl Into<String>,
+        kind: ArtifactKind,
+        sources: impl IntoArtifactSources,
+    ) {
+        self.try_log_artifact2(name, kind, sources)
+            .expect("Failed to log artifact, experiment may have been closed or inactive");
+    }
+
+    /// Attempts to log an artifact with the given name and kind.
+    pub fn try_log_artifact2(
+        &self,
+        name: impl Into<String>,
+        kind: ArtifactKind,
+        sources: impl IntoArtifactSources,
+    ) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?.log_artifact2(name, kind, sources)
+    }
+
     /// Loads an artifact with the given name and device.
     pub fn load_artifact<B, R>(
         &self,
@@ -59,6 +81,15 @@ impl ExperimentRunHandle {
         R: Record<B>,
     {
         self.try_upgrade()?.load_artifact(name, device)
+    }
+
+    /// Loads an artifact with the given name and device.
+    pub fn load_artifact2(
+        &self,
+        name: impl Into<String>,
+        experiment_num: u64,
+    ) -> Result<Box<dyn ArtifactReader>, ExperimentTrackerError> {
+        self.try_upgrade()?.load_artifact2(name, experiment_num)
     }
 
     /// Logs a metric with the given name, epoch, iteration, value, and group.
@@ -140,6 +171,39 @@ impl ExperimentRunInner {
         recorder
             .record(record, args)
             .map_err(ExperimentTrackerError::BurnRecorderError)
+    }
+
+    pub fn log_artifact2(
+        &self,
+        name: impl Into<String>,
+        kind: ArtifactKind,
+        sources: impl IntoArtifactSources,
+    ) -> Result<(), ExperimentTrackerError> {
+        ArtifactScope::new(self.http_client.clone(), self.id.clone())
+            .builder(name, kind)
+            .add_sources(sources)
+            .upload()?;
+
+        Ok(())
+    }
+
+    pub fn load_artifact2(
+        &self,
+        name: impl Into<String>,
+        experiment_num: u64,
+    ) -> Result<Box<dyn ArtifactReader>, ExperimentTrackerError> {
+        let new_id = ExperimentPath::try_from(format!(
+            "{}/{}/{}",
+            self.id.owner_name(),
+            self.id.project_name(),
+            experiment_num
+        ))
+        .unwrap();
+        ArtifactScope::new(self.http_client.clone(), new_id)
+            .fetch(name)
+            .map_err(|e| {
+                ExperimentTrackerError::InternalError(format!("Failed to load artifact: {e}"))
+            })
     }
 
     pub fn load_artifact<B: Backend, R: Record<B>>(
