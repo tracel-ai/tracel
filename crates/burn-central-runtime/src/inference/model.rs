@@ -90,14 +90,14 @@ pub struct ModelAccessor<M> {
 
 impl<M: Debug> Debug for ModelAccessor<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let debug_str = self.with(|m| format!("{m:?}"));
+        let debug_str = self.submit(|m| format!("{m:?}"));
         write!(f, "{debug_str}")
     }
 }
 
 impl<M: Display> Display for ModelAccessor<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let display_str = self.with(|m| format!("{m}"));
+        let display_str = self.submit(|m| format!("{m}"));
         write!(f, "{display_str}")
     }
 }
@@ -112,7 +112,7 @@ impl<M> Clone for ModelAccessor<M> {
 
 impl<M> ModelAccessor<M> {
     /// Run a closure that returns a value on the model thread, waiting for completion.
-    pub fn with<R: Send + 'static>(&self, f: impl FnOnce(&mut M) -> R + Send + 'static) -> R {
+    pub fn submit<R: Send + 'static>(&self, f: impl FnOnce(&mut M) -> R + Send + 'static) -> R {
         let (ret_tx, ret_rx) = crossbeam::channel::bounded(1);
         let _ = self.tx.send(Msg::Call {
             f: Box::new(move |m| Box::new(f(m)) as BoxAny),

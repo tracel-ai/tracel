@@ -69,7 +69,7 @@ fn streaming_inference_handler<B: Backend>(
     println!("Using device: {:?}", devices[0]);
     let mut result = input;
     for i in 0..3 {
-        result = model.with(move |m| m.forward(result.clone() + i));
+        result = model.submit(move |m| m.forward(result.clone() + i));
         if output.emit(result.clone()).is_err() {
             return Err("Failed to emit output".into());
         }
@@ -82,7 +82,7 @@ fn direct_inference_handler<B: Backend>(
     model: ModelAccessor<TestModel<B>>,
     _devices: MultiDevice<B>,
 ) -> Out<Tensor<B, 2>> {
-    let result = model.with(move |m| m.forward(input));
+    let result = model.submit(|m| m.forward(input));
     result.into()
 }
 
@@ -93,7 +93,7 @@ fn stateful_inference_handler<B: Backend>(
     output: OutStream<String>,
     State(counter): State<i32>,
 ) -> Result<(), String> {
-    let result = model.with(move |m| m.forward(input));
+    let result = model.submit(|m| m.forward(input));
     for i in 0..counter {
         if output
             .emit(format!("Step {}: {:?}", i, result.to_data()))
@@ -218,7 +218,7 @@ fn streaming_inference_cancellable_handler<B: Backend>(
         if cancel.is_cancelled() {
             return Err("Cancelled mid-stream".into());
         }
-        result = model.with(move |m| m.forward(result.clone() + i));
+        result = model.submit(move |m| m.forward(result.clone() + i));
         output
             .emit(result.clone())
             .map_err(|_| "emit failed".to_string())?;
