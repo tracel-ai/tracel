@@ -1,5 +1,7 @@
 mod error;
 mod executor;
+mod inference;
+mod input;
 mod output;
 mod param;
 mod routine;
@@ -11,6 +13,7 @@ pub mod cli;
 
 pub use error::RuntimeError;
 pub use executor::{ExecutionContext, Executor, ExecutorBuilder};
+pub use inference::*;
 pub use routine::{IntoRoutine, Routine};
 pub use types::*;
 
