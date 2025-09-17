@@ -128,7 +128,7 @@ pub struct PackagedCrateData {
     pub metadata: CrateMetadata,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProjectPath {
     pub owner_name: String,
     pub project_name: String,
@@ -259,6 +259,78 @@ impl TryFrom<String> for ExperimentPath {
 impl std::fmt::Display for ExperimentPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.project_path, self.experiment_num)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPath {
+    project_path: ProjectPath,
+    model_name: String,
+}
+
+impl ModelPath {
+    pub fn new(namespace: &str, project_name: &str, model_name: &str) -> Self {
+        ModelPath {
+            project_path: ProjectPath::new(namespace.to_string(), project_name.to_string()),
+            model_name: model_name.to_string(),
+        }
+    }
+
+    pub fn validate_path(path: &str) -> bool {
+        static NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"^[a-zA-Z0-9_.-]+$")
+                .expect("Should be able to compile name validation regex.")
+        });
+
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() != 3 {
+            return false;
+        }
+
+        for part in parts {
+            if !NAME_REGEX.is_match(part) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn namespace(&self) -> &str {
+        &self.project_path.owner_name
+    }
+
+    pub fn project_name(&self) -> &str {
+        &self.project_path.project_name
+    }
+
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+}
+
+impl TryFrom<String> for ModelPath {
+    type Error = BurnCentralError;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        if !ModelPath::validate_path(&path) {
+            return Err(Self::Error::InvalidModelPath(path));
+        }
+
+        let parts: Vec<&str> = path.split('/').collect();
+        let project_path = ProjectPath::try_from(parts[0..2].join("/"))?;
+        let model_name = parts[2].to_string();
+
+        Ok(ModelPath {
+            project_path,
+            model_name,
+        })
+    }
+}
+
+impl std::fmt::Display for ModelPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.project_path, self.model_name)
     }
 }
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn::prelude::Backend;
-use burn_central_client::artifacts::{ArtifactDecode, ArtifactReadError};
+use burn_central_client::artifacts::{ArtifactDecode, ArtifactError};
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
@@ -13,11 +13,14 @@ use burn_central_client::experiment::{
 };
 use std::collections::HashMap;
 
+/// A loader for artifacts associated with a specific experiment in Burn Central.
+///
+/// It can be used as a parameter in experiment routines to load artifacts like models or checkpoints.
 pub struct ArtifactLoader<T: ArtifactDecode> {
     namespace: String,
     project_name: String,
     client: BurnCentral,
-    _decoder: std::marker::PhantomData<T>,
+    _artifact: std::marker::PhantomData<T>,
 }
 
 impl<T: ArtifactDecode> ArtifactLoader<T> {
@@ -26,42 +29,37 @@ impl<T: ArtifactDecode> ArtifactLoader<T> {
             namespace,
             project_name,
             client,
-            _decoder: std::marker::PhantomData,
+            _artifact: std::marker::PhantomData,
         }
     }
 
+    /// Load an artifact by name with specific settings.
     pub fn load_with(
         &self,
         experiment_num: i32,
         name: impl AsRef<str>,
         settings: &T::Settings,
-    ) -> Result<T, ArtifactReadError> {
+    ) -> Result<T, ArtifactError> {
         let scope = self
             .client
             .artifacts(&self.namespace, &self.project_name, experiment_num)
             .map_err(|e| {
-                ArtifactReadError::Internal(format!("Failed to create artifact scope: {}", e))
+                ArtifactError::Internal(format!("Failed to create artifact scope: {}", e))
             })?;
 
-        let reader = scope.fetch(name)?;
-
-        T::decode(&reader, settings).map_err(|e| {
-            ArtifactReadError::Internal(format!("Failed to decode artifact: {}", e.into()))
-        })
+        scope.download(name, settings)
     }
-    pub fn load(&self, experiment_num: i32, name: impl AsRef<str>) -> Result<T, ArtifactReadError> {
+
+    /// Load an artifact by name with default settings.
+    pub fn load(&self, experiment_num: i32, name: impl AsRef<str>) -> Result<T, ArtifactError> {
         let scope = self
             .client
             .artifacts(&self.namespace, &self.project_name, experiment_num)
             .map_err(|e| {
-                ArtifactReadError::Internal(format!("Failed to create artifact scope: {}", e))
+                ArtifactError::Internal(format!("Failed to create artifact scope: {}", e))
             })?;
 
-        let reader = scope.fetch(name)?;
-
-        T::decode(&reader, &Default::default()).map_err(|e| {
-            ArtifactReadError::Internal(format!("Failed to decode artifact: {}", e.into()))
-        })
+        scope.download(name, &Default::default())
     }
 }
 

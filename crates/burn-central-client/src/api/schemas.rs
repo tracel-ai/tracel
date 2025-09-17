@@ -162,3 +162,26 @@ pub struct CreateArtifactRequest {
     pub kind: String,
     pub files: Vec<ArtifactFileSpecRequest>,
 }
+
+#[derive(Deserialize)]
+pub struct ModelDownloadResponse {
+    pub files: Vec<PresignedModelFileUrlResponse>,
+}
+
+#[derive(Deserialize)]
+pub struct PresignedModelFileUrlResponse {
+    pub rel_path: String,
+    pub url: String,
+}
+
+#[derive(Deserialize)]
+pub struct ModelVersionResponse {
+    pub id: String,
+    pub experiment: Option<ExperimentSourceResponse>,
+    pub version: u32,
+    pub size: u64,
+    pub checksum: String,
+    pub created_by: CreatedByUserResponse,
+    pub created_at: String,
+    pub manifest: serde_json::Value,
+}

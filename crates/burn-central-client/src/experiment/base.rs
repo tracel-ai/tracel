@@ -24,7 +24,7 @@ impl ExperimentRunHandle {
             .ok_or(ExperimentTrackerError::InactiveExperiment)
     }
 
-    /// Log an artifact with the given name and kind.
+    /// Log an artifact with the given name, kind and settings.
     pub fn log_artifact<A: ArtifactEncode>(
         &self,
         name: impl Into<String>,
@@ -33,10 +33,10 @@ impl ExperimentRunHandle {
         settings: &A::Settings,
     ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?
-            .log_artifact2(name, kind, sources, settings)
+            .log_artifact(name, kind, sources, settings)
     }
 
-    /// Loads an artifact with the given name and device.
+    /// Loads an artifact with the given name and settings.
     pub fn load_artifact<D: ArtifactDecode>(
         &self,
         name: impl AsRef<str>,
@@ -45,14 +45,12 @@ impl ExperimentRunHandle {
         self.try_upgrade()?.load_artifact(name, settings)
     }
 
-    /// Loads an artifact with the given name and device.
-    pub fn load_artifact_reader(
+    /// Loads a raw artifact with the given name.
+    pub fn load_artifact_raw(
         &self,
         name: impl AsRef<str>,
-        experiment_num: u64,
     ) -> Result<MemoryArtifactReader, ExperimentTrackerError> {
-        self.try_upgrade()?
-            .load_artifact_reader(name, experiment_num)
+        self.try_upgrade()?.load_artifact_raw(name)
     }
 
     /// Logs a metric with the given name, epoch, iteration, value, and group.
@@ -119,7 +117,7 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_artifact2<A: ArtifactEncode>(
+    pub fn log_artifact<A: ArtifactEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
@@ -128,29 +126,17 @@ impl ExperimentRunInner {
     ) -> Result<(), ExperimentTrackerError> {
         ArtifactScope::new(self.http_client.clone(), self.id.clone())
             .upload(name, kind, artifact, settings)
-            .map_err(|e| {
-                ExperimentTrackerError::InternalError(format!("Failed to log artifact: {e}"))
-            })?;
-        Ok(())
+            .map_err(Into::into)
+            .map(|_| ())
     }
 
-    pub fn load_artifact_reader(
+    pub fn load_artifact_raw(
         &self,
         name: impl AsRef<str>,
-        experiment_num: u64,
     ) -> Result<MemoryArtifactReader, ExperimentTrackerError> {
-        let new_id = ExperimentPath::try_from(format!(
-            "{}/{}/{}",
-            self.id.owner_name(),
-            self.id.project_name(),
-            experiment_num
-        ))
-        .unwrap();
-        ArtifactScope::new(self.http_client.clone(), new_id)
-            .fetch(name.as_ref())
-            .map_err(|e| {
-                ExperimentTrackerError::InternalError(format!("Failed to load artifact: {e}"))
-            })
+        ArtifactScope::new(self.http_client.clone(), self.id.clone())
+            .download_raw(name.as_ref())
+            .map_err(Into::into)
     }
 
     pub fn load_artifact<D: ArtifactDecode>(
@@ -158,18 +144,9 @@ impl ExperimentRunInner {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentTrackerError> {
-        let reader = ArtifactScope::new(self.http_client.clone(), self.id.clone())
-            .fetch(name)
-            .map_err(|e| {
-                ExperimentTrackerError::InternalError(format!("Failed to load artifact: {e}"))
-            })?;
-
-        D::decode(&reader, settings).map_err(|e| {
-            ExperimentTrackerError::InternalError(format!(
-                "Failed to decode artifact: {}",
-                e.into()
-            ))
-        })
+        ArtifactScope::new(self.http_client.clone(), self.id.clone())
+            .download(name, settings)
+            .map_err(Into::into)
     }
 
     pub fn log_metric(
