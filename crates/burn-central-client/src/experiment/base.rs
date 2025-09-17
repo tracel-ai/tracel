@@ -164,12 +164,12 @@ impl ExperimentRunInner {
                 ExperimentTrackerError::InternalError(format!("Failed to load artifact: {e}"))
             })?;
 
-        Ok(D::decode(&reader, settings).map_err(|e| {
+        D::decode(&reader, settings).map_err(|e| {
             ExperimentTrackerError::InternalError(format!(
                 "Failed to decode artifact: {}",
                 e.into()
             ))
-        })?)
+        })
     }
 
     pub fn log_metric(

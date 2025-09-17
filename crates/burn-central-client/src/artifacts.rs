@@ -282,7 +282,7 @@ impl ArtifactScope {
                 format!(
                     "Failed to upload file {} to URL: {}",
                     f.dest_path,
-                    e.to_string()
+                    e
                 )
             })?;
         }
