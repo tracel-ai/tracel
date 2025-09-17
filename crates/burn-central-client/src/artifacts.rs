@@ -1,32 +1,103 @@
-//! Fluent multi-file artifact builder for experiments.
-//! Example:
-//!
-//! let artifact_id = burn_central
-//!     .artifacts("owner", "project", 42)?
-//!     .builder("mnist-v1", ArtifactKind::Other)
-//!     .add_file("./README.md", Some("docs/readme.md"))
-//!     .add_dir("./data", "data")?
-//!     .add_bytes(vec![1,2,3], "meta/raw.bin")
-//!     .upload()?;
-//!
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::api::{ArtifactFileSpecRequest, Client, ClientError, CreateArtifactRequest};
 use crate::client::BurnCentralError;
-use crate::record::ArtifactKind;
 use crate::schemas::ExperimentPath;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use sha2::Digest;
 
-pub trait IntoArtifactSources {
-    fn into_artifact_sources(self) -> ArtifactSources;
+#[derive(Clone, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum ArtifactKind {
+    Model,
+    Log,
+    Other,
 }
 
-impl IntoArtifactSources for ArtifactSources {
-    fn into_artifact_sources(self) -> ArtifactSources {
-        self
+pub trait BundleSink {
+    /// Add a file by streaming its bytes. Returns computed checksum + size.
+    fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String>;
+
+    /// Convenience: write all bytes.
+    fn put_bytes(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        let mut r = std::io::Cursor::new(bytes);
+        self.put_file(path, &mut r)
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ArtifactEncodeError {
+    #[error("bundle sink error: {0}")]
+    Sink(String),
+    #[error("serialization error: {0}")]
+    Serialize(String),
+    #[error("other: {0}")]
+    Other(String),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ArtifactDecodeError {
+    #[error("bundle source error: {0}")]
+    Source(String),
+    #[error("deserialization error: {0}")]
+    Deserialize(String),
+    #[error("missing required file: {0}")]
+    MissingFile(String),
+    #[error("other: {0}")]
+    Other(String),
+}
+
+pub trait BundleSource {
+    /// Open the given path for streaming read. Must validate existence.
+    fn open(&self, path: &str) -> Result<Box<dyn Read + Send>, String>;
+
+    /// Optionally list available files (used by generic decoders; can be best-effort).
+    fn list(&self) -> Result<Vec<String>, String>;
+}
+
+pub trait ArtifactEncode {
+    type Settings: Default + Serialize + DeserializeOwned;
+    type Error: Into<Box<dyn std::error::Error + Send + Sync + 'static>>;
+    fn encode<O: BundleSink>(
+        self,
+        sink: &mut O,
+        settings: &Self::Settings,
+    ) -> Result<(), Self::Error>;
+}
+
+pub trait ArtifactDecode: Sized {
+    type Settings: Default + Serialize + DeserializeOwned;
+    type Error: Into<Box<dyn std::error::Error + Send + Sync + 'static>>;
+    fn decode<I: BundleSource>(source: &I, settings: &Self::Settings) -> Result<Self, Self::Error>;
+}
+
+impl BundleSink for ArtifactSources {
+    fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String> {
+        let mut buf = Vec::new();
+        reader
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("Failed to read from source: {}", e))?;
+        *self = self.clone().add_bytes(buf, path);
+        Ok(())
+    }
+}
+
+impl BundleSource for MemoryArtifactReader {
+    fn open(&self, path: &str) -> Result<Box<dyn Read + Send>, String> {
+        let rel = normalize_artifact_path(path);
+        let bytes = self
+            .files
+            .get(&rel)
+            .ok_or_else(|| format!("File not found in artifact: {}", rel))?;
+        Ok(Box::new(std::io::Cursor::new(bytes.clone())))
+    }
+
+    fn list(&self) -> Result<Vec<String>, String> {
+        Ok(self.files.keys().cloned().collect())
     }
 }
 
@@ -118,11 +189,6 @@ impl ArtifactSources {
         Ok(self)
     }
 
-    pub fn add_sources(mut self, other: impl IntoArtifactSources) -> Self {
-        self.files.extend(other.into_artifact_sources().files);
-        self
-    }
-
     fn files(&self) -> &Vec<PendingFile> {
         &self.files
     }
@@ -139,153 +205,27 @@ impl ArtifactScope {
         Self { client, exp_path }
     }
 
-    /// Start a new artifact builder for this scope.
-    pub fn builder(&self, name: impl Into<String>, kind: ArtifactKind) -> ArtifactBuilder {
-        ArtifactBuilder::new(
-            self.client.clone(),
-            self.exp_path.clone(),
-            name.into(),
-            kind,
-        )
-    }
-
-    /// Create a dynamic reader for an existing artifact (by id) bound to this scope.
-    pub fn fetch(
+    pub fn upload<A: ArtifactEncode>(
         &self,
         name: impl Into<String>,
-    ) -> Result<Box<dyn ArtifactReader>, ArtifactReadError> {
+        kind: ArtifactKind,
+        artifact: A,
+        settings: &A::Settings,
+    ) -> Result<String, String> {
         let name = name.into();
-        let artifact_resp = self
-            .client
-            .list_artifacts_by_name(
-                self.exp_path.owner_name(),
-                self.exp_path.project_name(),
-                self.exp_path.experiment_num(),
-                &name,
-            )?
-            .items
-            .into_iter()
-            .next()
-            .ok_or_else(|| ArtifactReadError::NotFound(name))?;
-
-        let resp = self.client.presign_artifact_download(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            &artifact_resp.id,
-        )?;
-
-        let mut data = BTreeMap::new();
-
-        for file in resp.files {
-            data.insert(
-                file.rel_path.clone(),
-                self.client.download_bytes_from_url(&file.url)?,
-            );
-        }
-
-        Ok(Box::new(MemoryArtifactReader::new(data)))
-    }
-
-    /// Create a dynamic reader for an existing artifact by name (first match).
-    pub fn reader_by_name(&self, name: &str) -> Result<Box<dyn ArtifactReader>, ArtifactReadError> {
-        // Reuse existing list_artifacts_by_name endpoint
-        let list = self.client.list_artifacts_by_name(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            name,
-        )?;
-        let artifact = list
-            .items
-            .into_iter()
-            .next()
-            .ok_or_else(|| ArtifactReadError::NotFound(name.to_string()))?;
-        self.fetch(&artifact.id)
-    }
-}
-
-#[derive(Clone)]
-pub struct ArtifactBuilder {
-    client: Client,
-    exp_path: ExperimentPath,
-    name: String,
-    kind: ArtifactKind,
-    sources: ArtifactSources,
-}
-
-#[derive(Clone)]
-enum Source {
-    Path(PathBuf),
-    Bytes(Vec<u8>),
-}
-
-#[derive(Clone)]
-struct PendingFile {
-    dest_path: String, // path within the artifact (use forward slashes)
-    source: Source,
-}
-
-impl ArtifactBuilder {
-    fn new(client: Client, exp_path: ExperimentPath, name: String, kind: ArtifactKind) -> Self {
-        Self {
-            client,
-            exp_path,
-            name,
-            kind,
-            sources: ArtifactSources::new(),
-        }
-    }
-
-    fn validate(&self) -> Result<(), ArtifactBuilderError> {
-        if self.name.trim().is_empty() {
-            return Err(ArtifactBuilderError::EmptyName);
-        }
-        if self.sources.files().is_empty() {
-            return Err(ArtifactBuilderError::NoFiles);
-        }
-        let mut seen = HashSet::new();
-        for f in &self.sources.files {
-            if !seen.insert(f.dest_path.clone()) {
-                return Err(ArtifactBuilderError::DuplicateDestPath(f.dest_path.clone()));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn add_sources(mut self, other: impl IntoArtifactSources) -> Self {
-        self.sources = self.sources.add_sources(other);
-        self
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ArtifactBuilderError {
-    #[error("Artifact name cannot be empty")]
-    EmptyName,
-    #[error("Artifact must contain at least one file")]
-    NoFiles,
-    #[error("Duplicate dest path in artifact: {0}")]
-    DuplicateDestPath(String),
-    #[error("Internal error: {0}")]
-    Internal(String),
-    #[error("Failed to read file")]
-    Io(#[from] std::io::Error),
-    #[error("Failed to upload artifact")]
-    UploadError(#[from] ClientError),
-}
-
-impl ArtifactBuilder {
-    /// Create the artifact on the server, upload files, and return the artifact id.
-    pub fn upload(self) -> Result<String, ArtifactBuilderError> {
-        self.validate()?;
+        let mut sources = ArtifactSources::new();
+        artifact
+            .encode(&mut sources, settings)
+            .map_err(|e| format!("Failed to encode artifact: {}", e.into()))?;
+        // self.validate()?;
 
         // Build file specs with size and checksum
-        let mut specs = Vec::with_capacity(self.sources.files().len());
-        for f in self.sources.files() {
+        let mut specs = Vec::with_capacity(sources.files().len());
+        for f in sources.files() {
             match &f.source {
                 Source::Path(p) => {
-                    let (checksum, size) = sha256_and_size_from_path(p)?;
+                    let (checksum, size) = sha256_and_size_from_path(p)
+                        .map_err(|e| format!("Failed to read file {}: {}", p.display(), e))?;
                     specs.push(ArtifactFileSpecRequest {
                         rel_path: f.dest_path.clone(),
                         size_bytes: size,
@@ -304,16 +244,19 @@ impl ArtifactBuilder {
         }
 
         // 1) Ask backend to create artifact and return presigned URLs
-        let res = self.client.create_artifact(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            CreateArtifactRequest {
-                name: self.name.clone(),
-                kind: self.kind.to_string(),
-                files: specs,
-            },
-        )?;
+        let res = self
+            .client
+            .create_artifact(
+                self.exp_path.owner_name(),
+                self.exp_path.project_name(),
+                self.exp_path.experiment_num(),
+                CreateArtifactRequest {
+                    name: name.clone(),
+                    kind: kind.to_string(),
+                    files: specs,
+                },
+            )
+            .map_err(|e| format!("Failed to create artifact: {}", e))?;
 
         let mut url_map: BTreeMap<String, String> = BTreeMap::new();
         for f in res.files {
@@ -321,29 +264,94 @@ impl ArtifactBuilder {
         }
 
         // 2) Upload all files
-        for f in self.sources.files() {
+        for f in sources.files() {
             let url = url_map.get(&f.dest_path).ok_or_else(|| {
-                ArtifactBuilderError::Internal(format!(
-                    "No upload URL for artifact file: {}",
+                format!(
+                    "Internal error: missing upload URL for file {}",
                     f.dest_path
-                ))
+                )
             })?;
 
             let bytes = match &f.source {
-                Source::Path(p) => fs::read(p).map_err(|e| {
-                    std::io::Error::new(
-                        e.kind(),
-                        format!("Failed to read file {}: {}", p.display(), e),
-                    )
-                })?,
+                Source::Path(p) => fs::read(p)
+                    .map_err(|e| format!("Failed to read file {}: {}", p.display(), e))?,
                 Source::Bytes(b) => b.clone(),
             };
 
-            self.client.upload_bytes_to_url(url, bytes)?;
+            self.client.upload_bytes_to_url(url, bytes).map_err(|e| {
+                format!(
+                    "Failed to upload file {} to URL: {}",
+                    f.dest_path,
+                    e.to_string()
+                )
+            })?;
         }
 
         Ok(res.id)
     }
+
+    /// Create a dynamic reader for an existing artifact (by id) bound to this scope.
+    pub fn fetch(&self, name: impl AsRef<str>) -> Result<MemoryArtifactReader, ArtifactReadError> {
+        let name = name.as_ref();
+        let artifact_resp = self
+            .client
+            .list_artifacts_by_name(
+                self.exp_path.owner_name(),
+                self.exp_path.project_name(),
+                self.exp_path.experiment_num(),
+                name,
+            )?
+            .items
+            .into_iter()
+            .next()
+            .ok_or_else(|| ArtifactReadError::NotFound(name.to_owned()))?;
+
+        let resp = self.client.presign_artifact_download(
+            self.exp_path.owner_name(),
+            self.exp_path.project_name(),
+            self.exp_path.experiment_num(),
+            &artifact_resp.id,
+        )?;
+
+        let mut data = BTreeMap::new();
+
+        for file in resp.files {
+            data.insert(
+                file.rel_path.clone(),
+                self.client.download_bytes_from_url(&file.url)?,
+            );
+        }
+
+        Ok(MemoryArtifactReader::new(data))
+    }
+}
+
+#[derive(Clone)]
+enum Source {
+    Path(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+#[derive(Clone)]
+struct PendingFile {
+    dest_path: String, // path within the artifact (use forward slashes)
+    source: Source,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ArtifactBuilderError {
+    #[error("Artifact name cannot be empty")]
+    EmptyName,
+    #[error("Artifact must contain at least one file")]
+    NoFiles,
+    #[error("Duplicate dest path in artifact: {0}")]
+    DuplicateDestPath(String),
+    #[error("Internal error: {0}")]
+    Internal(String),
+    #[error("Failed to read file")]
+    Io(#[from] std::io::Error),
+    #[error("Failed to upload artifact")]
+    UploadError(#[from] ClientError),
 }
 
 fn normalize_artifact_path<S: AsRef<str>>(s: S) -> String {
@@ -397,40 +405,6 @@ pub enum ArtifactReadError {
     Internal(String),
 }
 
-/// A dynamic reader for multi-file artifacts.
-pub trait ArtifactReader: Send + Sync {
-    /// List all file paths inside the artifact (normalized with forward slashes).
-    fn list_paths(&self) -> Result<Vec<String>, ArtifactReadError>;
-    /// Read the bytes of a specific file by its relative path.
-    fn read(&self, rel_path: &str) -> Result<Vec<u8>, ArtifactReadError>;
-
-    /// Convenience: check if a given file exists in the artifact.
-    fn exists(&self, rel_path: &str) -> Result<bool, ArtifactReadError> {
-        let rel = normalize_artifact_path(rel_path);
-        Ok(self.list_paths()?.into_iter().any(|p| p == rel))
-    }
-}
-
-pub trait ArtifactDecoder: Sized {
-    fn decode(reader: &dyn ArtifactReader) -> Result<Self, ArtifactReadError>;
-}
-
-impl ArtifactDecoder for () {
-    fn decode(_reader: &dyn ArtifactReader) -> Result<Self, ArtifactReadError> {
-        Ok(())
-    }
-}
-
-impl ArtifactDecoder for serde_json::Value {
-    fn decode(reader: &dyn ArtifactReader) -> Result<Self, ArtifactReadError> {
-        let bytes = reader.read("config.json")?;
-        let v = serde_json::from_slice(&bytes).map_err(|e| {
-            ArtifactReadError::Internal(format!("Failed to deserialize config.json: {e}"))
-        })?;
-        Ok(v)
-    }
-}
-
 /// In-memory reader for synthetic or cached artifacts.
 pub struct MemoryArtifactReader {
     files: BTreeMap<String, Vec<u8>>, // rel_path -> bytes
@@ -439,19 +413,5 @@ pub struct MemoryArtifactReader {
 impl MemoryArtifactReader {
     pub fn new(files: BTreeMap<String, Vec<u8>>) -> Self {
         Self { files }
-    }
-}
-
-impl ArtifactReader for MemoryArtifactReader {
-    fn list_paths(&self) -> Result<Vec<String>, ArtifactReadError> {
-        Ok(self.files.keys().cloned().collect())
-    }
-
-    fn read(&self, rel_path: &str) -> Result<Vec<u8>, ArtifactReadError> {
-        let rel = normalize_artifact_path(rel_path);
-        self.files
-            .get(&rel)
-            .cloned()
-            .ok_or_else(|| ArtifactReadError::NotFound(rel))
     }
 }

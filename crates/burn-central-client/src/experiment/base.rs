@@ -1,16 +1,12 @@
 use super::socket::ExperimentSocket;
 use crate::api::EndExperimentStatus;
-use crate::artifacts::{ArtifactReader, ArtifactScope, IntoArtifactSources};
+use crate::artifacts::ArtifactKind;
+use crate::artifacts::{ArtifactDecode, ArtifactEncode, ArtifactScope, MemoryArtifactReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::message::ExperimentMessage;
 use crate::experiment::socket::ThreadError;
-use crate::record::{
-    ArtifactKind, ArtifactLoadArgs, ArtifactQueryArgs, ArtifactRecordArgs, ArtifactRecorder,
-};
 use crate::{api::Client, schemas::ExperimentPath, websocket::WebSocketClient};
-use burn::prelude::Backend;
-use burn::record::{Record, Recorder};
 use crossbeam::channel::Sender;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
@@ -28,68 +24,35 @@ impl ExperimentRunHandle {
             .ok_or(ExperimentTrackerError::InactiveExperiment)
     }
 
-    /// Logs an artifact with the given name and kind.
-    pub fn log_artifact<B: Backend>(
+    /// Log an artifact with the given name and kind.
+    pub fn log_artifact<A: ArtifactEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
-        record: impl Record<B>,
-    ) {
-        self.try_log_artifact(name, kind, record)
-            .expect("Failed to log artifact, experiment may have been closed or inactive");
-    }
-
-    /// Attempts to log an artifact with the given name and kind.
-    pub fn try_log_artifact<B: Backend>(
-        &self,
-        name: impl Into<String>,
-        kind: ArtifactKind,
-        record: impl Record<B>,
+        sources: A,
+        settings: &A::Settings,
     ) -> Result<(), ExperimentTrackerError> {
-        self.try_upgrade()?.log_artifact(name, kind, record)
-    }
-
-    /// Logs an artifact with the given name and kind.
-    pub fn log_artifact2(
-        &self,
-        name: impl Into<String>,
-        kind: ArtifactKind,
-        sources: impl IntoArtifactSources,
-    ) {
-        self.try_log_artifact2(name, kind, sources)
-            .expect("Failed to log artifact, experiment may have been closed or inactive");
-    }
-
-    /// Attempts to log an artifact with the given name and kind.
-    pub fn try_log_artifact2(
-        &self,
-        name: impl Into<String>,
-        kind: ArtifactKind,
-        sources: impl IntoArtifactSources,
-    ) -> Result<(), ExperimentTrackerError> {
-        self.try_upgrade()?.log_artifact2(name, kind, sources)
+        self.try_upgrade()?
+            .log_artifact2(name, kind, sources, settings)
     }
 
     /// Loads an artifact with the given name and device.
-    pub fn load_artifact<B, R>(
+    pub fn load_artifact<D: ArtifactDecode>(
         &self,
-        name: impl Into<String>,
-        device: &B::Device,
-    ) -> Result<R, ExperimentTrackerError>
-    where
-        B: Backend,
-        R: Record<B>,
-    {
-        self.try_upgrade()?.load_artifact(name, device)
+        name: impl AsRef<str>,
+        settings: &D::Settings,
+    ) -> Result<D, ExperimentTrackerError> {
+        self.try_upgrade()?.load_artifact(name, settings)
     }
 
     /// Loads an artifact with the given name and device.
-    pub fn load_artifact2(
+    pub fn load_artifact_reader(
         &self,
-        name: impl Into<String>,
+        name: impl AsRef<str>,
         experiment_num: u64,
-    ) -> Result<Box<dyn ArtifactReader>, ExperimentTrackerError> {
-        self.try_upgrade()?.load_artifact2(name, experiment_num)
+    ) -> Result<MemoryArtifactReader, ExperimentTrackerError> {
+        self.try_upgrade()?
+            .load_artifact_reader(name, experiment_num)
     }
 
     /// Logs a metric with the given name, epoch, iteration, value, and group.
@@ -156,42 +119,26 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_artifact<B: Backend>(
+    pub fn log_artifact2<A: ArtifactEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
-        record: impl Record<B>,
-    ) -> Result<(), ExperimentTrackerError> {
-        let recorder = ArtifactRecorder::new(self.http_client.clone());
-        let args = ArtifactRecordArgs {
-            experiment_path: self.id.clone(),
-            name: name.into(),
-            kind,
-        };
-        recorder
-            .record(record, args)
-            .map_err(ExperimentTrackerError::BurnRecorderError)
-    }
-
-    pub fn log_artifact2(
-        &self,
-        name: impl Into<String>,
-        kind: ArtifactKind,
-        sources: impl IntoArtifactSources,
+        artifact: A,
+        settings: &A::Settings,
     ) -> Result<(), ExperimentTrackerError> {
         ArtifactScope::new(self.http_client.clone(), self.id.clone())
-            .builder(name, kind)
-            .add_sources(sources)
-            .upload()?;
-
+            .upload(name, kind, artifact, settings)
+            .map_err(|e| {
+                ExperimentTrackerError::InternalError(format!("Failed to log artifact: {e}"))
+            })?;
         Ok(())
     }
 
-    pub fn load_artifact2(
+    pub fn load_artifact_reader(
         &self,
-        name: impl Into<String>,
+        name: impl AsRef<str>,
         experiment_num: u64,
-    ) -> Result<Box<dyn ArtifactReader>, ExperimentTrackerError> {
+    ) -> Result<MemoryArtifactReader, ExperimentTrackerError> {
         let new_id = ExperimentPath::try_from(format!(
             "{}/{}/{}",
             self.id.owner_name(),
@@ -200,25 +147,29 @@ impl ExperimentRunInner {
         ))
         .unwrap();
         ArtifactScope::new(self.http_client.clone(), new_id)
-            .fetch(name)
+            .fetch(name.as_ref())
             .map_err(|e| {
                 ExperimentTrackerError::InternalError(format!("Failed to load artifact: {e}"))
             })
     }
 
-    pub fn load_artifact<B: Backend, R: Record<B>>(
+    pub fn load_artifact<D: ArtifactDecode>(
         &self,
-        name: impl Into<String>,
-        device: &B::Device,
-    ) -> Result<R, ExperimentTrackerError> {
-        let recorder = ArtifactRecorder::new(self.http_client.clone());
-        let args = ArtifactLoadArgs {
-            experiment_path: self.id.clone(),
-            query: ArtifactQueryArgs::ByName(name.into()),
-        };
-        recorder
-            .load(args, device)
-            .map_err(ExperimentTrackerError::BurnRecorderError)
+        name: impl AsRef<str>,
+        settings: &D::Settings,
+    ) -> Result<D, ExperimentTrackerError> {
+        let reader = ArtifactScope::new(self.http_client.clone(), self.id.clone())
+            .fetch(name)
+            .map_err(|e| {
+                ExperimentTrackerError::InternalError(format!("Failed to load artifact: {e}"))
+            })?;
+
+        Ok(D::decode(&reader, settings).map_err(|e| {
+            ExperimentTrackerError::InternalError(format!(
+                "Failed to decode artifact: {}",
+                e.into()
+            ))
+        })?)
     }
 
     pub fn log_metric(
@@ -374,112 +325,5 @@ impl Deref for ExperimentRun {
 
     fn deref(&self) -> &Self::Target {
         &self._handle
-    }
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-mod test {
-    use crate::api::Client;
-    use crate::experiment::ExperimentRun;
-    use crate::record::ArtifactKind;
-    use crate::schemas::ExperimentPath;
-    use burn::backend::NdArray;
-    use burn::nn::conv::{Conv2d, Conv2dConfig};
-    use burn::nn::pool::{AdaptiveAvgPool2d, AdaptiveAvgPool2dConfig};
-    use burn::nn::{Dropout, DropoutConfig, Linear, LinearConfig, Relu};
-    use burn::prelude::*;
-
-    #[derive(Module, Debug)]
-    pub struct Model<B: Backend> {
-        conv1: Conv2d<B>,
-        conv2: Conv2d<B>,
-        pool: AdaptiveAvgPool2d,
-        dropout: Dropout,
-        linear1: Linear<B>,
-        linear2: Linear<B>,
-        activation: Relu,
-    }
-
-    #[derive(Config, Debug)]
-    pub struct ModelConfig {
-        num_classes: usize,
-        hidden_size: usize,
-        #[config(default = "0.5")]
-        dropout: f64,
-    }
-
-    impl ModelConfig {
-        pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
-            Model {
-                conv1: Conv2dConfig::new([1, 8], [3, 3]).init(device),
-                conv2: Conv2dConfig::new([8, 16], [3, 3]).init(device),
-                pool: AdaptiveAvgPool2dConfig::new([8, 8]).init(),
-                activation: Relu::new(),
-                linear1: LinearConfig::new(16 * 8 * 8, self.hidden_size).init(device),
-                linear2: LinearConfig::new(self.hidden_size, self.num_classes).init(device),
-                dropout: DropoutConfig::new(self.dropout).init(),
-            }
-        }
-    }
-
-    fn test_experiment_handle() -> anyhow::Result<()> {
-        type TestBackend = NdArray;
-        type TestDevice = <TestBackend as Backend>::Device;
-
-        let device = TestDevice::default();
-        train_experiment::<TestBackend>(device)?;
-
-        Ok(())
-    }
-
-    fn train_experiment<B: Backend>(device: B::Device) -> anyhow::Result<()> {
-        let experiment = ExperimentRun::new(
-            Client::new_without_credentials("http://localhost:9001".parse().unwrap()),
-            ExperimentPath::try_from("test_owner/test_project/1".to_string()).unwrap(),
-        )?;
-
-        let model_config = ModelConfig::new(10, 128);
-        let model = model_config.init::<B>(&device);
-
-        experiment.try_log_error("This is an error")?;
-        experiment.try_log_info("Hello, world")?;
-        experiment.try_log_artifact("model", ArtifactKind::Model, model.clone().into_record())?;
-
-        std::thread::spawn({
-            let handle = experiment.handle();
-            let model_fork = model.clone();
-            move || {
-                handle.log_metric("accuracy", 1, 1, 0.95, "test");
-                handle.log_info("Training started");
-                handle.log_error("An error occurred");
-                handle.log_metric("accuracy", 1, 1, 0.95, "test");
-                handle.log_artifact("model_fork", ArtifactKind::Model, model_fork.into_record());
-            }
-        });
-
-        experiment.finish()?;
-
-        Ok(())
-    }
-
-    fn eval_experiment<B: Backend>(device: B::Device) -> anyhow::Result<()> {
-        let experiment = ExperimentRun::new(
-            Client::new_without_credentials("http://localhost:8000".parse().unwrap()),
-            ExperimentPath::try_from("test_owner/test_project/1".to_string()).unwrap(),
-        )?;
-
-        let model_config = ModelConfig::new(10, 128);
-
-        // load the artifact back
-        let loaded_model_record = experiment.load_artifact("model", &device)?;
-
-        let _model = model_config
-            .init::<B>(&device)
-            .load_record(loaded_model_record);
-
-        experiment.fail("Hello")?;
-
-        Ok(())
     }
 }

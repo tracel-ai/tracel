@@ -1,41 +1,94 @@
 use std::path::PathBuf;
 
-use crate::artifacts::{ArtifactSources, IntoArtifactSources};
+use crate::artifacts::ArtifactKind;
+use crate::artifacts::{ArtifactDecode, ArtifactEncode, BundleSink};
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
-use crate::record::ArtifactKind;
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
 use burn::tensor::backend::Backend;
+use serde::Deserialize;
 use serde::{Serialize, de::DeserializeOwned};
 
 struct CheckpointRecordSources<B, R> {
-    pub name: String,
     pub backend: std::marker::PhantomData<B>,
     pub record: R,
 }
 
 impl<B, R> CheckpointRecordSources<B, R> {
-    pub fn new(name: String, record: R) -> Self {
+    pub fn new(record: R) -> Self {
         Self {
-            name,
             backend: std::marker::PhantomData,
             record,
         }
     }
 }
 
-impl<B, R> IntoArtifactSources for CheckpointRecordSources<B, R>
+#[derive(Serialize, Deserialize)]
+struct CheckpointRecordArtifactSettings {
+    pub name: String,
+}
+
+impl Default for CheckpointRecordArtifactSettings {
+    fn default() -> Self {
+        Self {
+            name: "checkpoint.mpk".to_string(),
+        }
+    }
+}
+
+impl<B, R> ArtifactEncode for CheckpointRecordSources<B, R>
 where
     R: Record<B>,
     B: Backend,
 {
-    fn into_artifact_sources(self) -> ArtifactSources {
+    type Settings = CheckpointRecordArtifactSettings;
+    type Error = String;
+    fn encode<E: BundleSink>(
+        self,
+        sink: &mut E,
+        settings: &Self::Settings,
+    ) -> Result<(), Self::Error> {
         let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
         let bytes = recorder
             .record(self.record, ())
-            .expect("Failed to record item");
-        ArtifactSources::new().add_bytes(bytes, self.name)
+            .map_err(|e| format!("Failed to record to bytes: {}", e))?;
+        sink.put_bytes(&settings.name, &bytes)
+            .map_err(|e| format!("Failed to write bytes to sink: {}", e))?;
+        Ok(())
+    }
+}
+
+impl<B, R> ArtifactDecode for CheckpointRecordSources<B, R>
+where
+    R: Record<B>,
+    B: Backend,
+{
+    type Settings = CheckpointRecordArtifactSettings;
+    type Error = String;
+
+    fn decode<I: crate::artifacts::BundleSource>(
+        source: &I,
+        settings: &Self::Settings,
+    ) -> Result<Self, Self::Error> {
+        let mut reader = source.open(&settings.name).map_err(|e| {
+            format!(
+                "Failed to get reader for checkpoint artifact {}: {}",
+                settings.name, e
+            )
+        })?;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).map_err(|e| {
+            format!(
+                "Failed to read bytes for checkpoint artifact {}: {}",
+                settings.name, e
+            )
+        })?;
+        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
+        let record = recorder
+            .load::<R>(bytes, &B::Device::default())
+            .map_err(|e| format!("Failed to load record from bytes: {}", e))?;
+        Ok(Self::new(record))
     }
 }
 
@@ -88,32 +141,41 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
             .ok_or(RecorderError::Unknown(
                 "File name should be a valid string".to_string(),
             ))?;
+        let settings = CheckpointRecordArtifactSettings {
+            name: file_name.to_string(),
+        };
         self.experiment_handle
-            .try_log_artifact2(
+            .log_artifact(
                 file_name,
                 ArtifactKind::Other,
-                CheckpointRecordSources::new(file_name.to_owned(), record),
+                CheckpointRecordSources::new(record),
+                &settings,
             )
             .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))
     }
 
-    fn load<R>(&self, args: Self::LoadArgs, device: &B::Device) -> Result<R, RecorderError>
+    fn load<R>(&self, args: Self::LoadArgs, _device: &B::Device) -> Result<R, RecorderError>
     where
         R: Record<B>,
     {
-        self.experiment_handle
-            .load_artifact::<B, R>(
-                args.file_name()
-                    .ok_or(RecorderError::Unknown(
-                        "File name should be present".to_string(),
-                    ))?
-                    .to_str()
-                    .ok_or(RecorderError::Unknown(
-                        "File name should be a valid string".to_string(),
-                    ))?,
-                device,
-            )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))
+        let name = args
+            .file_name()
+            .ok_or(RecorderError::Unknown(
+                "File name should be present".to_string(),
+            ))?
+            .to_str()
+            .ok_or(RecorderError::Unknown(
+                "File name should be a valid string".to_string(),
+            ))?;
+
+        let settings = CheckpointRecordArtifactSettings {
+            name: name.to_string(),
+        };
+        let artifact = self
+            .experiment_handle
+            .load_artifact::<CheckpointRecordSources<B, R>>(name, &settings)
+            .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))?;
+        Ok(artifact.record)
     }
 
     fn save_item<I: Serialize>(

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn::prelude::Backend;
-use burn_central_client::artifacts::{ArtifactDecoder, ArtifactReadError};
+use burn_central_client::artifacts::{ArtifactDecode, ArtifactReadError};
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
@@ -13,14 +13,14 @@ use burn_central_client::experiment::{
 };
 use std::collections::HashMap;
 
-pub struct Artifact<T: ArtifactDecoder> {
+pub struct Artifact<T: ArtifactDecode> {
     namespace: String,
     project_name: String,
     client: BurnCentral,
     _decoder: std::marker::PhantomData<T>,
 }
 
-impl<T: ArtifactDecoder> Artifact<T> {
+impl<T: ArtifactDecode> Artifact<T> {
     pub fn new(namespace: String, project_name: String, client: BurnCentral) -> Self {
         Self {
             namespace,
@@ -30,10 +30,11 @@ impl<T: ArtifactDecoder> Artifact<T> {
         }
     }
 
-    pub fn load(
+    pub fn load_with(
         &self,
-        name: impl Into<String>,
         experiment_num: i32,
+        name: impl AsRef<str>,
+        settings: &T::Settings,
     ) -> Result<T, ArtifactReadError> {
         let scope = self
             .client
@@ -44,11 +45,27 @@ impl<T: ArtifactDecoder> Artifact<T> {
 
         let reader = scope.fetch(name)?;
 
-        T::decode(&*reader)
+        T::decode(&reader, settings).map_err(|e| {
+            ArtifactReadError::Internal(format!("Failed to decode artifact: {}", e.into()))
+        })
+    }
+    pub fn load(&self, experiment_num: i32, name: impl AsRef<str>) -> Result<T, ArtifactReadError> {
+        let scope = self
+            .client
+            .artifacts(&self.namespace, &self.project_name, experiment_num)
+            .map_err(|e| {
+                ArtifactReadError::Internal(format!("Failed to create artifact scope: {}", e))
+            })?;
+
+        let reader = scope.fetch(name)?;
+
+        T::decode(&reader, &Default::default()).map_err(|e| {
+            ArtifactReadError::Internal(format!("Failed to decode artifact: {}", e.into()))
+        })
     }
 }
 
-impl<B: Backend, T: ArtifactDecoder> RoutineParam<ExecutionContext<B>> for Artifact<T> {
+impl<B: Backend, T: ArtifactDecode> RoutineParam<ExecutionContext<B>> for Artifact<T> {
     type Item<'new>
         = Artifact<T>
     where
@@ -288,12 +305,15 @@ impl<B: AutodiffBackend> Executor<B> {
 
 #[cfg(test)]
 mod test {
+    use std::convert::Infallible;
+
     use crate::{Cfg, Model, MultiDevice};
 
     use super::*;
     use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
+    use burn_central_client::artifacts::ArtifactEncode;
     use serde::{Deserialize, Serialize};
 
     impl<B: AutodiffBackend> ExecutorBuilder<B> {
@@ -309,6 +329,18 @@ mod test {
     #[derive(Module, Debug)]
     struct TestModel<B: Backend> {
         linear: Linear<B>,
+    }
+
+    impl<B: Backend> ArtifactEncode for TestModel<B> {
+        type Settings = ();
+        type Error = Infallible;
+        fn encode<E: burn_central_client::artifacts::BundleSink>(
+            self,
+            _sink: &mut E,
+            _settings: &Self::Settings,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
     }
 
     impl<B: AutodiffBackend> TestModel<B> {
@@ -352,7 +384,7 @@ mod test {
     #[test]
     fn should_run_simple_routine_successfully() {
         let mut builder = Executor::<TestBackend>::builder();
-        builder.train("simple_task", simple_train_step);
+        builder.train("simple_task", simple_train_step::<TestBackend>);
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -399,7 +431,7 @@ mod test {
     #[test]
     fn should_handle_failing_routine() {
         let mut builder = Executor::<TestBackend>::builder();
-        builder.train("failing_task", failing_routine);
+        builder.train("failing_task", failing_routine::<TestBackend>);
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -415,8 +447,11 @@ mod test {
     #[test]
     fn should_support_named_routines() {
         let mut builder = Executor::<TestBackend>::builder();
-        builder.train("task1", simple_train_step.with_name("custom_name_1"));
-        builder.train("task2", ("custom_name_2", simple_train_step));
+        builder.train(
+            "task1",
+            simple_train_step::<TestBackend>.with_name("custom_name_1"),
+        );
+        builder.train("task2", ("custom_name_2", simple_train_step::<TestBackend>));
         let executor = builder.build_offline();
 
         let res1 = executor.run("train".parse().unwrap(), "task1", [], None);
