@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use crate::client::BurnCentralError;
 use once_cell::sync::Lazy;
@@ -193,6 +193,13 @@ impl std::fmt::Display for ProjectPath {
     }
 }
 
+impl FromStr for ProjectPath {
+    type Err = BurnCentralError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ProjectPath::try_from(s.to_string())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExperimentPath {
     project_path: ProjectPath,
@@ -262,6 +269,13 @@ impl std::fmt::Display for ExperimentPath {
     }
 }
 
+impl FromStr for ExperimentPath {
+    type Err = BurnCentralError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ExperimentPath::try_from(s.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelPath {
     project_path: ProjectPath,
@@ -325,6 +339,13 @@ impl TryFrom<String> for ModelPath {
             project_path,
             model_name,
         })
+    }
+}
+
+impl FromStr for ModelPath {
+    type Err = BurnCentralError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ModelPath::try_from(s.to_string())
     }
 }
 

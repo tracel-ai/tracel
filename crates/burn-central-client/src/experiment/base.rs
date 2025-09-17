@@ -1,7 +1,7 @@
 use super::socket::ExperimentSocket;
 use crate::api::EndExperimentStatus;
-use crate::artifacts::ArtifactKind;
-use crate::artifacts::{ArtifactDecode, ArtifactEncode, ArtifactScope, MemoryArtifactReader};
+use crate::artifacts::{ArtifactKind, ExperimentArtifactScope};
+use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::message::ExperimentMessage;
@@ -25,7 +25,7 @@ impl ExperimentRunHandle {
     }
 
     /// Log an artifact with the given name, kind and settings.
-    pub fn log_artifact<A: ArtifactEncode>(
+    pub fn log_artifact<A: BundleEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
@@ -37,7 +37,7 @@ impl ExperimentRunHandle {
     }
 
     /// Loads an artifact with the given name and settings.
-    pub fn load_artifact<D: ArtifactDecode>(
+    pub fn load_artifact<D: BundleDecode>(
         &self,
         name: impl AsRef<str>,
         settings: &D::Settings,
@@ -49,7 +49,7 @@ impl ExperimentRunHandle {
     pub fn load_artifact_raw(
         &self,
         name: impl AsRef<str>,
-    ) -> Result<MemoryArtifactReader, ExperimentTrackerError> {
+    ) -> Result<InMemoryBundleReader, ExperimentTrackerError> {
         self.try_upgrade()?.load_artifact_raw(name)
     }
 
@@ -117,14 +117,14 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_artifact<A: ArtifactEncode>(
+    pub fn log_artifact<A: BundleEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
         artifact: A,
         settings: &A::Settings,
     ) -> Result<(), ExperimentTrackerError> {
-        ArtifactScope::new(self.http_client.clone(), self.id.clone())
+        ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
             .upload(name, kind, artifact, settings)
             .map_err(Into::into)
             .map(|_| ())
@@ -133,18 +133,18 @@ impl ExperimentRunInner {
     pub fn load_artifact_raw(
         &self,
         name: impl AsRef<str>,
-    ) -> Result<MemoryArtifactReader, ExperimentTrackerError> {
-        ArtifactScope::new(self.http_client.clone(), self.id.clone())
+    ) -> Result<InMemoryBundleReader, ExperimentTrackerError> {
+        ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
             .download_raw(name.as_ref())
             .map_err(Into::into)
     }
 
-    pub fn load_artifact<D: ArtifactDecode>(
+    pub fn load_artifact<D: BundleDecode>(
         &self,
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentTrackerError> {
-        ArtifactScope::new(self.http_client.clone(), self.id.clone())
+        ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
             .download(name, settings)
             .map_err(Into::into)
     }

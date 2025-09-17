@@ -1,7 +1,8 @@
 use crate::ExecutionContext;
 use crate::types::Model;
 use burn::prelude::Backend;
-use burn_central_client::artifacts::{ArtifactEncode, ArtifactKind};
+use burn_central_client::artifacts::ArtifactKind;
+use burn_central_client::bundle::BundleEncode;
 use std::fmt::Display;
 
 /// This trait defines how a specific return type (Output) from a handler apply its effects to the execution context.
@@ -36,9 +37,7 @@ where
     }
 }
 
-impl<B: Backend, M: ArtifactEncode + Send + 'static> RoutineOutput<ExecutionContext<B>>
-    for Model<M>
-{
+impl<B: Backend, M: BundleEncode + Send + 'static> RoutineOutput<ExecutionContext<B>> for Model<M> {
     fn apply_output(self, ctx: &mut ExecutionContext<B>) -> anyhow::Result<()> {
         if let Some(experiment) = ctx.experiment() {
             experiment.log_artifact("model", ArtifactKind::Model, self.0, &Default::default())?;
@@ -47,10 +46,10 @@ impl<B: Backend, M: ArtifactEncode + Send + 'static> RoutineOutput<ExecutionCont
     }
 }
 
-impl<B: Backend, M: ArtifactEncode + Send + 'static> ExperimentOutput<B> for Model<M> {}
+impl<B: Backend, M: BundleEncode + Send + 'static> ExperimentOutput<B> for Model<M> {}
 
 /// --- TrainOutput ---
-impl<B: Backend, M: ArtifactEncode + Send + 'static> TrainOutput<B> for Model<M> {}
+impl<B: Backend, M: BundleEncode + Send + 'static> TrainOutput<B> for Model<M> {}
 
 impl<T, E, B: Backend> ExperimentOutput<B> for Result<T, E>
 where

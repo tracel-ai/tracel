@@ -10,7 +10,7 @@ use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
     ArtifactCreationResponse, ArtifactDownloadResponse, ArtifactListResponse, ArtifactResponse,
     CreateArtifactRequest, CreateProjectSchema, GetUserOrganizationsResponseSchema,
-    ModelDownloadResponse, ModelVersionResponse,
+    ModelDownloadResponse, ModelResponse, ModelVersionResponse,
 };
 use crate::schemas::{BurnCentralCodeMetadata, CreatedByUser};
 use crate::{
@@ -451,6 +451,24 @@ impl Client {
         self.get_json::<ArtifactDownloadResponse>(url)
     }
 
+    /// Get details about a specific model.
+    ///
+    /// The client must be logged in before calling this method.
+    pub fn get_model(
+        &self,
+        namespace: &str,
+        project_name: &str,
+        model_name: &str,
+    ) -> Result<ModelResponse, ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{namespace}/{project_name}/models/{model_name}"
+        ));
+
+        self.get_json::<ModelResponse>(url)
+    }
+
     /// Get details about a specific model version.
     ///
     /// The client must be logged in before calling this method.
@@ -487,28 +505,6 @@ impl Client {
         ));
 
         self.get_json::<ModelDownloadResponse>(url)
-    }
-
-    /// Request a URL to save the final model to the Burn Central server.
-    ///
-    /// The client must be logged in before calling this method.
-    pub fn request_final_model_save_url(
-        &self,
-        owner_name: &str,
-        project_name: &str,
-        exp_num: i32,
-    ) -> Result<String, ClientError> {
-        self.validate_session_cookie()?;
-
-        let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/save_model"
-        ));
-
-        let save_url = self
-            .post_json::<serde_json::Value, URLSchema>(url, None::<serde_json::Value>)
-            .map(|res| res.url)?;
-
-        Ok(save_url)
     }
 
     /// Request a URL to upload logs to the Burn Central server.

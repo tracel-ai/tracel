@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::artifacts::ArtifactKind;
-use crate::artifacts::{ArtifactDecode, ArtifactEncode, BundleSink};
+use crate::bundle::{BundleDecode, BundleEncode, BundleSink};
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
@@ -37,7 +37,7 @@ impl Default for CheckpointRecordArtifactSettings {
     }
 }
 
-impl<B, R> ArtifactEncode for CheckpointRecordSources<B, R>
+impl<B, R> BundleEncode for CheckpointRecordSources<B, R>
 where
     R: Record<B>,
     B: Backend,
@@ -59,7 +59,7 @@ where
     }
 }
 
-impl<B, R> ArtifactDecode for CheckpointRecordSources<B, R>
+impl<B, R> BundleDecode for CheckpointRecordSources<B, R>
 where
     R: Record<B>,
     B: Backend,
@@ -67,7 +67,7 @@ where
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
 
-    fn decode<I: crate::artifacts::BundleSource>(
+    fn decode<I: crate::bundle::BundleSource>(
         source: &I,
         settings: &Self::Settings,
     ) -> Result<Self, Self::Error> {

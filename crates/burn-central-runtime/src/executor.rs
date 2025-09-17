@@ -1,6 +1,7 @@
 use anyhow::Result;
 use burn::prelude::Backend;
-use burn_central_client::artifacts::{ArtifactDecode, ArtifactError};
+use burn_central_client::artifacts::ArtifactError;
+use burn_central_client::bundle::BundleDecode;
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
@@ -16,14 +17,14 @@ use std::collections::HashMap;
 /// A loader for artifacts associated with a specific experiment in Burn Central.
 ///
 /// It can be used as a parameter in experiment routines to load artifacts like models or checkpoints.
-pub struct ArtifactLoader<T: ArtifactDecode> {
+pub struct ArtifactLoader<T: BundleDecode> {
     namespace: String,
     project_name: String,
     client: BurnCentral,
     _artifact: std::marker::PhantomData<T>,
 }
 
-impl<T: ArtifactDecode> ArtifactLoader<T> {
+impl<T: BundleDecode> ArtifactLoader<T> {
     pub fn new(namespace: String, project_name: String, client: BurnCentral) -> Self {
         Self {
             namespace,
@@ -63,7 +64,7 @@ impl<T: ArtifactDecode> ArtifactLoader<T> {
     }
 }
 
-impl<B: Backend, T: ArtifactDecode> RoutineParam<ExecutionContext<B>> for ArtifactLoader<T> {
+impl<B: Backend, T: BundleDecode> RoutineParam<ExecutionContext<B>> for ArtifactLoader<T> {
     type Item<'new>
         = ArtifactLoader<T>
     where
@@ -311,7 +312,7 @@ mod test {
     use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
-    use burn_central_client::artifacts::ArtifactEncode;
+    use burn_central_client::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
     impl<B: AutodiffBackend> ExecutorBuilder<B> {
@@ -329,10 +330,10 @@ mod test {
         linear: Linear<B>,
     }
 
-    impl<B: Backend> ArtifactEncode for TestModel<B> {
+    impl<B: Backend> BundleEncode for TestModel<B> {
         type Settings = ();
         type Error = Infallible;
-        fn encode<E: burn_central_client::artifacts::BundleSink>(
+        fn encode<E: BundleSink>(
             self,
             _sink: &mut E,
             _settings: &Self::Settings,

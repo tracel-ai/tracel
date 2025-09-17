@@ -185,3 +185,14 @@ pub struct ModelVersionResponse {
     pub created_at: String,
     pub manifest: serde_json::Value,
 }
+
+#[derive(Deserialize)]
+pub struct ModelResponse {
+    pub id: String,
+    pub project_id: i32,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_by: CreatedByUserResponse,
+    pub created_at: String,
+    pub version_count: u64,
+}
