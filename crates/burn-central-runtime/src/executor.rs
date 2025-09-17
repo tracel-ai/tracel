@@ -13,14 +13,14 @@ use burn_central_client::experiment::{
 };
 use std::collections::HashMap;
 
-pub struct Artifact<T: ArtifactDecode> {
+pub struct ArtifactLoader<T: ArtifactDecode> {
     namespace: String,
     project_name: String,
     client: BurnCentral,
     _decoder: std::marker::PhantomData<T>,
 }
 
-impl<T: ArtifactDecode> Artifact<T> {
+impl<T: ArtifactDecode> ArtifactLoader<T> {
     pub fn new(namespace: String, project_name: String, client: BurnCentral) -> Self {
         Self {
             namespace,
@@ -65,9 +65,9 @@ impl<T: ArtifactDecode> Artifact<T> {
     }
 }
 
-impl<B: Backend, T: ArtifactDecode> RoutineParam<ExecutionContext<B>> for Artifact<T> {
+impl<B: Backend, T: ArtifactDecode> RoutineParam<ExecutionContext<B>> for ArtifactLoader<T> {
     type Item<'new>
-        = Artifact<T>
+        = ArtifactLoader<T>
     where
         ExecutionContext<B>: 'new;
 
@@ -76,7 +76,7 @@ impl<B: Backend, T: ArtifactDecode> RoutineParam<ExecutionContext<B>> for Artifa
             anyhow::anyhow!("Burn Central client is not configured in the execution context")
         })?;
 
-        Ok(Artifact::new(
+        Ok(ArtifactLoader::new(
             ctx.namespace.clone(),
             ctx.project.clone(),
             client.clone(),
