@@ -135,10 +135,10 @@ pub struct ProjectPath {
 }
 
 impl ProjectPath {
-    pub fn new(owner_name: String, project_name: String) -> Self {
+    pub fn new(owner_name: impl Into<String>, project_name: impl Into<String>) -> Self {
         ProjectPath {
-            owner_name,
-            project_name,
+            owner_name: owner_name.into(),
+            project_name: project_name.into(),
         }
     }
 
@@ -207,6 +207,17 @@ pub struct ExperimentPath {
 }
 
 impl ExperimentPath {
+    pub fn new(
+        owner_name: impl Into<String>,
+        project_name: impl Into<String>,
+        experiment_num: i32,
+    ) -> Self {
+        Self {
+            project_path: ProjectPath::new(owner_name, project_name),
+            experiment_num,
+        }
+    }
+
     pub fn validate_path(path: &str) -> bool {
         static NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
             Regex::new(r"^[a-zA-Z0-9_.-]+$")

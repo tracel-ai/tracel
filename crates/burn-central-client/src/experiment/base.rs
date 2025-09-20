@@ -4,9 +4,11 @@ use crate::artifacts::{ArtifactKind, ExperimentArtifactScope};
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
-use crate::experiment::message::ExperimentMessage;
+use crate::experiment::message::{ExperimentMessage, InputUsed};
 use crate::experiment::socket::ThreadError;
-use crate::{api::Client, schemas::ExperimentPath, websocket::WebSocketClient};
+use crate::models::ModelRegistry;
+use crate::schemas::{ExperimentPath, ModelPath};
+use crate::{api::Client, websocket::WebSocketClient};
 use crossbeam::channel::Sender;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
@@ -25,12 +27,12 @@ impl ExperimentRunHandle {
     }
 
     /// Log an artifact with the given name, kind and settings.
-    pub fn log_artifact<A: BundleEncode>(
+    pub fn log_artifact<E: BundleEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
-        sources: A,
-        settings: &A::Settings,
+        sources: E,
+        settings: &E::Settings,
     ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?
             .log_artifact(name, kind, sources, settings)
@@ -117,12 +119,12 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_artifact<A: BundleEncode>(
+    pub fn log_artifact<E: BundleEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
-        artifact: A,
-        settings: &A::Settings,
+        artifact: E,
+        settings: &E::Settings,
     ) -> Result<(), ExperimentTrackerError> {
         ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
             .upload(name, kind, artifact, settings)
@@ -134,9 +136,12 @@ impl ExperimentRunInner {
         &self,
         name: impl AsRef<str>,
     ) -> Result<InMemoryBundleReader, ExperimentTrackerError> {
-        ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
-            .download_raw(name.as_ref())
-            .map_err(Into::into)
+        let scope = ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone());
+        let artifact = scope.fetch(&name)?;
+        self.send(ExperimentMessage::InputUsed(InputUsed::Artifact {
+            artifact_id: artifact.id.to_string(),
+        }))?;
+        scope.download_raw(name).map_err(Into::into)
     }
 
     pub fn load_artifact<D: BundleDecode>(
@@ -144,9 +149,12 @@ impl ExperimentRunInner {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentTrackerError> {
-        ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
-            .download(name, settings)
-            .map_err(Into::into)
+        let scope = ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone());
+        let artifact = scope.fetch(&name)?;
+        self.send(ExperimentMessage::InputUsed(InputUsed::Artifact {
+            artifact_id: artifact.id.to_string(),
+        }))?;
+        scope.download(name, settings).map_err(Into::into)
     }
 
     pub fn log_metric(

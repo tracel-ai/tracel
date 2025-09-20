@@ -2,10 +2,11 @@ use sha2::Digest;
 use std::collections::BTreeMap;
 
 use crate::api::{ArtifactFileSpecRequest, Client, ClientError, CreateArtifactRequest};
+use crate::artifacts::ArtifactInfo;
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader, InMemoryBundleSources};
 use crate::schemas::ExperimentPath;
 
-#[derive(Clone, strum::Display)]
+#[derive(Debug, Clone, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum ArtifactKind {
     Model,
@@ -99,6 +100,29 @@ impl ExperimentArtifactScope {
         name: impl AsRef<str>,
     ) -> Result<InMemoryBundleReader, ArtifactError> {
         let name = name.as_ref();
+        let artifact = self.fetch(name)?;
+        let resp = self.client.presign_artifact_download(
+            self.exp_path.owner_name(),
+            self.exp_path.project_name(),
+            self.exp_path.experiment_num(),
+            &artifact.id.to_string(),
+        )?;
+
+        let mut data = BTreeMap::new();
+
+        for file in resp.files {
+            data.insert(
+                file.rel_path.clone(),
+                self.client.download_bytes_from_url(&file.url)?,
+            );
+        }
+
+        Ok(InMemoryBundleReader::new(data))
+    }
+
+    /// Fetch information about an artifact by name
+    pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactInfo, ArtifactError> {
+        let name = name.as_ref();
         let artifact_resp = self
             .client
             .list_artifacts_by_name(
@@ -112,23 +136,7 @@ impl ExperimentArtifactScope {
             .next()
             .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))?;
 
-        let resp = self.client.presign_artifact_download(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            &artifact_resp.id,
-        )?;
-
-        let mut data = BTreeMap::new();
-
-        for file in resp.files {
-            data.insert(
-                file.rel_path.clone(),
-                self.client.download_bytes_from_url(&file.url)?,
-            );
-        }
-
-        Ok(InMemoryBundleReader::new(data))
+        Ok(artifact_resp.into())
     }
 
     /// Get the experiment path this scope operates on

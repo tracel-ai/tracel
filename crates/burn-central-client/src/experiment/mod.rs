@@ -8,3 +8,4 @@ mod socket;
 pub use base::*;
 pub use config::*;
 pub use error::*;
+pub use message::InputUsed;
