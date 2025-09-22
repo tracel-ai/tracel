@@ -1,5 +1,5 @@
+mod client;
 mod schemas;
-mod scope;
 
+pub use client::*;
 pub use schemas::*;
-pub use scope::*;

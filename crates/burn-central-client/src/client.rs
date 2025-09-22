@@ -1,7 +1,7 @@
 //! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
 use crate::api::{Client, ClientError, OrganizationSchema};
-use crate::artifacts::ExperimentArtifactScope;
+use crate::artifacts::ExperimentArtifactClient;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::models::ModelRegistry;
@@ -391,9 +391,9 @@ impl BurnCentral {
         owner: &str,
         project: &str,
         exp_num: i32,
-    ) -> Result<ExperimentArtifactScope, BurnCentralError> {
+    ) -> Result<ExperimentArtifactClient, BurnCentralError> {
         let exp_path = ExperimentPath::try_from(format!("{}/{}/{}", owner, project, exp_num))?;
-        Ok(ExperimentArtifactScope::new(self.client.clone(), exp_path))
+        Ok(ExperimentArtifactClient::new(self.client.clone(), exp_path))
     }
 
     /// Create a model registry for downloading models from Burn Central.

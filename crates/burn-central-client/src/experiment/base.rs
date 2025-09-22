@@ -1,6 +1,6 @@
 use super::socket::ExperimentSocket;
 use crate::api::EndExperimentStatus;
-use crate::artifacts::{ArtifactKind, ExperimentArtifactScope};
+use crate::artifacts::{ArtifactKind, ExperimentArtifactClient};
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
@@ -125,7 +125,7 @@ impl ExperimentRunInner {
         artifact: E,
         settings: &E::Settings,
     ) -> Result<(), ExperimentTrackerError> {
-        ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone())
+        ExperimentArtifactClient::new(self.http_client.clone(), self.id.clone())
             .upload(name, kind, artifact, settings)
             .map_err(Into::into)
             .map(|_| ())
@@ -135,7 +135,7 @@ impl ExperimentRunInner {
         &self,
         name: impl AsRef<str>,
     ) -> Result<InMemoryBundleReader, ExperimentTrackerError> {
-        let scope = ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone());
+        let scope = ExperimentArtifactClient::new(self.http_client.clone(), self.id.clone());
         let artifact = scope.fetch(&name)?;
         self.send(ExperimentMessage::InputUsed(InputUsed::Artifact {
             artifact_id: artifact.id.to_string(),
@@ -148,7 +148,7 @@ impl ExperimentRunInner {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentTrackerError> {
-        let scope = ExperimentArtifactScope::new(self.http_client.clone(), self.id.clone());
+        let scope = ExperimentArtifactClient::new(self.http_client.clone(), self.id.clone());
         let artifact = scope.fetch(&name)?;
         self.send(ExperimentMessage::InputUsed(InputUsed::Artifact {
             artifact_id: artifact.id.to_string(),

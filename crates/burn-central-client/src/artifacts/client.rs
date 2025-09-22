@@ -16,12 +16,12 @@ pub enum ArtifactKind {
 
 /// A scope for artifact operations within a specific experiment
 #[derive(Clone)]
-pub struct ExperimentArtifactScope {
+pub struct ExperimentArtifactClient {
     client: Client,
     exp_path: ExperimentPath,
 }
 
-impl ExperimentArtifactScope {
+impl ExperimentArtifactClient {
     pub(crate) fn new(client: Client, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
@@ -137,11 +137,6 @@ impl ExperimentArtifactScope {
             .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))?;
 
         Ok(artifact_resp.into())
-    }
-
-    /// Get the experiment path this scope operates on
-    pub fn experiment_path(&self) -> &ExperimentPath {
-        &self.exp_path
     }
 }
 

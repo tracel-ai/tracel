@@ -17,7 +17,7 @@ impl ModelRegistry {
     }
 
     /// Create a scope for a specific model within a project.
-    pub fn model(&self, model_path: ModelPath) -> Result<ModelScope, ModelError> {
+    pub fn model(&self, model_path: ModelPath) -> Result<ModelClient, ModelError> {
         let response = self
             .client
             .get_model(
@@ -35,7 +35,7 @@ impl ModelRegistry {
 
         let model = response.into();
 
-        Ok(ModelScope::new(self.client.clone(), model_path, model))
+        Ok(ModelClient::new(self.client.clone(), model_path, model))
     }
 
     /// Download a specific model version and decode it using the BundleDecode trait.
@@ -62,13 +62,13 @@ impl ModelRegistry {
 
 /// A scope for operations on a specific model within a project.
 #[derive(Clone)]
-pub struct ModelScope {
+pub struct ModelClient {
     client: Client,
     model_path: ModelPath,
     model: Model,
 }
 
-impl ModelScope {
+impl ModelClient {
     pub(crate) fn new(client: Client, model_path: ModelPath, model: Model) -> Self {
         Self {
             client,
@@ -120,11 +120,6 @@ impl ModelScope {
         }
 
         Ok(InMemoryBundleReader::new(data))
-    }
-
-    /// Get the model path this scope operates on.
-    pub fn path(&self) -> &ModelPath {
-        &self.model_path
     }
 
     /// Get information about a specific model version.
