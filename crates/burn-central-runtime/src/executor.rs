@@ -1,8 +1,11 @@
 use anyhow::Result;
 use burn::prelude::Backend;
+use burn_central_client::artifacts::ArtifactError;
+use burn_central_client::bundle::BundleDecode;
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
+use crate::param::RoutineParam;
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use burn::tensor::backend::AutodiffBackend;
 use burn_central_client::BurnCentral;
@@ -10,6 +13,75 @@ use burn_central_client::experiment::{
     ExperimentConfig, ExperimentRun, deserialize_and_merge_with_default,
 };
 use std::collections::HashMap;
+
+/// A loader for artifacts associated with a specific experiment in Burn Central.
+///
+/// It can be used as a parameter in experiment routines to load artifacts like models or checkpoints.
+pub struct ArtifactLoader<T: BundleDecode> {
+    namespace: String,
+    project_name: String,
+    client: BurnCentral,
+    _artifact: std::marker::PhantomData<T>,
+}
+
+impl<T: BundleDecode> ArtifactLoader<T> {
+    pub fn new(namespace: String, project_name: String, client: BurnCentral) -> Self {
+        Self {
+            namespace,
+            project_name,
+            client,
+            _artifact: std::marker::PhantomData,
+        }
+    }
+
+    /// Load an artifact by name with specific settings.
+    pub fn load_with(
+        &self,
+        experiment_num: i32,
+        name: impl AsRef<str>,
+        settings: &T::Settings,
+    ) -> Result<T, ArtifactError> {
+        let scope = self
+            .client
+            .artifacts(&self.namespace, &self.project_name, experiment_num)
+            .map_err(|e| {
+                ArtifactError::Internal(format!("Failed to create artifact scope: {}", e))
+            })?;
+
+        scope.download(name, settings)
+    }
+
+    /// Load an artifact by name with default settings.
+    pub fn load(&self, experiment_num: i32, name: impl AsRef<str>) -> Result<T, ArtifactError> {
+        let scope = self
+            .client
+            .artifacts(&self.namespace, &self.project_name, experiment_num)
+            .map_err(|e| {
+                ArtifactError::Internal(format!("Failed to create artifact scope: {}", e))
+            })?;
+
+        scope.download(name, &Default::default())
+    }
+}
+
+impl<B: Backend, T: BundleDecode> RoutineParam<ExecutionContext<B>> for ArtifactLoader<T> {
+    type Item<'new>
+        = ArtifactLoader<T>
+    where
+        ExecutionContext<B>: 'new;
+
+    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
+        let client = ctx.client.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Burn Central client is not configured in the execution context")
+        })?;
+
+        Ok(ArtifactLoader::new(
+            ctx.namespace.clone(),
+            ctx.project.clone(),
+            client.clone(),
+        ))
+    }
+}
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
 
@@ -232,12 +304,15 @@ impl<B: AutodiffBackend> Executor<B> {
 
 #[cfg(test)]
 mod test {
+    use std::convert::Infallible;
+
     use crate::{Cfg, Model, MultiDevice};
 
     use super::*;
     use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
+    use burn_central_client::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
     impl<B: AutodiffBackend> ExecutorBuilder<B> {
@@ -253,6 +328,18 @@ mod test {
     #[derive(Module, Debug)]
     struct TestModel<B: Backend> {
         linear: Linear<B>,
+    }
+
+    impl<B: Backend> BundleEncode for TestModel<B> {
+        type Settings = ();
+        type Error = Infallible;
+        fn encode<E: BundleSink>(
+            self,
+            _sink: &mut E,
+            _settings: &Self::Settings,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
     }
 
     impl<B: AutodiffBackend> TestModel<B> {
@@ -296,7 +383,7 @@ mod test {
     #[test]
     fn should_run_simple_routine_successfully() {
         let mut builder = Executor::<TestBackend>::builder();
-        builder.train("simple_task", simple_train_step);
+        builder.train("simple_task", simple_train_step::<TestBackend>);
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -343,7 +430,7 @@ mod test {
     #[test]
     fn should_handle_failing_routine() {
         let mut builder = Executor::<TestBackend>::builder();
-        builder.train("failing_task", failing_routine);
+        builder.train("failing_task", failing_routine::<TestBackend>);
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -359,8 +446,11 @@ mod test {
     #[test]
     fn should_support_named_routines() {
         let mut builder = Executor::<TestBackend>::builder();
-        builder.train("task1", simple_train_step.with_name("custom_name_1"));
-        builder.train("task2", ("custom_name_2", simple_train_step));
+        builder.train(
+            "task1",
+            simple_train_step::<TestBackend>.with_name("custom_name_1"),
+        );
+        builder.train("task2", ("custom_name_2", simple_train_step::<TestBackend>));
         let executor = builder.build_offline();
 
         let res1 = executor.run("train".parse().unwrap(), "task1", [], None);

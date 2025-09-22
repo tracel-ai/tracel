@@ -1,7 +1,6 @@
 pub mod api;
 mod client;
 pub mod credentials;
-pub mod error;
 
 pub mod schemas;
 
@@ -13,3 +12,7 @@ pub mod experiment;
 mod websocket;
 
 pub use crate::client::*;
+
+pub mod artifacts;
+pub mod bundle;
+pub mod models;

@@ -1,10 +1,10 @@
 //! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
-use crate::api::Client;
-use crate::api::ClientError;
-use crate::api::OrganizationSchema;
+use crate::api::{Client, ClientError, OrganizationSchema};
+use crate::artifacts::ExperimentArtifactClient;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
+use crate::models::ModelRegistry;
 use crate::schemas::{
     BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
     ProjectSchema, User,
@@ -36,6 +36,8 @@ pub enum BurnCentralError {
     InvalidProjectPath(String),
     #[error("Invalid experiment number: {0}")]
     InvalidExperimentNumber(String),
+    #[error("Invalid model path: {0}")]
+    InvalidModelPath(String),
 
     /// Represents an error related to client operations.
     ///
@@ -382,5 +384,21 @@ impl BurnCentral {
                 source: e,
             })
             .map(|response| response.organizations)
+    }
+
+    pub fn artifacts(
+        &self,
+        owner: &str,
+        project: &str,
+        exp_num: i32,
+    ) -> Result<ExperimentArtifactClient, BurnCentralError> {
+        let exp_path = ExperimentPath::try_from(format!("{}/{}/{}", owner, project, exp_num))?;
+        Ok(ExperimentArtifactClient::new(self.client.clone(), exp_path))
+    }
+
+    /// Create a model registry for downloading models from Burn Central.
+    /// Models are project-scoped and identified by namespace/project/model_name.
+    pub fn models(&self) -> ModelRegistry {
+        ModelRegistry::new(self.client.clone())
     }
 }
