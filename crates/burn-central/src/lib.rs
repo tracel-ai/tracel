@@ -10,6 +10,7 @@ pub use burn_central_client::*;
 /// Burn Central macros
 #[cfg(feature = "client")]
 pub mod macros {
+    pub use burn_central_cli_macros::Bundle;
     pub use burn_central_cli_macros::burn_central_main;
     pub use burn_central_cli_macros::register;
 }
