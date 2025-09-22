@@ -29,8 +29,8 @@ pub struct CodeUploadParamsSchema {
 }
 
 #[derive(Debug, Serialize)]
-pub struct RunnerQueueJobParamsSchema {
-    pub runner_group_name: String,
+pub struct ComputeProviderQueueJobParamsSchema {
+    pub compute_provider_group_name: String,
     pub code_version: String,
     pub command: String,
 }

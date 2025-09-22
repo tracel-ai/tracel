@@ -354,13 +354,13 @@ impl BurnCentral {
         &self,
         namespace: &str,
         project_name: &str,
-        runner_group_name: String,
+        compute_provider_group_name: String,
         code_version: &str,
         command: &str,
     ) -> Result<(), BurnCentralError> {
         self.client
             .start_remote_job(
-                &runner_group_name,
+                &compute_provider_group_name,
                 namespace,
                 project_name,
                 code_version,
@@ -368,7 +368,7 @@ impl BurnCentral {
             )
             .map_err(|e| BurnCentralError::Client {
                 context: format!(
-                    "Failed to start remote job for {namespace}/{project_name}/{runner_group_name}"
+                    "Failed to start remote job for {namespace}/{project_name}/{compute_provider_group_name}"
                 ),
                 source: e,
             })?;
