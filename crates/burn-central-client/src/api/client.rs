@@ -3,8 +3,8 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
 use super::schemas::{
-    CodeUploadParamsSchema, CodeUploadUrlsSchema, EndExperimentSchema, ExperimentResponse,
-    ProjectSchema, RunnerQueueJobParamsSchema, URLSchema, UserResponseSchema,
+    CodeUploadParamsSchema, CodeUploadUrlsSchema, ComputeProviderQueueJobParamsSchema,
+    EndExperimentSchema, ExperimentResponse, ProjectSchema, URLSchema, UserResponseSchema,
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
@@ -599,7 +599,7 @@ impl Client {
 
     pub fn start_remote_job(
         &self,
-        runner_group_name: &str,
+        compute_provider_group_name: &str,
         owner_name: &str,
         project_name: &str,
         code_version: &str,
@@ -609,8 +609,8 @@ impl Client {
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/jobs/queue"));
 
-        let body = RunnerQueueJobParamsSchema {
-            runner_group_name: runner_group_name.to_string(),
+        let body = ComputeProviderQueueJobParamsSchema {
+            compute_provider_group_name: compute_provider_group_name.to_string(),
             code_version: code_version.to_string(),
             command: command.to_string(),
         };

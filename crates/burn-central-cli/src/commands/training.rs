@@ -72,9 +72,13 @@ pub struct TrainingArgs {
         help = "The code version on which to run the training. (if unspecified, the current version will be packaged and used)"
     )]
     code_version: Option<String>,
-    /// The runner group name
-    #[clap(long = "runner", help = "The runner group name.")]
-    runner: Option<String>,
+    /// The compute provider group name
+    #[clap(
+        long = "compute-provider",
+        short = 'p',
+        help = "The compute provider group name."
+    )]
+    compute_provider: Option<String>,
 }
 
 impl Default for TrainingArgs {
@@ -85,19 +89,19 @@ impl Default for TrainingArgs {
             config: None,
             overrides: vec![],
             code_version: None,
-            runner: None,
+            compute_provider: None,
             backend: None,
         }
     }
 }
 
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
-    match (&args.runner, &args.code_version) {
+    match (&args.compute_provider, &args.code_version) {
         (Some(_), _) => remote_run(args, context),
         (None, None) => local_run(args, context),
         (None, Some(_)) => {
             print_warn!(
-                "Code version is ignored when executing locally (i.e. no runner is defined with --runner argument). The current code will always be packaged and used."
+                "Code version is ignored when executing locally (i.e. no compute provider is defined with --compute-provider argument). The current code will always be packaged and used."
             );
             local_run(args, context)
         }
@@ -154,7 +158,8 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     client.start_remote_job(
         &namespace,
         &project,
-        args.runner.expect("Runner should be provided"),
+        args.compute_provider
+            .expect("Compute provider should be provided"),
         &code_version_digest,
         &serde_json::to_string(&command)?,
     )?;
