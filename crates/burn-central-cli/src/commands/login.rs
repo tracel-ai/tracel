@@ -83,7 +83,7 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
 
     let mut client = context.create_client();
 
-    while !client.is_ok() {
+    while client.is_err() {
         context
             .terminal()
             .print_err("Invalid credentials. Please try again.");
