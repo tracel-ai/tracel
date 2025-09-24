@@ -41,7 +41,7 @@ pub struct ComputeProviderTrainingArgs {
 pub fn compute_provider_main(config: Config) {
     let manifest_path = cargo::try_locate_manifest().expect("Should be able to locate manifest.");
 
-    let terminal = Terminal::new();
+    let terminal = Terminal {};
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry);

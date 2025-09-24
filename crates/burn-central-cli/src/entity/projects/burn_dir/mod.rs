@@ -48,8 +48,11 @@ impl BurnDir {
         BurnCentralProject::load(&self.root)
     }
 
-    #[allow(dead_code)]
     pub fn save_project(&self, project: &BurnCentralProject) -> io::Result<()> {
         project.save(&self.root)
+    }
+
+    pub fn delete(&self) -> io::Result<()> {
+        fs::remove_dir_all(&self.root)
     }
 }

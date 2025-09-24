@@ -32,8 +32,7 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         .get_workspace_root()
         .context("Failed to get workspace root")?;
 
-    cliclack::clear_screen()?;
-    cliclack::intro(console::style("Project Initialization").black().on_green())?;
+    context.terminal().command_title("Project Initialization");
 
     ensure_git_repo_initialized(&ws_root)?;
     ensure_git_repo_clean()?;
@@ -77,7 +76,7 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         .join(&format!("/{owner_name}/{project_name}"))?;
     cliclack::outro(format!(
         "Project initialized successfully! You can check out your project at {}",
-        context.terminal().url(&frontend_url)
+        context.terminal().format_url(&frontend_url)
     ))?;
 
     Ok(())

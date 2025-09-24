@@ -6,6 +6,7 @@ pub mod init;
 pub mod login;
 pub mod package;
 pub mod training;
+pub mod unlink;
 
 pub fn default_command(mut context: CliContext) -> anyhow::Result<()> {
     let project_loaded = context.load_project().is_ok();
