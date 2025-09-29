@@ -8,7 +8,7 @@ pub fn handle_command(context: CliContext) -> anyhow::Result<()> {
         .confirm("Are you sure you want to unlink the burn central project to this repository?")?;
 
     if confirm_value {
-        context.burn_dir().delete()?;
+        context.burn_dir().unlink_project()?;
         context.terminal().finalize("Project unlinked");
     } else {
         context.terminal().cancel_finalize("Cancelled");

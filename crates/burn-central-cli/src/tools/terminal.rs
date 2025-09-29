@@ -3,6 +3,10 @@ use cliclack::{clear_screen, confirm};
 pub struct Terminal {}
 
 impl Terminal {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     pub fn print(&self, message: &str) {
         cliclack::log::info(message).expect("To be able to print message");
     }

@@ -30,4 +30,8 @@ impl BurnCentralProject {
             toml::from_str(&contents).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(meta)
     }
+
+    pub fn remove(dir: &Path) -> io::Result<()> {
+        fs::remove_file(dir.join(Self::BURN_PROJECT_FILENAME))
+    }
 }

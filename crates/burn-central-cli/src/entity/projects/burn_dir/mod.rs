@@ -1,4 +1,4 @@
-﻿use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::entity::projects::burn_dir::cache::CacheState;
@@ -52,7 +52,7 @@ impl BurnDir {
         project.save(&self.root)
     }
 
-    pub fn delete(&self) -> io::Result<()> {
-        fs::remove_dir_all(&self.root)
+    pub fn unlink_project(&self) -> io::Result<()> {
+        BurnCentralProject::remove(&self.root)
     }
 }

@@ -39,7 +39,7 @@ pub fn cli_main(config: Config) {
 
     let manifest_path = cargo::try_locate_manifest().expect("Failed to locate manifest");
 
-    let terminal = Terminal {};
+    let terminal = Terminal::new();
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(terminal, &config, crate_context, function_registry).init();
