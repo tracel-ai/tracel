@@ -10,25 +10,6 @@ pub struct LoginArgs {
     pub api_key: Option<String>,
 }
 
-pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<()> {
-    let prompt = format!(
-        "Enter your API key found on {} below.",
-        context
-            .terminal()
-            .url(&context.get_frontend_endpoint().join("/settings/api-keys")?),
-    );
-    context.terminal().print(&prompt);
-    let api_key = context.terminal_mut().read_password("Key")?;
-    if !api_key.trim().is_empty() {
-        context.set_credentials(Credentials { api_key });
-    } else {
-        println!("Login cancelled.");
-        return Ok(());
-    }
-
-    Ok(())
-}
-
 pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<BurnCentral> {
     const MAX_RETRIES: u32 = 3;
     let mut attempts = 0;
@@ -52,7 +33,14 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
                         context
                             .terminal()
                             .print("Failed to login. Please try again. Press Ctrl+C to exit.");
-                        prompt_login(context)?;
+
+                        let api_key = prompt_login(context)?;
+
+                        context.set_credentials(Credentials { api_key });
+
+                        context
+                            .create_client()
+                            .context("Failed to authenticate with the server")?;
                     }
                     ClientCreationError::ServerConnectionError(msg) => {
                         if attempts > MAX_RETRIES {
@@ -71,17 +59,50 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
     }
 }
 
+pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<String> {
+    context.terminal().input_password(&format!(
+        "Enter your API key found on {} below.",
+        context
+            .terminal()
+            .format_url(&context.get_frontend_endpoint().join("/settings/api-keys")?),
+    ))
+}
+
 pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Result<()> {
-    if let Some(api_key) = args.api_key {
+    let api_key = match args.api_key {
+        Some(api_key) => api_key,
+        None => {
+            context
+                .terminal()
+                .command_title("Credential initialization");
+            prompt_login(&mut context)?
+        }
+    };
+
+    context.set_credentials(Credentials { api_key });
+
+    let mut client = context.create_client();
+
+    while client.is_err() {
+        context
+            .terminal()
+            .print_err("Invalid credentials. Please try again.");
+        let api_key = prompt_login(&mut context)?;
         context.set_credentials(Credentials { api_key });
-    } else {
-        prompt_login(&mut context).context("Failed to prompt for API key")?;
+        client = context.create_client();
     }
 
-    let client = context
-        .create_client()
-        .context("Failed to authenticate with the server")?;
-    let user = client.me().context("Failed to retrieve current user")?;
-    println!("Successfully logged in! Welcome {}.", user.username);
+    let user = client.unwrap().me();
+    if let Ok(user) = user {
+        context.terminal().finalize(&format!(
+            "Successfully logged in! Welcome {}.",
+            user.username
+        ));
+    } else {
+        context
+            .terminal()
+            .cancel_finalize("Login failed, invalid credentials!");
+    }
+
     Ok(())
 }

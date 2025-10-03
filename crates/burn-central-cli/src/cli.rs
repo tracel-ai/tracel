@@ -28,6 +28,8 @@ pub enum Commands {
     Login(commands::login::LoginArgs),
     /// Initialize a new project or reinitialize an existing one.
     Init(commands::init::InitArgs),
+    /// Unlink the burn central project from this repository.
+    Unlink,
 }
 
 pub fn cli_main(config: Config) {
@@ -75,5 +77,6 @@ fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<
         Commands::Package(package_args) => commands::package::handle_command(package_args, context),
         Commands::Login(login_args) => commands::login::handle_command(login_args, context),
         Commands::Init(init_args) => commands::init::handle_command(init_args, context),
+        Commands::Unlink => commands::unlink::handle_command(context),
     }
 }

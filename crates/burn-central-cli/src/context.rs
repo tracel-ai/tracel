@@ -169,8 +169,4 @@ impl CliContext {
     pub fn terminal(&self) -> &Terminal {
         &self.terminal
     }
-
-    pub fn terminal_mut(&mut self) -> &mut Terminal {
-        &mut self.terminal
-    }
 }

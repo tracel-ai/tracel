@@ -1,51 +1,53 @@
-use console::Term;
-use std::io::Write;
+use cliclack::{clear_screen, confirm};
 
-pub struct Terminal {
-    inner: Term,
-}
+pub struct Terminal {}
 
 impl Terminal {
     pub fn new() -> Self {
-        Terminal {
-            inner: Term::stdout(),
-        }
+        Self {}
     }
 
-    #[allow(dead_code)]
     pub fn print(&self, message: &str) {
-        let _ = self.inner.write_line(message);
+        cliclack::log::info(message).expect("To be able to print message");
     }
 
-    #[allow(dead_code)]
+    pub fn print_err(&self, message: &str) {
+        cliclack::log::error(message).expect("To be able to print message");
+    }
+
     pub fn clear(&self) {
-        self.inner.clear_screen().expect("Failed to clear terminal");
+        clear_screen().expect("Failed to clear screen");
     }
 
-    #[allow(dead_code)]
-    pub fn read_line(&self, prompt: &str) -> anyhow::Result<String> {
-        let line = self.inner.read_line_initial_text(prompt)?;
-        Ok(line)
-    }
-
-    pub fn read_password(&mut self, prompt: &str) -> anyhow::Result<String> {
-        let prompt = format!("{} {prompt}: ", console::style("?").green());
-        self.inner
-            .write(prompt.as_bytes())
-            .map_err(|e| anyhow::anyhow!("Failed to write prompt: {}", e))?;
-        let password = self
-            .inner
-            .read_secure_line()
-            .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))?;
-
-        self.inner.clear_last_lines(1)?;
-        self.inner
-            .write_line(&format!("{}{}", &prompt, "********"))?;
-
-        Ok(password)
-    }
-
-    pub fn url(&self, url: &url::Url) -> String {
+    pub fn format_url(&self, url: &url::Url) -> String {
         format!("\x1b[1;34m{url}\x1b[0m")
+    }
+
+    pub fn confirm(&self, message: &str) -> anyhow::Result<bool> {
+        confirm(message).interact().map_err(anyhow::Error::from)
+    }
+
+    pub fn command_title(&self, title: &str) {
+        self.clear();
+        let title = format!(" {} {} ", "▶", title);
+        cliclack::intro(console::style(title).black().on_green())
+            .expect("To be able to print title");
+    }
+
+    pub fn finalize(&self, msg: &str) {
+        cliclack::outro(console::style(format!(" {} ", msg)).black().on_green())
+            .expect("To be able to print message");
+    }
+
+    pub fn cancel_finalize(&self, msg: &str) {
+        cliclack::outro_cancel(console::style(format!(" {} ", msg)).black().on_red())
+            .expect("To be able to print message");
+    }
+
+    pub fn input_password(&self, prompt: &str) -> anyhow::Result<String> {
+        cliclack::password(prompt)
+            .mask('•')
+            .interact()
+            .map_err(anyhow::Error::from)
     }
 }
