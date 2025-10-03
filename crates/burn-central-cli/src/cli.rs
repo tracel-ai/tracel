@@ -33,7 +33,6 @@ pub enum Commands {
 }
 
 pub fn cli_main(config: Config) {
-    print_info!("Running CLI");
     let time_begin = std::time::Instant::now();
     let args = CliArgs::parse();
 
