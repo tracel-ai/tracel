@@ -21,7 +21,7 @@ pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::
 
 pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Result<String> {
     if is_repo_dirty()? && !allow_dirty {
-        ensure_git_repo_clean()?;
+        ensure_git_repo_clean(context.terminal())?;
     }
 
     let client = context.create_client()?;

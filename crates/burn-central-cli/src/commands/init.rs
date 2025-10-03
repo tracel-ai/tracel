@@ -1,6 +1,7 @@
 use crate::context::CliContext;
 use crate::entity::projects::burn_dir::project::BurnCentralProject;
 use crate::tools::git;
+use crate::tools::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::BurnCentral;
 use burn_central_client::schemas::{ProjectPath, ProjectSchema};
@@ -34,14 +35,16 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
 
     context.terminal().command_title("Project Initialization");
 
+    let terminal = context.terminal();
+
     ensure_git_repo_initialized(&ws_root)?;
-    ensure_git_repo_clean()?;
+    ensure_git_repo_clean(terminal)?;
 
     let first_commit_hash = git::get_first_commit_hash();
     if let Err(e) = first_commit_hash {
-        cliclack::outro_cancel(
+        terminal.cancel_finalize(
             "No commits found in the repository. Please make an initial commit before proceeding.",
-        )?;
+        );
         return Err(anyhow::anyhow!("Failed to get first commit hash: {}", e));
     }
     let _first_commit_hash = first_commit_hash?;
@@ -57,7 +60,7 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         Ok(Some(project)) => handle_existing_project(&project)?,
         Ok(None) => create_new_project(client, project_owner, &project_name)?,
         Err(e) => {
-            cliclack::outro_cancel(format!("Failed to check for existing project: {e}"))?;
+            terminal.cancel_finalize(&format!("Failed to check for existing project: {e}"));
             return Err(anyhow::anyhow!(e));
         }
     };
@@ -69,15 +72,16 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         name: project_name.to_string(),
         owner: owner_name.to_string(),
     })?;
-    cliclack::log::success("Created project metadata")?;
+    terminal.print("Created project metadata");
 
     let frontend_url = context
         .get_frontend_endpoint()
         .join(&format!("/{owner_name}/{project_name}"))?;
-    cliclack::outro(format!(
+
+    terminal.finalize(&format!(
         "Project initialized successfully! You can check out your project at {}",
         context.terminal().format_url(&frontend_url)
-    ))?;
+    ));
 
     Ok(())
 }
@@ -189,19 +193,19 @@ pub fn ensure_git_repo_initialized(ws_root: &std::path::Path) -> anyhow::Result<
     Ok(())
 }
 
-pub fn ensure_git_repo_clean() -> anyhow::Result<()> {
+pub fn ensure_git_repo_clean(terminal: &Terminal) -> anyhow::Result<()> {
     match git::is_repo_dirty() {
         Ok(false) => Ok(()),
         Ok(true) => {
-            cliclack::log::info(
-                "Repository is dirty. Please commit or stash your changes before proceeding.",
-            )?;
+            terminal.print(
+                "Repository is dirty. Burn central need a valid commit hash to associated your code with your reppository.",
+            );
             commit_sequence().map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))
         }
         Err(e) if e.to_string().contains("does not have any commits") => {
-            cliclack::log::info(
+            terminal.print(
                 "Repository is dirty. Please commit or stash your changes before proceeding.",
-            )?;
+            );
             commit_sequence().map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))
         }
         Err(_) => Err(anyhow::anyhow!(
@@ -211,7 +215,8 @@ pub fn ensure_git_repo_clean() -> anyhow::Result<()> {
 }
 
 pub fn commit_sequence() -> anyhow::Result<()> {
-    let do_commit = cliclack::confirm("Automatically commit all files?").interact()?;
+    let do_commit =
+        cliclack::confirm("Do you want to automatically commit all files?").interact()?;
     if do_commit {
         let commit_message = "Automatic commit by Burn Central CLI";
         let status = std::process::Command::new("git")
@@ -237,7 +242,7 @@ pub fn commit_sequence() -> anyhow::Result<()> {
         let spinner = cliclack::spinner();
         let message = format!(
             "{}\n{}\n\n{}",
-            console::style("Manual commit").bold(),
+            console::style("Waiting for Manual commit").bold(),
             console::style("Press Esc, Enter, or Ctrl-C").dim(),
             console::style(
                 "Please make a commit before proceeding. Press Enter to continue or Esc to cancel."

@@ -16,7 +16,6 @@ mod toml;
 mod version;
 mod workspace;
 
-use crate::print_info;
 use std::ffi::OsString;
 
 pub fn cargo_binary() -> OsString {
@@ -38,7 +37,6 @@ pub fn try_locate_manifest() -> Option<std::path::PathBuf> {
         .to_owned();
 
     let manifest_path = std::path::PathBuf::from(manifest_path_str);
-    print_info!("Found manifest at: {}", manifest_path.display());
     Some(manifest_path)
 }
 
