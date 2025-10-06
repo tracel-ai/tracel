@@ -242,7 +242,7 @@ pub fn commit_sequence() -> anyhow::Result<()> {
         let spinner = cliclack::spinner();
         let message = format!(
             "{}\n{}\n\n{}",
-            console::style("Waiting for Manual commit").bold(),
+            console::style("Waiting for manual commit").bold(),
             console::style("Press Esc, Enter, or Ctrl-C").dim(),
             console::style(
                 "Please make a commit before proceeding. Press Enter to continue or Esc to cancel."
