@@ -198,7 +198,7 @@ pub fn ensure_git_repo_clean(terminal: &Terminal) -> anyhow::Result<()> {
         Ok(false) => Ok(()),
         Ok(true) => {
             terminal.print(
-                "Repository is dirty. Burn central need a valid commit hash to associated your code with your reppository.",
+                "Repository is dirty. Burn central needs a valid commit hash to associated your code with your repository.",
             );
             commit_sequence().map_err(|e| anyhow::anyhow!("Failed to make initial commit: {}", e))
         }
