@@ -3,4 +3,3 @@ pub(crate) mod cargo;
 pub mod functions_registry;
 pub(crate) mod git;
 pub(crate) mod terminal;
-pub(crate) mod time;

@@ -7,14 +7,16 @@ use crate::context::CliContext;
 use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
-use crate::tools::time::format_duration;
-use crate::{commands, print_err, print_info};
+use crate::{commands, print_err};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 pub struct CliArgs {
     #[command(subcommand)]
     pub command: Option<Commands>,
+
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub dev: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -32,12 +34,18 @@ pub enum Commands {
     Unlink,
 }
 
-pub fn cli_main(config: Config) {
-    print_info!("Running CLI");
-    let time_begin = std::time::Instant::now();
+pub fn cli_main() {
     let args = CliArgs::parse();
 
     let manifest_path = cargo::try_locate_manifest().expect("Failed to locate manifest");
+
+    let config = Config {
+        api_endpoint: if args.dev {
+            "http://localhost:9001/".to_string()
+        } else {
+            "https://heat.tracel.ai/api/".to_string()
+        },
+    };
 
     let terminal = Terminal::new();
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
@@ -49,20 +57,9 @@ pub fn cli_main(config: Config) {
         None => default_command(context),
     };
 
-    match cli_res {
-        Ok(_) => {
-            print_info!("CLI command executed successfully.");
-        }
-        Err(e) => {
-            print_err!("Error executing CLI command: {}", e);
-        }
+    if let Err(e) = cli_res {
+        print_err!("{e}");
     }
-
-    let duration = time_begin.elapsed();
-    print_info!(
-        "\x1B[32;1mTime elapsed for the current execution: {}\x1B[0m",
-        format_duration(&duration)
-    );
 }
 
 fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<()> {
