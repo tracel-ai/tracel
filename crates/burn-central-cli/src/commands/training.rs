@@ -124,7 +124,7 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
 fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     context
         .terminal()
-        .command_title("Setup remote experiments run");
+        .command_title("Remote experiment run");
     let namespace = context.get_project_path()?.owner_name;
     let project = context.get_project_path()?.project_name;
     let function = get_function_to_run(args.function, &context)?;
