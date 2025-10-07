@@ -15,7 +15,7 @@ pub struct CliArgs {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    #[arg(long, action = clap::ArgAction::SetTrue, hide = true)]
     pub dev: bool,
 }
 
