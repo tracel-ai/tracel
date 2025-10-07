@@ -1,6 +1,6 @@
+#[allow(dead_code)]
 mod name_value;
 
-use name_value::get_name_value;
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
@@ -225,16 +225,6 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
         .expect("Should be able to get first arg.")
         .path()
         .clone();
-    let api_endpoint: Option<String> = get_name_value(&args, "api_endpoint");
-
-    let mut config_block = quote! {
-        let mut config = burn_central::cli::config::Config::default();
-    };
-    if let Some(api_endpoint) = api_endpoint {
-        config_block.extend(quote! {
-            config.api_endpoint = #api_endpoint.to_string();
-        });
-    }
 
     let item_sig = &item.sig;
     let item_block = &item.block;
@@ -256,11 +246,11 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let main_call = if option_env!("COMPUTE_PROVIDER_RUNTIME").is_some() {
         quote! {
-            burn_central::cli::compute_provider::compute_provider_main(config);
+            burn_central::cli::compute_provider::compute_provider_main();
         }
     } else {
         quote! {
-            burn_central::cli::cli::cli_main(config);
+            burn_central::cli::cli::cli_main();
         }
     };
 
@@ -271,8 +261,6 @@ pub fn burn_central_main(args: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #item_sig {
-            #config_block
-
             #main_call
         }
     };
