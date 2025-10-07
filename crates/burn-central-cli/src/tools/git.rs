@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use crate::print_err;
 use anyhow::Context;
 use gix::Repository;
 use gix::revision::walk::Sorting;
@@ -16,13 +15,7 @@ pub fn get_last_commit_hash() -> anyhow::Result<String> {
 
 pub fn is_repo_dirty() -> anyhow::Result<bool> {
     let repo = gix::discover(".")?;
-    let is_dirty = repo.is_dirty()?;
-    if is_dirty {
-        print_err!(
-            "The repository is dirty. Please commit or stash your changes before proceeding."
-        );
-    }
-    Ok(is_dirty)
+    Ok(repo.is_dirty()?)
 }
 
 pub fn get_first_commit_hash() -> anyhow::Result<String> {
