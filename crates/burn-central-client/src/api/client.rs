@@ -611,7 +611,7 @@ impl Client {
 
         let body = ComputeProviderQueueJobParamsSchema {
             compute_provider_group_name: compute_provider_group_name.to_string(),
-            code_version: digest.to_string(),
+            digest: digest.to_string(),
             command: command.to_string(),
         };
 
