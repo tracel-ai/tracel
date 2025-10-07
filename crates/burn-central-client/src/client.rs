@@ -323,30 +323,31 @@ impl BurnCentral {
                 source: e,
             })?;
 
-        for (crate_name, file_path) in data.into_iter() {
-            let url = urls
-                .urls
-                .get(&crate_name)
-                .ok_or(BurnCentralError::Internal(format!(
-                    "No upload URL found for crate: {crate_name}"
-                )))?;
+        if let Some(urls) = urls.urls {
+            for (crate_name, file_path) in data.into_iter() {
+                let url = urls
+                    .get(&crate_name)
+                    .ok_or(BurnCentralError::Internal(format!(
+                        "No upload URL found for crate: {crate_name}"
+                    )))?;
 
-            let data = std::fs::read(&file_path).map_err(|e| {
-                std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to read crate file {}: {}", file_path.display(), e),
-                )
-            })?;
-
-            self.client
-                .upload_bytes_to_url(url, data)
-                .map_err(|e| BurnCentralError::Client {
-                    context: format!("Failed to upload crate {crate_name} to URL {url}"),
-                    source: e,
+                let data = std::fs::read(&file_path).map_err(|e| {
+                    std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to read crate file {}: {}", file_path.display(), e),
+                    )
                 })?;
+
+                self.client.upload_bytes_to_url(url, data).map_err(|e| {
+                    BurnCentralError::Client {
+                        context: format!("Failed to upload crate {crate_name} to URL {url}"),
+                        source: e,
+                    }
+                })?;
+            }
         }
 
-        Ok(urls.project_version)
+        Ok(urls.digest)
     }
 
     /// Start a remote job on the Burn Central backend.
@@ -355,7 +356,7 @@ impl BurnCentral {
         namespace: &str,
         project_name: &str,
         compute_provider_group_name: String,
-        code_version: &str,
+        code_digest: &str,
         command: &str,
     ) -> Result<(), BurnCentralError> {
         self.client
@@ -363,7 +364,7 @@ impl BurnCentral {
                 &compute_provider_group_name,
                 namespace,
                 project_name,
-                code_version,
+                code_digest,
                 command,
             )
             .map_err(|e| BurnCentralError::Client {
