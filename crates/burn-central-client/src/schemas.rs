@@ -105,6 +105,7 @@ pub struct CrateData {
 pub struct CrateVersionMetadata {
     pub checksum: String,
     pub metadata: CrateMetadata,
+    pub size: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -126,6 +127,7 @@ pub struct PackagedCrateData {
     pub path: PathBuf,
     pub checksum: String,
     pub metadata: CrateMetadata,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]

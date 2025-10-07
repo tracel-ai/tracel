@@ -301,6 +301,7 @@ impl BurnCentral {
                     CrateVersionMetadata {
                         checksum: krate.checksum,
                         metadata: krate.metadata,
+                        size: krate.size,
                     },
                 )
             })

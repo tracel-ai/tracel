@@ -218,8 +218,9 @@ pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Resul
                 let dst_path = artifacts_dir.join(&filename);
                 std::fs::rename(&path, &dst_path).ok()?;
                 let data = std::fs::read(&dst_path).ok()?;
+                let size = data.len() as u64;
                 let checksum = format!("{:x}", Sha256::digest(data));
-                Some((filename, dst_path, checksum))
+                Some((filename, dst_path, checksum, size))
             } else {
                 None
             }
@@ -310,6 +311,7 @@ pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Resul
             path: tarball.1,
             checksum: tarball.2,
             metadata: crate_metadata,
+            size: tarball.3,
         });
     }
 
