@@ -1,13 +1,13 @@
 use crate::entity::projects::ProjectContext;
 use clap::{Parser, Subcommand};
 
+use crate::commands;
 use crate::commands::default_command;
 use crate::config::Config;
 use crate::context::CliContext;
 use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
-use crate::{commands, print_err};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
