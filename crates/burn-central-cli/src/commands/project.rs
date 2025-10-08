@@ -5,7 +5,7 @@ pub fn handle_command(mut context: CliContext) {
     context.terminal().command_title("Project Information");
 
     // Load the local project metadata
-    if let Err(_) = context.load_project() {
+    if context.load_project().is_err() {
         context.terminal().cancel_finalize(
             "Project is not configured. Please run 'cargo run -- init' to link a project.",
         );

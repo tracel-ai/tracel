@@ -79,8 +79,17 @@ fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<
         Commands::Package(package_args) => commands::package::handle_command(package_args, context),
         Commands::Login(login_args) => commands::login::handle_command(login_args, context),
         Commands::Init(init_args) => commands::init::handle_command(init_args, context),
-        Commands::Unlink => Ok(commands::unlink::handle_command(context)),
-        Commands::Me => Ok(commands::me::handle_command(context)),
-        Commands::Project => Ok(commands::project::handle_command(context)),
+        Commands::Unlink => {
+            commands::unlink::handle_command(context);
+            Ok(())
+        }
+        Commands::Me => {
+            commands::me::handle_command(context);
+            Ok(())
+        }
+        Commands::Project => {
+            commands::project::handle_command(context);
+            Ok(())
+        }
     }
 }
