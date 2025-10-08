@@ -1,6 +1,5 @@
 use reqwest::StatusCode;
 use serde::Deserialize;
-use std::fmt::{Display, Formatter};
 use strum::Display;
 use thiserror::Error;
 
@@ -14,51 +13,35 @@ pub enum ApiErrorCode {
     Unknown,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct ApiErrorBody {
+#[derive(Error, Deserialize, Debug)]
+#[error("Api error {status}: Code: {code}, Message: {message}")]
+pub struct ApiError {
+    #[serde(skip)]
+    pub status: StatusCode,
     pub code: ApiErrorCode,
     pub message: String,
 }
 
-impl Default for ApiErrorBody {
+impl Default for ApiError {
     fn default() -> Self {
-        ApiErrorBody {
+        ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
             code: ApiErrorCode::Unknown,
             message: "An unknown error occurred".to_string(),
         }
     }
 }
 
-impl Display for ApiErrorBody {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Code: {}, Message: {}", self.code, self.message)
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum ClientError {
-    #[error("Bad session id")]
-    BadSessionId,
-    #[error("Api error {status}: {body}")]
-    ApiError {
-        status: StatusCode,
-        body: ApiErrorBody,
-    },
-}
-
-impl ClientError {
-    pub fn code(&self) -> Option<ApiErrorCode> {
-        match self {
-            ClientError::ApiError { body, .. } => Some(body.code.clone()),
-            _ => None,
-        }
+impl ApiError {
+    pub fn code(&self) -> ApiErrorCode {
+        self.code.clone()
     }
 
     pub fn is_login_error(&self) -> bool {
-        matches!(self, ClientError::ApiError { status, ..} if *status == StatusCode::UNAUTHORIZED )
+        self.status == StatusCode::UNAUTHORIZED
     }
 
     pub fn is_not_found(&self) -> bool {
-        matches!(self, ClientError::ApiError { status, ..} if *status == StatusCode::NOT_FOUND )
+        self.status == StatusCode::NOT_FOUND
     }
 }

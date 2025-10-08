@@ -1,7 +1,7 @@
 use sha2::Digest;
 
 use crate::api::Client;
-use crate::api::ClientError;
+use crate::api::ApiError;
 use crate::schemas::ExperimentPath;
 
 #[derive(Debug)]
@@ -25,7 +25,7 @@ impl TempLogStore {
         }
     }
 
-    pub fn push(&mut self, log: String) -> Result<(), ClientError> {
+    pub fn push(&mut self, log: String) -> Result<(), ApiError> {
         if self.bytes + log.len() > Self::BYTE_LIMIT {
             self.flush()?;
         }
@@ -36,7 +36,7 @@ impl TempLogStore {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), ClientError> {
+    pub fn flush(&mut self) -> Result<(), ApiError> {
         if !self.logs.is_empty() {
             let data = self.logs.join("").into_bytes();
 

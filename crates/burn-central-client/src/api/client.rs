@@ -1,4 +1,4 @@
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::Serialize;
 
@@ -6,7 +6,7 @@ use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, ComputeProviderQueueJobParamsSchema,
     EndExperimentSchema, ExperimentResponse, ProjectSchema, URLSchema, UserResponseSchema,
 };
-use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
+use crate::api::error::{ApiError, ApiErrorCode};
 use crate::api::{
     ArtifactCreationResponse, ArtifactDownloadResponse, ArtifactListResponse, ArtifactResponse,
     CreateArtifactRequest, CreateProjectSchema, GetUserOrganizationsResponseSchema,
@@ -24,42 +24,39 @@ pub enum EndExperimentStatus {
     Fail(String),
 }
 
-impl From<reqwest::Error> for ClientError {
+impl From<reqwest::Error> for ApiError {
     fn from(error: reqwest::Error) -> Self {
-        ClientError::ApiError {
+        ApiError {
             status: error
                 .status()
                 .unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
-            body: ApiErrorBody {
-                code: ApiErrorCode::Unknown,
-                message: error.to_string(),
-            },
+            code: ApiErrorCode::Unknown,
+            message: error.to_string(),
         }
     }
 }
 
 trait ResponseExt {
-    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, ClientError>;
+    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, ApiError>;
 }
 
 impl ResponseExt for reqwest::blocking::Response {
-    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, ClientError> {
+    fn map_to_burn_central_err(self) -> Result<reqwest::blocking::Response, ApiError> {
         if self.status().is_success() {
             Ok(self)
         } else {
-            match self.status() {
-                _ => Err(ClientError::ApiError {
-                    status: self.status(),
-                    body: self
-                        .text()
-                        .ok()
-                        .and_then(|text| serde_json::from_str::<ApiErrorBody>(&text).ok())
-                        .unwrap_or_else(|| ApiErrorBody {
-                            code: ApiErrorCode::Unknown,
-                            message: "Failed to parse error response".to_string(),
-                        }),
-                }),
-            }
+            let status = self.status();
+            let mut error = self
+                .text()
+                .ok()
+                .and_then(|text| serde_json::from_str::<ApiError>(&text).ok())
+                .unwrap_or_else(|| ApiError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: ApiErrorCode::Unknown,
+                    message: "Failed to parse error response".to_string(),
+                });
+            error.status = status;
+            Err(error)
         }
     }
 }
@@ -76,7 +73,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new HttpClient with the given base URL and API key.
-    pub fn new(base_url: Url, credentials: &BurnCentralCredentials) -> Result<Self, ClientError> {
+    pub fn new(base_url: Url, credentials: &BurnCentralCredentials) -> Result<Self, ApiError> {
         let mut client = Self::new_without_credentials(base_url);
         let cookie = client.login(credentials)?;
         client.session_cookie = Some(cookie);
@@ -92,7 +89,7 @@ impl Client {
         }
     }
 
-    pub fn get_json<R>(&self, path: impl AsRef<str>) -> Result<R, ClientError>
+    pub fn get_json<R>(&self, path: impl AsRef<str>) -> Result<R, ApiError>
     where
         R: for<'de> serde::Deserialize<'de>,
     {
@@ -105,7 +102,7 @@ impl Client {
         &self,
         path: impl AsRef<str>,
         body: Option<T>,
-    ) -> Result<R, ClientError>
+    ) -> Result<R, ApiError>
     where
         T: serde::Serialize,
         R: for<'de> serde::Deserialize<'de>,
@@ -115,7 +112,7 @@ impl Client {
         Ok(json)
     }
 
-    pub fn post_json<T, R>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<R, ClientError>
+    pub fn post_json<T, R>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<R, ApiError>
     where
         T: serde::Serialize,
         R: for<'de> serde::Deserialize<'de>,
@@ -125,14 +122,14 @@ impl Client {
         Ok(json)
     }
 
-    pub fn post<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), ClientError>
+    pub fn post<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), ApiError>
     where
         T: serde::Serialize,
     {
         self.req(reqwest::Method::POST, path, body).map(|_| ())
     }
 
-    pub fn put<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), ClientError>
+    pub fn put<T>(&self, path: impl AsRef<str>, body: Option<T>) -> Result<(), ApiError>
     where
         T: serde::Serialize,
     {
@@ -144,7 +141,7 @@ impl Client {
         method: reqwest::Method,
         path: impl AsRef<str>,
         body: Option<T>,
-    ) -> Result<reqwest::blocking::Response, ClientError> {
+    ) -> Result<reqwest::blocking::Response, ApiError> {
         let url = self.join(path.as_ref());
         let request_builder = self.http_client.request(method, url);
 
@@ -176,7 +173,7 @@ impl Client {
     }
 
     /// Log in to the Burn Central server with the given credentials.
-    fn login(&self, credentials: &BurnCentralCredentials) -> Result<String, ClientError> {
+    fn login(&self, credentials: &BurnCentralCredentials) -> Result<String, ApiError> {
         let url = self.join("login/api-key");
 
         let res = self
@@ -193,17 +190,15 @@ impl Client {
                 .expect("Session cookie should be able to convert to str");
             Ok(cookie_str.to_string())
         } else {
-            Err(ClientError::ApiError {
-                status: reqwest::StatusCode::UNAUTHORIZED,
-                body: ApiErrorBody {
-                    code: ApiErrorCode::Unknown,
-                    message: "No session cookie found. Please log in.".to_string(),
-                },
+            Err(ApiError {
+                status: StatusCode::UNAUTHORIZED,
+                code: ApiErrorCode::Unknown,
+                message: "No session cookie found. Please log in.".to_string(),
             })
         }
     }
 
-    pub fn get_current_user(&self) -> Result<UserResponseSchema, ClientError> {
+    pub fn get_current_user(&self) -> Result<UserResponseSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join("user");
@@ -235,7 +230,7 @@ impl Client {
         &self,
         project_name: &str,
         project_description: Option<&str>,
-    ) -> Result<ProjectSchema, ClientError> {
+    ) -> Result<ProjectSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join("user/projects");
@@ -253,7 +248,7 @@ impl Client {
         owner_name: &str,
         project_name: &str,
         project_description: Option<&str>,
-    ) -> Result<ProjectSchema, ClientError> {
+    ) -> Result<ProjectSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("organizations/{owner_name}/projects"));
@@ -268,7 +263,7 @@ impl Client {
 
     pub fn get_user_organizations(
         &self,
-    ) -> Result<GetUserOrganizationsResponseSchema, ClientError> {
+    ) -> Result<GetUserOrganizationsResponseSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join("user/organizations");
@@ -280,7 +275,7 @@ impl Client {
         &self,
         owner_name: &str,
         project_name: &str,
-    ) -> Result<ProjectSchema, ClientError> {
+    ) -> Result<ProjectSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}"));
@@ -299,7 +294,7 @@ impl Client {
         config: serde_json::Value,
         code_version_digest: String,
         routine: String,
-    ) -> Result<Experiment, ClientError> {
+    ) -> Result<Experiment, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/experiments"));
@@ -341,7 +336,7 @@ impl Client {
         project_name: &str,
         exp_num: i32,
         end_status: EndExperimentStatus,
-    ) -> Result<(), ClientError> {
+    ) -> Result<(), ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -365,7 +360,7 @@ impl Client {
         project_name: &str,
         exp_num: i32,
         req: CreateArtifactRequest,
-    ) -> Result<ArtifactCreationResponse, ClientError> {
+    ) -> Result<ArtifactCreationResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -383,7 +378,7 @@ impl Client {
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
-    ) -> Result<ArtifactListResponse, ClientError> {
+    ) -> Result<ArtifactListResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -402,7 +397,7 @@ impl Client {
         project_name: &str,
         exp_num: i32,
         name: &str,
-    ) -> Result<ArtifactListResponse, ClientError> {
+    ) -> Result<ArtifactListResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let mut url = self.join(&format!(
@@ -422,7 +417,7 @@ impl Client {
         project_name: &str,
         exp_num: i32,
         artifact_id: &str,
-    ) -> Result<ArtifactResponse, ClientError> {
+    ) -> Result<ArtifactResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -441,7 +436,7 @@ impl Client {
         project_name: &str,
         exp_num: i32,
         artifact_id: &str,
-    ) -> Result<ArtifactDownloadResponse, ClientError> {
+    ) -> Result<ArtifactDownloadResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -459,7 +454,7 @@ impl Client {
         namespace: &str,
         project_name: &str,
         model_name: &str,
-    ) -> Result<ModelResponse, ClientError> {
+    ) -> Result<ModelResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -478,7 +473,7 @@ impl Client {
         project_name: &str,
         model_name: &str,
         version: u32,
-    ) -> Result<ModelVersionResponse, ClientError> {
+    ) -> Result<ModelVersionResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -497,7 +492,7 @@ impl Client {
         project_name: &str,
         model_name: &str,
         version: u32,
-    ) -> Result<ModelDownloadResponse, ClientError> {
+    ) -> Result<ModelDownloadResponse, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -517,7 +512,7 @@ impl Client {
         exp_num: i32,
         size: usize,
         checksum: &str,
-    ) -> Result<String, ClientError> {
+    ) -> Result<String, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
@@ -543,7 +538,7 @@ impl Client {
     }
 
     /// Generic method to upload bytes to the given URL.
-    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), ClientError> {
+    pub fn upload_bytes_to_url(&self, url: &str, bytes: Vec<u8>) -> Result<(), ApiError> {
         self.http_client
             .put(url)
             .body(bytes)
@@ -554,7 +549,7 @@ impl Client {
     }
 
     /// Generic method to download bytes from the given URL.
-    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, ClientError> {
+    pub fn download_bytes_from_url(&self, url: &str) -> Result<Vec<u8>, ApiError> {
         let data = self
             .http_client
             .get(url)
@@ -566,14 +561,12 @@ impl Client {
         Ok(data)
     }
 
-    fn validate_session_cookie(&self) -> Result<(), ClientError> {
+    fn validate_session_cookie(&self) -> Result<(), ApiError> {
         if self.session_cookie.is_none() {
-            return Err(ClientError::ApiError {
-                status: reqwest::StatusCode::UNAUTHORIZED,
-                body: ApiErrorBody {
-                    code: ApiErrorCode::Unknown,
-                    message: "No session cookie found. Please log in.".to_string(),
-                },
+            return Err(ApiError {
+                status: StatusCode::UNAUTHORIZED,
+                code: ApiErrorCode::Unknown,
+                message: "No session cookie found. Please log in.".to_string(),
             });
         }
         Ok(())
@@ -587,7 +580,7 @@ impl Client {
         code_metadata: BurnCentralCodeMetadata,
         crates_metadata: Vec<CrateVersionMetadata>,
         digest: &str,
-    ) -> Result<CodeUploadUrlsSchema, ClientError> {
+    ) -> Result<CodeUploadUrlsSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/code/upload"));
@@ -610,7 +603,7 @@ impl Client {
         project_name: &str,
         code_version: &str,
         command: &str,
-    ) -> Result<(), ClientError> {
+    ) -> Result<(), ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/jobs/queue"));

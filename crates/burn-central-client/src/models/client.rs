@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::api::{Client, ClientError};
+use crate::api::{Client, ApiError};
 use crate::bundle::{BundleDecode, InMemoryBundleReader};
 use crate::models::{Model, ModelVersionInfo};
 use crate::schemas::ModelPath;
@@ -152,7 +152,7 @@ impl ModelClient {
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
     #[error("Client error: {0}")]
-    Client(#[from] ClientError),
+    Client(#[from] ApiError),
     #[error("Decode error: {0}")]
     Decode(String),
     #[error("Model not found: {0}")]

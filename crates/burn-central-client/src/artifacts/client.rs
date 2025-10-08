@@ -1,7 +1,7 @@
 use sha2::Digest;
 use std::collections::BTreeMap;
 
-use crate::api::{ArtifactFileSpecRequest, Client, ClientError, CreateArtifactRequest};
+use crate::api::{ArtifactFileSpecRequest, Client, ApiError, CreateArtifactRequest};
 use crate::artifacts::ArtifactInfo;
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader, InMemoryBundleSources};
 use crate::schemas::ExperimentPath;
@@ -152,7 +152,7 @@ pub enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
-    Client(#[from] ClientError),
+    Client(#[from] ApiError),
     #[error("Error while encoding artifact: {0}")]
     Encoding(String),
     #[error("Error while decoding artifact: {0}")]

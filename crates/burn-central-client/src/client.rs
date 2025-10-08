@@ -1,6 +1,6 @@
 //! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
-use crate::api::{Client, ClientError, OrganizationSchema};
+use crate::api::{Client, ApiError, OrganizationSchema};
 use crate::artifacts::ExperimentArtifactClient;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 pub enum InitError {
     /// Represents an error related to the client.
     #[error("Client error: {0}")]
-    Client(#[from] ClientError),
+    Client(#[from] ApiError),
     /// Represents an error when the endpoint URL is invalid.
     #[error("Failed to parse endpoint URL: {0}")]
     InvalidEndpointUrl(String),
@@ -46,11 +46,11 @@ pub enum BurnCentralError {
     ///
     /// # Fields
     /// - `context` (String): A description or additional information about the client error context.
-    /// - `source` (ClientError): The underlying source of the client error, providing more details about the cause.
+    /// - `source` (ApiError): The underlying source of the client error, providing more details about the cause.
     #[error("Client error: {context}\nSource: {source}")]
     Client {
         context: String,
-        source: ClientError,
+        source: ApiError,
     },
     /// Represents an error related to the experiment tracker.
     #[error("Experiment error: {0}")]
