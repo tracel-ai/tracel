@@ -1,6 +1,6 @@
 //! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
-use crate::api::{Client, ApiError, OrganizationSchema};
+use crate::api::{ApiError, ApiErrorCode, Client, OrganizationSchema};
 use crate::artifacts::ExperimentArtifactClient;
 use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
@@ -48,10 +48,7 @@ pub enum BurnCentralError {
     /// - `context` (String): A description or additional information about the client error context.
     /// - `source` (ApiError): The underlying source of the client error, providing more details about the cause.
     #[error("Client error: {context}\nSource: {source}")]
-    Client {
-        context: String,
-        source: ApiError,
-    },
+    Client { context: String, source: ApiError },
     /// Represents an error related to the experiment tracker.
     #[error("Experiment error: {0}")]
     ExperimentTracker(#[from] ExperimentTrackerError),
@@ -310,11 +307,19 @@ impl BurnCentral {
                 metadata,
                 last_commit,
             )
-            .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to get upload URLs for project {namespace}/{project_name}"
-                ),
-                source: e,
+            .map_err(|e| match e.code() {
+                ApiErrorCode::LimitReached => BurnCentralError::Client {
+                    context:
+                        "Failed to upload code. You reach cloud storage limit. Please subscribe to a paid plan to increase your limit or delete older artifacts.".to_string()
+                    ,
+                    source: e,
+                },
+                _ => BurnCentralError::Client {
+                    context: format!(
+                        "Failed to get upload URLs for project {namespace}/{project_name}"
+                    ),
+                    source: e,
+                },
             })?;
 
         for (crate_name, file_path) in data.into_iter() {
