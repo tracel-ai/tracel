@@ -32,6 +32,10 @@ pub enum Commands {
     Init(commands::init::InitArgs),
     /// Unlink the burn central project from this repository.
     Unlink,
+    /// Display current user information.
+    Me,
+    /// Display current project information.
+    Project,
 }
 
 pub fn cli_main() {
@@ -50,7 +54,8 @@ pub fn cli_main() {
     let terminal = Terminal::new();
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let function_registry = FunctionRegistry::new();
-    let context = CliContext::new(terminal, &config, crate_context, function_registry).init();
+    let context =
+        CliContext::new(terminal.clone(), &config, crate_context, function_registry).init();
 
     let cli_res = match args.command {
         Some(command) => handle_command(command, context),
@@ -58,7 +63,7 @@ pub fn cli_main() {
     };
 
     if let Err(e) = cli_res {
-        print_err!("{e}");
+        terminal.cancel_finalize(&format!("{e}"));
     }
 }
 
@@ -74,6 +79,8 @@ fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<
         Commands::Package(package_args) => commands::package::handle_command(package_args, context),
         Commands::Login(login_args) => commands::login::handle_command(login_args, context),
         Commands::Init(init_args) => commands::init::handle_command(init_args, context),
-        Commands::Unlink => commands::unlink::handle_command(context),
+        Commands::Unlink => Ok(commands::unlink::handle_command(context)),
+        Commands::Me => Ok(commands::me::handle_command(context)),
+        Commands::Project => Ok(commands::project::handle_command(context)),
     }
 }

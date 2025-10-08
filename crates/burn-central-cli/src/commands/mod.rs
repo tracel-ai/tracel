@@ -4,7 +4,9 @@ use crate::print_info;
 use crate::{commands::login::get_client_and_login_if_needed, context::CliContext};
 pub mod init;
 pub mod login;
+pub mod me;
 pub mod package;
+pub mod project;
 pub mod training;
 pub mod unlink;
 

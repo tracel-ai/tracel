@@ -1,5 +1,6 @@
 use cliclack::{clear_screen, confirm};
 
+#[derive(Clone)]
 pub struct Terminal {}
 
 impl Terminal {
@@ -15,6 +16,7 @@ impl Terminal {
         cliclack::log::error(message).expect("To be able to print message");
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) {
         clear_screen().expect("Failed to clear screen");
     }
@@ -28,7 +30,6 @@ impl Terminal {
     }
 
     pub fn command_title(&self, title: &str) {
-        self.clear();
         let title = format!(" {} {} ", "▶", title);
         cliclack::intro(console::style(title).black().on_green())
             .expect("To be able to print title");
