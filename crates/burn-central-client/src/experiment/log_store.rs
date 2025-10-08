@@ -1,7 +1,7 @@
 use sha2::Digest;
 
-use crate::api::Client;
 use crate::api::ApiError;
+use crate::api::Client;
 use crate::schemas::ExperimentPath;
 
 #[derive(Debug)]

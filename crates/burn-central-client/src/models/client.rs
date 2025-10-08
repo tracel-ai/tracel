@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::api::{Client, ApiError};
+use crate::api::{ApiError, Client};
 use crate::bundle::{BundleDecode, InMemoryBundleReader};
 use crate::models::{Model, ModelVersionInfo};
 use crate::schemas::ModelPath;

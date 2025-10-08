@@ -1,5 +1,5 @@
-use reqwest::{StatusCode, Url};
 use reqwest::header::{COOKIE, SET_COOKIE};
+use reqwest::{StatusCode, Url};
 use serde::Serialize;
 
 use super::schemas::{
@@ -261,9 +261,7 @@ impl Client {
         self.post_json::<CreateProjectSchema, ProjectSchema>(url, Some(project_data))
     }
 
-    pub fn get_user_organizations(
-        &self,
-    ) -> Result<GetUserOrganizationsResponseSchema, ApiError> {
+    pub fn get_user_organizations(&self) -> Result<GetUserOrganizationsResponseSchema, ApiError> {
         self.validate_session_cookie()?;
 
         let url = self.join("user/organizations");

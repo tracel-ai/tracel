@@ -1,7 +1,7 @@
 use sha2::Digest;
 use std::collections::BTreeMap;
 
-use crate::api::{ArtifactFileSpecRequest, Client, ApiError, CreateArtifactRequest};
+use crate::api::{ApiError, ArtifactFileSpecRequest, Client, CreateArtifactRequest};
 use crate::artifacts::ArtifactInfo;
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader, InMemoryBundleSources};
 use crate::schemas::ExperimentPath;
