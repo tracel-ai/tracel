@@ -8,6 +8,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum ApiErrorCode {
     ProjectAlreadyExists,
+    LimitReached,
     // ...
     #[serde(other)]
     Unknown,
