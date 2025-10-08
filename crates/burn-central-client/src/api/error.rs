@@ -39,23 +39,11 @@ impl Display for ApiErrorBody {
 pub enum ClientError {
     #[error("Bad session id")]
     BadSessionId,
-    #[error("Resource not found")]
-    NotFound,
-    #[error("Unauthorized access")]
-    Unauthorized,
-    #[error("Forbidden access")]
-    Forbidden,
-    #[error("Internal server error")]
-    InternalServerError,
     #[error("Api error {status}: {body}")]
     ApiError {
         status: StatusCode,
         body: ApiErrorBody,
     },
-    #[error(transparent)]
-    Serialization(#[from] serde_json::Error),
-    #[error("Unknown Error: {0}")]
-    UnknownError(String),
 }
 
 impl ClientError {
@@ -67,6 +55,10 @@ impl ClientError {
     }
 
     pub fn is_login_error(&self) -> bool {
-        matches!(self, ClientError::Unauthorized | ClientError::Forbidden)
+        matches!(self, ClientError::ApiError { status, ..} if *status == StatusCode::UNAUTHORIZED )
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, ClientError::ApiError { status, ..} if *status == StatusCode::NOT_FOUND )
     }
 }

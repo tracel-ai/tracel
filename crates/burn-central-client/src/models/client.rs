@@ -26,7 +26,7 @@ impl ModelRegistry {
                 model_path.model_name(),
             )
             .map_err(|e| {
-                if matches!(e, ClientError::NotFound) {
+                if e.is_not_found() {
                     ModelError::NotFound(format!("Model not found: {}", model_path))
                 } else {
                     ModelError::Client(e)
@@ -105,7 +105,7 @@ impl ModelClient {
                 version,
             )
             .map_err(|e| {
-                if matches!(e, ClientError::NotFound) {
+                if e.is_not_found() {
                     ModelError::VersionNotFound(format!("{} v{}", self.model_path, version))
                 } else {
                     ModelError::Client(e)
@@ -133,7 +133,7 @@ impl ModelClient {
                 version,
             )
             .map_err(|e| {
-                if matches!(e, ClientError::NotFound) {
+                if e.is_not_found() {
                     ModelError::VersionNotFound(format!("{} v{}", self.model_path, version))
                 } else {
                     ModelError::Client(e)

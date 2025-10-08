@@ -154,13 +154,7 @@ impl BurnCentral {
             .client
             .get_project(owner_name.as_ref(), project_name.as_ref())
             .map(Some)
-            .or_else(|e| {
-                if matches!(e, ClientError::NotFound) {
-                    Ok(None)
-                } else {
-                    Err(e)
-                }
-            })
+            .or_else(|e| if e.is_not_found() { Ok(None) } else { Err(e) })
             .map_err(|e| BurnCentralError::Client {
                 context: format!(
                     "Failed to get project {}/{}",
@@ -227,7 +221,7 @@ impl BurnCentral {
     /// Returns the current user information.
     pub fn me(&self) -> Result<User, BurnCentralError> {
         let user = self.client.get_current_user().map_err(|e| {
-            if matches!(e, ClientError::Unauthorized) {
+            if e.is_login_error() {
                 BurnCentralError::Unauthenticated
             } else {
                 BurnCentralError::Client {

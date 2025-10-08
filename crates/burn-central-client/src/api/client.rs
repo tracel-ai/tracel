@@ -26,15 +26,14 @@ pub enum EndExperimentStatus {
 
 impl From<reqwest::Error> for ClientError {
     fn from(error: reqwest::Error) -> Self {
-        match error.status() {
-            Some(status) => ClientError::ApiError {
-                status,
-                body: ApiErrorBody {
-                    code: ApiErrorCode::Unknown,
-                    message: error.to_string(),
-                },
+        ClientError::ApiError {
+            status: error
+                .status()
+                .unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+            body: ApiErrorBody {
+                code: ApiErrorCode::Unknown,
+                message: error.to_string(),
             },
-            None => ClientError::UnknownError(error.to_string()),
         }
     }
 }
@@ -49,20 +48,15 @@ impl ResponseExt for reqwest::blocking::Response {
             Ok(self)
         } else {
             match self.status() {
-                reqwest::StatusCode::NOT_FOUND => Err(ClientError::NotFound),
-                reqwest::StatusCode::UNAUTHORIZED => Err(ClientError::Unauthorized),
-                reqwest::StatusCode::FORBIDDEN => Err(ClientError::Forbidden),
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR => Err(ClientError::InternalServerError),
                 _ => Err(ClientError::ApiError {
                     status: self.status(),
                     body: self
                         .text()
-                        .map_err(|e| ClientError::UnknownError(e.to_string()))?
-                        .parse::<serde_json::Value>()
-                        .and_then(serde_json::from_value::<ApiErrorBody>)
-                        .unwrap_or_else(|e| ApiErrorBody {
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<ApiErrorBody>(&text).ok())
+                        .unwrap_or_else(|| ApiErrorBody {
                             code: ApiErrorCode::Unknown,
-                            message: e.to_string(),
+                            message: "Failed to parse error response".to_string(),
                         }),
                 }),
             }
@@ -199,7 +193,13 @@ impl Client {
                 .expect("Session cookie should be able to convert to str");
             Ok(cookie_str.to_string())
         } else {
-            Err(ClientError::BadSessionId)
+            Err(ClientError::ApiError {
+                status: reqwest::StatusCode::UNAUTHORIZED,
+                body: ApiErrorBody {
+                    code: ApiErrorCode::Unknown,
+                    message: "No session cookie found. Please log in.".to_string(),
+                },
+            })
         }
     }
 
@@ -568,7 +568,13 @@ impl Client {
 
     fn validate_session_cookie(&self) -> Result<(), ClientError> {
         if self.session_cookie.is_none() {
-            return Err(ClientError::BadSessionId);
+            return Err(ClientError::ApiError {
+                status: reqwest::StatusCode::UNAUTHORIZED,
+                body: ApiErrorBody {
+                    code: ApiErrorCode::Unknown,
+                    message: "No session cookie found. Please log in.".to_string(),
+                },
+            });
         }
         Ok(())
     }
