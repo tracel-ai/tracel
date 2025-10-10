@@ -34,7 +34,7 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
     };
 
     let project_path = context.get_project_path()?;
-    let project_version = client.upload_new_project_version(
+    let digest = client.upload_new_project_version(
         project_path.owner_name(),
         project_path.project_name(),
         context.package_name(),
@@ -43,5 +43,5 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
         &package.digest,
     )?;
 
-    Ok(project_version)
+    Ok(digest)
 }

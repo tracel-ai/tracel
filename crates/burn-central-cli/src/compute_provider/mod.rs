@@ -30,7 +30,7 @@ pub struct ComputeProviderTrainingArgs {
     /// Batch override: e.g. --overrides a.b=3 x.y.z=true
     pub overrides: Vec<(String, serde_json::Value)>,
     /// Project version
-    pub project_version: String,
+    pub digest: String,
     pub namespace: String,
     pub project: String,
     pub key: String,
@@ -83,7 +83,7 @@ fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext) {
         args.function,
         args.namespace,
         args.project,
-        args.project_version,
+        args.digest,
         args.key,
         context,
     )

@@ -602,7 +602,7 @@ impl Client {
         compute_provider_group_name: &str,
         owner_name: &str,
         project_name: &str,
-        code_version: &str,
+        digest: &str,
         command: &str,
     ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
@@ -611,7 +611,7 @@ impl Client {
 
         let body = ComputeProviderQueueJobParamsSchema {
             compute_provider_group_name: compute_provider_group_name.to_string(),
-            code_version: code_version.to_string(),
+            digest: digest.to_string(),
             command: command.to_string(),
         };
 

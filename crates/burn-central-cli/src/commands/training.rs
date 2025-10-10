@@ -130,7 +130,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         .get_api_key()
         .context("Failed to get API key")?
         .to_owned();
-    let code_version_digest = match args.code_version {
+    let digest = match args.code_version {
         Some(version) => {
             print_info!("Using code version: {}", version);
             version
@@ -146,7 +146,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         backend: args.backend,
         config: args.config,
         overrides: args.overrides,
-        project_version: code_version_digest.clone(),
+        digest: digest.clone(),
         namespace: namespace.clone(),
         project: project.clone(),
         key,
@@ -161,7 +161,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         &project,
         args.compute_provider
             .expect("Compute provider should be provided"),
-        &code_version_digest,
+        &digest,
         &serde_json::to_string(&command)?,
     )?;
 
