@@ -42,17 +42,6 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
                             .create_client()
                             .context("Failed to authenticate with the server")?;
                     }
-                    ClientCreationError::ServerConnectionError(msg) => {
-                        if attempts > MAX_RETRIES {
-                            return Err(anyhow::anyhow!(
-                                "Server connection failed after maximum retries: {}",
-                                msg
-                            ));
-                        }
-                        context.terminal().print(&format!(
-                            "Failed to connect to the server: {msg}. Retrying..."
-                        ));
-                    }
                 }
             }
         }

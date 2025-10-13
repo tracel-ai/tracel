@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::api::{Client, ClientError};
+use crate::api::{ApiError, Client};
 use crate::bundle::{BundleDecode, InMemoryBundleReader};
 use crate::models::{Model, ModelVersionInfo};
 use crate::schemas::ModelPath;
@@ -26,7 +26,7 @@ impl ModelRegistry {
                 model_path.model_name(),
             )
             .map_err(|e| {
-                if matches!(e, ClientError::NotFound) {
+                if e.is_not_found() {
                     ModelError::NotFound(format!("Model not found: {}", model_path))
                 } else {
                     ModelError::Client(e)
@@ -105,7 +105,7 @@ impl ModelClient {
                 version,
             )
             .map_err(|e| {
-                if matches!(e, ClientError::NotFound) {
+                if e.is_not_found() {
                     ModelError::VersionNotFound(format!("{} v{}", self.model_path, version))
                 } else {
                     ModelError::Client(e)
@@ -133,7 +133,7 @@ impl ModelClient {
                 version,
             )
             .map_err(|e| {
-                if matches!(e, ClientError::NotFound) {
+                if e.is_not_found() {
                     ModelError::VersionNotFound(format!("{} v{}", self.model_path, version))
                 } else {
                     ModelError::Client(e)
@@ -152,7 +152,7 @@ impl ModelClient {
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
     #[error("Client error: {0}")]
-    Client(#[from] ClientError),
+    Client(#[from] ApiError),
     #[error("Decode error: {0}")]
     Decode(String),
     #[error("Model not found: {0}")]

@@ -1,4 +1,4 @@
-use crate::api::ClientError;
+use crate::api::ApiError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::message::ExperimentMessage;
 use crate::websocket::WebSocketClient;
@@ -12,7 +12,7 @@ pub enum ThreadError {
     #[error("Message channel closed unexpectedly")]
     MessageChannelClosed,
     #[error("Log storage failed: {0}")]
-    LogFlushError(ClientError),
+    LogFlushError(ApiError),
     #[error("Failed to abort thread")]
     AbortError,
     #[error("Unexpected panic in thread")]
