@@ -616,6 +616,21 @@ impl Client {
         )
     }
 
+    pub fn complete_project_version_upload(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        code_version_id: &str,
+    ) -> Result<(), ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/code/{code_version_id}/complete"
+        ));
+
+        self.post(url, None::<()>)
+    }
+
     pub fn start_remote_job(
         &self,
         compute_provider_group_name: &str,

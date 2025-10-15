@@ -29,6 +29,7 @@ pub struct CreatedByUserResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct CodeUploadUrlsSchema {
+    pub id: String,
     pub digest: String,
     pub urls: Option<HashMap<String, String>>,
 }

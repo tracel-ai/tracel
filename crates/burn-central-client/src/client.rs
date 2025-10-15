@@ -307,7 +307,7 @@ impl BurnCentral {
             })
             .unzip();
 
-        let urls = self
+        let response = self
             .client
             .publish_project_version_urls(
                 namespace,
@@ -324,7 +324,7 @@ impl BurnCentral {
                 source: e,
             })?;
 
-        if let Some(urls) = urls.urls {
+        if let Some(urls) = response.urls {
             for (crate_name, file_path) in data.into_iter() {
                 let url = urls
                     .get(&crate_name)
@@ -346,9 +346,18 @@ impl BurnCentral {
                     }
                 })?;
             }
+
+            self.client
+                .complete_project_version_upload(namespace, project_name, &response.id)
+                .map_err(|e| BurnCentralError::Client {
+                    context: format!(
+                        "Failed to complete upload for project {namespace}/{project_name}"
+                    ),
+                    source: e,
+                })?;
         }
 
-        Ok(urls.digest)
+        Ok(response.digest)
     }
 
     /// Start a remote job on the Burn Central backend.
