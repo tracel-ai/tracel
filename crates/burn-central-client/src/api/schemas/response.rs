@@ -66,9 +66,28 @@ pub struct OrganizationSchema {
 }
 
 #[derive(Deserialize)]
+pub struct PresignedUploadUrlResponse {
+    pub part: u32,
+    pub url: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Deserialize)]
+pub struct MultipartUploadReponse {
+    pub id: String,
+    pub parts: Vec<PresignedUploadUrlResponse>,
+}
+
+#[derive(Deserialize)]
+pub struct PresignedArtifactFileUploadUrlsResponse {
+    pub rel_path: String,
+    pub urls: MultipartUploadReponse,
+}
+
+#[derive(Deserialize)]
 pub struct ArtifactCreationResponse {
     pub id: String,
-    pub files: Vec<PresignedArtifactFileUrlResponse>,
+    pub files: Vec<PresignedArtifactFileUploadUrlsResponse>,
 }
 
 #[derive(Deserialize)]
