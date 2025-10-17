@@ -1,4 +1,4 @@
-﻿use serde::Serialize;
+use serde::Serialize;
 use std::str::FromStr;
 
 /// Credentials to connect to the Burn Central server

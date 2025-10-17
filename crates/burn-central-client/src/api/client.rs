@@ -375,6 +375,25 @@ impl Client {
         self.post_json::<CreateArtifactRequest, ArtifactCreationResponse>(url, Some(req))
     }
 
+    /// Complete an artifact upload.
+    ///
+    /// The client must be logged in before calling this method.
+    pub fn complete_artifact_upload(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        exp_num: i32,
+        artifact_id: &str,
+    ) -> Result<(), ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}/complete"
+        ));
+
+        self.post::<()>(url, None)
+    }
+
     /// List artifacts for the given experiment.
     ///
     /// The client must be logged in before calling this method.
@@ -595,6 +614,21 @@ impl Client {
                 digest: digest.to_string(),
             }),
         )
+    }
+
+    pub fn complete_project_version_upload(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        code_version_id: &str,
+    ) -> Result<(), ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/code/{code_version_id}/complete"
+        ));
+
+        self.post(url, None::<()>)
     }
 
     pub fn start_remote_job(

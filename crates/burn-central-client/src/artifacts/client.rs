@@ -1,7 +1,9 @@
 use sha2::Digest;
 use std::collections::BTreeMap;
 
-use crate::api::{ArtifactFileSpecRequest, Client, ClientError, CreateArtifactRequest};
+use crate::api::{
+    ArtifactFileSpecRequest, Client, ClientError, CreateArtifactRequest, MultipartUploadReponse,
+};
 use crate::artifacts::ArtifactInfo;
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader, InMemoryBundleSources};
 use crate::schemas::ExperimentPath;
@@ -40,7 +42,6 @@ impl ExperimentArtifactClient {
             ArtifactError::Encoding(format!("Failed to encode artifact: {}", e.into()))
         })?;
 
-        // Build file specs with size and checksum
         let mut specs = Vec::with_capacity(sources.files().len());
         for f in sources.files() {
             let (checksum, size) = sha256_and_size_from_bytes(f.source());
@@ -62,18 +63,28 @@ impl ExperimentArtifactClient {
             },
         )?;
 
-        let mut url_map: BTreeMap<String, String> = BTreeMap::new();
-        for f in res.files {
-            url_map.insert(f.rel_path, f.url);
+        let mut multipart_map: BTreeMap<String, &MultipartUploadReponse> = BTreeMap::new();
+        for f in &res.files {
+            multipart_map.insert(f.rel_path.clone(), &f.urls);
         }
 
         for f in sources.into_files() {
-            let url = url_map.get(f.dest_path()).ok_or_else(|| {
-                ArtifactError::Internal(format!("Missing upload URL for file {}", f.dest_path()))
+            let multipart_info = multipart_map.get(f.dest_path()).ok_or_else(|| {
+                ArtifactError::Internal(format!(
+                    "Missing multipart upload info for file {}",
+                    f.dest_path()
+                ))
             })?;
 
-            self.client.upload_bytes_to_url(url, f.source().to_vec())?;
+            self.upload_file_multipart(f.source(), multipart_info)?;
         }
+
+        self.client.complete_artifact_upload(
+            self.exp_path.owner_name(),
+            self.exp_path.project_name(),
+            self.exp_path.experiment_num(),
+            &res.id,
+        )?;
 
         Ok(res.id)
     }
@@ -137,6 +148,58 @@ impl ExperimentArtifactClient {
             .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))?;
 
         Ok(artifact_resp.into())
+    }
+
+    fn upload_file_multipart(
+        &self,
+        file_data: &[u8],
+        multipart_info: &MultipartUploadReponse,
+    ) -> Result<(), ArtifactError> {
+        let mut part_indices: Vec<usize> = (0..multipart_info.parts.len()).collect();
+        part_indices.sort_by_key(|&i| multipart_info.parts[i].part);
+
+        for (i, &part_idx) in part_indices.iter().enumerate() {
+            let part = &multipart_info.parts[part_idx];
+            if part.part != (i as u32 + 1) {
+                return Err(ArtifactError::Internal(format!(
+                    "Invalid part numbering: expected part {}, got part {}",
+                    i + 1,
+                    part.part
+                )));
+            }
+        }
+
+        let mut current_offset = 0usize;
+        let total_parts = multipart_info.parts.len();
+
+        for (part_index, &part_idx) in part_indices.iter().enumerate() {
+            let part_info = &multipart_info.parts[part_idx];
+            let end_offset = std::cmp::min(
+                current_offset + part_info.size_bytes as usize,
+                file_data.len(),
+            );
+
+            if current_offset >= file_data.len() {
+                break;
+            }
+
+            let part_data = &file_data[current_offset..end_offset];
+
+            self.client
+                .upload_bytes_to_url(&part_info.url, part_data.to_vec())
+                .map_err(|e| {
+                    ArtifactError::Internal(format!(
+                        "Failed to upload part {} of {}: {}",
+                        part_index + 1,
+                        total_parts,
+                        e
+                    ))
+                })?;
+
+            current_offset = end_offset;
+        }
+
+        Ok(())
     }
 }
 
