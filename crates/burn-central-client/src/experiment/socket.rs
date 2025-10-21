@@ -63,10 +63,11 @@ impl ExperimentThread {
         Ok(())
     }
 
-    fn handle_websocket_send<T: serde::Serialize>(
+    fn handle_websocket_send<T: serde::Serialize + std::fmt::Debug>(
         &mut self,
         message: T,
     ) -> Result<(), ThreadError> {
+        println!("{message:?}");
         self.ws_client
             .send(message)
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
@@ -107,6 +108,9 @@ impl ExperimentThread {
                     match message {
                         ExperimentMessage::MetricLog { name, epoch, iteration: _, value, group } => {
                             self.handle_metric_log(name, epoch, value, group)?;
+                        }
+                        ExperimentMessage::MetricDefinitionLog { .. } => {
+                            self.handle_websocket_send(message)?;
                         }
                         ExperimentMessage::Log(log) => {
                             self.handle_log_message(log)?;
