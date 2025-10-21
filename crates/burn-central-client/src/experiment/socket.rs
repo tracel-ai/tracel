@@ -67,7 +67,6 @@ impl ExperimentThread {
         &mut self,
         message: T,
     ) -> Result<(), ThreadError> {
-        println!("{message:?}");
         self.ws_client
             .send(message)
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
