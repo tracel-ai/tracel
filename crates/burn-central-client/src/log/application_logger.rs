@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use burn::train::ApplicationLoggerInstaller;
@@ -23,12 +24,48 @@ impl RemoteExperimentLoggerInstaller {
     }
 }
 
+struct LogBuffer {
+    buffer: String,
+    last_flush: Instant,
+    flush_interval: Duration,
+}
+
+impl LogBuffer {
+    fn new() -> Self {
+        Self {
+            buffer: String::new(),
+            last_flush: Instant::now(),
+            flush_interval: Duration::from_secs(1),
+        }
+    }
+
+    fn should_flush(&self) -> bool {
+        self.last_flush.elapsed() >= self.flush_interval
+    }
+
+    fn append(&mut self, message: &str) {
+        self.buffer.push_str(message);
+    }
+
+    fn flush(&mut self) -> Option<String> {
+        if self.buffer.is_empty() {
+            return None;
+        }
+
+        let content = std::mem::take(&mut self.buffer);
+        self.last_flush = Instant::now();
+        Some(content)
+    }
+}
+
 struct RemoteWriter {
     sender: Arc<ExperimentRunHandle>,
+    buffer: Arc<Mutex<LogBuffer>>,
 }
 
 struct RemoteWriterMaker {
     experiment_handle: Arc<ExperimentRunHandle>,
+    buffer: Arc<Mutex<LogBuffer>>,
 }
 
 impl MakeWriter<'_> for RemoteWriterMaker {
@@ -36,7 +73,8 @@ impl MakeWriter<'_> for RemoteWriterMaker {
 
     fn make_writer(&self) -> Self::Writer {
         let sender = self.experiment_handle.clone();
-        RemoteWriter { sender }
+        let buffer = self.buffer.clone();
+        RemoteWriter { sender, buffer }
     }
 }
 
@@ -44,11 +82,24 @@ impl std::io::Write for RemoteWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let message = String::from_utf8_lossy(buf).to_string();
 
-        self.sender.log_info(message);
+        let mut log_buffer = self.buffer.lock().unwrap();
+        log_buffer.append(&message);
+
+        // Flush if enough time has elapsed
+        if log_buffer.should_flush() {
+            if let Some(content) = log_buffer.flush() {
+                self.sender.log_info(content);
+            }
+        }
+
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        let mut log_buffer = self.buffer.lock().unwrap();
+        if let Some(content) = log_buffer.flush() {
+            self.sender.log_info(content);
+        }
         Ok(())
     }
 }
@@ -57,6 +108,7 @@ impl ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
     fn install(&self) -> Result<(), String> {
         let make_writer = RemoteWriterMaker {
             experiment_handle: self.experiment_handle.clone(),
+            buffer: Arc::new(Mutex::new(LogBuffer::new())),
         };
 
         let layer = tracing_subscriber::fmt::layer()

@@ -84,6 +84,7 @@ impl ExperimentArtifactClient {
             self.exp_path.project_name(),
             self.exp_path.experiment_num(),
             &res.id,
+            None,
         )?;
 
         Ok(res.id)

@@ -92,6 +92,11 @@ pub struct ArtifactCreationResponse {
 }
 
 #[derive(Deserialize)]
+pub struct ArtifactAddFileResponse {
+    pub files: Vec<PresignedArtifactFileUploadUrlsResponse>,
+}
+
+#[derive(Deserialize)]
 pub struct PresignedArtifactFileUrlResponse {
     pub rel_path: String,
     pub url: String,

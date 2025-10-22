@@ -253,7 +253,7 @@ impl ExperimentRun {
                 eprintln!("Warning: WebSocket failure during experiment finish: {msg}");
             }
             Err(ThreadError::LogFlushError(msg)) => {
-                eprintln!("Warning: Log flush failed: {msg}");
+                eprintln!("Warning: Log artifact creation failed: {msg}");
             }
             Err(ThreadError::MessageChannelClosed) => {
                 eprintln!("Warning: Message channel closed before thread could complete");
