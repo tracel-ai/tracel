@@ -15,7 +15,7 @@ pub struct TempLogStore {
 
 impl TempLogStore {
     // 100 MiB per chunk
-    const CHUNK_SIZE: usize = 100 * 1024 * 1024;
+    const CHUNK_SIZE: usize = 1 * 1024 * 1024;
 
     pub fn new(client: Client, experiment_path: ExperimentPath) -> TempLogStore {
         TempLogStore {
@@ -49,7 +49,7 @@ impl TempLogStore {
         let mut file_specs = Vec::with_capacity(num_chunks);
         for (idx, chunk) in chunks.iter().enumerate() {
             let checksum = format!("{:x}", sha2::Sha256::new_with_prefix(chunk).finalize());
-            let filename = format!("experiment-{:0width$}.log", idx, width = num_digits);
+            let filename = format!("experiment-{:0width$}.log", idx, width = 3);
 
             file_specs.push(ArtifactFileSpecRequest {
                 rel_path: filename,
