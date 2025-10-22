@@ -418,9 +418,7 @@ impl Client {
             "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}/complete"
         ));
 
-        let body = file_names.map(|names| CompleteUploadRequest { file_names: names });
-
-        self.post_json::<CompleteUploadRequest, ()>(url, body)
+        self.post_json::<CompleteUploadRequest, ()>(url, Some(CompleteUploadRequest { file_names }))
     }
 
     /// List artifacts for the given experiment.

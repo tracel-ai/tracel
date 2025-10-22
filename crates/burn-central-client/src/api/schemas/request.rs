@@ -57,7 +57,7 @@ pub struct CreateArtifactRequest {
 
 #[derive(Serialize, Default)]
 pub struct CompleteUploadRequest {
-    pub file_names: Vec<String>,
+    pub file_names: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
