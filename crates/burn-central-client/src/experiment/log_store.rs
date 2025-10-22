@@ -18,7 +18,7 @@ pub struct TempLogStore {
 
 impl TempLogStore {
     // 10 MiB per chunk
-    const CHUNK_SIZE: usize = 1 * 1024 * 1024;
+    const CHUNK_SIZE: usize = 10 * 1024 * 1024;
     // Assume max 1000 log files (10GB of logs), use 3 digits padding
     const NUM_DIGITS: usize = 3;
 
