@@ -7,10 +7,10 @@ use super::schemas::{
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
-    AddFilesToArtifactRequest, ArtifactCreationResponse, ArtifactDownloadResponse,
-    ArtifactFileSpecRequest, ArtifactListResponse, ArtifactResponse, CompleteUploadRequest,
-    CreateArtifactRequest, CreateProjectSchema, GetUserOrganizationsResponseSchema,
-    ModelDownloadResponse, ModelResponse, ModelVersionResponse,
+    AddFilesToArtifactRequest, ArtifactAddFileResponse, ArtifactCreationResponse,
+    ArtifactDownloadResponse, ArtifactFileSpecRequest, ArtifactListResponse, ArtifactResponse,
+    CompleteUploadRequest, CreateArtifactRequest, CreateProjectSchema,
+    GetUserOrganizationsResponseSchema, ModelDownloadResponse, ModelResponse, ModelVersionResponse,
 };
 use crate::schemas::{BurnCentralCodeMetadata, CreatedByUser};
 use crate::{
@@ -385,14 +385,14 @@ impl Client {
         exp_num: i32,
         artifact_id: &str,
         files: Vec<ArtifactFileSpecRequest>,
-    ) -> Result<ArtifactCreationResponse, ClientError> {
+    ) -> Result<ArtifactAddFileResponse, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!(
             "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}/files"
         ));
 
-        self.post_json::<AddFilesToArtifactRequest, ArtifactCreationResponse>(
+        self.post_json::<AddFilesToArtifactRequest, ArtifactAddFileResponse>(
             url,
             Some(AddFilesToArtifactRequest { files }),
         )

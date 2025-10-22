@@ -56,7 +56,6 @@ impl TempLogStore {
             width = self.num_digits
         );
 
-        // Create file spec
         let checksum = format!("{:x}", sha2::Sha256::new_with_prefix(log_bytes).finalize());
         let file_spec = ArtifactFileSpecRequest {
             rel_path: filename.clone(),
@@ -64,15 +63,17 @@ impl TempLogStore {
             checksum,
         };
 
-        let response = if let Some(artifact_id) = &self.artifact_id {
+        let upload_url = if let Some(artifact_id) = &self.artifact_id {
             // Artifact exists, add files to it
-            self.client.add_files_to_artifact(
-                self.experiment_path.owner_name(),
-                self.experiment_path.project_name(),
-                self.experiment_path.experiment_num(),
-                artifact_id,
-                vec![file_spec],
-            )?
+            self.client
+                .add_files_to_artifact(
+                    self.experiment_path.owner_name(),
+                    self.experiment_path.project_name(),
+                    self.experiment_path.experiment_num(),
+                    artifact_id,
+                    vec![file_spec],
+                )?
+                .files
         } else {
             // First flush, create the artifact
             let response = self.client.create_artifact(
@@ -88,11 +89,10 @@ impl TempLogStore {
 
             // Store artifact ID for future flushes
             self.artifact_id = Some(response.id.clone());
-            response
+            response.files
         };
 
-        // Upload the file
-        if let Some(file_response) = response.files.first() {
+        if let Some(file_response) = upload_url.first() {
             self.upload_chunk_multipart(log_bytes, &file_response.urls)?;
         } else {
             return Err(ClientError::UnknownError(
@@ -100,7 +100,6 @@ impl TempLogStore {
             ));
         }
 
-        // Complete the upload for this specific file
         if let Some(artifact_id) = &self.artifact_id {
             self.client.complete_artifact_upload(
                 self.experiment_path.owner_name(),
@@ -111,7 +110,6 @@ impl TempLogStore {
             )?;
         }
 
-        // Clear buffer and increment counter
         self.logs.clear();
         self.bytes = 0;
         self.file_counter += 1;
@@ -124,11 +122,9 @@ impl TempLogStore {
         chunk_data: &[u8],
         multipart_info: &MultipartUploadReponse,
     ) -> Result<(), ClientError> {
-        // Sort parts by part number
         let mut part_indices: Vec<usize> = (0..multipart_info.parts.len()).collect();
         part_indices.sort_by_key(|&i| multipart_info.parts[i].part);
 
-        // Validate part numbering
         for (i, &part_idx) in part_indices.iter().enumerate() {
             let part = &multipart_info.parts[part_idx];
             if part.part != (i as u32 + 1) {
@@ -140,7 +136,6 @@ impl TempLogStore {
             }
         }
 
-        // Upload each part
         let mut current_offset = 0usize;
         for &part_idx in part_indices.iter() {
             let part_info = &multipart_info.parts[part_idx];
