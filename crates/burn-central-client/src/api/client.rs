@@ -7,7 +7,8 @@ use super::schemas::{
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
-    ArtifactCreationResponse, ArtifactDownloadResponse, ArtifactListResponse, ArtifactResponse,
+    AddFilesToArtifactRequest, ArtifactCreationResponse, ArtifactDownloadResponse,
+    ArtifactFileSpecRequest, ArtifactListResponse, ArtifactResponse, CompleteUploadRequest,
     CreateArtifactRequest, CreateProjectSchema, GetUserOrganizationsResponseSchema,
     ModelDownloadResponse, ModelResponse, ModelVersionResponse,
 };
@@ -374,15 +375,42 @@ impl Client {
         self.post_json::<CreateArtifactRequest, ArtifactCreationResponse>(url, Some(req))
     }
 
+    /// Add files to an existing artifact.
+    ///
+    /// The client must be logged in before calling this method.
+    pub fn add_files_to_artifact(
+        &self,
+        owner_name: &str,
+        project_name: &str,
+        exp_num: i32,
+        artifact_id: &str,
+        files: Vec<ArtifactFileSpecRequest>,
+    ) -> Result<ArtifactCreationResponse, ClientError> {
+        self.validate_session_cookie()?;
+
+        let url = self.join(&format!(
+            "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}/files"
+        ));
+
+        self.post_json::<AddFilesToArtifactRequest, ArtifactCreationResponse>(
+            url,
+            Some(AddFilesToArtifactRequest { files }),
+        )
+    }
+
     /// Complete an artifact upload.
     ///
     /// The client must be logged in before calling this method.
+    ///
+    /// If `file_names` is None, all files in the artifact will be marked as complete.
+    /// If `file_names` is Some, only the specified files will be marked as complete.
     pub fn complete_artifact_upload(
         &self,
         owner_name: &str,
         project_name: &str,
         exp_num: i32,
         artifact_id: &str,
+        file_names: Option<Vec<String>>,
     ) -> Result<(), ClientError> {
         self.validate_session_cookie()?;
 
@@ -390,7 +418,9 @@ impl Client {
             "projects/{owner_name}/{project_name}/experiments/{exp_num}/artifacts/{artifact_id}/complete"
         ));
 
-        self.post::<()>(url, None)
+        let body = file_names.map(|names| CompleteUploadRequest { file_names: names });
+
+        self.post_json::<CompleteUploadRequest, ()>(url, body)
     }
 
     /// List artifacts for the given experiment.

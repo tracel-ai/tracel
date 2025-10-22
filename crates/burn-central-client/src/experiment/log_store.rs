@@ -11,11 +11,16 @@ pub struct TempLogStore {
     client: Client,
     experiment_path: ExperimentPath,
     bytes: usize,
+    artifact_id: Option<String>,
+    file_counter: usize,
+    num_digits: usize,
 }
 
 impl TempLogStore {
-    // 100 MiB per chunk
-    const CHUNK_SIZE: usize = 100 * 1024 * 1024;
+    // 10 MiB per chunk
+    const CHUNK_SIZE: usize = 10 * 1024 * 1024;
+    // Assume max 1000 log files (10GB of logs), use 3 digits padding
+    const NUM_DIGITS: usize = 3;
 
     pub fn new(client: Client, experiment_path: ExperimentPath) -> TempLogStore {
         TempLogStore {
@@ -23,69 +28,93 @@ impl TempLogStore {
             client,
             experiment_path,
             bytes: 0,
+            artifact_id: None,
+            file_counter: 0,
+            num_digits: Self::NUM_DIGITS,
         }
     }
 
     pub fn push(&mut self, log: String) -> Result<(), ClientError> {
+        if self.bytes + log.len() > Self::CHUNK_SIZE {
+            self.flush()?;
+        }
         self.bytes += log.len();
         self.logs.push(log);
         Ok(())
     }
 
-    pub fn create_log_artifact(&mut self) -> Result<(), ClientError> {
+    pub fn flush(&mut self) -> Result<(), ClientError> {
         if self.logs.is_empty() {
             return Ok(());
         }
 
         let full_log = self.logs.join("");
         let log_bytes = full_log.as_bytes();
+        let filename = format!(
+            "experiment-{:0width$}.log",
+            self.file_counter,
+            width = self.num_digits
+        );
 
-        let chunks: Vec<&[u8]> = log_bytes.chunks(Self::CHUNK_SIZE).collect();
-        let num_chunks = chunks.len();
-        let max_digit_lenght = num_chunks.to_string().len();
+        // Create file spec
+        let checksum = format!("{:x}", sha2::Sha256::new_with_prefix(log_bytes).finalize());
+        let file_spec = ArtifactFileSpecRequest {
+            rel_path: filename.clone(),
+            size_bytes: log_bytes.len() as u64,
+            checksum,
+        };
 
-        let mut file_specs = Vec::with_capacity(num_chunks);
-        for (idx, chunk) in chunks.iter().enumerate() {
-            let checksum = format!("{:x}", sha2::Sha256::new_with_prefix(chunk).finalize());
-            let filename = format!("experiment-{:0width$}.log", idx, width = max_digit_lenght);
+        let response = if let Some(artifact_id) = &self.artifact_id {
+            // Artifact exists, add files to it
+            self.client.add_files_to_artifact(
+                self.experiment_path.owner_name(),
+                self.experiment_path.project_name(),
+                self.experiment_path.experiment_num(),
+                artifact_id,
+                vec![file_spec],
+            )?
+        } else {
+            // First flush, create the artifact
+            let response = self.client.create_artifact(
+                self.experiment_path.owner_name(),
+                self.experiment_path.project_name(),
+                self.experiment_path.experiment_num(),
+                CreateArtifactRequest {
+                    name: "logs".to_string(),
+                    kind: "log".to_string(),
+                    files: vec![file_spec],
+                },
+            )?;
 
-            file_specs.push(ArtifactFileSpecRequest {
-                rel_path: filename,
-                size_bytes: chunk.len() as u64,
-                checksum,
-            });
-        }
+            // Store artifact ID for future flushes
+            self.artifact_id = Some(response.id.clone());
+            response
+        };
 
-        let create_response = self.client.create_artifact(
-            self.experiment_path.owner_name(),
-            self.experiment_path.project_name(),
-            self.experiment_path.experiment_num(),
-            CreateArtifactRequest {
-                name: "logs".to_string(),
-                kind: "log".to_string(),
-                files: file_specs,
-            },
-        )?;
-
-        if create_response.files.len() != num_chunks {
+        // Upload the file
+        if let Some(file_response) = response.files.first() {
+            self.upload_chunk_multipart(log_bytes, &file_response.urls)?;
+        } else {
             return Err(ClientError::UnknownError(
-                "Mismatch in number of files for upload".to_string(),
+                "No upload URL returned for log file".to_string(),
             ));
         }
 
-        for (chunk, file_response) in chunks.iter().zip(create_response.files.iter()) {
-            self.upload_chunk_multipart(chunk, &file_response.urls)?;
+        // Complete the upload for this specific file
+        if let Some(artifact_id) = &self.artifact_id {
+            self.client.complete_artifact_upload(
+                self.experiment_path.owner_name(),
+                self.experiment_path.project_name(),
+                self.experiment_path.experiment_num(),
+                artifact_id,
+                Some(vec![filename]),
+            )?;
         }
 
-        self.client.complete_artifact_upload(
-            self.experiment_path.owner_name(),
-            self.experiment_path.project_name(),
-            self.experiment_path.experiment_num(),
-            &create_response.id,
-        )?;
-
+        // Clear buffer and increment counter
         self.logs.clear();
         self.bytes = 0;
+        self.file_counter += 1;
 
         Ok(())
     }
