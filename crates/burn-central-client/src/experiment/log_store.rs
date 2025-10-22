@@ -15,7 +15,7 @@ pub struct TempLogStore {
 
 impl TempLogStore {
     // 100 MiB per chunk
-    const CHUNK_SIZE: usize = 1 * 1024 * 1024;
+    const CHUNK_SIZE: usize = 100 * 1024 * 1024;
 
     pub fn new(client: Client, experiment_path: ExperimentPath) -> TempLogStore {
         TempLogStore {
@@ -40,16 +40,14 @@ impl TempLogStore {
         let full_log = self.logs.join("");
         let log_bytes = full_log.as_bytes();
 
-        // Split into chunks of max 100MB
         let chunks: Vec<&[u8]> = log_bytes.chunks(Self::CHUNK_SIZE).collect();
         let num_chunks = chunks.len();
-        let num_digits = num_chunks.to_string().len();
+        let max_digit_lenght = num_chunks.to_string().len();
 
-        // Build file specs with checksums and sizes
         let mut file_specs = Vec::with_capacity(num_chunks);
         for (idx, chunk) in chunks.iter().enumerate() {
             let checksum = format!("{:x}", sha2::Sha256::new_with_prefix(chunk).finalize());
-            let filename = format!("experiment-{:0width$}.log", idx, width = 3);
+            let filename = format!("experiment-{:0width$}.log", idx, width = max_digit_lenght);
 
             file_specs.push(ArtifactFileSpecRequest {
                 rel_path: filename,
@@ -58,7 +56,6 @@ impl TempLogStore {
             });
         }
 
-        // Create artifact with all file specs
         let create_response = self.client.create_artifact(
             self.experiment_path.owner_name(),
             self.experiment_path.project_name(),
@@ -70,27 +67,16 @@ impl TempLogStore {
             },
         )?;
 
-        // Upload each chunk using multipart upload
-        for (idx, chunk) in chunks.iter().enumerate() {
-            let filename = format!("experiment-{:0width$}.log", idx, width = num_digits);
+        if create_response.files.len() != num_chunks {
+            return Err(ClientError::UnknownError(
+                "Mismatch in number of files for upload".to_string(),
+            ));
+        }
 
-            // Find the corresponding upload URLs
-            let file_response = create_response
-                .files
-                .iter()
-                .find(|f| f.rel_path == filename)
-                .ok_or_else(|| {
-                    ClientError::UnknownError(format!(
-                        "Missing upload URL for log file: {}",
-                        filename
-                    ))
-                })?;
-
-            // Upload the chunk using multipart upload
+        for (chunk, file_response) in chunks.iter().zip(create_response.files.iter()) {
             self.upload_chunk_multipart(chunk, &file_response.urls)?;
         }
 
-        // Complete the artifact upload
         self.client.complete_artifact_upload(
             self.experiment_path.owner_name(),
             self.experiment_path.project_name(),
@@ -98,7 +84,6 @@ impl TempLogStore {
             &create_response.id,
         )?;
 
-        // Clear the log buffer
         self.logs.clear();
         self.bytes = 0;
 
