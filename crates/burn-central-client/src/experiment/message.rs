@@ -18,8 +18,8 @@ pub enum ExperimentMessage {
     },
     MetricDefinitionLog {
         name: String,
-        description: String,
-        unit: String,
+        description: Option<String>,
+        unit: Option<String>,
         higher_is_better: bool,
     },
     Log(String),

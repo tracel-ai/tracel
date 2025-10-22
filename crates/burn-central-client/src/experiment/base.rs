@@ -83,8 +83,8 @@ impl ExperimentRunHandle {
     pub fn log_metric_definition(
         &self,
         name: impl Into<String>,
-        description: impl Into<String>,
-        unit: impl Into<String>,
+        description: Option<String>,
+        unit: Option<String>,
         higher_is_better: bool,
     ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?
@@ -188,14 +188,14 @@ impl ExperimentRunInner {
     pub fn log_metric_definition(
         &self,
         name: impl Into<String>,
-        description: impl Into<String>,
-        unit: impl Into<String>,
+        description: Option<String>,
+        unit: Option<String>,
         higher_is_better: bool,
     ) -> Result<(), ExperimentTrackerError> {
         let message = ExperimentMessage::MetricDefinitionLog {
             name: name.into(),
-            description: description.into(),
-            unit: unit.into(),
+            description: description,
+            unit: unit,
             higher_is_better,
         };
         self.send(message)

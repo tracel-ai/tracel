@@ -64,14 +64,13 @@ impl MetricLogger for RemoteMetricLogger {
 
     fn log_metric_definition(&self, definition: burn::train::metric::MetricDefinition) {
         let (unit, higher_is_better) = match &definition.attributes {
-            MetricAttributes::Numeric(attr) => {
-                (attr.unit.clone().unwrap_or_default(), attr.higher_is_better)
-            }
-            MetricAttributes::None => (String::new(), true),
+            MetricAttributes::Numeric(attr) => (attr.unit.clone(), attr.higher_is_better),
+            MetricAttributes::None => return,
         };
+
         match self.experiment_handle.log_metric_definition(
             definition.name,
-            definition.description.unwrap_or_else(|| "".to_string()),
+            definition.description,
             unit,
             higher_is_better,
         ) {
