@@ -16,6 +16,12 @@ pub enum ExperimentMessage {
         value: f64,
         group: String,
     },
+    MetricDefinitionLog {
+        name: String,
+        description: Option<String>,
+        unit: Option<String>,
+        higher_is_better: bool,
+    },
     Log(String),
     InputUsed(InputUsed),
     Error(String),
