@@ -1,10 +1,9 @@
 use reqwest::Url;
 use reqwest::header::{COOKIE, SET_COOKIE};
-use serde::Serialize;
 
 use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, ComputeProviderQueueJobParamsSchema,
-    EndExperimentSchema, ExperimentResponse, ProjectSchema, URLSchema, UserResponseSchema,
+    EndExperimentSchema, ExperimentResponse, ProjectSchema, UserResponseSchema,
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
@@ -524,41 +523,6 @@ impl Client {
         ));
 
         self.get_json::<ModelDownloadResponse>(url)
-    }
-
-    /// Request a URL to upload logs to the Burn Central server.
-    ///
-    /// The client must be logged in before calling this method.
-    pub fn request_logs_upload_url(
-        &self,
-        owner_name: &str,
-        project_name: &str,
-        exp_num: i32,
-        size: usize,
-        checksum: &str,
-    ) -> Result<String, ClientError> {
-        self.validate_session_cookie()?;
-
-        let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/logs"
-        ));
-
-        #[derive(Serialize)]
-        struct LogsUploadParams {
-            size: usize,
-            checksum: String,
-        }
-
-        let logs_upload_url = self
-            .post_json::<LogsUploadParams, URLSchema>(
-                url,
-                Some(LogsUploadParams {
-                    size,
-                    checksum: checksum.to_string(),
-                }),
-            )
-            .map(|res| res.url)?;
-        Ok(logs_upload_url)
     }
 
     /// Generic method to upload bytes to the given URL.
