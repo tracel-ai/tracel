@@ -8,7 +8,7 @@ use tungstenite::{
     Message, Utf8Bytes, WebSocket, client::IntoClientRequest, connect, stream::MaybeTlsStream,
 };
 
-const DEFAULT_RECONNECT_DELAY: Duration = Duration::from_millis(100);
+const DEFAULT_RECONNECT_DELAY: Duration = Duration::from_millis(1000);
 
 type Socket = WebSocket<MaybeTlsStream<std::net::TcpStream>>;
 struct ConnectedSocket {
