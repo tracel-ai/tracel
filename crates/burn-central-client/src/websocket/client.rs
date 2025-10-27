@@ -28,7 +28,6 @@ impl WebSocketClient {
     }
 
     pub fn connect(&mut self, url: String, session_cookie: &str) -> Result<(), WebSocketError> {
-        println!("Connecting to {}", url);
         let mut req = url
             .clone()
             .into_client_request()
@@ -53,7 +52,6 @@ impl WebSocketClient {
     }
 
     pub fn reconnect(&mut self) -> Result<(), WebSocketError> {
-        println!("Reconnecting...");
         if let Some(socket) = self.state.take() {
             self.connect(socket.url, &socket.cookie)
         } else {
@@ -64,7 +62,6 @@ impl WebSocketClient {
     }
 
     pub fn send<I: Serialize>(&mut self, message: I) -> Result<(), WebSocketError> {
-        println!("Sending message in wsclient");
         let socket = self.active_socket()?;
 
         let json = serde_json::to_string(&message)
@@ -95,7 +92,6 @@ impl WebSocketClient {
 
     fn active_socket(&mut self) -> Result<&mut Socket, WebSocketError> {
         if let Some(socket) = self.state.as_mut() {
-            println!("Socket still good");
             Ok(&mut socket.socket)
         } else {
             Err(WebSocketError::NotConnected)
