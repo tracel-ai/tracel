@@ -20,6 +20,7 @@ pub struct ExperimentRunHandle {
 
 impl ExperimentRunHandle {
     fn try_upgrade(&self) -> Result<Arc<ExperimentRunInner>, ExperimentTrackerError> {
+        println!("Trying to upgrade experiment handle");
         self.recorder
             .upgrade()
             .ok_or(ExperimentTrackerError::InactiveExperiment)
@@ -82,12 +83,16 @@ impl ExperimentRunHandle {
 
     /// Logs an info message.
     pub fn log_info(&self, message: impl Into<String>) {
+        let message = message.into();
+        println!("Logging info: {}", message);
         self.try_log_info(message)
             .expect("Failed to log info, experiment may have been closed or inactive");
     }
 
     /// Attempts to log an info message.
     pub fn try_log_info(&self, message: impl Into<String>) -> Result<(), ExperimentTrackerError> {
+        let message = message.into();
+        println!("Try logging info: {}", message);
         self.try_upgrade()?.log_info(message)
     }
 
@@ -113,6 +118,7 @@ struct ExperimentRunInner {
 
 impl ExperimentRunInner {
     fn send(&self, message: ExperimentMessage) -> Result<(), ExperimentTrackerError> {
+        println!("Sending message: {:?}", message);
         self.sender
             .send(message)
             .map_err(|_| ExperimentTrackerError::SocketClosed)
@@ -175,6 +181,8 @@ impl ExperimentRunInner {
     }
 
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentTrackerError> {
+        let message = message.into();
+        println!("log info: {}", message);
         self.send(ExperimentMessage::Log(message.into()))
     }
 

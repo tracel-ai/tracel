@@ -9,4 +9,6 @@ pub enum WebSocketError {
     SendError(String),
     #[error("WebSocket is not connected")]
     NotConnected,
+    #[error("WebSocket cannot reconnect: {0}")]
+    CannotReconnect(String),
 }

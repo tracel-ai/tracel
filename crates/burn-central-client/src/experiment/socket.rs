@@ -146,6 +146,7 @@ impl ExperimentSocket {
     }
 
     pub fn close(self) -> Result<ThreadResult, ThreadError> {
+        println!("Closing experiment socket");
         self.abort_sender
             .send(())
             .map_err(|_| ThreadError::AbortError)?;
