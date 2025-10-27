@@ -1,3 +1,5 @@
+use std::{thread, time::Duration};
+
 use reqwest::header::COOKIE;
 use serde::Serialize;
 
@@ -5,6 +7,8 @@ use crate::websocket::WebSocketError;
 use tungstenite::{
     Message, Utf8Bytes, WebSocket, client::IntoClientRequest, connect, stream::MaybeTlsStream,
 };
+
+const DEFAULT_RECONNECT_DELAY: Duration = Duration::from_millis(100);
 
 type Socket = WebSocket<MaybeTlsStream<std::net::TcpStream>>;
 struct ConnectedSocket {
@@ -70,7 +74,9 @@ impl WebSocketClient {
         match Self::attempt_send(socket, &json) {
             Ok(_) => Ok(()),
             Err(_) => {
+                thread::sleep(DEFAULT_RECONNECT_DELAY);
                 self.reconnect()?;
+
                 let socket = self.active_socket()?;
                 Self::attempt_send(socket, &json)
             }
