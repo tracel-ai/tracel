@@ -153,6 +153,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         procedure_type: ProcedureTypeArg {
             procedure_type: ProcedureType::Training,
         },
+        api_endpoint: context.get_api_endpoint().to_string(),
     };
 
     let client = context.create_client()?;
