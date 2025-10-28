@@ -163,6 +163,7 @@ impl Client {
         if let Some(cookie) = self.session_cookie.as_ref() {
             request_builder = request_builder.header(COOKIE, cookie);
         }
+        request_builder = request_builder.header("X-SDK-Version", env!("CARGO_PKG_VERSION"));
 
         let response = request_builder.send()?.map_to_burn_central_err()?;
 
