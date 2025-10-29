@@ -9,6 +9,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum ApiErrorCode {
     ProjectAlreadyExists,
+    UnsupportedSdkVersion,
     // ...
     #[serde(other)]
     Unknown,
