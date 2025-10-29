@@ -10,22 +10,20 @@ use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 pub struct RemoteMetricLogger {
     experiment_handle: ExperimentRunHandle,
     iterations: HashMap<String, usize>,
-    group: String,
 }
 
 impl RemoteMetricLogger {
     /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
-    pub fn new(experiment: &ExperimentRun, group: String) -> Self {
+    pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),
             iterations: HashMap::new(),
-            group,
         }
     }
 }
 
 impl MetricLogger for RemoteMetricLogger {
-    fn log(&mut self, item: &MetricEntry, epoch: usize, _split: Split) {
+    fn log(&mut self, item: &MetricEntry, epoch: usize, split: Split) {
         let key = &item.name;
         let value = &item.serialize;
         // deserialize
@@ -45,7 +43,7 @@ impl MetricLogger for RemoteMetricLogger {
                 NumericEntry::Value(v) => v,
                 NumericEntry::Aggregated { sum: v, .. } => v,
             },
-            self.group.clone(),
+            split.to_string(),
         );
 
         // todo: this is an incorrect way to get the iteration, ideally, the learner would provide this on every log call.
