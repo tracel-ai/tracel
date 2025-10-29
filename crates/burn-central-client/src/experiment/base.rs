@@ -194,8 +194,8 @@ impl ExperimentRunInner {
     ) -> Result<(), ExperimentTrackerError> {
         let message = ExperimentMessage::MetricDefinitionLog {
             name: name.into(),
-            description: description,
-            unit: unit,
+            description,
+            unit,
             higher_is_better,
         };
         self.send(message)

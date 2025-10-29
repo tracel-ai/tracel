@@ -74,7 +74,7 @@ impl MetricLogger for RemoteMetricLogger {
             unit,
             higher_is_better,
         ) {
-            Ok(_) => return,
+            Ok(_) => (),
             Err(e) => panic!("{e}"),
         }
     }
