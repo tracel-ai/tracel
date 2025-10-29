@@ -80,6 +80,17 @@ impl ExperimentRunHandle {
             .log_metric(name, epoch, iteration, value, group)
     }
 
+    pub fn log_metric_definition(
+        &self,
+        name: impl Into<String>,
+        description: Option<String>,
+        unit: Option<String>,
+        higher_is_better: bool,
+    ) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?
+            .log_metric_definition(name, description, unit, higher_is_better)
+    }
+
     /// Logs an info message.
     pub fn log_info(&self, message: impl Into<String>) {
         self.try_log_info(message)
@@ -170,6 +181,22 @@ impl ExperimentRunInner {
             iteration,
             value,
             group: group.into(),
+        };
+        self.send(message)
+    }
+
+    pub fn log_metric_definition(
+        &self,
+        name: impl Into<String>,
+        description: Option<String>,
+        unit: Option<String>,
+        higher_is_better: bool,
+    ) -> Result<(), ExperimentTrackerError> {
+        let message = ExperimentMessage::MetricDefinitionLog {
+            name: name.into(),
+            description,
+            unit,
+            higher_is_better,
         };
         self.send(message)
     }
