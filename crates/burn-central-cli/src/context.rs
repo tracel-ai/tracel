@@ -109,6 +109,13 @@ impl CliContext {
         &self.project_metadata.generated_crate_name
     }
 
+    pub fn set_config(&mut self, config: &Config) {
+        self.api_endpoint = config
+            .api_endpoint
+            .parse::<url::Url>()
+            .expect("API endpoint should be valid");
+    }
+
     pub fn get_api_endpoint(&self) -> &url::Url {
         &self.api_endpoint
     }
