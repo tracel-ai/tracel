@@ -120,6 +120,10 @@ impl ExperimentThread {
                         ExperimentMessage::Error(err) => {
                             self.handle_websocket_send(ExperimentMessage::Error(err))?;
                         }
+                        ExperimentMessage::ExperimentComplete(completion) => {
+                            self.handle_websocket_send(ExperimentMessage::ExperimentComplete(completion))?;
+                            return Ok(());
+                        }
                     }
                 }
             }

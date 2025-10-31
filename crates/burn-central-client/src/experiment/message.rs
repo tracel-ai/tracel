@@ -8,6 +8,13 @@ pub enum InputUsed {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ExperimentCompletion {
+    Success,
+    Fail { reason: String },
+}
+
+#[derive(Debug, Serialize)]
 pub enum ExperimentMessage {
     MetricLog {
         name: String,
@@ -25,4 +32,5 @@ pub enum ExperimentMessage {
     Log(String),
     InputUsed(InputUsed),
     Error(String),
+    ExperimentComplete(ExperimentCompletion),
 }
