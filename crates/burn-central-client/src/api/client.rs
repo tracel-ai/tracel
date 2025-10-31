@@ -163,6 +163,7 @@ impl Client {
         if let Some(cookie) = self.session_cookie.as_ref() {
             request_builder = request_builder.header(COOKIE, cookie);
         }
+        request_builder = request_builder.header("X-SDK-Version", env!("CARGO_PKG_VERSION"));
 
         let response = request_builder.send()?.map_to_burn_central_err()?;
 
@@ -174,9 +175,15 @@ impl Client {
         self.session_cookie.as_ref()
     }
 
-    /// Join the given path to the base URL.
+    // Todo update to support multiple versions
     fn join(&self, path: &str) -> Url {
+        self.join_versioned(path, 1)
+    }
+
+    fn join_versioned(&self, path: &str, version: u8) -> Url {
         self.base_url
+            .join(&format!("v{version}/"))
+            .unwrap()
             .join(path)
             .expect("Should be able to join url")
     }
