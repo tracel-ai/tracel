@@ -174,9 +174,15 @@ impl Client {
         self.session_cookie.as_ref()
     }
 
-    /// Join the given path to the base URL.
+    // Todo update to support multiple versions
     fn join(&self, path: &str) -> Url {
+        self.join_versioned(path, 1)
+    }
+
+    fn join_versioned(&self, path: &str, version: u8) -> Url {
         self.base_url
+            .join(&format!("v{version}/"))
+            .unwrap()
             .join(path)
             .expect("Should be able to join url")
     }
