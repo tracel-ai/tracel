@@ -3,7 +3,7 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 
 use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, ComputeProviderQueueJobParamsSchema,
-    EndExperimentSchema, ExperimentResponse, ProjectSchema, UserResponseSchema,
+    ExperimentResponse, ProjectSchema, UserResponseSchema,
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
@@ -337,30 +337,6 @@ impl Client {
         };
 
         Ok(experiment)
-    }
-
-    /// End the experiment with the given status.
-    ///
-    /// The client must be logged in before calling this method.
-    pub fn end_experiment(
-        &self,
-        owner_name: &str,
-        project_name: &str,
-        exp_num: i32,
-        end_status: EndExperimentStatus,
-    ) -> Result<(), ClientError> {
-        self.validate_session_cookie()?;
-
-        let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/end"
-        ));
-
-        let end_status: EndExperimentSchema = match end_status {
-            EndExperimentStatus::Success => EndExperimentSchema::Success,
-            EndExperimentStatus::Fail(reason) => EndExperimentSchema::Fail(reason),
-        };
-
-        self.put::<EndExperimentSchema>(url, Some(end_status))
     }
 
     /// Creates an artifact entry on the Burn Central server with the given files.

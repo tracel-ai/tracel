@@ -4,7 +4,7 @@ use crate::artifacts::{ArtifactKind, ExperimentArtifactClient};
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
-use crate::experiment::message::{ExperimentMessage, InputUsed};
+use crate::experiment::message::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
 use crate::{api::Client, websocket::WebSocketClient};
@@ -269,6 +269,14 @@ impl ExperimentRun {
         &mut self,
         end_status: EndExperimentStatus,
     ) -> Result<(), ExperimentTrackerError> {
+        let completion = match end_status {
+            EndExperimentStatus::Success => ExperimentCompletion::Success,
+            EndExperimentStatus::Fail(reason) => ExperimentCompletion::Fail { reason },
+        };
+        self.inner
+            .send(ExperimentMessage::ExperimentComplete(completion))
+            .map_err(|_| ExperimentTrackerError::SocketClosed)?;
+
         let thread_result = match self.socket.take() {
             Some(socket) => socket.close(),
             None => return Err(ExperimentTrackerError::AlreadyFinished),
@@ -297,18 +305,6 @@ impl ExperimentRun {
             }
         }
 
-        self.inner
-            .http_client
-            .end_experiment(
-                self.inner.id.owner_name(),
-                self.inner.id.project_name(),
-                self.inner.id.experiment_num(),
-                end_status,
-            )
-            .map_err(|e| {
-                ExperimentTrackerError::InternalError(format!("Failed to end experiment: {e}"))
-            })?;
-
         Ok(())
     }
 
@@ -323,9 +319,11 @@ impl ExperimentRun {
 
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
-        let _ = self.finish_internal(EndExperimentStatus::Fail(
-            "Experiment dropped without finishing".to_string(),
-        ));
+        if self.socket.is_some() {
+            let _ = self.finish_internal(EndExperimentStatus::Fail(
+                "Experiment dropped without finishing".to_string(),
+            ));
+        }
     }
 }
 
