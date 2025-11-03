@@ -9,6 +9,7 @@ use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
 use crate::{api::Client, websocket::WebSocketClient};
 use crossbeam::channel::Sender;
+use serde::Serialize;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
 
@@ -23,6 +24,11 @@ impl ExperimentRunHandle {
         self.recorder
             .upgrade()
             .ok_or(ExperimentTrackerError::InactiveExperiment)
+    }
+
+    /// Log a configuration object.
+    pub fn log_config<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?.log_config(config)
     }
 
     /// Log an artifact with the given name, kind and settings.
@@ -127,6 +133,13 @@ impl ExperimentRunInner {
         self.sender
             .send(message)
             .map_err(|_| ExperimentTrackerError::SocketClosed)
+    }
+
+    pub fn log_config<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
+        let message = ExperimentMessage::Config(serde_json::to_value(config).map_err(|e| {
+            ExperimentTrackerError::InternalError(format!("Failed to serialize config: {}", e))
+        })?);
+        self.send(message)
     }
 
     pub fn log_artifact<E: BundleEncode>(

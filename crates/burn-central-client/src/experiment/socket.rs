@@ -114,6 +114,9 @@ impl ExperimentThread {
                         ExperimentMessage::Log(log) => {
                             self.handle_log_message(log)?;
                         }
+                        ExperimentMessage::Config(c) => {
+                            self.handle_websocket_send(ExperimentMessage::Config(c))?;
+                        }
                         ExperimentMessage::InputUsed(input) => {
                             self.handle_websocket_send(ExperimentMessage::InputUsed(input))?;
                         }
