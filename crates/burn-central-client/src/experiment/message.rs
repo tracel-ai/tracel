@@ -15,7 +15,7 @@ pub enum ExperimentCompletion {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ExperimentMessage {
     MetricLog {
         name: String,

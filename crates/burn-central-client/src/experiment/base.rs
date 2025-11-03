@@ -312,6 +312,7 @@ impl ExperimentRun {
                 ));
             }
             Err(ThreadError::Panic) => {
+                eprintln!("Warning: Experiment thread panicked");
                 return Err(ExperimentTrackerError::InternalError(
                     "Experiment thread panicked".into(),
                 ));
