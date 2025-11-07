@@ -303,7 +303,6 @@ impl Client {
         owner_name: &str,
         project_name: &str,
         description: Option<String>,
-        config: serde_json::Value,
         code_version_digest: String,
         routine: String,
     ) -> Result<Experiment, ClientError> {
@@ -316,7 +315,6 @@ impl Client {
             url,
             Some(CreateExperimentSchema {
                 description,
-                config,
                 code_version_digest,
                 routine_run: routine,
             }),

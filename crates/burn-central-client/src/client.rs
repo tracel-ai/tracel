@@ -10,7 +10,6 @@ use crate::schemas::{
     ProjectSchema, User,
 };
 use reqwest::Url;
-use serde::Serialize;
 use std::path::PathBuf;
 
 /// Errors that can occur during the initialization of the [BurnCentral] client.
@@ -249,25 +248,12 @@ impl BurnCentral {
         &self,
         namespace: &str,
         project_name: &str,
-        config: &impl Serialize,
         digest: String,
         routine: String,
     ) -> Result<ExperimentRun, BurnCentralError> {
         let experiment = self
             .client
-            .create_experiment(
-                namespace,
-                project_name,
-                None,
-                serde_json::to_value(config).map_err(|e| {
-                    BurnCentralError::Internal(format!(
-                        "Failed to serialize config for {namespace}/{project_name}: {}",
-                        e
-                    ))
-                })?,
-                digest,
-                routine,
-            )
+            .create_experiment(namespace, project_name, None, digest, routine)
             .map_err(|e| BurnCentralError::Client {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,

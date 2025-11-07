@@ -15,6 +15,7 @@ pub enum ExperimentCompletion {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ExperimentMessage {
     MetricLog {
         name: String,
@@ -30,6 +31,7 @@ pub enum ExperimentMessage {
         higher_is_better: bool,
     },
     Log(String),
+    Config(serde_json::Value),
     InputUsed(InputUsed),
     Error(String),
     ExperimentComplete(ExperimentCompletion),

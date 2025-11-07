@@ -20,7 +20,6 @@ pub enum ThreadError {
 }
 
 const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
-const CHANNEL_BUFFER_SIZE: usize = 1;
 
 #[derive(Debug)]
 pub struct ThreadResult {}
@@ -50,9 +49,9 @@ impl ExperimentThread {
     }
 
     fn run(mut self) -> Result<ThreadResult, ThreadError> {
-        self.thread_loop()?;
+        let res = self.thread_loop();
         self.cleanup()?;
-        Ok(ThreadResult {})
+        res.map(|_| ThreadResult {})
     }
 
     fn cleanup(&mut self) -> Result<(), ThreadError> {
@@ -114,6 +113,9 @@ impl ExperimentThread {
                         ExperimentMessage::Log(log) => {
                             self.handle_log_message(log)?;
                         }
+                        ExperimentMessage::Config(c) => {
+                            self.handle_websocket_send(ExperimentMessage::Config(c))?;
+                        }
                         ExperimentMessage::InputUsed(input) => {
                             self.handle_websocket_send(ExperimentMessage::InputUsed(input))?;
                         }
@@ -122,7 +124,6 @@ impl ExperimentThread {
                         }
                         ExperimentMessage::ExperimentComplete(completion) => {
                             self.handle_websocket_send(ExperimentMessage::ExperimentComplete(completion))?;
-                            return Ok(());
                         }
                     }
                 }
@@ -143,7 +144,7 @@ impl ExperimentSocket {
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
     ) -> Self {
-        let (abort_sender, abort_signal) = crossbeam::channel::bounded(CHANNEL_BUFFER_SIZE);
+        let (abort_sender, abort_signal) = crossbeam::channel::bounded(1);
         let thread = ExperimentThread::new(ws_client, message_receiver, abort_signal, log_store);
         let handle = std::thread::spawn(|| thread.run());
         Self {

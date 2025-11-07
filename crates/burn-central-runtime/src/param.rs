@@ -33,7 +33,7 @@ impl<B: Backend, C: ExperimentConfig> RoutineParam<ExecutionContext<B>> for Cfg<
     type Item<'new> = Cfg<C>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        let cfg = ctx.get_merged_config();
+        let cfg = ctx.use_merged_config();
         Ok(Cfg(cfg))
     }
 }

@@ -418,8 +418,8 @@ fn make_build_command(
     context: &CliContext,
 ) -> anyhow::Result<std::process::Command> {
     let profile_arg = match context.metadata().build_profile.as_str() {
-        "release" => "--release",
-        "debug" => "--debug",
+        "release" => "--profile=release",
+        "debug" => "--profile=dev",
         _ => {
             return Err(anyhow::anyhow!(format!(
                 "Invalid profile: {}",
