@@ -48,6 +48,8 @@ impl<B: Backend, M: BundleEncode + Send + 'static> RoutineOutput<ExecutionContex
 
 impl<B: Backend, M: BundleEncode + Send + 'static> ExperimentOutput<B> for Model<M> {}
 
+impl<B: Backend> ExperimentOutput<B> for () {}
+
 /// --- TrainOutput ---
 impl<B: Backend, M: BundleEncode + Send + 'static> TrainOutput<B> for Model<M> {}
 
@@ -64,3 +66,5 @@ where
     E: Display + Send + Sync + 'static,
 {
 }
+
+impl<B: Backend> TrainOutput<B> for () {}
