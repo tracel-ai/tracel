@@ -3,7 +3,7 @@ use reqwest::header::{COOKIE, SET_COOKIE};
 
 use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, ComputeProviderQueueJobParamsSchema,
-    EndExperimentSchema, ExperimentResponse, ProjectSchema, UserResponseSchema,
+    ExperimentResponse, ProjectSchema, UserResponseSchema,
 };
 use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
 use crate::api::{
@@ -163,6 +163,7 @@ impl Client {
         if let Some(cookie) = self.session_cookie.as_ref() {
             request_builder = request_builder.header(COOKIE, cookie);
         }
+        request_builder = request_builder.header("X-SDK-Version", env!("CARGO_PKG_VERSION"));
 
         let response = request_builder.send()?.map_to_burn_central_err()?;
 
@@ -174,9 +175,15 @@ impl Client {
         self.session_cookie.as_ref()
     }
 
-    /// Join the given path to the base URL.
+    // Todo update to support multiple versions
     fn join(&self, path: &str) -> Url {
+        self.join_versioned(path, 1)
+    }
+
+    fn join_versioned(&self, path: &str, version: u8) -> Url {
         self.base_url
+            .join(&format!("v{version}/"))
+            .unwrap()
             .join(path)
             .expect("Should be able to join url")
     }
@@ -296,7 +303,6 @@ impl Client {
         owner_name: &str,
         project_name: &str,
         description: Option<String>,
-        config: serde_json::Value,
         code_version_digest: String,
         routine: String,
     ) -> Result<Experiment, ClientError> {
@@ -309,7 +315,6 @@ impl Client {
             url,
             Some(CreateExperimentSchema {
                 description,
-                config,
                 code_version_digest,
                 routine_run: routine,
             }),
@@ -330,30 +335,6 @@ impl Client {
         };
 
         Ok(experiment)
-    }
-
-    /// End the experiment with the given status.
-    ///
-    /// The client must be logged in before calling this method.
-    pub fn end_experiment(
-        &self,
-        owner_name: &str,
-        project_name: &str,
-        exp_num: i32,
-        end_status: EndExperimentStatus,
-    ) -> Result<(), ClientError> {
-        self.validate_session_cookie()?;
-
-        let url = self.join(&format!(
-            "projects/{owner_name}/{project_name}/experiments/{exp_num}/end"
-        ));
-
-        let end_status: EndExperimentSchema = match end_status {
-            EndExperimentStatus::Success => EndExperimentSchema::Success,
-            EndExperimentStatus::Fail(reason) => EndExperimentSchema::Fail(reason),
-        };
-
-        self.put::<EndExperimentSchema>(url, Some(end_status))
     }
 
     /// Creates an artifact entry on the Burn Central server with the given files.

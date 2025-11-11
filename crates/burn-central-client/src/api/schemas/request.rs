@@ -2,15 +2,8 @@ use crate::schemas::{BurnCentralCodeMetadata, CrateVersionMetadata};
 use serde::Serialize;
 
 #[derive(Serialize)]
-pub enum EndExperimentSchema {
-    Success,
-    Fail(String),
-}
-
-#[derive(Serialize)]
 pub struct CreateExperimentSchema {
     pub description: Option<String>,
-    pub config: serde_json::Value,
     pub code_version_digest: String,
     pub routine_run: String,
 }

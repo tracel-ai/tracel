@@ -279,8 +279,6 @@ fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String
         fn main() -> Result<(), String> {
             use burn_central::runtime::Executor;
 
-            burn_central::runtime::setup_logging();
-
             let runtime_args = burn_central::runtime::cli::parse_runtime_args();
 
             let device = #backend_default_device;

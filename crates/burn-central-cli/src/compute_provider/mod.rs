@@ -34,23 +34,33 @@ pub struct ComputeProviderTrainingArgs {
     pub namespace: String,
     pub project: String,
     pub key: String,
+    pub api_endpoint: String,
     #[serde(flatten)]
     pub procedure_type: ProcedureTypeArg,
 }
 
-pub fn compute_provider_main(config: Config) {
+pub fn compute_provider_main() {
     let manifest_path = cargo::try_locate_manifest().expect("Should be able to locate manifest.");
+
+    let config = Config {
+        api_endpoint: "https://heat.tracel.ai".to_string(),
+    };
 
     let terminal = Terminal {};
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let function_registry = FunctionRegistry::new();
-    let context = CliContext::new(terminal, &config, crate_context, function_registry);
+    let mut context = CliContext::new(terminal, &config, crate_context, function_registry);
 
     let arg = get_arg();
     match get_procedure_type(&arg) {
         ProcedureType::Training => {
             let args = serde_json::from_str::<ComputeProviderTrainingArgs>(&arg)
                 .expect("Should be able to deserialize the arg as ComputeProviderTrainingArgs");
+
+            let config = Config {
+                api_endpoint: args.api_endpoint.clone(),
+            };
+            context.set_config(&config);
 
             run_training(args, &context);
         }

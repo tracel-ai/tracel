@@ -153,6 +153,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         procedure_type: ProcedureTypeArg {
             procedure_type: ProcedureType::Training,
         },
+        api_endpoint: context.get_api_endpoint().to_string(),
     };
 
     let client = context.create_client()?;
@@ -417,8 +418,8 @@ fn make_build_command(
     context: &CliContext,
 ) -> anyhow::Result<std::process::Command> {
     let profile_arg = match context.metadata().build_profile.as_str() {
-        "release" => "--release",
-        "debug" => "--debug",
+        "release" => "--profile=release",
+        "debug" => "--profile=dev",
         _ => {
             return Err(anyhow::anyhow!(format!(
                 "Invalid profile: {}",

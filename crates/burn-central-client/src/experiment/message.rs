@@ -10,6 +10,14 @@ pub enum InputUsed {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ExperimentCompletion {
+    Success,
+    Fail { reason: String },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ExperimentMessage {
     MetricLog {
         name: String,
@@ -30,6 +38,12 @@ pub enum ExperimentMessage {
         best_metric_values: HashMap<String, f64>,
     },
     Log(String),
+    Arguments(serde_json::Value),
+    Config {
+        value: serde_json::Value,
+        name: String,
+    },
     InputUsed(InputUsed),
     Error(String),
+    ExperimentComplete(ExperimentCompletion),
 }

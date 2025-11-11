@@ -90,17 +90,25 @@ pub struct ExecutionContext<B: Backend> {
     client: Option<BurnCentral>,
     namespace: String,
     project: String,
-    config_override: Option<String>,
+    config_override: Option<serde_json::Value>,
     devices: Vec<B::Device>,
     experiment: Option<ExperimentRun>,
 }
 
 impl<B: Backend> ExecutionContext<B> {
-    pub fn get_merged_config<C: ExperimentConfig>(&self) -> C {
-        match &self.config_override {
+    pub fn use_merged_config<C: ExperimentConfig>(&self) -> C {
+        let config = match &self.config_override {
             Some(json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
             None => C::default(),
+        };
+
+        if let Some(experiment) = &self.experiment {
+            experiment.log_arguments(&config).unwrap_or_else(|e| {
+                log::error!("Failed to log experiment config: {}", e);
+            });
         }
+
+        config
     }
 
     pub fn experiment(&self) -> Option<&ExperimentRun> {
@@ -240,6 +248,15 @@ impl<B: AutodiffBackend> Executor<B> {
 
         log::debug!("Starting Execution for Target: {routine}");
 
+        let config_override = config_override
+            .as_ref()
+            .map(|cfg_str| serde_json::from_str::<serde_json::Value>(cfg_str))
+            .transpose()
+            .map_err(|e| {
+                log::error!("Failed to parse configuration override: {}", e);
+                RuntimeError::InvalidConfig(e.to_string())
+            })?;
+
         let mut ctx = ExecutionContext {
             client: self.client.clone(),
             namespace: self.namespace.clone().unwrap_or_default(),
@@ -248,13 +265,6 @@ impl<B: AutodiffBackend> Executor<B> {
             devices: devices.into_iter().collect(),
             experiment: None,
         };
-
-        let config = ctx.config_override.as_deref().unwrap_or("{}");
-
-        let parsed_config = serde_json::from_str::<serde_json::Value>(config).map_err(|e| {
-            log::error!("Failed to parse configuration: {e}");
-            RuntimeError::InvalidConfig(e.to_string())
-        })?;
 
         if let Some(client) = &mut ctx.client {
             let code_version = option_env!("BURN_CENTRAL_CODE_VERSION")
@@ -271,7 +281,6 @@ impl<B: AutodiffBackend> Executor<B> {
             let experiment = client.start_experiment(
                 &ctx.namespace,
                 &ctx.project,
-                &parsed_config,
                 code_version,
                 routine.to_string(),
             )?;
