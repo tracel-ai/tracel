@@ -31,7 +31,11 @@ pub enum ExperimentMessage {
         higher_is_better: bool,
     },
     Log(String),
-    Config(serde_json::Value),
+    Arguments(serde_json::Value),
+    Config {
+        value: serde_json::Value,
+        name: String,
+    },
     InputUsed(InputUsed),
     Error(String),
     ExperimentComplete(ExperimentCompletion),

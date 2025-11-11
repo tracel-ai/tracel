@@ -103,7 +103,7 @@ impl<B: Backend> ExecutionContext<B> {
         };
 
         if let Some(experiment) = &self.experiment {
-            experiment.log_config(&config).unwrap_or_else(|e| {
+            experiment.log_arguments(&config).unwrap_or_else(|e| {
                 log::error!("Failed to log experiment config: {}", e);
             });
         }
