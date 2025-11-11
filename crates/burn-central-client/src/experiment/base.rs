@@ -27,8 +27,8 @@ impl ExperimentRunHandle {
     }
 
     /// Log a configuration object.
-    pub fn log_config<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
-        self.try_upgrade()?.log_config(config)
+    pub fn log_arguments<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?.log_arguments(config)
     }
 
     /// Log an artifact with the given name, kind and settings.
@@ -118,6 +118,13 @@ impl ExperimentRunHandle {
     pub fn try_log_error(&self, error: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?.log_error(error)
     }
+    pub fn log_config<C: Serialize>(
+        &self,
+        name: impl Into<String>,
+        config: &C,
+    ) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?.log_config(name.into(), config)
+    }
 }
 
 /// Represents a recorder for an experiment, allowing logging of artifacts, metrics, and messages.
@@ -135,10 +142,24 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_config<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
-        let message = ExperimentMessage::Config(serde_json::to_value(config).map_err(|e| {
+    pub fn log_arguments<C: Serialize>(&self, args: &C) -> Result<(), ExperimentTrackerError> {
+        let message = ExperimentMessage::Arguments(serde_json::to_value(args).map_err(|e| {
             ExperimentTrackerError::InternalError(format!("Failed to serialize config: {}", e))
         })?);
+        self.send(message)
+    }
+
+    pub fn log_config<C: Serialize>(
+        &self,
+        name: String,
+        config: &C,
+    ) -> Result<(), ExperimentTrackerError> {
+        let message = ExperimentMessage::Config {
+            value: serde_json::to_value(config).map_err(|e| {
+                ExperimentTrackerError::InternalError(format!("Failed to serialize config: {}", e))
+            })?,
+            name,
+        };
         self.send(message)
     }
 
