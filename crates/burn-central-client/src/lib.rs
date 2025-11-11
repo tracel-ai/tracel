@@ -10,6 +10,7 @@ pub mod experiment;
 mod websocket;
 
 pub use crate::client::*;
+pub use burn_central_api::credentials;
 
 pub mod artifacts;
 pub mod bundle;
