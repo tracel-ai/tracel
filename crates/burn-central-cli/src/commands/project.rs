@@ -34,41 +34,35 @@ pub fn handle_command(mut context: CliContext) {
     };
 
     // Fetch project information from the server
-    let project = match client.find_project(project_path.owner_name(), project_path.project_name())
-    {
-        Ok(project) => project,
-        Err(e) => {
+    match client.get_project(project_path.owner_name(), project_path.project_name()) {
+        Ok(project) => {
             context
                 .terminal()
-                .cancel_finalize(&format!("Failed to retrieve project information: {}", e));
-            return;
-        }
-    };
-
-    match project {
-        Some(project_info) => {
+                .print(&format!("Project: {}", project.project_name));
             context
                 .terminal()
-                .print(&format!("Project: {}", project_info.project_name));
+                .print(&format!("Namespace: {}", project.namespace_name));
             context
                 .terminal()
-                .print(&format!("Namespace: {}", project_info.namespace_name));
+                .print(&format!("Description: {}", project.description));
             context
                 .terminal()
-                .print(&format!("Description: {}", project_info.description));
-            context
-                .terminal()
-                .print(&format!("Created By: {}", project_info.created_by));
+                .print(&format!("Created By: {}", project.created_by));
             context
                 .terminal()
                 .finalize("Project information retrieved successfully.");
         }
-        None => {
+        Err(e) if e.is_not_found() => {
             context.terminal().cancel_finalize(&format!(
                 "Project {}/{} not found on the server.",
                 project_path.owner_name(),
                 project_path.project_name()
             ));
         }
-    }
+        Err(e) => {
+            context
+                .terminal()
+                .cancel_finalize(&format!("Failed to retrieve project information: {}", e));
+        }
+    };
 }

@@ -244,11 +244,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-central-api"
+version = "0.1.0"
+dependencies = [
+ "derive-new",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.17",
+ "uuid",
+]
+
+[[package]]
 name = "burn-central-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "burn-central-client",
+ "burn-central-api",
  "cargo-util-schemas 0.8.2",
  "cargo_metadata",
  "chrono",
@@ -256,6 +269,7 @@ dependencies = [
  "cliclack",
  "colored",
  "console",
+ "derive-new",
  "directories",
  "flate2",
  "gix",
@@ -267,6 +281,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
+ "regex",
  "serde",
  "serde-untagged",
  "serde_ignored",
@@ -303,6 +318,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "burn",
+ "burn-central-api",
  "crossbeam",
  "derive-new",
  "json-patch",

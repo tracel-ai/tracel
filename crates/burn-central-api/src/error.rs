@@ -60,6 +60,10 @@ pub enum ClientError {
 }
 
 impl ClientError {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, ClientError::NotFound)
+    }
+
     pub fn code(&self) -> Option<ApiErrorCode> {
         match self {
             ClientError::ApiError { body, .. } => Some(body.code.clone()),

@@ -14,7 +14,7 @@ pub fn handle_command(mut context: CliContext) {
     }
     let client = client.unwrap();
 
-    let user = match client.me() {
+    let user = match client.get_current_user() {
         Ok(user) => user,
         Err(e) => {
             context

@@ -1,4 +1,4 @@
-use burn_central_client::schemas::RegisteredFunction;
+use burn_central_api::schemas::RegisteredFunction;
 pub use inventory;
 use quote::ToTokens;
 

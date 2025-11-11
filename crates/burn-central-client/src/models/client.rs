@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::api::{Client, ClientError};
 use crate::bundle::{BundleDecode, InMemoryBundleReader};
 use crate::models::{Model, ModelVersionInfo};
 use crate::schemas::ModelPath;
+use burn_central_api::{Client, ClientError};
 
 /// An interface for downloading models from Burn Central.
 #[derive(Clone)]

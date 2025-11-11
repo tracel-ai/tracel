@@ -5,24 +5,18 @@ use super::schemas::{
     CodeUploadParamsSchema, CodeUploadUrlsSchema, ComputeProviderQueueJobParamsSchema,
     ExperimentResponse, ProjectSchema, UserResponseSchema,
 };
-use crate::api::error::{ApiErrorBody, ApiErrorCode, ClientError};
-use crate::api::{
+use crate::error::{ApiErrorBody, ApiErrorCode, ClientError};
+use crate::schemas::BurnCentralCodeMetadata;
+use crate::schemas::{
     AddFilesToArtifactRequest, ArtifactAddFileResponse, ArtifactCreationResponse,
     ArtifactDownloadResponse, ArtifactFileSpecRequest, ArtifactListResponse, ArtifactResponse,
     CompleteUploadRequest, CreateArtifactRequest, CreateProjectSchema,
     GetUserOrganizationsResponseSchema, ModelDownloadResponse, ModelResponse, ModelVersionResponse,
 };
-use crate::schemas::{BurnCentralCodeMetadata, CreatedByUser};
 use crate::{
-    api::schemas::CreateExperimentSchema,
-    credentials::BurnCentralCredentials,
-    schemas::{CrateVersionMetadata, Experiment},
+    credentials::BurnCentralCredentials, schemas::CrateVersionMetadata,
+    schemas::CreateExperimentSchema,
 };
-
-pub enum EndExperimentStatus {
-    Success,
-    Fail(String),
-}
 
 impl From<reqwest::Error> for ClientError {
     fn from(error: reqwest::Error) -> Self {
@@ -103,7 +97,8 @@ impl Client {
         R: for<'de> serde::Deserialize<'de>,
     {
         let response = self.req(reqwest::Method::GET, path, None::<serde_json::Value>)?;
-        let json = response.json::<R>()?;
+        let bytes = response.bytes()?;
+        let json = serde_json::from_slice::<R>(&bytes)?;
         Ok(json)
     }
 
@@ -117,7 +112,8 @@ impl Client {
         R: for<'de> serde::Deserialize<'de>,
     {
         let response = self.req(reqwest::Method::GET, path, body)?;
-        let json = response.json::<R>()?;
+        let bytes = response.bytes()?;
+        let json = serde_json::from_slice::<R>(&bytes)?;
         Ok(json)
     }
 
@@ -127,7 +123,8 @@ impl Client {
         R: for<'de> serde::Deserialize<'de>,
     {
         let response = self.req(reqwest::Method::POST, path, body)?;
-        let json = response.json::<R>()?;
+        let bytes = response.bytes()?;
+        let json = serde_json::from_slice::<R>(&bytes)?;
         Ok(json)
     }
 
@@ -155,7 +152,9 @@ impl Client {
         let request_builder = self.http_client.request(method, url);
 
         let mut request_builder = if let Some(body) = body {
-            request_builder.json(&body)
+            request_builder
+                .body(serde_json::to_vec(&body)?)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
         } else {
             request_builder
         };
@@ -305,7 +304,7 @@ impl Client {
         description: Option<String>,
         code_version_digest: String,
         routine: String,
-    ) -> Result<Experiment, ClientError> {
+    ) -> Result<ExperimentResponse, ClientError> {
         self.validate_session_cookie()?;
 
         let url = self.join(&format!("projects/{owner_name}/{project_name}/experiments"));
@@ -320,21 +319,7 @@ impl Client {
             }),
         )?;
 
-        let experiment = Experiment {
-            experiment_num: experiment_response.experiment_num,
-            project_name: project_name.to_string(),
-            status: experiment_response.status,
-            description: experiment_response.description,
-            config: experiment_response.config,
-            created_by: CreatedByUser {
-                id: experiment_response.created_by.id,
-                username: experiment_response.created_by.username,
-                namespace: experiment_response.created_by.namespace,
-            },
-            created_at: experiment_response.created_at,
-        };
-
-        Ok(experiment)
+        Ok(experiment_response)
     }
 
     /// Creates an artifact entry on the Burn Central server with the given files.

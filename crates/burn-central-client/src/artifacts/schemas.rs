@@ -1,4 +1,5 @@
-use crate::{api::ArtifactResponse, artifacts::ArtifactKind, models::ExperimentSource};
+use crate::{artifacts::ArtifactKind, models::ExperimentSource};
+use burn_central_api::schemas::ArtifactResponse;
 
 #[derive(Debug, Clone)]
 pub struct ArtifactInfo {

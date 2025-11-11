@@ -5,11 +5,13 @@
 //!
 //! # Organization
 //!
+//! - [`experiment`] - Schemas related to data sent during experiment runs
 //! - [`request`] - Schemas for data sent to the API
 //! - [`response`] - Schemas for data received from the API
 //!
 //! Common types are re-exported at the module level for convenience.
 
+pub mod experiment;
 pub mod request;
 pub mod response;
 
