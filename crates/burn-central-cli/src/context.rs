@@ -1,4 +1,4 @@
-use crate::app_config::{AppConfig, Credentials};
+use crate::app_config::{AppConfig, Credentials, Environment};
 use crate::config::Config;
 use crate::entity::projects::ProjectContext;
 use crate::entity::projects::burn_dir::BurnDir;
@@ -26,6 +26,7 @@ pub struct CliContext {
     creds: Option<Credentials>,
     project_metadata: ProjectContext,
     pub function_registry: FunctionRegistry,
+    environment: Environment,
 }
 
 impl CliContext {
@@ -34,6 +35,7 @@ impl CliContext {
         config: &Config,
         project_metadata: ProjectContext,
         function_registry: FunctionRegistry,
+        environment: Environment,
     ) -> Self {
         Self {
             terminal,
@@ -44,11 +46,12 @@ impl CliContext {
             creds: None,
             project_metadata,
             function_registry,
+            environment,
         }
     }
 
     pub fn init(mut self) -> Self {
-        let entry_res = AppConfig::new();
+        let entry_res = AppConfig::new_with_environment(self.environment);
         if let Ok(entry) = entry_res {
             if let Ok(Some(api_key)) = entry.load_credentials() {
                 self.creds = Some(api_key);
@@ -59,7 +62,8 @@ impl CliContext {
 
     pub fn set_credentials(&mut self, creds: Credentials) {
         self.creds = Some(creds);
-        let app_config = AppConfig::new().expect("AppConfig should be created");
+        let app_config =
+            AppConfig::new_with_environment(self.environment).expect("AppConfig should be created");
         app_config
             .save_credentials(self.creds.as_ref().unwrap())
             .expect("Credentials should be saved");
@@ -172,5 +176,9 @@ impl CliContext {
 
     pub fn terminal(&self) -> &Terminal {
         &self.terminal
+    }
+
+    pub fn environment(&self) -> Environment {
+        self.environment
     }
 }

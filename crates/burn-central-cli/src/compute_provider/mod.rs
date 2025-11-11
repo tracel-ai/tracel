@@ -1,4 +1,5 @@
 use crate::{
+    app_config::Environment,
     commands::training::local_run_internal,
     config::Config,
     context::CliContext,
@@ -49,7 +50,13 @@ pub fn compute_provider_main() {
     let terminal = Terminal {};
     let crate_context = ProjectContext::load_from_manifest(&manifest_path);
     let function_registry = FunctionRegistry::new();
-    let mut context = CliContext::new(terminal, &config, crate_context, function_registry);
+    let mut context = CliContext::new(
+        terminal,
+        &config,
+        crate_context,
+        function_registry,
+        Environment::Production,
+    );
 
     let arg = get_arg();
     match get_procedure_type(&arg) {

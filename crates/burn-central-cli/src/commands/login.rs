@@ -1,4 +1,4 @@
-use crate::app_config::Credentials;
+use crate::app_config::{Credentials, Environment};
 use crate::context::{CliContext, ClientCreationError};
 use anyhow::Context;
 use burn_central_api::Client;
@@ -30,9 +30,14 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
                         if attempts > MAX_RETRIES {
                             return Err(anyhow::anyhow!("Maximum login attempts exceeded"));
                         }
-                        context
-                            .terminal()
-                            .print("Failed to login. Please try again. Press Ctrl+C to exit.");
+                        let env_msg = match context.environment() {
+                            Environment::Development => " (development environment)",
+                            Environment::Production => "",
+                        };
+                        context.terminal().print(&format!(
+                            "Failed to login{}. Please try again. Press Ctrl+C to exit.",
+                            env_msg
+                        ));
 
                         let api_key = prompt_login(context)?;
 
@@ -60,8 +65,14 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
 }
 
 pub fn prompt_login(context: &mut CliContext) -> anyhow::Result<String> {
+    let env_msg = match context.environment() {
+        Environment::Development => " for the development environment",
+        Environment::Production => "",
+    };
+
     context.terminal().input_password(&format!(
-        "Enter your API key found on {} below.",
+        "Enter your API key{} found on {} below.",
+        env_msg,
         context
             .terminal()
             .format_url(&context.get_frontend_endpoint().join("/settings/api-keys")?),
@@ -72,9 +83,13 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
     let api_key = match args.api_key {
         Some(api_key) => api_key,
         None => {
+            let env_msg = match context.environment() {
+                Environment::Development => " (Development)",
+                Environment::Production => "",
+            };
             context
                 .terminal()
-                .command_title("Credential initialization");
+                .command_title(&format!("Credential initialization{}", env_msg));
             prompt_login(&mut context)?
         }
     };
@@ -94,9 +109,13 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
 
     let user = client.unwrap().get_current_user();
     if let Ok(user) = user {
+        let env_msg = match context.environment() {
+            Environment::Development => " to the development environment",
+            Environment::Production => "",
+        };
         context.terminal().finalize(&format!(
-            "Successfully logged in! Welcome {}.",
-            user.username
+            "Successfully logged in{}! Welcome {}.",
+            env_msg, user.username
         ));
     } else {
         context
