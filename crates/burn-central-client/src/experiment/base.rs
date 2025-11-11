@@ -9,6 +9,7 @@ use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
 use crate::{api::Client, websocket::WebSocketClient};
 use crossbeam::channel::Sender;
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
 
@@ -89,6 +90,16 @@ impl ExperimentRunHandle {
     ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?
             .log_metric_definition(name, description, unit, higher_is_better)
+    }
+
+    pub fn log_epoch_summary(
+        &self,
+        epoch: usize,
+        split: String,
+        best_metric_values: HashMap<String, f64>,
+    ) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?
+            .log_epoch_summary(epoch, split, best_metric_values)
     }
 
     /// Logs an info message.
@@ -197,6 +208,20 @@ impl ExperimentRunInner {
             description,
             unit,
             higher_is_better,
+        };
+        self.send(message)
+    }
+
+    pub fn log_epoch_summary(
+        &self,
+        epoch: usize,
+        split: String,
+        best_metric_values: HashMap<String, f64>,
+    ) -> Result<(), ExperimentTrackerError> {
+        let message = ExperimentMessage::EpochSummaryLog {
+            epoch,
+            split,
+            best_metric_values,
         };
         self.send(message)
     }

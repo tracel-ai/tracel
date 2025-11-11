@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -21,6 +23,11 @@ pub enum ExperimentMessage {
         description: Option<String>,
         unit: Option<String>,
         higher_is_better: bool,
+    },
+    EpochSummaryLog {
+        epoch: usize,
+        split: String,
+        best_metric_values: HashMap<String, f64>,
     },
     Log(String),
     InputUsed(InputUsed),

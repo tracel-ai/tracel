@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use burn::train::logger::MetricLogger;
-use burn::train::metric::store::Split;
-use burn::train::metric::{MetricAttributes, MetricEntry, NumericEntry};
+use burn::train::metric::store::{EpochSummary, Split};
+use burn::train::metric::{MetricAttributes, MetricDefinition, MetricEntry, NumericEntry};
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 
@@ -60,7 +60,7 @@ impl MetricLogger for RemoteMetricLogger {
         Ok(vec![]) // Not implemented
     }
 
-    fn log_metric_definition(&self, definition: burn::train::metric::MetricDefinition) {
+    fn log_metric_definition(&self, definition: MetricDefinition) {
         let (unit, higher_is_better) = match &definition.attributes {
             MetricAttributes::Numeric(attr) => (attr.unit.clone(), attr.higher_is_better),
             MetricAttributes::None => return,
@@ -71,6 +71,23 @@ impl MetricLogger for RemoteMetricLogger {
             definition.description,
             unit,
             higher_is_better,
+        ) {
+            Ok(_) => (),
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    fn log_epoch_summary(&mut self, summary: EpochSummary) {
+        let best_metric_values: HashMap<String, f64> = summary
+            .clone()
+            .best_metric_values
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|val| (k, val.current())))
+            .collect();
+        match self.experiment_handle.log_epoch_summary(
+            summary.epoch_number,
+            summary.split.to_string(),
+            best_metric_values,
         ) {
             Ok(_) => (),
             Err(e) => panic!("{e}"),

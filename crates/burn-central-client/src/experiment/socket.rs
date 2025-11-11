@@ -67,6 +67,7 @@ impl ExperimentThread {
         &mut self,
         message: T,
     ) -> Result<(), ThreadError> {
+        println!("Message {:?}", message);
         self.ws_client
             .send(message)
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
@@ -109,6 +110,9 @@ impl ExperimentThread {
                             self.handle_metric_log(name, epoch, value, group)?;
                         }
                         ExperimentMessage::MetricDefinitionLog { .. } => {
+                            self.handle_websocket_send(message)?;
+                        }
+                        ExperimentMessage::EpochSummaryLog { .. } => {
                             self.handle_websocket_send(message)?;
                         }
                         ExperimentMessage::Log(log) => {
