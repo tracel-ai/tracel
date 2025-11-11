@@ -39,7 +39,7 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
 
     let project_path = context.get_project_path()?;
     let digest = upload_new_project_version(
-        client,
+        &client,
         project_path.owner_name(),
         project_path.project_name(),
         context.package_name(),
@@ -53,7 +53,7 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
 
 /// Upload a new version of a project to Burn Central.
 pub fn upload_new_project_version(
-    ref client: Client,
+    client: &Client,
     namespace: &str,
     project_name: &str,
     target_package_name: &str,
