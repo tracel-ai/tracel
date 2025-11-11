@@ -1,7 +1,6 @@
-use crate::api::ClientError;
 use crate::experiment::log_store::TempLogStore;
-use crate::experiment::message::ExperimentMessage;
 use crate::websocket::WebSocketClient;
+use burn_central_api::{ClientError, schemas::experiment::ExperimentMessage};
 use crossbeam::channel::{Receiver, Sender, select};
 use std::thread::JoinHandle;
 

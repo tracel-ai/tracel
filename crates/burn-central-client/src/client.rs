@@ -1,16 +1,11 @@
 //! This module provides the [BurnCentral] struct, which is used to interact with the Burn Central service.
 
-use crate::api::{Client, ClientError, OrganizationSchema};
 use crate::artifacts::ExperimentArtifactClient;
-use crate::credentials::BurnCentralCredentials;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::models::ModelRegistry;
-use crate::schemas::{
-    BurnCentralCodeMetadata, CrateVersionMetadata, ExperimentPath, PackagedCrateData, ProjectPath,
-    ProjectSchema, User,
-};
+use crate::schemas::{ExperimentPath, User};
+use burn_central_api::{BurnCentralCredentials, Client, ClientError};
 use reqwest::Url;
-use std::path::PathBuf;
 
 /// Errors that can occur during the initialization of the [BurnCentral] client.
 #[derive(Debug, thiserror::Error)]
@@ -144,85 +139,6 @@ impl BurnCentral {
         BurnCentral { client }
     }
 
-    pub fn find_project(
-        &self,
-        owner_name: impl AsRef<str>,
-        project_name: impl AsRef<str>,
-    ) -> Result<Option<ProjectSchema>, BurnCentralError> {
-        let project = self
-            .client
-            .get_project(owner_name.as_ref(), project_name.as_ref())
-            .map(Some)
-            .or_else(|e| {
-                if matches!(e, ClientError::NotFound) {
-                    Ok(None)
-                } else {
-                    Err(e)
-                }
-            })
-            .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to get project {}/{}",
-                    owner_name.as_ref(),
-                    project_name.as_ref()
-                ),
-                source: e,
-            })?
-            .map(|project_schema| ProjectSchema {
-                project_name: project_schema.project_name,
-                namespace_name: project_schema.namespace_name,
-                namespace_type: project_schema.namespace_type,
-                description: project_schema.description,
-                created_by: project_schema.created_by,
-                created_at: project_schema.created_at,
-                visibility: project_schema.visibility,
-            });
-        Ok(project)
-    }
-
-    pub fn create_user_project(
-        &self,
-        project_name: impl AsRef<str>,
-        description: Option<&str>,
-    ) -> Result<ProjectPath, BurnCentralError> {
-        let project = self
-            .client
-            .create_user_project(project_name.as_ref(), description)
-            .map_err(|e| BurnCentralError::Client {
-                context: format!("Failed to create project {}", project_name.as_ref()),
-                source: e,
-            })?;
-
-        let new_project_path = ProjectPath::new(project.namespace_name, project.project_name);
-        Ok(new_project_path)
-    }
-
-    pub fn create_organization_project(
-        &self,
-        organization_name: impl AsRef<str>,
-        project_name: impl AsRef<str>,
-        description: Option<&str>,
-    ) -> Result<ProjectPath, BurnCentralError> {
-        let project = self
-            .client
-            .create_organization_project(
-                organization_name.as_ref(),
-                project_name.as_ref(),
-                description,
-            )
-            .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to create project {}/{}",
-                    organization_name.as_ref(),
-                    project_name.as_ref()
-                ),
-                source: e,
-            })?;
-
-        let new_project_path = ProjectPath::new(project.namespace_name, project.project_name);
-        Ok(new_project_path)
-    }
-
     /// Returns the current user information.
     pub fn me(&self) -> Result<User, BurnCentralError> {
         let user = self.client.get_current_user().map_err(|e| {
@@ -267,120 +183,6 @@ impl BurnCentral {
 
         ExperimentRun::new(self.client.clone(), experiment_path)
             .map_err(BurnCentralError::ExperimentTracker)
-    }
-
-    /// Upload a new version of a project to Burn Central.
-    pub fn upload_new_project_version(
-        &self,
-        namespace: &str,
-        project_name: &str,
-        target_package_name: &str,
-        code_metadata: BurnCentralCodeMetadata,
-        crates_data: Vec<PackagedCrateData>,
-        last_commit: &str,
-    ) -> Result<String, BurnCentralError> {
-        let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
-            .into_iter()
-            .map(|krate| {
-                (
-                    (krate.name, krate.path),
-                    CrateVersionMetadata {
-                        checksum: krate.checksum,
-                        metadata: krate.metadata,
-                        size: krate.size,
-                    },
-                )
-            })
-            .unzip();
-
-        let response = self
-            .client
-            .publish_project_version_urls(
-                namespace,
-                project_name,
-                target_package_name,
-                code_metadata,
-                metadata,
-                last_commit,
-            )
-            .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to get upload URLs for project {namespace}/{project_name}"
-                ),
-                source: e,
-            })?;
-
-        if let Some(urls) = response.urls {
-            for (crate_name, file_path) in data.into_iter() {
-                let url = urls
-                    .get(&crate_name)
-                    .ok_or(BurnCentralError::Internal(format!(
-                        "No upload URL found for crate: {crate_name}"
-                    )))?;
-
-                let data = std::fs::read(&file_path).map_err(|e| {
-                    std::io::Error::new(
-                        e.kind(),
-                        format!("Failed to read crate file {}: {}", file_path.display(), e),
-                    )
-                })?;
-
-                self.client.upload_bytes_to_url(url, data).map_err(|e| {
-                    BurnCentralError::Client {
-                        context: format!("Failed to upload crate {crate_name} to URL {url}"),
-                        source: e,
-                    }
-                })?;
-            }
-
-            self.client
-                .complete_project_version_upload(namespace, project_name, &response.id)
-                .map_err(|e| BurnCentralError::Client {
-                    context: format!(
-                        "Failed to complete upload for project {namespace}/{project_name}"
-                    ),
-                    source: e,
-                })?;
-        }
-
-        Ok(response.digest)
-    }
-
-    /// Start a remote job on the Burn Central backend.
-    pub fn start_remote_job(
-        &self,
-        namespace: &str,
-        project_name: &str,
-        compute_provider_group_name: String,
-        code_digest: &str,
-        command: &str,
-    ) -> Result<(), BurnCentralError> {
-        self.client
-            .start_remote_job(
-                &compute_provider_group_name,
-                namespace,
-                project_name,
-                code_digest,
-                command,
-            )
-            .map_err(|e| BurnCentralError::Client {
-                context: format!(
-                    "Failed to start remote job for {namespace}/{project_name}/{compute_provider_group_name}"
-                ),
-                source: e,
-            })?;
-
-        Ok(())
-    }
-
-    pub fn get_organizations(&self) -> Result<Vec<OrganizationSchema>, BurnCentralError> {
-        self.client
-            .get_user_organizations()
-            .map_err(|e| BurnCentralError::Client {
-                context: "Failed to get user organizations".to_string(),
-                source: e,
-            })
-            .map(|response| response.organizations)
     }
 
     pub fn artifacts(

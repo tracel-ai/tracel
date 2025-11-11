@@ -1,6 +1,4 @@
-pub mod api;
 mod client;
-pub mod credentials;
 
 pub mod schemas;
 

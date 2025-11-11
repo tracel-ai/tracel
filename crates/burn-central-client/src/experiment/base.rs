@@ -1,17 +1,22 @@
 use super::socket::ExperimentSocket;
-use crate::api::EndExperimentStatus;
 use crate::artifacts::{ArtifactKind, ExperimentArtifactClient};
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
-use crate::experiment::message::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
-use crate::{api::Client, websocket::WebSocketClient};
+use crate::websocket::WebSocketClient;
+use burn_central_api::client::Client;
+use burn_central_api::schemas::experiment::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crossbeam::channel::Sender;
 use serde::Serialize;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
+
+pub enum EndExperimentStatus {
+    Success,
+    Fail(String),
+}
 
 /// Represents a handle to an experiment, allowing logging of artifacts, metrics, and messages.
 #[derive(Clone, Debug)]

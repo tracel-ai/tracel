@@ -157,14 +157,23 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     };
 
     let client = context.create_client()?;
-    client.start_remote_job(
-        &namespace,
-        &project,
-        args.compute_provider
-            .expect("Compute provider should be provided"),
-        &digest,
-        &serde_json::to_string(&command)?,
-    )?;
+    let command = serde_json::to_string(&command)?;
+    let compute_provider_group_name = args
+        .compute_provider
+        .expect("Compute provider should be provided");
+    client
+        .start_remote_job(
+            &compute_provider_group_name,
+            &namespace,
+            &project,
+            &digest,
+            &command,
+        )
+        .with_context(|| {
+            format!(
+                "Failed to start remote job for {namespace}/{project}/{compute_provider_group_name}"
+            )
+        })?;
 
     Ok(())
 }

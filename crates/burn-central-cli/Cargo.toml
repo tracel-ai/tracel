@@ -12,7 +12,7 @@ version.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-burn-central-client = { path = "../burn-central-client", version = "0.1.0" }
+burn-central-api = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "cargo"] }
@@ -27,6 +27,8 @@ quote = { workspace = true }
 proc-macro2 = { workspace = true }
 syn-serde = { workspace = true }
 thiserror = { workspace = true }
+derive-new = { workspace = true }
+regex = { workspace = true }
 
 toml_edit = "0.22.26"
 inventory = "0.3"

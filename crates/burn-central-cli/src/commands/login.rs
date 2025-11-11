@@ -1,7 +1,7 @@
 use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
 use anyhow::Context;
-use burn_central_client::BurnCentral;
+use burn_central_api::Client;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -10,7 +10,7 @@ pub struct LoginArgs {
     pub api_key: Option<String>,
 }
 
-pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<BurnCentral> {
+pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Result<Client> {
     const MAX_RETRIES: u32 = 3;
     let mut attempts = 0;
 
@@ -92,7 +92,7 @@ pub fn handle_command(args: LoginArgs, mut context: CliContext) -> anyhow::Resul
         client = context.create_client();
     }
 
-    let user = client.unwrap().me();
+    let user = client.unwrap().get_current_user();
     if let Ok(user) = user {
         context.terminal().finalize(&format!(
             "Successfully logged in! Welcome {}.",

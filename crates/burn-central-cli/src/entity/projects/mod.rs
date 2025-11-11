@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
 
 pub mod burn_dir;
+pub mod project_path;
 
 pub struct ProjectContext {
     pub user_crate_name: String,

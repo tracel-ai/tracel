@@ -40,6 +40,7 @@ crossbeam = { workspace = true, default-features = false, features = [
     "std",
 ] }
 json-patch = { workspace = true }
+burn-central-api = { path = "../burn-central-api" }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

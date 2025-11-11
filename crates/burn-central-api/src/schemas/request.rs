@@ -1,5 +1,6 @@
-use crate::schemas::{BurnCentralCodeMetadata, CrateVersionMetadata};
-use serde::Serialize;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 pub struct CreateExperimentSchema {
@@ -13,12 +14,41 @@ pub struct BurnCentralCredentialsSchema {
     pub api_key: String,
 }
 
+pub struct PackagedCrateData {
+    pub name: String,
+    pub path: PathBuf,
+    pub checksum: String,
+    pub metadata: serde_json::Value,
+    pub size: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RegisteredFunction {
+    pub mod_path: String,
+    pub fn_name: String,
+    pub proc_type: String,
+    pub code: String,
+    pub routine: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BurnCentralCodeMetadata {
+    pub functions: Vec<RegisteredFunction>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CodeUploadParamsSchema {
     pub target_package_name: String,
     pub burn_central_metadata: BurnCentralCodeMetadata,
     pub crates: Vec<CrateVersionMetadata>,
     pub digest: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CrateVersionMetadata {
+    pub checksum: String,
+    pub metadata: serde_json::Value,
+    pub size: u64,
 }
 
 #[derive(Debug, Serialize)]
