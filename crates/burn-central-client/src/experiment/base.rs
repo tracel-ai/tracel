@@ -31,9 +31,9 @@ impl ExperimentRunHandle {
             .ok_or(ExperimentTrackerError::InactiveExperiment)
     }
 
-    /// Log a configuration object.
-    pub fn log_arguments<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
-        self.try_upgrade()?.log_arguments(config)
+    /// Log arguments used to launch this experiment
+    pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?.log_args(args)
     }
 
     /// Log an artifact with the given name, kind and settings.
@@ -147,9 +147,9 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_arguments<C: Serialize>(&self, args: &C) -> Result<(), ExperimentTrackerError> {
+    pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentTrackerError> {
         let message = ExperimentMessage::Arguments(serde_json::to_value(args).map_err(|e| {
-            ExperimentTrackerError::InternalError(format!("Failed to serialize config: {}", e))
+            ExperimentTrackerError::InternalError(format!("Failed to serialize arguments: {}", e))
         })?);
         self.send(message)
     }

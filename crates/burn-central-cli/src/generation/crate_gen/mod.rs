@@ -307,7 +307,7 @@ fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String
                     runtime_args.kind.parse().unwrap(),
                     runtime_args.routine,
                     [device],
-                    Some(runtime_args.config),
+                    Some(runtime_args.args),
                 )
                 .map_err(|e| e.to_string())
         }

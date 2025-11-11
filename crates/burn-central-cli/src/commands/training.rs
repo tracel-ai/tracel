@@ -32,7 +32,7 @@ pub enum RunKind {
 pub struct RunParams {
     pub kind: RunKind,
     pub function: String,
-    pub config: String,
+    pub args: String,
     pub namespace: String,
     pub project: String,
     pub key: String,
@@ -62,7 +62,7 @@ pub struct TrainingArgs {
     backend: Option<BackendType>,
     /// Config file path
     #[clap(short = 'c', long = "config")]
-    config: Option<String>,
+    args: Option<String>,
     /// Batch override: e.g. --overrides a.b=3 x.y.z=true
     #[clap(long = "overrides", value_parser = parse_key_val, value_hint = ValueHint::Other, value_delimiter = ' ', num_args = 1..)]
     overrides: Vec<(String, serde_json::Value)>,
@@ -86,7 +86,7 @@ impl Default for TrainingArgs {
     fn default() -> Self {
         Self {
             function: None,
-            config: None,
+            args: None,
             overrides: vec![],
             code_version: None,
             compute_provider: None,
@@ -144,7 +144,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
     let command = ComputeProviderTrainingArgs {
         function,
         backend: args.backend,
-        config: args.config,
+        config: args.args,
         overrides: args.overrides,
         digest: digest.clone(),
         namespace: namespace.clone(),
@@ -209,7 +209,7 @@ pub fn local_run_internal(
                 run_params: RunParams {
                     kind,
                     function: function.clone(),
-                    config: config.data.to_string(),
+                    args: config.data.to_string(),
                     namespace,
                     project,
                     key,
@@ -252,7 +252,7 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
 
     local_run_internal(
         backend,
-        args.config,
+        args.args,
         args.overrides,
         function,
         namespace,
@@ -398,7 +398,7 @@ fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process
     let RunParams {
         kind,
         function,
-        config,
+        args,
         namespace,
         project,
         key,
@@ -417,7 +417,7 @@ fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process
         .args(["--project", project])
         .args(["--api-key", key])
         .args(["--endpoint", context.get_api_endpoint().as_str()])
-        .args(["--config", config])
+        .args(["--args", args])
         .args([kind_str, function]);
     command
 }
