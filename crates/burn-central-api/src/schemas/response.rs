@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct URLSchema {
@@ -9,15 +8,7 @@ pub struct URLSchema {
 
 #[derive(Deserialize)]
 pub struct ExperimentResponse {
-    pub id: i32,
     pub experiment_num: i32,
-    pub project_id: i32,
-    pub status: String,
-    pub description: String,
-    pub config: serde_json::Value,
-    pub created_by: CreatedByUserResponse,
-    pub created_at: String,
-    pub code_version_id: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -50,8 +41,6 @@ pub struct ProjectSchema {
     pub namespace_type: String,
     pub description: String,
     pub created_by: String,
-    pub created_at: String,
-    pub visibility: String,
 }
 
 #[derive(Deserialize)]
@@ -61,7 +50,6 @@ pub struct GetUserOrganizationsResponseSchema {
 
 #[derive(Deserialize)]
 pub struct OrganizationSchema {
-    pub id: i32,
     pub name: String,
     pub namespace: String,
 }
