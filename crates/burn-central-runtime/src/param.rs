@@ -1,9 +1,9 @@
 use crate::ExecutionContext;
-use crate::types::{Cfg, Model, MultiDevice};
+use crate::types::{Args, Model, MultiDevice};
 use anyhow::Result;
 use burn::module::Module;
 use burn::prelude::Backend;
-use burn_central_client::experiment::{ExperimentConfig, ExperimentRun};
+use burn_central_client::experiment::{ExperimentArgs, ExperimentRun};
 use variadics_please::all_tuples;
 
 /// This trait defines how parameters for a routine are retrieved from the execution context.
@@ -29,12 +29,12 @@ impl<B: Backend> RoutineParam<ExecutionContext<B>> for &ExecutionContext<B> {
     }
 }
 
-impl<B: Backend, C: ExperimentConfig> RoutineParam<ExecutionContext<B>> for Cfg<C> {
-    type Item<'new> = Cfg<C>;
+impl<B: Backend, C: ExperimentArgs> RoutineParam<ExecutionContext<B>> for Args<C> {
+    type Item<'new> = Args<C>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        let cfg = ctx.use_merged_config();
-        Ok(Cfg(cfg))
+        let cfg = ctx.use_merged_args();
+        Ok(Args(cfg))
     }
 }
 

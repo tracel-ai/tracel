@@ -22,7 +22,7 @@ pub struct RuntimeArgs {
     pub kind: String,
     pub routine: String,
     #[arg(long, default_value = "{}")]
-    pub config: String,
+    pub args: String,
     #[command(flatten)]
     pub burn_central: BurnCentralArgs,
 }
@@ -51,7 +51,7 @@ mod test {
         let runtime_args = RuntimeArgs::try_parse_from(args).unwrap();
         assert_eq!(runtime_args.kind, "train");
         assert_eq!(runtime_args.routine, "my_routine");
-        assert_eq!(runtime_args.config, "{}");
+        assert_eq!(runtime_args.args, "{}");
         assert_eq!(runtime_args.burn_central.namespace, "my_namespace");
         assert_eq!(runtime_args.burn_central.project, "my_project");
         assert_eq!(runtime_args.burn_central.api_key, "my_api_key");

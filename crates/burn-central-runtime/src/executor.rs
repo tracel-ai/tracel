@@ -10,7 +10,7 @@ use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine}
 use burn::tensor::backend::AutodiffBackend;
 use burn_central_client::BurnCentral;
 use burn_central_client::experiment::{
-    ExperimentConfig, ExperimentRun, deserialize_and_merge_with_default,
+    ExperimentArgs, ExperimentRun, deserialize_and_merge_with_default,
 };
 use std::collections::HashMap;
 
@@ -90,25 +90,25 @@ pub struct ExecutionContext<B: Backend> {
     client: Option<BurnCentral>,
     namespace: String,
     project: String,
-    config_override: Option<serde_json::Value>,
+    args_override: Option<serde_json::Value>,
     devices: Vec<B::Device>,
     experiment: Option<ExperimentRun>,
 }
 
 impl<B: Backend> ExecutionContext<B> {
-    pub fn use_merged_config<C: ExperimentConfig>(&self) -> C {
-        let config = match &self.config_override {
+    pub fn use_merged_args<A: ExperimentArgs>(&self) -> A {
+        let args = match &self.args_override {
             Some(json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
-            None => C::default(),
+            None => A::default(),
         };
 
         if let Some(experiment) = &self.experiment {
-            experiment.log_arguments(&config).unwrap_or_else(|e| {
-                log::error!("Failed to log experiment config: {}", e);
+            experiment.log_args(&args).unwrap_or_else(|e| {
+                log::error!("Failed to log experiment arguments: {}", e);
             });
         }
 
-        config
+        args
     }
 
     pub fn experiment(&self) -> Option<&ExperimentRun> {
@@ -226,13 +226,13 @@ impl<B: AutodiffBackend> Executor<B> {
         self.handlers.keys().cloned().collect()
     }
 
-    /// Runs a routine for the specified target with the given devices and configuration override.
+    /// Runs a routine for the specified target with the given devices and arguments override.
     pub fn run(
         &self,
         kind: ActionKind,
         name: impl AsRef<str>,
         devices: impl IntoIterator<Item = B::Device>,
-        config_override: Option<String>,
+        args_override: Option<String>,
     ) -> Result<(), RuntimeError> {
         let routine = name.as_ref();
 
@@ -248,20 +248,20 @@ impl<B: AutodiffBackend> Executor<B> {
 
         log::debug!("Starting Execution for Target: {routine}");
 
-        let config_override = config_override
+        let args_override = args_override
             .as_ref()
             .map(|cfg_str| serde_json::from_str::<serde_json::Value>(cfg_str))
             .transpose()
             .map_err(|e| {
-                log::error!("Failed to parse configuration override: {}", e);
-                RuntimeError::InvalidConfig(e.to_string())
+                log::error!("Failed to parse experiment argument overrides: {}", e);
+                RuntimeError::InvalidArgs(e.to_string())
             })?;
 
         let mut ctx = ExecutionContext {
             client: self.client.clone(),
             namespace: self.namespace.clone().unwrap_or_default(),
             project: self.project.clone().unwrap_or_default(),
-            config_override,
+            args_override,
             devices: devices.into_iter().collect(),
             experiment: None,
         };
@@ -315,7 +315,7 @@ impl<B: AutodiffBackend> Executor<B> {
 mod test {
     use std::convert::Infallible;
 
-    use crate::{Cfg, Model, MultiDevice};
+    use crate::{Args, Model, MultiDevice};
 
     use super::*;
     use burn::backend::{Autodiff, NdArray};
@@ -359,7 +359,7 @@ mod test {
     }
 
     #[derive(Serialize, Deserialize, Debug, Default, Clone)]
-    struct TestConfig {
+    struct TestArgs {
         lr: f32,
         epochs: usize,
     }
@@ -373,12 +373,12 @@ mod test {
     }
 
     fn train_with_params<B: AutodiffBackend>(
-        config: Cfg<TestConfig>,
+        args: Args<TestArgs>,
         devices: MultiDevice<B>,
     ) -> Model<TestModel<B>> {
         let model = TestModel::new(&devices[0]);
-        assert_eq!(config.lr, 0.01);
-        assert_eq!(config.epochs, 10);
+        assert_eq!(args.lr, 0.01);
+        assert_eq!(args.epochs, 10);
         println!("Train step with config and model executed.");
         model.into()
     }
@@ -410,13 +410,13 @@ mod test {
         builder.train("complex_task", train_with_params);
         let executor = builder.build_offline();
 
-        let config_json = r#"{"lr": 0.01, "epochs": 10}"#.to_string();
+        let args_json = r#"{"lr": 0.01, "epochs": 10}"#.to_string();
 
         let result = executor.run(
             "train".parse().unwrap(),
             "complex_task",
             [TestDevice::default()],
-            Some(config_json),
+            Some(args_json),
         );
         assert!(result.is_ok());
     }
