@@ -29,7 +29,6 @@ struct ExperimentThread {
     message_receiver: Receiver<ExperimentMessage>,
     abort_signal: Receiver<()>,
     log_store: TempLogStore,
-    iteration_count: usize,
 }
 
 impl ExperimentThread {
@@ -44,7 +43,6 @@ impl ExperimentThread {
             message_receiver,
             abort_signal,
             log_store,
-            iteration_count: 0,
         }
     }
 
@@ -66,27 +64,9 @@ impl ExperimentThread {
         &mut self,
         message: T,
     ) -> Result<(), ThreadError> {
-        println!("Message {:?}", message);
         self.ws_client
             .send(message)
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
-    }
-
-    fn handle_metric_log(
-        &mut self,
-        name: String,
-        epoch: usize,
-        value: f64,
-        group: String,
-    ) -> Result<(), ThreadError> {
-        self.iteration_count += 1;
-        self.handle_websocket_send(ExperimentMessage::MetricLog {
-            name,
-            epoch,
-            iteration: self.iteration_count,
-            value,
-            group,
-        })
     }
 
     fn handle_log_message(&mut self, log: String) -> Result<(), ThreadError> {
@@ -105,8 +85,8 @@ impl ExperimentThread {
                 recv(self.message_receiver) -> msg => {
                     let message = msg.map_err(|_| ThreadError::MessageChannelClosed)?;
                     match message {
-                        ExperimentMessage::MetricLog { name, epoch, iteration: _, value, group } => {
-                            self.handle_metric_log(name, epoch, value, group)?;
+                        ExperimentMessage::MetricsLog { .. } => {
+                            self.handle_websocket_send(message)?;
                         }
                         ExperimentMessage::MetricDefinitionLog { .. } => {
                             self.handle_websocket_send(message)?;

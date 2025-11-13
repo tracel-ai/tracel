@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
+use crate::metrics::MetricLog;
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputUsed {
@@ -19,12 +21,11 @@ pub enum ExperimentCompletion {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ExperimentMessage {
-    MetricLog {
-        name: String,
+    MetricsLog {
         epoch: usize,
+        split: String,
         iteration: usize,
-        value: f64,
-        group: String,
+        items: Vec<MetricLog>,
     },
     MetricDefinitionLog {
         name: String,

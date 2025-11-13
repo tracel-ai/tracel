@@ -6,6 +6,7 @@ use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::message::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crate::experiment::socket::ThreadError;
+use crate::metrics::MetricLog;
 use crate::schemas::ExperimentPath;
 use crate::{api::Client, websocket::WebSocketClient};
 use crossbeam::channel::Sender;
@@ -64,27 +65,25 @@ impl ExperimentRunHandle {
     /// Logs a metric with the given name, epoch, iteration, value, and group.
     pub fn log_metric(
         &self,
-        name: impl Into<String>,
         epoch: usize,
+        split: impl Into<String>,
         iteration: usize,
-        value: f64,
-        group: impl Into<String>,
+        items: Vec<MetricLog>,
     ) {
-        self.try_log_metric(name, epoch, iteration, value, group)
+        self.try_log_metric(epoch, split, iteration, items)
             .expect("Failed to log metric, experiment may have been closed or inactive");
     }
 
     /// Attempts to log a metric with the given name, epoch, iteration, value, and group.
     pub fn try_log_metric(
         &self,
-        name: impl Into<String>,
         epoch: usize,
+        split: impl Into<String>,
         iteration: usize,
-        value: f64,
-        group: impl Into<String>,
+        items: Vec<MetricLog>,
     ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?
-            .log_metric(name, epoch, iteration, value, group)
+            .log_metric(epoch, split, iteration, items)
     }
 
     pub fn log_metric_definition(
@@ -214,18 +213,16 @@ impl ExperimentRunInner {
 
     pub fn log_metric(
         &self,
-        name: impl Into<String>,
         epoch: usize,
+        split: impl Into<String>,
         iteration: usize,
-        value: f64,
-        group: impl Into<String>,
+        items: Vec<MetricLog>,
     ) -> Result<(), ExperimentTrackerError> {
-        let message = ExperimentMessage::MetricLog {
-            name: name.into(),
+        let message = ExperimentMessage::MetricsLog {
             epoch,
+            split: split.into(),
             iteration,
-            value,
-            group: group.into(),
+            items,
         };
         self.send(message)
     }
