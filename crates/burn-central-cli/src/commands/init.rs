@@ -1,10 +1,11 @@
 use crate::context::CliContext;
 use crate::entity::projects::burn_dir::project::BurnCentralProject;
+use crate::entity::projects::project_path::ProjectPath;
 use crate::tools::git;
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
-use burn_central_client::BurnCentral;
-use burn_central_client::schemas::{ProjectPath, ProjectSchema};
+use burn_central_api::Client;
+use burn_central_api::schemas::ProjectSchema;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -27,8 +28,8 @@ pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result
     prompt_init(&context, &client).context("Failed to initialize the project")
 }
 
-pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result<()> {
-    let user = client.me()?;
+pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> {
+    let user = client.get_current_user()?;
     let ws_root = context
         .get_workspace_root()
         .context("Failed to get workspace root")?;
@@ -56,9 +57,9 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
         ProjectKind::User => user.namespace.as_str(),
         ProjectKind::Organization(org_name) => org_name.as_str(),
     };
-    let project_path = match client.find_project(owner_name, &project_name) {
-        Ok(Some(project)) => handle_existing_project(&project)?,
-        Ok(None) => create_new_project(client, project_owner, &project_name)?,
+    let project_path = match client.get_project(owner_name, &project_name) {
+        Ok(project) => handle_existing_project(&project)?,
+        Err(e) if e.is_not_found() => create_new_project(client, project_owner, &project_name)?,
         Err(e) => {
             terminal.cancel_finalize(&format!("Failed to check for existing project: {e}"));
             return Err(anyhow::anyhow!(e));
@@ -86,10 +87,10 @@ pub fn prompt_init(context: &CliContext, client: &BurnCentral) -> anyhow::Result
     Ok(())
 }
 
-fn prompt_owner_name(user_name: &str, client: &BurnCentral) -> anyhow::Result<ProjectKind> {
-    let organizations = client.get_organizations()?;
+fn prompt_owner_name(user_name: &str, client: &Client) -> anyhow::Result<ProjectKind> {
+    let organizations = client.get_user_organizations()?;
     let mut namespaces = vec![(ProjectKind::User, format!("[user] {user_name}"), "")];
-    namespaces.extend(organizations.into_iter().map(|org| {
+    namespaces.extend(organizations.organizations.into_iter().map(|org| {
         (
             ProjectKind::Organization(org.namespace.clone()),
             format!("[org] {}", org.name),
@@ -157,7 +158,7 @@ enum ProjectKind {
 }
 
 fn create_new_project(
-    client: &BurnCentral,
+    client: &Client,
     project_kind: ProjectKind,
     name: &str,
 ) -> anyhow::Result<ProjectPath> {
@@ -170,16 +171,23 @@ fn create_new_project(
         Some(description)
     };
 
-    match project_kind {
+    let created_project_path = match project_kind {
         ProjectKind::User => client.create_user_project(name, desc.as_deref()),
         ProjectKind::Organization(org_name) => {
             client.create_organization_project(&org_name, name, desc.as_deref())
         }
+    };
+
+    match created_project_path {
+        Ok(project) => Ok(ProjectPath::new(
+            project.namespace_name,
+            project.project_name,
+        )),
+        Err(e) => {
+            cliclack::outro_cancel(format!("Failed to create project: {e}"))?;
+            Err(anyhow::anyhow!("Failed to create project: {}", e))
+        }
     }
-    .map_err(|e| {
-        cliclack::outro_cancel(format!("Failed to create project: {e}")).unwrap();
-        anyhow::anyhow!("Failed to create project: {}", e)
-    })
 }
 
 pub fn ensure_git_repo_initialized(ws_root: &std::path::Path) -> anyhow::Result<()> {

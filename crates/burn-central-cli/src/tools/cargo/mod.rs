@@ -12,6 +12,7 @@ mod interning;
 pub mod package;
 mod paths;
 mod restricted_names;
+pub mod schemas;
 mod toml;
 mod version;
 mod workspace;

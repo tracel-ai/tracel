@@ -6,11 +6,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use burn_central_client::schemas::{CrateMetadata, Dep, PackagedCrateData};
+use burn_central_api::schemas::PackagedCrateData;
 use colored::Colorize;
 
 use super::paths;
-use crate::{print_err, print_info, print_warn, tools};
+use crate::{
+    print_err, print_info, print_warn,
+    tools::{
+        self,
+        cargo::schemas::{CrateMetadata, Dep},
+    },
+};
 use sha2::Digest as _;
 use sha2::Sha256;
 
@@ -247,15 +253,9 @@ pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Resul
                     dep.uses_default_features,
                     dep.target.clone().map(|t| t.to_string()),
                     match dep.kind {
-                        cargo_metadata::DependencyKind::Normal => {
-                            burn_central_client::schemas::DepKind::Normal
-                        }
-                        cargo_metadata::DependencyKind::Development => {
-                            burn_central_client::schemas::DepKind::Dev
-                        }
-                        cargo_metadata::DependencyKind::Build => {
-                            burn_central_client::schemas::DepKind::Build
-                        }
+                        cargo_metadata::DependencyKind::Normal => super::schemas::DepKind::Normal,
+                        cargo_metadata::DependencyKind::Development => super::schemas::DepKind::Dev,
+                        cargo_metadata::DependencyKind::Build => super::schemas::DepKind::Build,
                         cargo_metadata::DependencyKind::Unknown => {
                             unimplemented!("Unknown dep kind")
                         }
@@ -310,7 +310,7 @@ pub fn package(artifacts_dir: &Path, target_package_name: &str) -> anyhow::Resul
             name: tarball.0,
             path: tarball.1,
             checksum: tarball.2,
-            metadata: crate_metadata,
+            metadata: serde_json::to_value(&crate_metadata)?,
             size: tarball.3,
         });
     }

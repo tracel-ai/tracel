@@ -19,15 +19,15 @@ impl Error {
     }
 }
 
-pub trait ExperimentConfig: Serialize + for<'de> Deserialize<'de> + Default {}
-impl<T> ExperimentConfig for T where T: Serialize + for<'de> Deserialize<'de> + Default {}
+pub trait ExperimentArgs: Serialize + for<'de> Deserialize<'de> + Default {}
+impl<T> ExperimentArgs for T where T: Serialize + for<'de> Deserialize<'de> + Default {}
 
-pub fn deserialize_and_merge_with_default<T: ExperimentConfig>(
-    config: &serde_json::Value,
+pub fn deserialize_and_merge_with_default<T: ExperimentArgs>(
+    args: &serde_json::Value,
 ) -> Result<T, Error> {
     let mut merged = serde_json::to_value(T::default()).map_err(Error::Serialization)?;
 
-    merge(&mut merged, config);
+    merge(&mut merged, args);
 
     serde_json::from_value(merged).map_err(Error::Serialization)
 }
@@ -51,16 +51,16 @@ mod tests {
     }
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct MyConfig {
+    struct MyArgs {
         a: i32,
         b: Option<String>,
         nested: Nested,
         list: Vec<i32>,
     }
 
-    impl Default for MyConfig {
+    impl Default for MyArgs {
         fn default() -> Self {
-            MyConfig {
+            MyArgs {
                 a: 5,
                 b: Some("hello".to_owned()),
                 nested: Nested::default(),
@@ -71,14 +71,14 @@ mod tests {
 
     #[test]
     fn empty_override_returns_default() {
-        let cfg: MyConfig = deserialize_and_merge_with_default(&json!({})).unwrap();
-        assert_eq!(cfg, MyConfig::default());
+        let cfg: MyArgs = deserialize_and_merge_with_default(&json!({})).unwrap();
+        assert_eq!(cfg, MyArgs::default());
     }
 
     #[test]
     fn override_top_level_field() {
-        let cfg: MyConfig = deserialize_and_merge_with_default(&json!({ "a": 42 })).unwrap();
-        let expected = MyConfig {
+        let cfg: MyArgs = deserialize_and_merge_with_default(&json!({ "a": 42 })).unwrap();
+        let expected = MyArgs {
             a: 42,
             ..Default::default()
         };
@@ -87,36 +87,34 @@ mod tests {
 
     #[test]
     fn deep_override_nested_field() {
-        let cfg: MyConfig =
+        let cfg: MyArgs =
             deserialize_and_merge_with_default(&json!({ "nested": { "y": 99 } })).unwrap();
-        let mut expected = MyConfig::default();
+        let mut expected = MyArgs::default();
         expected.nested.y = 99;
         assert_eq!(cfg, expected);
     }
 
     #[test]
     fn null_becomes_json_null_for_optional() {
-        let cfg: MyConfig = deserialize_and_merge_with_default(&json!({ "b": null })).unwrap();
+        let cfg: MyArgs = deserialize_and_merge_with_default(&json!({ "b": null })).unwrap();
         assert_eq!(cfg.b, None);
     }
 
     #[test]
     fn null_becomes_json_null_for_required() {
-        let err =
-            deserialize_and_merge_with_default::<MyConfig>(&json!({ "a": null })).unwrap_err();
+        let err = deserialize_and_merge_with_default::<MyArgs>(&json!({ "a": null })).unwrap_err();
         assert!(err.is_data());
     }
 
     #[test]
     fn override_list_replaces_array() {
-        let cfg: MyConfig =
-            deserialize_and_merge_with_default(&json!({ "list": [9,8,7] })).unwrap();
+        let cfg: MyArgs = deserialize_and_merge_with_default(&json!({ "list": [9,8,7] })).unwrap();
         assert_eq!(cfg.list, vec![9, 8, 7]);
     }
 
     #[test]
     fn type_mismatch_in_nested_errors_data() {
-        let err = deserialize_and_merge_with_default::<MyConfig>(
+        let err = deserialize_and_merge_with_default::<MyArgs>(
             &json!({ "nested": { "x": "not_a_bool" } }),
         )
         .unwrap_err();
@@ -125,10 +123,9 @@ mod tests {
 
     #[test]
     fn patch_application_error_propagates() {
-        let err = deserialize_and_merge_with_default::<MyConfig>(
-            &json!({ "nested": { "y": [1, 2, 3] } }),
-        )
-        .unwrap_err();
+        let err =
+            deserialize_and_merge_with_default::<MyArgs>(&json!({ "nested": { "y": [1, 2, 3] } }))
+                .unwrap_err();
         assert!(err.is_data());
     }
 }

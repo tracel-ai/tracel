@@ -2,13 +2,12 @@ use crate::app_config::{AppConfig, Credentials};
 use crate::config::Config;
 use crate::entity::projects::ProjectContext;
 use crate::entity::projects::burn_dir::BurnDir;
+use crate::entity::projects::project_path::ProjectPath;
 use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
-use burn_central_client::BurnCentral;
-use burn_central_client::credentials::BurnCentralCredentials;
-use burn_central_client::schemas::ProjectPath;
+use burn_central_api::{BurnCentralCredentials, Client};
 use std::path::PathBuf;
 
 #[derive(thiserror::Error, Debug)]
@@ -82,22 +81,20 @@ impl CliContext {
         ))
     }
 
-    pub fn create_client(&self) -> Result<BurnCentral, ClientCreationError> {
+    pub fn create_client(&self) -> Result<Client, ClientCreationError> {
         let api_key = self
             .get_api_key()
             .ok_or(ClientCreationError::NoCredentials)?;
 
         let creds = BurnCentralCredentials::new(api_key.to_owned());
-        let builder = BurnCentral::builder(creds).with_endpoint(self.api_endpoint.clone());
+        let client = Client::new(self.api_endpoint.clone(), &creds);
 
-        builder.build().map_err(|e| match e {
-            burn_central_client::InitError::Client(e) if e.is_login_error() => {
+        client.map_err(|e| {
+            if e.is_login_error() {
                 ClientCreationError::InvalidCredentials
+            } else {
+                ClientCreationError::ServerConnectionError(e.to_string())
             }
-            burn_central_client::InitError::Client(e) if e.code().is_some() => {
-                ClientCreationError::InvalidCredentials
-            }
-            _ => ClientCreationError::ServerConnectionError(e.to_string()),
         })
     }
 

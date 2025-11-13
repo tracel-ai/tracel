@@ -1,7 +1,6 @@
-use crate::{
-    api::{ModelResponse, ModelVersionResponse},
-    schemas::CreatedByUser,
-};
+use burn_central_api::schemas::{ModelResponse, ModelVersionResponse};
+
+use crate::schemas::CreatedByUser;
 
 /// Information about a specific model version
 #[derive(Debug, Clone)]

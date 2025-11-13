@@ -1,19 +1,24 @@
 use super::socket::ExperimentSocket;
-use crate::api::EndExperimentStatus;
 use crate::artifacts::{ArtifactKind, ExperimentArtifactClient};
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
-use crate::experiment::message::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crate::experiment::socket::ThreadError;
 use crate::metrics::MetricLog;
 use crate::schemas::ExperimentPath;
-use crate::{api::Client, websocket::WebSocketClient};
+use crate::websocket::WebSocketClient;
+use burn_central_api::client::Client;
+use burn_central_api::schemas::experiment::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crossbeam::channel::Sender;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
+
+pub enum EndExperimentStatus {
+    Success,
+    Fail(String),
+}
 
 /// Represents a handle to an experiment, allowing logging of artifacts, metrics, and messages.
 #[derive(Clone, Debug)]
@@ -28,9 +33,9 @@ impl ExperimentRunHandle {
             .ok_or(ExperimentTrackerError::InactiveExperiment)
     }
 
-    /// Log a configuration object.
-    pub fn log_arguments<C: Serialize>(&self, config: &C) -> Result<(), ExperimentTrackerError> {
-        self.try_upgrade()?.log_arguments(config)
+    /// Log arguments used to launch this experiment
+    pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentTrackerError> {
+        self.try_upgrade()?.log_args(args)
     }
 
     /// Log an artifact with the given name, kind and settings.
@@ -152,9 +157,9 @@ impl ExperimentRunInner {
             .map_err(|_| ExperimentTrackerError::SocketClosed)
     }
 
-    pub fn log_arguments<C: Serialize>(&self, args: &C) -> Result<(), ExperimentTrackerError> {
+    pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentTrackerError> {
         let message = ExperimentMessage::Arguments(serde_json::to_value(args).map_err(|e| {
-            ExperimentTrackerError::InternalError(format!("Failed to serialize config: {}", e))
+            ExperimentTrackerError::InternalError(format!("Failed to serialize arguments: {}", e))
         })?);
         self.send(message)
     }

@@ -1,6 +1,4 @@
-pub mod api;
 mod client;
-pub mod credentials;
 
 pub mod schemas;
 
@@ -12,6 +10,7 @@ pub mod experiment;
 mod websocket;
 
 pub use crate::client::*;
+pub use burn_central_api::credentials;
 
 pub mod artifacts;
 pub mod bundle;

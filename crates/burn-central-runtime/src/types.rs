@@ -1,9 +1,9 @@
 use burn::prelude::Backend;
-use burn_central_client::experiment::ExperimentConfig;
+use burn_central_client::experiment::ExperimentArgs;
 use derive_more::{Deref, From};
 
 #[derive(From, Deref)]
-pub struct Cfg<T: ExperimentConfig>(pub T);
+pub struct Args<T: ExperimentArgs>(pub T);
 #[derive(Clone, Debug, Deref, From)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 #[derive(Clone, From, Deref)]

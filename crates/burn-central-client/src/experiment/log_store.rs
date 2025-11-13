@@ -1,8 +1,9 @@
+use burn_central_api::{
+    Client, ClientError,
+    schemas::{ArtifactFileSpecRequest, CreateArtifactRequest, MultipartUploadReponse},
+};
 use sha2::Digest;
 
-use crate::api::{
-    ArtifactFileSpecRequest, Client, ClientError, CreateArtifactRequest, MultipartUploadReponse,
-};
 use crate::schemas::ExperimentPath;
 
 #[derive(Debug)]
