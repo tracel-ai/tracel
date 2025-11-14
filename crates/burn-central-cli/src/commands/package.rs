@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use crate::commands::init::ensure_git_repo_clean;
 use crate::context::CliContext;
 use crate::print_success;
-use crate::tools::cargo::package::package;
+use crate::tools::cargo::package::{PackagedCrateData, package};
 use crate::tools::git::is_repo_dirty;
 use anyhow::Context;
 use burn_central_api::Client;
-use burn_central_api::schemas::{BurnCentralCodeMetadata, CrateVersionMetadata, PackagedCrateData};
+use burn_central_api::request::{BurnCentralCodeMetadataRequest, CrateVersionMetadataRequest};
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -33,7 +33,7 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
 
     let registered_functions = context.function_registry.get_registered_functions();
 
-    let code_metadata = BurnCentralCodeMetadata {
+    let code_metadata = BurnCentralCodeMetadataRequest {
         functions: registered_functions,
     };
 
@@ -57,16 +57,16 @@ pub fn upload_new_project_version(
     namespace: &str,
     project_name: &str,
     target_package_name: &str,
-    code_metadata: BurnCentralCodeMetadata,
+    code_metadata: BurnCentralCodeMetadataRequest,
     crates_data: Vec<PackagedCrateData>,
     last_commit: &str,
 ) -> anyhow::Result<String> {
-    let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadata>) = crates_data
+    let (data, metadata): (Vec<(String, PathBuf)>, Vec<CrateVersionMetadataRequest>) = crates_data
         .into_iter()
         .map(|krate| {
             (
                 (krate.name, krate.path),
-                CrateVersionMetadata {
+                CrateVersionMetadataRequest {
                     checksum: krate.checksum,
                     metadata: krate.metadata,
                     size: krate.size,

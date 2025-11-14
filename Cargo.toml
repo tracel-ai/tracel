@@ -54,7 +54,10 @@ variadics_please = "1.1.0"
 tynm = { version = "0.2.0" }
 derive_more = { version = "2.0.1", default-features = false }
 env_logger = "0.11.8"
-burn-central-api = { version = "0.1.0", path = "crates/burn-central-api" }
+
+## Crate
+burn-central-api = { version = "0.1.0", path = "../burn-central-client/burn-central-api" }
+burn-central-core = { version = "0.1.0", path = "crates/burn-central-core" }
 
 ### For xtask crate ###
 tracel-xtask = { version = "2.1.7" }

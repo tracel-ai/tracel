@@ -3,7 +3,7 @@ use crate::types::{Args, Model, MultiDevice};
 use anyhow::Result;
 use burn::module::Module;
 use burn::prelude::Backend;
-use burn_central_client::experiment::{ExperimentArgs, ExperimentRun};
+use burn_central_core::experiment::{ExperimentArgs, ExperimentRun};
 use variadics_please::all_tuples;
 
 /// This trait defines how parameters for a routine are retrieved from the execution context.

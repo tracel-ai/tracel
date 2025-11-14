@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use burn_central_api::schemas::PackagedCrateData;
 use colored::Colorize;
 
 use super::paths;
@@ -19,6 +18,14 @@ use crate::{
 };
 use sha2::Digest as _;
 use sha2::Sha256;
+
+pub struct PackagedCrateData {
+    pub name: String,
+    pub path: PathBuf,
+    pub checksum: String,
+    pub metadata: serde_json::Value,
+    pub size: u64,
+}
 
 /// Based on the struct ArchiveFile from Cargo: https://github.com/rust-lang/cargo/blob/57622d793935a662b5f14ca728a2989c14833d37/src/cargo/ops/cargo_package.rs#L48
 /// rel_str member was removed

@@ -5,7 +5,7 @@ description = "Burn Central Client."
 keywords = ["tracel", "burn-central", "burn", "sdk"]
 edition.workspace = true
 license.workspace = true
-name = "burn-central-client"
+name = "burn-central-core"
 readme = "README.md"
 repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-client"
 version.workspace = true
@@ -40,7 +40,7 @@ crossbeam = { workspace = true, default-features = false, features = [
     "std",
 ] }
 json-patch = { workspace = true }
-burn-central-api = { path = "../burn-central-api" }
+burn-central-api = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

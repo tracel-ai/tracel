@@ -5,7 +5,7 @@ use crate::tools::git;
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
 use burn_central_api::Client;
-use burn_central_api::schemas::ProjectSchema;
+use burn_central_api::response::ProjectResponse;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -133,7 +133,7 @@ pub fn prompt_project_name(context: &CliContext) -> anyhow::Result<String> {
     Ok(input)
 }
 
-fn handle_existing_project(project: &ProjectSchema) -> anyhow::Result<ProjectPath> {
+fn handle_existing_project(project: &ProjectResponse) -> anyhow::Result<ProjectPath> {
     let confirmed = cliclack::confirm(format!(
         "Project \"{}\" already exists under owner \"{}\". Do you want to link it?",
         project.project_name, project.namespace_name

@@ -239,7 +239,7 @@ version = "0.1.0"
 dependencies = [
  "burn-central-cli",
  "burn-central-cli-macros",
- "burn-central-client",
+ "burn-central-core",
  "burn-central-runtime",
 ]
 
@@ -247,12 +247,12 @@ dependencies = [
 name = "burn-central-api"
 version = "0.1.0"
 dependencies = [
- "derive-new",
  "reqwest",
  "serde",
  "serde_json",
  "strum",
  "thiserror 2.0.17",
+ "tungstenite",
  "uuid",
 ]
 
@@ -312,7 +312,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-central-client"
+name = "burn-central-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -346,7 +346,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "burn",
- "burn-central-client",
+ "burn-central-core",
  "clap",
  "crossbeam",
  "derive_more",

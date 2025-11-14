@@ -7,10 +7,9 @@ pub mod metrics;
 pub mod record;
 
 pub mod experiment;
-mod websocket;
 
 pub use crate::client::*;
-pub use burn_central_api::credentials;
+pub use burn_central_api::BurnCentralCredentials;
 
 pub mod artifacts;
 pub mod bundle;

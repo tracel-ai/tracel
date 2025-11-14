@@ -1,5 +1,4 @@
-use burn_central_client::BurnCentralError;
-use burn_central_client::experiment::ExperimentTrackerError;
+use burn_central_core::{BurnCentralError, experiment::ExperimentTrackerError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum RuntimeError {
