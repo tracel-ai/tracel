@@ -16,14 +16,7 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
-    pub fn load_from_manifest(manifest_path: &Path) -> Self {
-        Self::load_from_manifest_with_environment(manifest_path, Environment::Production)
-    }
-
-    pub fn load_from_manifest_with_environment(
-        manifest_path: &Path,
-        environment: Environment,
-    ) -> Self {
+    pub fn load_from_manifest(manifest_path: &Path, environment: Environment) -> Self {
         // assert that the manifest path is a file
         assert!(manifest_path.is_file());
         assert!(manifest_path.ends_with("Cargo.toml"));

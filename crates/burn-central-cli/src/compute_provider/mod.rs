@@ -48,10 +48,7 @@ pub fn compute_provider_main() {
     };
 
     let terminal = Terminal {};
-    let crate_context = ProjectContext::load_from_manifest_with_environment(
-        &manifest_path,
-        Environment::Production,
-    );
+    let crate_context = ProjectContext::load_from_manifest(&manifest_path, Environment::Production);
     let function_registry = FunctionRegistry::new();
     let mut context = CliContext::new(
         terminal,
