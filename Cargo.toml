@@ -25,10 +25,8 @@ log = "0.4.27"
 once_cell = "1.21.3"
 proc-macro2 = { version = "1.0.95" }
 quote = "1.0.40"
-rand = "0.9.1"
 reqwest = "0.12.19"
 regex = "1.11.1"
-rmp-serde = "1.3.0"
 rstest = "0.25.0"
 serde = { version = "1.0.224", default-features = false, features = [
     "derive",
