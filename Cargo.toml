@@ -53,8 +53,11 @@ tynm = { version = "0.2.0" }
 derive_more = { version = "2.0.1", default-features = false }
 env_logger = "0.11.8"
 
+## External Crate
+# burn-central-client = { version = "0.1.1", path = "../burn-central-client/burn-central-client" }
+burn-central-client = "0.1.1"
+
 ## Crate
-burn-central-client = { version = "0.1.0", path = "../burn-central-client/burn-central-client" }
 burn-central-core = { version = "0.1.0", path = "crates/burn-central-core" }
 burn-central-runtime = { version = "0.1.0", path = "crates/burn-central-runtime" }
 burn-central-cli-macros = { version = "0.1.0", path = "crates/burn-central-cli-macros" }

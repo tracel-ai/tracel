@@ -356,10 +356,6 @@ pub fn create_crate(
                     dep.add_feature(feature.to_string());
                 });
             }
-            if dep.name == "burn-central" {
-                dep.add_feature("client".to_string());
-                dep.add_feature("runtime".to_string());
-            }
             generated_crate.add_dependency(dep);
         });
 
