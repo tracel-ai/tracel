@@ -1,3 +1,4 @@
+use crate::app_config::Environment;
 use crate::entity::projects::ProjectContext;
 use clap::{Parser, Subcommand};
 
@@ -15,6 +16,7 @@ pub struct CliArgs {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
+    /// Use development environment (localhost:9001) with separate dev credentials
     #[arg(long, action = clap::ArgAction::SetTrue, hide = true)]
     pub dev: bool,
 }
@@ -43,6 +45,8 @@ pub fn cli_main() {
 
     let manifest_path = cargo::try_locate_manifest().expect("Failed to locate manifest");
 
+    let environment = Environment::from_dev_flag(args.dev);
+
     let config = Config {
         api_endpoint: if args.dev {
             "http://localhost:9001/".to_string()
@@ -52,10 +56,22 @@ pub fn cli_main() {
     };
 
     let terminal = Terminal::new();
-    let crate_context = ProjectContext::load_from_manifest(&manifest_path);
+
+    if args.dev {
+        terminal
+            .print_warning("Running in development mode - using local server and dev credentials");
+    }
+
+    let crate_context = ProjectContext::load_from_manifest(&manifest_path, environment);
     let function_registry = FunctionRegistry::new();
-    let context =
-        CliContext::new(terminal.clone(), &config, crate_context, function_registry).init();
+    let context = CliContext::new(
+        terminal.clone(),
+        &config,
+        crate_context,
+        function_registry,
+        environment,
+    )
+    .init();
 
     let cli_res = match args.command {
         Some(command) => handle_command(command, context),

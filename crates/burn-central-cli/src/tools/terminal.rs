@@ -8,6 +8,10 @@ impl Terminal {
         Self {}
     }
 
+    pub fn print_warning(&self, message: &str) {
+        cliclack::log::warning(message).expect("To be able to print remark");
+    }
+
     pub fn print(&self, message: &str) {
         cliclack::log::info(message).expect("To be able to print message");
     }

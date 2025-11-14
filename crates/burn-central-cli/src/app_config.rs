@@ -2,6 +2,29 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Environment {
+    Production,
+    Development,
+}
+
+impl Environment {
+    pub fn from_dev_flag(is_dev: bool) -> Self {
+        if is_dev {
+            Self::Development
+        } else {
+            Self::Production
+        }
+    }
+
+    fn file_suffix(&self) -> &'static str {
+        match self {
+            Self::Production => "prod",
+            Self::Development => "dev",
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
     #[error(transparent)]
@@ -19,10 +42,11 @@ pub struct Credentials {
 
 pub struct AppConfig {
     base_dir: PathBuf,
+    environment: Environment,
 }
 
 impl AppConfig {
-    pub fn new() -> Result<Self, ConfigError> {
+    pub fn new(environment: Environment) -> Result<Self, ConfigError> {
         let proj_dirs = ProjectDirs::from("com", "tracel", "burncentral")
             .ok_or(ConfigError::MissingDirectory)?;
 
@@ -31,11 +55,13 @@ impl AppConfig {
 
         Ok(Self {
             base_dir: config_dir,
+            environment,
         })
     }
 
     fn credentials_path(&self) -> PathBuf {
-        self.base_dir.join("credentials.json")
+        let filename = format!("credentials-{}.json", self.environment.file_suffix());
+        self.base_dir.join(filename)
     }
 
     pub fn save_credentials(&self, creds: &Credentials) -> Result<(), ConfigError> {
