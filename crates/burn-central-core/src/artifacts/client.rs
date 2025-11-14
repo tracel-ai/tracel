@@ -1,14 +1,12 @@
-use burn_central_api::client::Client;
-use burn_central_api::error::ClientError;
+use burn_central_client::response::MultipartUploadResponse;
+use burn_central_client::{Client, ClientError};
 use sha2::Digest;
 use std::collections::BTreeMap;
 
 use crate::artifacts::ArtifactInfo;
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader, InMemoryBundleSources};
 use crate::schemas::ExperimentPath;
-use burn_central_api::schemas::{
-    ArtifactFileSpecRequest, CreateArtifactRequest, MultipartUploadReponse,
-};
+use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
 
 #[derive(Debug, Clone, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -65,7 +63,7 @@ impl ExperimentArtifactClient {
             },
         )?;
 
-        let mut multipart_map: BTreeMap<String, &MultipartUploadReponse> = BTreeMap::new();
+        let mut multipart_map: BTreeMap<String, &MultipartUploadResponse> = BTreeMap::new();
         for f in &res.files {
             multipart_map.insert(f.rel_path.clone(), &f.urls);
         }
@@ -156,7 +154,7 @@ impl ExperimentArtifactClient {
     fn upload_file_multipart(
         &self,
         file_data: &[u8],
-        multipart_info: &MultipartUploadReponse,
+        multipart_info: &MultipartUploadResponse,
     ) -> Result<(), ArtifactError> {
         let mut part_indices: Vec<usize> = (0..multipart_info.parts.len()).collect();
         part_indices.sort_by_key(|&i| multipart_info.parts[i].part);

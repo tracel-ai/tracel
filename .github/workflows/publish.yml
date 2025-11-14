@@ -6,10 +6,10 @@ on:
       - "v*"
 
 jobs:
-  burn-central-client:
+  burn-central-core:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
-      crate: burn-central-client
+      crate: burn-central-core
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ jobs:
     with:
       crate: burn-central-cli
     needs:
-      - burn-central-client
+      - burn-central-core
       - burn-central-cli-macros
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
@@ -35,7 +35,7 @@ jobs:
     with:
       crate: burn-central
     needs:
-      - burn-central-client
+      - burn-central-core
       - burn-central-cli-macros
       - burn-central-cli
     secrets:

@@ -25,10 +25,8 @@ log = "0.4.27"
 once_cell = "1.21.3"
 proc-macro2 = { version = "1.0.95" }
 quote = "1.0.40"
-rand = "0.9.1"
 reqwest = "0.12.19"
 regex = "1.11.1"
-rmp-serde = "1.3.0"
 rstest = "0.25.0"
 serde = { version = "1.0.224", default-features = false, features = [
     "derive",
@@ -54,7 +52,16 @@ variadics_please = "1.1.0"
 tynm = { version = "0.2.0" }
 derive_more = { version = "2.0.1", default-features = false }
 env_logger = "0.11.8"
-burn-central-api = { version = "0.1.0", path = "crates/burn-central-api" }
+
+## External Crate
+# burn-central-client = { version = "0.1.1", path = "../burn-central-client/burn-central-client" }
+burn-central-client = "0.1.1"
+
+## Crate
+burn-central-core = { version = "0.1.0", path = "crates/burn-central-core" }
+burn-central-runtime = { version = "0.1.0", path = "crates/burn-central-runtime" }
+burn-central-cli-macros = { version = "0.1.0", path = "crates/burn-central-cli-macros" }
+burn-central-cli = { version = "0.1.0", path = "crates/burn-central-cli" }
 
 ### For xtask crate ###
 tracel-xtask = { version = "2.1.7" }

@@ -1,6 +1,7 @@
-use burn_central_api::{
+use burn_central_client::{
     Client, ClientError,
-    schemas::{ArtifactFileSpecRequest, CreateArtifactRequest, MultipartUploadReponse},
+    request::{ArtifactFileSpecRequest, CreateArtifactRequest},
+    response::MultipartUploadResponse,
 };
 use sha2::Digest;
 
@@ -121,7 +122,7 @@ impl TempLogStore {
     fn upload_chunk_multipart(
         &self,
         chunk_data: &[u8],
-        multipart_info: &MultipartUploadReponse,
+        multipart_info: &MultipartUploadResponse,
     ) -> Result<(), ClientError> {
         let mut part_indices: Vec<usize> = (0..multipart_info.parts.len()).collect();
         part_indices.sort_by_key(|&i| multipart_info.parts[i].part);

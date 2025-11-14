@@ -5,9 +5,8 @@ use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
-use crate::websocket::WebSocketClient;
-use burn_central_api::client::Client;
-use burn_central_api::schemas::experiment::{ExperimentCompletion, ExperimentMessage, InputUsed};
+use burn_central_client::Client;
+use burn_central_client::websocket::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crossbeam::channel::Sender;
 use serde::Serialize;
 use std::ops::Deref;
@@ -259,30 +258,29 @@ pub struct ExperimentRun {
 
 impl ExperimentRun {
     pub fn new(
-        http_client: Client,
+        burn_client: Client,
         experiment_path: ExperimentPath,
     ) -> Result<Self, ExperimentTrackerError> {
-        let mut ws_client = WebSocketClient::new();
+        let ws_client = burn_client
+            .create_experiment_run_websocket(
+                experiment_path.owner_name(),
+                experiment_path.project_name(),
+                experiment_path.experiment_num(),
+            )
+            .map_err(|e| {
+                ExperimentTrackerError::ConnectionFailed(format!(
+                    "Failed to create WebSocket client: {}",
+                    e
+                ))
+            })?;
 
-        let ws_endpoint = http_client.format_websocket_url(
-            experiment_path.owner_name(),
-            experiment_path.project_name(),
-            experiment_path.experiment_num(),
-        );
-        let cookie = http_client
-            .get_session_cookie()
-            .expect("Session cookie should be available");
-        ws_client
-            .connect(ws_endpoint, cookie)
-            .map_err(|e| ExperimentTrackerError::ConnectionFailed(e.to_string()))?;
-
-        let log_store = TempLogStore::new(http_client.clone(), experiment_path.clone());
+        let log_store = TempLogStore::new(burn_client.clone(), experiment_path.clone());
         let (sender, receiver) = crossbeam::channel::unbounded();
         let socket = ExperimentSocket::new(ws_client, log_store, receiver);
 
         let inner = Arc::new(ExperimentRunInner {
             id: experiment_path.clone(),
-            http_client: http_client.clone(),
+            http_client: burn_client.clone(),
             sender,
         });
 

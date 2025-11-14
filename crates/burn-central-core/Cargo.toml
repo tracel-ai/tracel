@@ -5,7 +5,7 @@ description = "Burn Central Client."
 keywords = ["tracel", "burn-central", "burn", "sdk"]
 edition.workspace = true
 license.workspace = true
-name = "burn-central-client"
+name = "burn-central-core"
 readme = "README.md"
 repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-client"
 version.workspace = true
@@ -14,15 +14,9 @@ rust-version.workspace = true
 [features]
 
 [dependencies]
-# todo: temporary fix until burn updates its bincode version to 2.0.0
-bincode = "2.0.1"
 burn = { workspace = true, features = ["train"] }
-
-derive-new = { workspace = true }
 log = { workspace = true }
-rand = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "json"] }
-rmp-serde = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -31,7 +25,6 @@ thiserror = { workspace = true }
 tracing = { version = "0.1.41" }
 tracing-core = { version = "0.1.33" }
 tracing-subscriber = { version = "0.3.20" }
-tungstenite = { version = "0.26.2", features = ["native-tls"] }
 uuid = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
@@ -40,7 +33,7 @@ crossbeam = { workspace = true, default-features = false, features = [
     "std",
 ] }
 json-patch = { workspace = true }
-burn-central-api = { path = "../burn-central-api" }
+burn-central-client = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

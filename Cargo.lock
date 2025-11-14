@@ -148,18 +148,8 @@ version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
 dependencies = [
- "bincode_derive",
  "serde",
  "unty",
-]
-
-[[package]]
-name = "bincode_derive"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf95709a440f45e986983918d0e8a1f30a9b1df04918fc828670606804ac3c09"
-dependencies = [
- "virtue",
 ]
 
 [[package]]
@@ -239,21 +229,8 @@ version = "0.1.0"
 dependencies = [
  "burn-central-cli",
  "burn-central-cli-macros",
- "burn-central-client",
+ "burn-central-core",
  "burn-central-runtime",
-]
-
-[[package]]
-name = "burn-central-api"
-version = "0.1.0"
-dependencies = [
- "derive-new",
- "reqwest",
- "serde",
- "serde_json",
- "strum",
- "thiserror 2.0.17",
- "uuid",
 ]
 
 [[package]]
@@ -261,7 +238,7 @@ name = "burn-central-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "burn-central-api",
+ "burn-central-client",
  "cargo-util-schemas 0.8.2",
  "cargo_metadata",
  "chrono",
@@ -313,21 +290,32 @@ dependencies = [
 
 [[package]]
 name = "burn-central-client"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d75c92ecec63c07f673710875ac53b4a2f46b54a8920d3adf46f69ea02c5cd50"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.17",
+ "tungstenite",
+ "uuid",
+]
+
+[[package]]
+name = "burn-central-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode",
  "burn",
- "burn-central-api",
+ "burn-central-client",
  "crossbeam",
- "derive-new",
  "json-patch",
  "log",
  "once_cell",
- "rand",
  "regex",
  "reqwest",
- "rmp-serde",
  "serde",
  "serde_json",
  "sha2",
@@ -336,7 +324,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-subscriber",
- "tungstenite",
  "uuid",
 ]
 
@@ -346,7 +333,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "burn",
- "burn-central-client",
+ "burn-central-core",
  "clap",
  "crossbeam",
  "derive_more",
@@ -4705,12 +4692,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "virtue"
-version = "0.0.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "void"

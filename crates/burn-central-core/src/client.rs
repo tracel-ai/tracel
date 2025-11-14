@@ -4,7 +4,7 @@ use crate::artifacts::ExperimentArtifactClient;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::models::ModelRegistry;
 use crate::schemas::{ExperimentPath, User};
-use burn_central_api::{BurnCentralCredentials, Client, ClientError};
+use burn_central_client::{BurnCentralCredentials, Client, ClientError};
 use reqwest::Url;
 
 /// Errors that can occur during the initialization of the [BurnCentral] client.

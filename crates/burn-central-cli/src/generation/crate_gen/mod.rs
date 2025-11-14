@@ -288,7 +288,7 @@ fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String
             let namespace = runtime_args.burn_central.namespace;
             let project = runtime_args.burn_central.project;
 
-            let creds = burn_central::credentials::BurnCentralCredentials::new(key);
+            let creds = burn_central::BurnCentralCredentials::new(key);
             let client = burn_central::BurnCentral::builder(creds)
                 .with_endpoint(endpoint)
                 .build()
@@ -355,10 +355,6 @@ pub fn create_crate(
                 burn_features.iter().for_each(|feature| {
                     dep.add_feature(feature.to_string());
                 });
-            }
-            if dep.name == "burn-central" {
-                dep.add_feature("client".to_string());
-                dep.add_feature("runtime".to_string());
             }
             generated_crate.add_dependency(dep);
         });

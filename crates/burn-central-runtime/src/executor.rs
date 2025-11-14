@@ -1,15 +1,15 @@
 use anyhow::Result;
 use burn::prelude::Backend;
-use burn_central_client::artifacts::ArtifactError;
-use burn_central_client::bundle::BundleDecode;
+use burn_central_core::artifacts::ArtifactError;
+use burn_central_core::bundle::BundleDecode;
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
 use crate::param::RoutineParam;
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use burn::tensor::backend::AutodiffBackend;
-use burn_central_client::BurnCentral;
-use burn_central_client::experiment::{
+use burn_central_core::BurnCentral;
+use burn_central_core::experiment::{
     ExperimentArgs, ExperimentRun, deserialize_and_merge_with_default,
 };
 use std::collections::HashMap;
@@ -321,7 +321,7 @@ mod test {
     use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
-    use burn_central_client::bundle::{BundleEncode, BundleSink};
+    use burn_central_core::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
     impl<B: AutodiffBackend> ExecutorBuilder<B> {

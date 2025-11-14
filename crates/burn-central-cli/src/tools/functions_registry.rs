@@ -1,4 +1,4 @@
-use burn_central_api::schemas::RegisteredFunction;
+use burn_central_client::request::RegisteredFunctionRequest;
 pub use inventory;
 use quote::ToTokens;
 
@@ -12,14 +12,14 @@ pub struct FunctionMetadata {
     pub token_stream: &'static [u8],
 }
 
-impl From<FunctionMetadata> for RegisteredFunction {
+impl From<FunctionMetadata> for RegisteredFunctionRequest {
     fn from(val: FunctionMetadata) -> Self {
         let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(val.token_stream)
             .expect("Should be able to parse token stream.");
         let syn_tree: syn::File =
             syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
         let code_str = prettyplease::unparse(&syn_tree);
-        RegisteredFunction {
+        RegisteredFunctionRequest {
             mod_path: val.mod_path.to_string(),
             fn_name: val.fn_name.to_string(),
             proc_type: val.proc_type.to_string(),
@@ -95,7 +95,7 @@ impl FunctionRegistry {
         &self.functions
     }
 
-    pub fn get_registered_functions(&self) -> Vec<RegisteredFunction> {
+    pub fn get_registered_functions(&self) -> Vec<RegisteredFunctionRequest> {
         self.functions
             .iter()
             .map(|function| function.clone().into())

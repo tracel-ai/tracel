@@ -13,7 +13,7 @@ cli = ["dep:clap"]
 
 [dependencies]
 anyhow = "1.0.98"
-burn-central-client = { path = "../burn-central-client" }
+burn-central-core = { workspace = true }
 burn = { workspace = true }
 thiserror = { workspace = true }
 variadics_please = { workspace = true }
