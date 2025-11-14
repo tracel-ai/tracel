@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
+use derive_new::new;
 use serde::Serialize;
-
-use crate::metrics::MetricLog;
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -16,6 +15,12 @@ pub enum InputUsed {
 pub enum ExperimentCompletion {
     Success,
     Fail { reason: String },
+}
+
+#[derive(Debug, Serialize, new)]
+pub struct MetricLog {
+    name: String,
+    value: f64,
 }
 
 #[derive(Debug, Serialize)]

@@ -3,16 +3,9 @@ use std::collections::HashMap;
 use burn::train::logger::MetricLogger;
 use burn::train::metric::store::{EpochSummary, Split};
 use burn::train::metric::{MetricAttributes, MetricDefinition, MetricEntry, NumericEntry};
-use derive_new::new;
-use serde::Serialize;
+use burn_central_api::schemas::experiment::MetricLog;
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
-
-#[derive(Debug, Serialize, new)]
-pub struct MetricLog {
-    name: String,
-    value: f64,
-}
 
 /// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
