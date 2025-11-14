@@ -46,7 +46,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn new_with_environment(environment: Environment) -> Result<Self, ConfigError> {
+    pub fn new(environment: Environment) -> Result<Self, ConfigError> {
         let proj_dirs = ProjectDirs::from("com", "tracel", "burncentral")
             .ok_or(ConfigError::MissingDirectory)?;
 

@@ -51,7 +51,7 @@ impl CliContext {
     }
 
     pub fn init(mut self) -> Self {
-        let entry_res = AppConfig::new_with_environment(self.environment);
+        let entry_res = AppConfig::new(self.environment);
         if let Ok(entry) = entry_res {
             if let Ok(Some(api_key)) = entry.load_credentials() {
                 self.creds = Some(api_key);
@@ -62,8 +62,7 @@ impl CliContext {
 
     pub fn set_credentials(&mut self, creds: Credentials) {
         self.creds = Some(creds);
-        let app_config =
-            AppConfig::new_with_environment(self.environment).expect("AppConfig should be created");
+        let app_config = AppConfig::new(self.environment).expect("AppConfig should be created");
         app_config
             .save_credentials(self.creds.as_ref().unwrap())
             .expect("Credentials should be saved");
