@@ -62,7 +62,8 @@ pub fn cli_main() {
             .print_warning("Running in development mode - using local server and dev credentials");
     }
 
-    let crate_context = ProjectContext::load_from_manifest(&manifest_path);
+    let crate_context =
+        ProjectContext::load_from_manifest_with_environment(&manifest_path, environment);
     let function_registry = FunctionRegistry::new();
     let context = CliContext::new(
         terminal.clone(),

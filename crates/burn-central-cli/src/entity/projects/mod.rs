@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::app_config::Environment;
 use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
 
 pub mod burn_dir;
@@ -16,6 +17,13 @@ pub struct ProjectContext {
 
 impl ProjectContext {
     pub fn load_from_manifest(manifest_path: &Path) -> Self {
+        Self::load_from_manifest_with_environment(manifest_path, Environment::Production)
+    }
+
+    pub fn load_from_manifest_with_environment(
+        manifest_path: &Path,
+        environment: Environment,
+    ) -> Self {
         // assert that the manifest path is a file
         assert!(manifest_path.is_file());
         assert!(manifest_path.ends_with("Cargo.toml"));
@@ -34,7 +42,7 @@ impl ProjectContext {
             .parent()
             .expect("Project directory should exist")
             .to_path_buf();
-        let burn_dir = BurnDir::new(&user_crate_dir);
+        let burn_dir = BurnDir::new(&user_crate_dir, environment);
         burn_dir
             .init()
             .expect("Burn directory should be initialized");
