@@ -244,24 +244,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-central-api"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "strum",
- "thiserror 2.0.17",
- "tungstenite",
- "uuid",
-]
-
-[[package]]
 name = "burn-central-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "burn-central-api",
+ "burn-central-client",
  "cargo-util-schemas 0.8.2",
  "cargo_metadata",
  "chrono",
@@ -312,13 +299,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-central-client"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.17",
+ "tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "burn-central-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
  "burn",
- "burn-central-api",
+ "burn-central-client",
  "crossbeam",
  "derive-new",
  "json-patch",

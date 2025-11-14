@@ -7,7 +7,7 @@ use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
-use burn_central_api::{BurnCentralCredentials, Client};
+use burn_central_client::{BurnCentralCredentials, Client};
 use std::path::PathBuf;
 
 #[derive(thiserror::Error, Debug)]

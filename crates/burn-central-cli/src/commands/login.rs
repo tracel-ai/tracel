@@ -1,7 +1,7 @@
 use crate::app_config::Credentials;
 use crate::context::{CliContext, ClientCreationError};
 use anyhow::Context;
-use burn_central_api::Client;
+use burn_central_client::Client;
 use clap::Args;
 
 #[derive(Args, Debug)]

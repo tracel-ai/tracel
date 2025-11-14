@@ -1,5 +1,5 @@
 use crate::{artifacts::ArtifactKind, models::ExperimentSource};
-use burn_central_api::response::ArtifactResponse;
+use burn_central_client::response::ArtifactResponse;
 
 #[derive(Debug, Clone)]
 pub struct ArtifactInfo {

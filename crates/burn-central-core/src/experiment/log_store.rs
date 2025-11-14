@@ -1,4 +1,4 @@
-use burn_central_api::{
+use burn_central_client::{
     Client, ClientError,
     request::{ArtifactFileSpecRequest, CreateArtifactRequest},
     response::MultipartUploadResponse,

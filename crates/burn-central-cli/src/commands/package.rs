@@ -6,8 +6,8 @@ use crate::print_success;
 use crate::tools::cargo::package::{PackagedCrateData, package};
 use crate::tools::git::is_repo_dirty;
 use anyhow::Context;
-use burn_central_api::Client;
-use burn_central_api::request::{BurnCentralCodeMetadataRequest, CrateVersionMetadataRequest};
+use burn_central_client::Client;
+use burn_central_client::request::{BurnCentralCodeMetadataRequest, CrateVersionMetadataRequest};
 use clap::Args;
 
 #[derive(Args, Debug)]

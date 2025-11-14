@@ -1,4 +1,4 @@
-use burn_central_api::response::{ModelResponse, ModelVersionResponse};
+use burn_central_client::response::{ModelResponse, ModelVersionResponse};
 
 use crate::schemas::CreatedByUser;
 

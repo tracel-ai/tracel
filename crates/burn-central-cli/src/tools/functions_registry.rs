@@ -1,4 +1,4 @@
-use burn_central_api::request::RegisteredFunctionRequest;
+use burn_central_client::request::RegisteredFunctionRequest;
 pub use inventory;
 use quote::ToTokens;
 

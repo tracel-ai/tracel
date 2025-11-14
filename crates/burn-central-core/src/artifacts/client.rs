@@ -1,12 +1,12 @@
-use burn_central_api::response::MultipartUploadResponse;
-use burn_central_api::{Client, ClientError};
+use burn_central_client::response::MultipartUploadResponse;
+use burn_central_client::{Client, ClientError};
 use sha2::Digest;
 use std::collections::BTreeMap;
 
 use crate::artifacts::ArtifactInfo;
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader, InMemoryBundleSources};
 use crate::schemas::ExperimentPath;
-use burn_central_api::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
+use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
 
 #[derive(Debug, Clone, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]

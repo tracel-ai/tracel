@@ -12,7 +12,7 @@ version.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-burn-central-api = { workspace = true }
+burn-central-client = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "cargo"] }

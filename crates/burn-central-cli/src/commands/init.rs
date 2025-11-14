@@ -4,8 +4,8 @@ use crate::entity::projects::project_path::ProjectPath;
 use crate::tools::git;
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
-use burn_central_api::Client;
-use burn_central_api::response::ProjectResponse;
+use burn_central_client::Client;
+use burn_central_client::response::ProjectResponse;
 use clap::Args;
 
 #[derive(Args, Debug)]
