@@ -8,7 +8,6 @@ mod routine;
 mod type_name;
 mod types;
 
-#[cfg(feature = "cli")]
 pub mod cli;
 
 pub use error::RuntimeError;

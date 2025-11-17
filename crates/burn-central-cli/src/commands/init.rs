@@ -1,4 +1,5 @@
 use crate::context::CliContext;
+use crate::entity::projects::ProjectContext;
 use crate::entity::projects::burn_dir::project::BurnCentralProject;
 use crate::entity::projects::project_path::ProjectPath;
 use crate::tools::git;
@@ -17,22 +18,25 @@ pub struct InitArgs {
 
 pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result<()> {
     let client = super::login::get_client_and_login_if_needed(&mut context)?;
+    let mut project = ProjectContext::discover(context.environment())?;
 
-    if !args.force && context.burn_dir().load_project().is_ok() {
+    if !args.force && project.get_project().is_some() {
         context
             .terminal()
             .print("Project already initialized. Use the `--force` flag to reinitialize.");
         return Ok(());
     }
 
-    prompt_init(&context, &client).context("Failed to initialize the project")
+    prompt_init(&context, &client, &mut project).context("Failed to initialize the project")
 }
 
-pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> {
+pub fn prompt_init(
+    context: &CliContext,
+    client: &Client,
+    project: &mut ProjectContext,
+) -> anyhow::Result<()> {
     let user = client.get_current_user()?;
-    let ws_root = context
-        .get_workspace_root()
-        .context("Failed to get workspace root")?;
+    let ws_root = project.get_workspace_root();
 
     context.terminal().command_title("Project Initialization");
 
@@ -51,7 +55,7 @@ pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> 
     let _first_commit_hash = first_commit_hash?;
 
     let project_owner = prompt_owner_name(&user.username, client)?;
-    let project_name = prompt_project_name(context)?;
+    let project_name = prompt_project_name(project)?;
 
     let owner_name = match &project_owner {
         ProjectKind::User => user.namespace.as_str(),
@@ -59,7 +63,9 @@ pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> 
     };
     let project_path = match client.get_project(owner_name, &project_name) {
         Ok(project) => handle_existing_project(&project)?,
-        Err(e) if e.is_not_found() => create_new_project(client, project_owner, &project_name)?,
+        Err(e) if e.is_not_found() => {
+            create_new_project(client, project_owner.clone(), &project_name)?
+        }
         Err(e) => {
             terminal.cancel_finalize(&format!("Failed to check for existing project: {e}"));
             return Err(anyhow::anyhow!(e));
@@ -69,15 +75,22 @@ pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> 
     let project_name = project_path.project_name();
     let owner_name = project_path.owner_name();
 
-    context.burn_dir().save_project(&BurnCentralProject {
+    project.save_project(&BurnCentralProject {
         name: project_name.to_string(),
         owner: owner_name.to_string(),
     })?;
     terminal.print("Created project metadata");
 
+    let url_path = match &project_owner {
+        ProjectKind::User => format!("/users/{}/projects/{}", user.username, project_name),
+        ProjectKind::Organization(org_name) => {
+            format!("/orgs/{}/projects/{}", org_name, project_name)
+        }
+    };
     let frontend_url = context
         .get_frontend_endpoint()
-        .join(&format!("/{owner_name}/{project_name}"))?;
+        .join(&url_path)
+        .expect("Should be able to construct frontend URL");
 
     terminal.finalize(&format!(
         "Project initialized successfully! You can check out your project at {}",
@@ -104,12 +117,12 @@ fn prompt_owner_name(user_name: &str, client: &Client) -> anyhow::Result<Project
         .map_err(anyhow::Error::from)
 }
 
-pub fn prompt_project_name(context: &CliContext) -> anyhow::Result<String> {
+pub fn prompt_project_name(project: &ProjectContext) -> anyhow::Result<String> {
     let input = cliclack::input(format!(
         "Enter the project name (default: {}) ",
-        console::style(&context.metadata().user_crate_name).bold()
+        console::style(&project.user_crate_name).bold()
     ))
-    .placeholder(&context.metadata().user_crate_name)
+    .placeholder(&project.user_crate_name)
     .required(false)
     .validate(|input: &String| {
         if input.is_empty()
@@ -125,7 +138,7 @@ pub fn prompt_project_name(context: &CliContext) -> anyhow::Result<String> {
     .interact::<String>()?;
 
     let input = if input.is_empty() {
-        context.metadata().user_crate_name.clone()
+        project.user_crate_name.clone()
     } else {
         input
     };
