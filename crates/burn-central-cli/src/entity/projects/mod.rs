@@ -42,6 +42,13 @@ impl ProjectContext {
         let manifest_document =
             toml::de::from_str::<toml::Value>(&toml_str).expect("Cargo.toml should be valid");
 
+        if manifest_document.get("workspace").is_some() {
+            anyhow::bail!(
+                "Found a workspace manifest at '{}', but expected a crate manifest.",
+                manifest_path.display()
+            );
+        }
+
         let user_crate_name = manifest_document["package"]["name"]
             .as_str()
             .expect("Package name should exist")
@@ -61,6 +68,29 @@ impl ProjectContext {
             .manifest_path(manifest_path)
             .exec()
             .with_context(|| "Failed to load cargo metadata")?;
+
+        let package = metadata
+            .packages
+            .iter()
+            .find(|pkg| pkg.name.to_string() == user_crate_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Failed to find package '{}' in cargo metadata",
+                    user_crate_name
+                )
+            })?;
+
+        // ensure that the package has a lib target
+        package
+            .targets
+            .iter()
+            .find(|target| target.kind.contains(&cargo_metadata::TargetKind::Lib))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Package '{}' does not have a library target",
+                    user_crate_name
+                )
+            })?;
 
         let project = burn_dir
             .load_project()
