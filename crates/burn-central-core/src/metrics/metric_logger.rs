@@ -1,15 +1,20 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use burn::train::logger::MetricLogger;
-use burn::train::metric::store::Split;
-use burn::train::metric::{MetricAttributes, MetricEntry, NumericEntry};
+use burn::train::metric::store::{EpochSummary, Split};
+use burn::train::metric::{
+    MetricAttributes, MetricDefinition, MetricEntry, MetricId, NumericEntry,
+};
+use burn_central_client::websocket::MetricLog;
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 
 /// The remote metric logger, used to send metric logs to Burn Central.
 pub struct RemoteMetricLogger {
     experiment_handle: ExperimentRunHandle,
-    iterations: HashMap<String, usize>,
+    metric_definitions: HashMap<MetricId, MetricDefinition>,
+    iteration_count: usize,
 }
 
 impl RemoteMetricLogger {
@@ -17,37 +22,54 @@ impl RemoteMetricLogger {
     pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),
-            iterations: HashMap::new(),
+            metric_definitions: HashMap::default(),
+            iteration_count: 0,
         }
+    }
+
+    fn get_logs_from_entries(&self, entries: &Vec<MetricEntry>) -> Vec<MetricLog> {
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let name = &self.metric_definitions.get(&entry.metric_id).unwrap().name;
+                let numeric_entry: NumericEntry =
+                    match NumericEntry::deserialize(&entry.serialized_entry.serialized) {
+                        Ok(e) => e,
+                        Err(_) => return None,
+                    };
+                let value = match numeric_entry {
+                    NumericEntry::Value(v) => v,
+                    NumericEntry::Aggregated {
+                        aggregated_value, ..
+                    } => aggregated_value,
+                };
+                Some(MetricLog::new(name.to_string(), value))
+            })
+            .collect()
     }
 }
 
 impl MetricLogger for RemoteMetricLogger {
-    fn log(&mut self, item: &MetricEntry, epoch: usize, split: Split) {
-        let key = &item.name;
-        let value = &item.serialize;
-        // deserialize
-        let numeric_entry: NumericEntry = match NumericEntry::deserialize(value) {
-            Ok(v) => v,
-            Err(_) => return,
+    fn log(
+        &mut self,
+        items: Vec<MetricEntry>,
+        epoch: usize,
+        split: Split,
+        _tag: Option<Arc<String>>,
+    ) {
+        self.iteration_count += 1;
+        let item_logs: Vec<MetricLog> = self.get_logs_from_entries(&items);
+        if item_logs.is_empty() {
+            return;
         };
-
-        let iteration = self.iterations.entry(key.to_string()).or_insert(0);
 
         // send to server
         self.experiment_handle.log_metric(
-            key.to_string(),
             epoch,
-            *iteration,
-            match numeric_entry {
-                NumericEntry::Value(v) => v,
-                NumericEntry::Aggregated { sum: v, .. } => v,
-            },
             split.to_string(),
+            self.iteration_count,
+            item_logs,
         );
-
-        // todo: this is an incorrect way to get the iteration, ideally, the learner would provide this on every log call.
-        *iteration += 1;
     }
 
     /// Read the logs for an epoch.
@@ -60,7 +82,10 @@ impl MetricLogger for RemoteMetricLogger {
         Ok(vec![]) // Not implemented
     }
 
-    fn log_metric_definition(&self, definition: burn::train::metric::MetricDefinition) {
+    fn log_metric_definition(&mut self, definition: burn::train::metric::MetricDefinition) {
+        self.metric_definitions
+            .insert(definition.metric_id.clone(), definition.clone());
+
         let (unit, higher_is_better) = match &definition.attributes {
             MetricAttributes::Numeric(attr) => (attr.unit.clone(), attr.higher_is_better),
             MetricAttributes::None => return,
@@ -71,6 +96,22 @@ impl MetricLogger for RemoteMetricLogger {
             definition.description,
             unit,
             higher_is_better,
+        ) {
+            Ok(_) => (),
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    fn log_epoch_summary(&mut self, summary: EpochSummary) {
+        let best_metric_values = self.get_logs_from_entries(&summary.best_metric_values);
+        if best_metric_values.is_empty() {
+            return;
+        };
+
+        match self.experiment_handle.log_epoch_summary(
+            summary.epoch_number,
+            summary.split.to_string(),
+            best_metric_values,
         ) {
             Ok(_) => (),
             Err(e) => panic!("{e}"),
