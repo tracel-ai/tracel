@@ -12,10 +12,10 @@ pub mod macros {
     pub use burn_central_cli_macros::register;
 }
 
-/// Burn Central CLI
-pub mod cli {
-    pub use burn_central_cli::*;
-}
+// /// Burn Central CLI
+// pub mod cli {
+//     pub use burn_central_cli::*;
+// }
 
 /// Burn Central Runtime
 pub mod runtime {

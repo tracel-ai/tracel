@@ -1,94 +1,49 @@
 use burn_central_client::request::RegisteredFunctionRequest;
-pub use inventory;
 use quote::ToTokens;
 
-#[derive(Clone, Debug)]
-pub struct FunctionMetadata {
-    pub mod_path: &'static str,
-    pub fn_name: &'static str,
-    pub builder_fn_name: &'static str,
-    pub routine_name: &'static str,
-    pub proc_type: &'static str,
-    pub token_stream: &'static [u8],
-}
+use crate::tools::function_discovery::FunctionMetadata;
 
 impl From<FunctionMetadata> for RegisteredFunctionRequest {
     fn from(val: FunctionMetadata) -> Self {
-        let itemfn = syn_serde::json::from_slice::<syn::ItemFn>(val.token_stream)
-            .expect("Should be able to parse token stream.");
-        let syn_tree: syn::File =
-            syn::parse2(itemfn.into_token_stream()).expect("Should be able to parse token stream.");
-        let code_str = prettyplease::unparse(&syn_tree);
-        RegisteredFunctionRequest {
-            mod_path: val.mod_path.to_string(),
-            fn_name: val.fn_name.to_string(),
-            proc_type: val.proc_type.to_string(),
-            code: code_str,
-            routine: val.routine_name.to_string(),
-        }
-    }
-}
-
-pub type LazyValue<T> = once_cell::sync::Lazy<T>;
-pub struct Plugin<T: 'static>(pub &'static LazyValue<T>);
-
-inventory::collect!(Plugin<FunctionMetadata>);
-
-pub const fn make_static_lazy<T>(init: fn() -> T) -> LazyValue<T> {
-    once_cell::sync::Lazy::new(init)
-}
-
-// macro that generates a flag with a given type and arbitrary parameters and submits it to the inventory
-#[macro_export]
-macro_rules! register_functions {
-    ($type:ty, $init:expr) => {
-        const _: () = {
-            #[allow(non_upper_case_globals)]
-            static FLAG: $crate::tools::functions_registry::LazyValue<$type> =
-                $crate::tools::functions_registry::make_static_lazy(|| $init);
-
-            $crate::tools::functions_registry::inventory::submit!(
-                $crate::tools::functions_registry::Plugin(&FLAG)
-            );
+        let code_str = if val.token_stream.is_empty() {
+            // If no token stream is available, create a placeholder function
+            format!(
+                "fn {}() {{\n    // Function implementation not available\n}}",
+                val.fn_name
+            )
+        } else {
+            match syn_serde::json::from_slice::<syn::ItemFn>(&val.token_stream) {
+                Ok(itemfn) => match syn::parse2(itemfn.into_token_stream()) {
+                    Ok(syn_tree) => prettyplease::unparse(&syn_tree),
+                    Err(_) => format!(
+                        "fn {}() {{\n    // Failed to parse token stream\n}}",
+                        val.fn_name
+                    ),
+                },
+                Err(_) => format!(
+                    "fn {}() {{\n    // Failed to deserialize token stream\n}}",
+                    val.fn_name
+                ),
+            }
         };
-    };
-}
 
-/// Need it for the macro to work
-impl FunctionMetadata {
-    pub fn new(
-        mod_path: &'static str,
-        fn_name: &'static str,
-        builder_fn_name: &'static str,
-        routine_name: &'static str,
-        proc_type: &'static str,
-        token_stream: &'static [u8],
-    ) -> Self {
-        Self {
-            mod_path,
-            fn_name,
-            builder_fn_name,
-            routine_name,
-            proc_type,
-            token_stream,
+        RegisteredFunctionRequest {
+            mod_path: val.mod_path,
+            fn_name: val.fn_name,
+            proc_type: val.proc_type,
+            code: code_str,
+            routine: val.routine_name,
         }
     }
 }
 
 pub struct FunctionRegistry {
-    functions: LazyValue<Vec<FunctionMetadata>>,
+    functions: Vec<FunctionMetadata>,
 }
 
 impl FunctionRegistry {
-    pub fn new() -> Self {
-        Self {
-            functions: LazyValue::new(|| {
-                inventory::iter::<Plugin<FunctionMetadata>>
-                    .into_iter()
-                    .map(|plugin| (*plugin.0).to_owned())
-                    .collect()
-            }),
-        }
+    pub fn new(functions: Vec<FunctionMetadata>) -> Self {
+        Self { functions }
     }
 
     pub fn get_function_references(&self) -> &[FunctionMetadata] {
@@ -106,13 +61,7 @@ impl FunctionRegistry {
         self.functions
             .iter()
             .filter(|function| function.proc_type == "training")
-            .map(|function| function.routine_name.to_string())
+            .map(|function| function.routine_name.clone())
             .collect()
-    }
-}
-
-impl Default for FunctionRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }
