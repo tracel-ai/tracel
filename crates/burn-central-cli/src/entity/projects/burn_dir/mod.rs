@@ -50,8 +50,16 @@ impl BurnDir {
         cache.save(&self.root)
     }
 
-    pub fn load_project(&self) -> io::Result<BurnCentralProject> {
+    pub fn load_project(&self) -> io::Result<Option<BurnCentralProject>> {
         BurnCentralProject::load(&self.root)
+            .map(Some)
+            .or_else(|err| {
+                if err.kind() == io::ErrorKind::NotFound {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            })
     }
 
     pub fn save_project(&self, project: &BurnCentralProject) -> io::Result<()> {

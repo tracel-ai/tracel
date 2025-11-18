@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::commands::init::ensure_git_repo_clean;
 use crate::context::CliContext;
+use crate::entity::projects::ProjectContext;
 use crate::print_success;
 use crate::tools::cargo::package::{PackagedCrateData, package};
 use crate::tools::git::is_repo_dirty;
@@ -17,19 +18,27 @@ pub struct PackageArgs {
 }
 
 pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
-    let version = package_sequence(&context, args.allow_dirty)?;
+    let project = ProjectContext::discover(context.environment())?;
+    let version = package_sequence(&context, &project, args.allow_dirty)?;
     print_success!("New project version uploaded: {version}");
 
     Ok(())
 }
 
-pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Result<String> {
+pub fn package_sequence(
+    context: &CliContext,
+    project: &ProjectContext,
+    allow_dirty: bool,
+) -> anyhow::Result<String> {
     if is_repo_dirty()? && !allow_dirty {
         ensure_git_repo_clean(context.terminal())?;
     }
 
     let client = context.create_client()?;
-    let package = package(&context.get_artifacts_dir_path(), context.package_name())?;
+    let package = package(
+        &project.burn_dir().artifacts_dir(),
+        project.user_crate_name.as_str(),
+    )?;
 
     let registered_functions = context.function_registry.get_registered_functions();
 
@@ -37,12 +46,14 @@ pub fn package_sequence(context: &CliContext, allow_dirty: bool) -> anyhow::Resu
         functions: registered_functions,
     };
 
-    let project_path = context.get_project_path()?;
+    let bc_project = project
+        .get_project()
+        .context("No Burn Central project linked to this repository")?;
     let digest = upload_new_project_version(
         &client,
-        project_path.owner_name(),
-        project_path.project_name(),
-        context.package_name(),
+        &bc_project.owner,
+        &bc_project.name,
+        project.user_crate_name.as_str(),
         code_metadata,
         package.crate_metadata,
         &package.digest,

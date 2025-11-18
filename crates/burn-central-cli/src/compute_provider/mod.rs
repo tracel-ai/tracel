@@ -5,7 +5,7 @@ use crate::{
     context::CliContext,
     entity::projects::ProjectContext,
     generation::backend::BackendType,
-    tools::{cargo, functions_registry::FunctionRegistry, terminal::Terminal},
+    tools::{functions_registry::FunctionRegistry, terminal::Terminal},
 };
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -41,22 +41,20 @@ pub struct ComputeProviderTrainingArgs {
 }
 
 pub fn compute_provider_main() {
-    let manifest_path = cargo::try_locate_manifest().expect("Should be able to locate manifest.");
-
     let config = Config {
         api_endpoint: "https://heat.tracel.ai".to_string(),
     };
 
     let terminal = Terminal {};
-    let crate_context = ProjectContext::load_from_manifest(&manifest_path, Environment::Production);
     let function_registry = FunctionRegistry::new();
     let mut context = CliContext::new(
         terminal,
         &config,
-        crate_context,
         function_registry,
         Environment::Production,
     );
+    let project = ProjectContext::discover(context.environment())
+        .expect("Should be able to discover project context.");
 
     let arg = get_arg();
     match get_procedure_type(&arg) {
@@ -69,7 +67,7 @@ pub fn compute_provider_main() {
             };
             context.set_config(&config);
 
-            run_training(args, &context);
+            run_training(args, &context, &project);
         }
         _ => {
             panic!("Only training is supported for now")
@@ -90,7 +88,7 @@ fn get_procedure_type(arg: &str) -> ProcedureType {
     proc_type.procedure_type
 }
 
-fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext) {
+fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext, project: &ProjectContext) {
     let backend = args.backend.unwrap_or_default();
 
     local_run_internal(
@@ -103,6 +101,7 @@ fn run_training(args: ComputeProviderTrainingArgs, context: &CliContext) {
         args.digest,
         args.key,
         context,
+        project,
     )
     .inspect_err(|err| {
         context

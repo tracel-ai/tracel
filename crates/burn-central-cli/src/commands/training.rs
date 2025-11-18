@@ -4,8 +4,10 @@ use crate::compute_provider::ComputeProviderTrainingArgs;
 use crate::compute_provider::ProcedureType;
 use crate::compute_provider::ProcedureTypeArg;
 use crate::entity::experiments::config::ExperimentConfig;
+use crate::entity::projects::ProjectContext;
 use crate::entity::projects::burn_dir::BurnDir;
 use crate::entity::projects::burn_dir::cache::CacheState;
+use crate::tools::cargo;
 use anyhow::Context;
 use clap::Parser;
 use clap::ValueHint;
@@ -96,14 +98,16 @@ impl Default for TrainingArgs {
 }
 
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+    let project = ProjectContext::discover(context.environment())?;
+
     match (&args.compute_provider, &args.code_version) {
-        (Some(_), _) => remote_run(args, context),
-        (None, None) => local_run(args, context),
+        (Some(_), _) => remote_run(args, &context, &project),
+        (None, None) => local_run(args, &context, &project),
         (None, Some(_)) => {
             print_warn!(
                 "Code version is ignored when executing locally (i.e. no compute provider is defined with --compute-provider argument). The current code will always be packaged and used."
             );
-            local_run(args, context)
+            local_run(args, &context, &project)
         }
     }
 }
@@ -121,11 +125,16 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
         .map_err(anyhow::Error::from)
 }
 
-fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+fn remote_run(
+    args: TrainingArgs,
+    context: &CliContext,
+    project_ctx: &ProjectContext,
+) -> anyhow::Result<()> {
     context.terminal().command_title("Remote experiment run");
-    let namespace = context.get_project_path()?.owner_name;
-    let project = context.get_project_path()?.project_name;
-    let function = get_function_to_run(args.function, &context)?;
+    let bc_project = project_ctx.get_project().context("No project loaded.")?;
+    let namespace = bc_project.owner.clone();
+    let project = bc_project.name.clone();
+    let function = get_function_to_run(args.function, context)?;
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
@@ -137,7 +146,7 @@ fn remote_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         }
         None => {
             print_info!("Packaging project and using this new code version");
-            package_sequence(&context, false)?
+            package_sequence(context, project_ctx, false)?
         }
     };
 
@@ -189,6 +198,7 @@ pub fn local_run_internal(
     code_version_digest: String,
     key: String,
     context: &CliContext,
+    project_ctx: &ProjectContext,
 ) -> anyhow::Result<()> {
     let kind = RunKind::Training;
     let config = ExperimentConfig::load_config(config, overrides);
@@ -201,7 +211,7 @@ pub fn local_run_internal(
                 backend,
                 code_version_digest,
             },
-            context,
+            project_ctx,
         )?;
         execute_run_command(
             RunCommand {
@@ -216,6 +226,7 @@ pub fn local_run_internal(
                 },
             },
             context,
+            project_ctx,
         )
     };
 
@@ -238,17 +249,22 @@ pub fn local_run_internal(
     Ok(())
 }
 
-fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
+fn local_run(
+    args: TrainingArgs,
+    context: &CliContext,
+    project: &ProjectContext,
+) -> anyhow::Result<()> {
     context.terminal().command_title("Local experiment run");
     let backend = args.backend.clone().unwrap_or_default();
-    let namespace = context.get_project_path()?.owner_name;
-    let project = context.get_project_path()?.project_name;
-    let function = get_function_to_run(args.function, &context)?;
+    let bc_project = project.get_project().context("No project loaded")?;
+    let namespace = bc_project.owner.clone();
+    let project_name = bc_project.name.clone();
+    let function = get_function_to_run(args.function, context)?;
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
         .to_owned();
-    let code_version_digest = package_sequence(&context, false)?;
+    let code_version_digest = package_sequence(context, project, false)?;
 
     local_run_internal(
         backend,
@@ -256,23 +272,27 @@ fn local_run(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
         args.overrides,
         function,
         namespace,
-        project,
+        project_name,
         code_version_digest,
         key,
-        &context,
+        context,
+        project,
     )?;
 
     Ok(())
 }
 
-fn execute_build_command(build_command: BuildCommand, context: &CliContext) -> anyhow::Result<()> {
+fn execute_build_command(
+    build_command: BuildCommand,
+    project: &ProjectContext,
+) -> anyhow::Result<()> {
     print_info!(
         "Building experiment project with command: {:?}",
         build_command
     );
 
-    generate_crate(context, &build_command)?;
-    let build_status = make_build_command(&build_command, context)?.status();
+    generate_crate(project, &build_command)?;
+    let build_status = make_build_command(&build_command, project)?.status();
 
     match build_status {
         Err(e) => {
@@ -292,10 +312,10 @@ fn execute_build_command(build_command: BuildCommand, context: &CliContext) -> a
         }
     }
 
-    let src_exe_path = get_target_exe_path(context);
-    let target_bin_name = bin_name_from_run_id(context, &build_command.run_id);
+    let src_exe_path = get_target_exe_path(project);
+    let target_bin_name = bin_name_from_run_id(project, &build_command.run_id);
 
-    let burn_dir = context.burn_dir();
+    let burn_dir = project.burn_dir();
     let mut cache = burn_dir.load_cache().context("Failed to load cache")?;
 
     copy_binary(
@@ -311,10 +331,14 @@ fn execute_build_command(build_command: BuildCommand, context: &CliContext) -> a
     Ok(())
 }
 
-fn execute_run_command(run_command: RunCommand, context: &CliContext) -> anyhow::Result<()> {
+fn execute_run_command(
+    run_command: RunCommand,
+    context: &CliContext,
+    project: &ProjectContext,
+) -> anyhow::Result<()> {
     print_info!("Running experiment with command: {:?}", run_command);
 
-    let mut command = make_run_command(&run_command, context);
+    let mut command = make_run_command(&run_command, context, project);
 
     let run_status = command.status();
     match run_status {
@@ -355,46 +379,49 @@ fn copy_binary(
     Ok(())
 }
 
-fn bin_name_from_run_id(context: &CliContext, run_id: &str) -> String {
+fn bin_name_from_run_id(project: &ProjectContext, run_id: &str) -> String {
     format!(
         "{}-{}{}",
-        &context.generated_crate_name(),
+        &project.generated_crate_name,
         run_id,
         std::env::consts::EXE_SUFFIX
     )
 }
 
-fn get_target_exe_path(context: &CliContext) -> PathBuf {
-    let crate_name = &context.generated_crate_name();
-    let target_path = context
+fn get_target_exe_path(project: &ProjectContext) -> PathBuf {
+    let crate_name = &project.generated_crate_name;
+    let target_path = project
         .burn_dir()
         .crates_dir()
         .join(crate_name)
         .join("target");
 
-    target_path
-        .join(&context.metadata().build_profile)
-        .join(format!("{}{}", crate_name, std::env::consts::EXE_SUFFIX))
+    target_path.join(&project.build_profile).join(format!(
+        "{}{}",
+        crate_name,
+        std::env::consts::EXE_SUFFIX
+    ))
 }
 
-fn generate_crate(context: &CliContext, build_command: &BuildCommand) -> anyhow::Result<()> {
+fn generate_crate(project: &ProjectContext, build_command: &BuildCommand) -> anyhow::Result<()> {
     let generated_crate = crate::generation::crate_gen::create_crate(
-        context.generated_crate_name(),
-        &context.metadata().user_crate_name,
-        context.metadata().user_crate_dir.to_str().unwrap(),
+        &project.generated_crate_name,
+        &project.user_crate_name,
+        project.user_crate_dir.to_str().unwrap(),
         vec![&build_command.backend.to_string()],
         &build_command.backend,
     );
 
-    let burn_dir = context.burn_dir();
-    let mut cache = burn_dir.load_cache()?;
-    generated_crate.write_to_burn_dir(burn_dir, &mut cache)?;
-    burn_dir.save_cache(&cache)?;
+    project.save_crate(generated_crate)?;
 
     Ok(())
 }
 
-fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process::Command {
+fn make_run_command(
+    cmd_desc: &RunCommand,
+    context: &CliContext,
+    project_ctx: &ProjectContext,
+) -> std::process::Command {
     let RunParams {
         kind,
         function,
@@ -407,12 +434,12 @@ fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process
     let kind_str = match kind {
         RunKind::Training => "train",
     };
-    let bin_name = bin_name_from_run_id(context, &cmd_desc.run_id);
-    let bin_exe_path = context.burn_dir().bin_dir().join(&bin_name);
+    let bin_name = bin_name_from_run_id(project_ctx, &cmd_desc.run_id);
+    let bin_exe_path = project_ctx.burn_dir().bin_dir().join(&bin_name);
     let mut command = std::process::Command::new(bin_exe_path);
     command
-        .current_dir(context.cwd())
-        .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
+        .current_dir(project_ctx.cwd())
+        .env("BURN_PROJECT_DIR", &project_ctx.user_crate_dir)
         .args(["--namespace", namespace])
         .args(["--project", project])
         .args(["--api-key", key])
@@ -424,37 +451,37 @@ fn make_run_command(cmd_desc: &RunCommand, context: &CliContext) -> std::process
 
 fn make_build_command(
     cmd_desc: &BuildCommand,
-    context: &CliContext,
+    project: &ProjectContext,
 ) -> anyhow::Result<std::process::Command> {
-    let profile_arg = match context.metadata().build_profile.as_str() {
+    let profile_arg = match project.build_profile.as_str() {
         "release" => "--profile=release",
         "debug" => "--profile=dev",
         _ => {
             return Err(anyhow::anyhow!(format!(
                 "Invalid profile: {}",
-                context.metadata().build_profile
+                project.build_profile
             )));
         }
     };
 
     let new_target_dir: Option<String> = std::env::var("BURN_TARGET_DIR").ok();
 
-    let mut build_command = context.cargo_cmd();
+    let mut build_command = cargo::command();
     build_command
         .arg("build")
         .arg(profile_arg)
         .arg("--no-default-features")
-        .env("BURN_PROJECT_DIR", &context.metadata().user_crate_dir)
+        .env("BURN_PROJECT_DIR", &project.user_crate_dir)
         .env(
             "BURN_CENTRAL_CODE_VERSION",
             cmd_desc.code_version_digest.as_str(),
         )
         .args([
             "--manifest-path",
-            context
+            project
                 .burn_dir()
                 .crates_dir()
-                .join(context.generated_crate_name())
+                .join(&project.generated_crate_name)
                 .join("Cargo.toml")
                 .to_str()
                 .unwrap(),

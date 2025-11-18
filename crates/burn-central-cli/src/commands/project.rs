@@ -1,16 +1,10 @@
 use crate::commands::login::get_client_and_login_if_needed;
 use crate::context::CliContext;
+use crate::entity::projects::ProjectContext;
 
-pub fn handle_command(mut context: CliContext) {
+pub fn handle_command(mut context: CliContext) -> anyhow::Result<()> {
+    let project = ProjectContext::discover(context.environment())?;
     context.terminal().command_title("Project Information");
-
-    // Load the local project metadata
-    if context.load_project().is_err() {
-        context.terminal().cancel_finalize(
-            "Project is not configured. Please run 'cargo run -- init' to link a project.",
-        );
-        return;
-    }
 
     let client = match get_client_and_login_if_needed(&mut context) {
         Ok(client) => client,
@@ -18,23 +12,23 @@ pub fn handle_command(mut context: CliContext) {
             context.terminal().cancel_finalize(
                 "Failed to connect to the server. Please run 'cargo run -- login' to authenticate.",
             );
-            return;
+            return Ok(());
         }
     };
 
-    // Get the project path (owner and name) from local metadata
-    let project_path = match context.get_project_path() {
-        Ok(path) => path,
-        Err(_) => {
+    // Get the local project metadata
+    let bc_project = match project.get_project() {
+        Some(proj) => proj,
+        None => {
             context.terminal().cancel_finalize(
                 "Project is not configured. Please run 'cargo run -- init' to link a project.",
             );
-            return;
+            anyhow::bail!("Project not configured");
         }
     };
 
     // Fetch project information from the server
-    match client.get_project(project_path.owner_name(), project_path.project_name()) {
+    match client.get_project(&bc_project.owner, &bc_project.name) {
         Ok(project) => {
             context
                 .terminal()
@@ -55,8 +49,7 @@ pub fn handle_command(mut context: CliContext) {
         Err(e) if e.is_not_found() => {
             context.terminal().cancel_finalize(&format!(
                 "Project {}/{} not found on the server.",
-                project_path.owner_name(),
-                project_path.project_name()
+                &bc_project.owner, &bc_project.name
             ));
         }
         Err(e) => {
@@ -65,4 +58,6 @@ pub fn handle_command(mut context: CliContext) {
                 .cancel_finalize(&format!("Failed to retrieve project information: {}", e));
         }
     };
+
+    Ok(())
 }

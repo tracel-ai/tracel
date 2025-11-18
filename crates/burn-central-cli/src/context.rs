@@ -1,14 +1,8 @@
 use crate::app_config::{AppConfig, Credentials, Environment};
 use crate::config::Config;
-use crate::entity::projects::ProjectContext;
-use crate::entity::projects::burn_dir::BurnDir;
-use crate::entity::projects::project_path::ProjectPath;
-use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
-use anyhow::Context;
 use burn_central_client::{BurnCentralCredentials, Client};
-use std::path::PathBuf;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
@@ -24,7 +18,6 @@ pub struct CliContext {
     terminal: Terminal,
     api_endpoint: url::Url,
     creds: Option<Credentials>,
-    project_metadata: ProjectContext,
     pub function_registry: FunctionRegistry,
     environment: Environment,
 }
@@ -33,7 +26,6 @@ impl CliContext {
     pub fn new(
         terminal: Terminal,
         config: &Config,
-        project_metadata: ProjectContext,
         function_registry: FunctionRegistry,
         environment: Environment,
     ) -> Self {
@@ -44,7 +36,6 @@ impl CliContext {
                 .parse::<url::Url>()
                 .expect("API endpoint should be valid"),
             creds: None,
-            project_metadata,
             function_registry,
             environment,
         }
@@ -72,18 +63,6 @@ impl CliContext {
         self.creds.as_ref().map(|creds| creds.api_key.as_str())
     }
 
-    pub fn get_project_path(&self) -> anyhow::Result<ProjectPath> {
-        let project_info = self
-            .project_metadata
-            .project
-            .as_ref()
-            .context("Could not load project metadata")?;
-        Ok(ProjectPath::new(
-            project_info.owner.clone(),
-            project_info.name.clone(),
-        ))
-    }
-
     pub fn create_client(&self) -> Result<Client, ClientCreationError> {
         let api_key = self
             .get_api_key()
@@ -99,14 +78,6 @@ impl CliContext {
                 ClientCreationError::ServerConnectionError(e.to_string())
             }
         })
-    }
-
-    pub fn package_name(&self) -> &str {
-        self.project_metadata.user_crate_name.as_str()
-    }
-
-    pub fn generated_crate_name(&self) -> &str {
-        &self.project_metadata.generated_crate_name
     }
 
     pub fn set_config(&mut self, config: &Config) {
@@ -133,44 +104,6 @@ impl CliContext {
             .set_scheme(self.api_endpoint.scheme())
             .expect("Scheme should be valid");
         host_url
-    }
-
-    pub fn cargo_cmd(&self) -> std::process::Command {
-        let mut cmd = cargo::command();
-        cmd.current_dir(self.cwd());
-        cmd
-    }
-
-    pub fn get_artifacts_dir_path(&self) -> PathBuf {
-        self.project_metadata.burn_dir.artifacts_dir()
-    }
-
-    pub fn metadata(&self) -> &ProjectContext {
-        &self.project_metadata
-    }
-
-    pub fn burn_dir(&self) -> &BurnDir {
-        &self.project_metadata.burn_dir
-    }
-
-    pub fn load_project(&mut self) -> anyhow::Result<()> {
-        self.project_metadata.load_project()
-    }
-
-    pub fn cwd(&self) -> PathBuf {
-        self.project_metadata.user_crate_dir.clone()
-    }
-
-    pub fn get_workspace_root(&self) -> anyhow::Result<PathBuf> {
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .no_deps()
-            .current_dir(self.cwd())
-            .exec();
-
-        match metadata {
-            Ok(meta) => Ok(meta.workspace_root.into()),
-            Err(e) => Err(anyhow::anyhow!("Unexpected error: {}", e)),
-        }
     }
 
     pub fn terminal(&self) -> &Terminal {

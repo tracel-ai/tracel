@@ -1,12 +1,10 @@
 use crate::app_config::Environment;
-use crate::entity::projects::ProjectContext;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
 use crate::commands::default_command;
 use crate::config::Config;
 use crate::context::CliContext;
-use crate::tools::cargo;
 use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
 
@@ -43,8 +41,6 @@ pub enum Commands {
 pub fn cli_main() {
     let args = CliArgs::parse();
 
-    let manifest_path = cargo::try_locate_manifest().expect("Failed to locate manifest");
-
     let environment = Environment::from_dev_flag(args.dev);
 
     let config = Config {
@@ -62,16 +58,8 @@ pub fn cli_main() {
             .print_warning("Running in development mode - using local server and dev credentials");
     }
 
-    let crate_context = ProjectContext::load_from_manifest(&manifest_path, environment);
     let function_registry = FunctionRegistry::new();
-    let context = CliContext::new(
-        terminal.clone(),
-        &config,
-        crate_context,
-        function_registry,
-        environment,
-    )
-    .init();
+    let context = CliContext::new(terminal.clone(), &config, function_registry, environment).init();
 
     let cli_res = match args.command {
         Some(command) => handle_command(command, context),
@@ -83,29 +71,14 @@ pub fn cli_main() {
     }
 }
 
-fn handle_command(command: Commands, mut context: CliContext) -> anyhow::Result<()> {
-    if matches!(command, Commands::Train(..) | Commands::Package(..)) {
-        if let Err(e) = context.load_project() {
-            return Err(anyhow::anyhow!("Failed to load project metadata: {}.", e));
-        }
-    }
-
+fn handle_command(command: Commands, context: CliContext) -> anyhow::Result<()> {
     match command {
         Commands::Train(run_args) => commands::training::handle_command(run_args, context),
         Commands::Package(package_args) => commands::package::handle_command(package_args, context),
         Commands::Login(login_args) => commands::login::handle_command(login_args, context),
         Commands::Init(init_args) => commands::init::handle_command(init_args, context),
-        Commands::Unlink => {
-            commands::unlink::handle_command(context);
-            Ok(())
-        }
-        Commands::Me => {
-            commands::me::handle_command(context);
-            Ok(())
-        }
-        Commands::Project => {
-            commands::project::handle_command(context);
-            Ok(())
-        }
+        Commands::Unlink => commands::unlink::handle_command(context),
+        Commands::Me => commands::me::handle_command(context),
+        Commands::Project => commands::project::handle_command(context),
     }
 }
