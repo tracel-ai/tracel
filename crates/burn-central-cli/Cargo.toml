@@ -11,6 +11,14 @@ repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-
 version.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "burn"
+path = "src/bin/burn.rs"
+
+[[bin]]
+name = "burn-function-discovery"
+path = "src/bin/burn-function-discovery.rs"
+
 [dependencies]
 burn-central-client = { workspace = true }
 
@@ -31,10 +39,9 @@ derive-new = { workspace = true }
 regex = { workspace = true }
 
 toml_edit = "0.22.26"
-inventory = "0.3"
 prettyplease = "0.2.33"
 url = "2.5.4"
-cargo_metadata = "0.20.0"
+cargo_metadata = { version = "0.20.0", features = ["builder"] }
 cargo-util-schemas = "0.8.1"
 flate2 = { version = "1.1.1", default-features = false, features = ["zlib"] }
 tar = { version = "0.4.44", default-features = false }
@@ -51,3 +58,14 @@ directories = "6"
 console = "0.15.8"
 cliclack = "0.3.6"
 chrono = "0.4.41"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[[example]]
+name = "function_registration_example"
+path = "examples/function_registration_example.rs"
+
+[features]
+default = []
+build-tools = []

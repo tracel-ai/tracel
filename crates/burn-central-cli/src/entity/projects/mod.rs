@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -6,6 +7,8 @@ use crate::app_config::Environment;
 use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
 use crate::generation::GeneratedCrate;
 use crate::tools::cargo;
+use crate::tools::function_discovery::{FunctionDiscovery, FunctionMetadata};
+use crate::tools::functions_registry::FunctionRegistry;
 
 pub mod burn_dir;
 pub mod project_path;
@@ -18,6 +21,7 @@ pub struct ProjectContext {
     pub burn_dir: BurnDir,
     pub project: Option<BurnCentralProject>,
     pub metadata: cargo_metadata::Metadata,
+    function_registry: RefCell<Vec<FunctionMetadata>>,
 }
 
 impl ProjectContext {
@@ -42,6 +46,13 @@ impl ProjectContext {
         let manifest_document =
             toml::de::from_str::<toml::Value>(&toml_str).expect("Cargo.toml should be valid");
 
+        if manifest_document.get("package").is_none() {
+            anyhow::bail!(
+                "Cargo.toml at '{}' does not include a [package] section",
+                manifest_path.display()
+            );
+        }
+
         let user_crate_name = manifest_document["package"]["name"]
             .as_str()
             .expect("Package name should exist")
@@ -62,9 +73,34 @@ impl ProjectContext {
             .exec()
             .with_context(|| "Failed to load cargo metadata")?;
 
+        let package = metadata
+            .packages
+            .iter()
+            .find(|pkg| pkg.name.to_string() == user_crate_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Failed to find package '{}' in cargo metadata",
+                    user_crate_name
+                )
+            })?;
+
+        // ensure that the package has a lib target
+        package
+            .targets
+            .iter()
+            .find(|target| target.kind.contains(&cargo_metadata::TargetKind::Lib))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Package '{}' does not have a library target",
+                    user_crate_name
+                )
+            })?;
+
         let project = burn_dir
             .load_project()
             .with_context(|| "Failed to load project metadata from burn directory")?;
+
+        let function_registry = RefCell::new(Default::default());
 
         Ok(Self {
             user_crate_name,
@@ -74,6 +110,7 @@ impl ProjectContext {
             burn_dir,
             project,
             metadata,
+            function_registry,
         })
     }
 
@@ -114,5 +151,33 @@ impl ProjectContext {
 
     pub fn cwd(&self) -> &Path {
         &self.user_crate_dir
+    }
+
+    pub fn load_functions(&self) -> anyhow::Result<FunctionRegistry> {
+        let mut functions = self.function_registry.borrow_mut();
+        if functions.is_empty() {
+            let current_pkg = self.get_current_package();
+            let discovered_functions = FunctionDiscovery::new(&self.user_crate_dir)
+                .with_manifest_path(current_pkg.manifest_path.clone())
+                .with_target_dir(self.burn_dir.target_dir())
+                .discover_functions()
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to discover functions in crate '{}': {}",
+                        self.user_crate_name,
+                        e
+                    )
+                })?;
+            *functions = discovered_functions;
+        }
+        Ok(FunctionRegistry::new(functions.clone()))
+    }
+
+    pub fn get_current_package(&self) -> &cargo_metadata::Package {
+        self.metadata
+            .packages
+            .iter()
+            .find(|pkg| pkg.name.to_string() == self.user_crate_name)
+            .expect("Current package should be found in metadata")
     }
 }

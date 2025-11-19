@@ -1,15 +1,16 @@
 pub mod backend;
 mod cargo_toml;
 
-use crate::entity::projects::burn_dir::{BurnDir, cache::CacheState};
+use crate::{
+    entity::projects::burn_dir::{BurnDir, cache::CacheState},
+    tools::function_discovery::FunctionMetadata,
+};
 use quote::quote;
-use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 use crate::generation::{FileTree, crate_gen::cargo_toml::FeatureFlag};
 
 use super::backend::BackendType;
-use crate::tools::functions_registry::FunctionRegistry;
 use cargo_toml::{CargoToml, Dependency, QueryType};
 
 pub struct GeneratedCrate {
@@ -102,34 +103,19 @@ impl GeneratedCrate {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct MetadataDependency {
-    pub name: String,
-    pub source: Option<String>,
-    pub req: String,
-    pub kind: Option<String>,
-    pub rename: Option<String>,
-    pub optional: bool,
-    pub uses_default_features: bool,
-    pub features: Vec<String>,
-    pub target: Option<String>,
-    pub path: Option<String>,
-    pub registry: Option<String>,
-}
-
-fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
-    let version = package.req.clone();
+fn get_cargo_dependency(package: &cargo_metadata::Dependency) -> Dependency {
+    let version = package.req.to_string();
 
     let is_local = package.path.is_some();
     if is_local {
         Dependency::new_path(
-            package.name.clone(),
+            package.name.to_string(),
             version,
-            package.path.as_ref().unwrap().clone(),
+            package.path.as_ref().unwrap().to_string(),
             vec![],
         )
     } else {
-        let source = package.source.as_ref().unwrap();
+        let source = package.source.as_ref().unwrap().to_string();
         let source_kind = {
             if source.starts_with("git") {
                 "git"
@@ -184,43 +170,16 @@ fn get_cargo_dependency(package: &MetadataDependency) -> Dependency {
     }
 }
 
-fn find_required_dependencies(req_deps: Vec<&str>) -> Vec<Dependency> {
-    // TODO: Refactor to use cargo metadata crate instead of reading manually.
-    let manifest_cmd = std::process::Command::new("cargo")
-        .arg("metadata")
-        .arg("--no-deps")
-        .args(["--format-version", "1"])
-        .output()
-        .expect("Should be able to run cargo init.");
-
-    let manifest_str =
-        std::str::from_utf8(&manifest_cmd.stdout).expect("Should be able to parse stdout.");
-    let manifest_json: serde_json::Value =
-        serde_json::from_str(manifest_str).expect("Should be able to parse json.");
-    let packages_array = manifest_json["packages"]
-        .as_array()
-        .expect("Should be able to get workspace members.");
-    let our_package_name =
-        std::env::var("CARGO_PKG_NAME").expect("Should be able to get package name.");
-    let our_package = packages_array
+fn find_required_dependencies(
+    current_pkg: &cargo_metadata::Package,
+    req_deps: Vec<&str>,
+) -> Vec<Dependency> {
+    current_pkg
+        .dependencies
         .iter()
-        .find(|package| package["name"] == our_package_name)
-        .expect("Should be able to find our package.");
-    let our_package_dependencies = our_package["dependencies"]
-        .as_array()
-        .expect("Should be able to get dependencies.");
-
-    let req_deps_metadata: Vec<MetadataDependency> = our_package_dependencies
-        .iter()
-        .filter(|dep| {
-            req_deps.contains(&dep["name"].as_str().expect("Should be able to get name."))
-        })
-        .map(|dep| {
-            serde_json::from_value(dep.clone()).expect("Should be able to parse dep metadata.")
-        })
-        .collect();
-
-    req_deps_metadata.iter().map(get_cargo_dependency).collect()
+        .filter(|dep| req_deps.contains(&dep.name.as_str()))
+        .map(get_cargo_dependency)
+        .collect()
 }
 
 fn generate_builder_call(
@@ -236,20 +195,21 @@ fn generate_builder_call(
     }
 }
 
-fn generate_main_rs(user_crate_name: &str, main_backend: &BackendType) -> String {
-    let function_registry = FunctionRegistry::new();
-    let flags = function_registry.get_function_references();
-
+fn generate_main_rs(
+    user_crate_name: &str,
+    main_backend: &BackendType,
+    functions: &[FunctionMetadata],
+) -> String {
     let backend_types = backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, _autodiff_backend_type_name) = backend::get_backend_type_names();
     let backend_default_device = main_backend.default_device_stream();
 
     let builder_ident = syn::Ident::new("builder", proc_macro2::Span::call_site());
-    let builder_registration: Vec<proc_macro2::TokenStream> = flags
+    let builder_registration: Vec<proc_macro2::TokenStream> = functions
         .iter()
         .map(|flag| {
             let proc_call =
-                generate_builder_call(&builder_ident, flag.mod_path, flag.builder_fn_name);
+                generate_builder_call(&builder_ident, &flag.mod_path, &flag.builder_fn_name);
             quote! {
                 #proc_call
             }
@@ -323,6 +283,8 @@ pub fn create_crate(
     user_project_dir: &str,
     burn_features: Vec<&str>,
     backend: &BackendType,
+    functions: &[FunctionMetadata],
+    current_pkg: &cargo_metadata::Package,
 ) -> GeneratedCrate {
     // Create the generated crate package
     let mut generated_crate = GeneratedCrate::new(crate_name.to_string());
@@ -348,7 +310,7 @@ pub fn create_crate(
         None,
         vec![],
     ));
-    find_required_dependencies(vec!["burn-central", "burn"])
+    find_required_dependencies(current_pkg, vec!["burn-central", "burn"])
         .drain(..)
         .for_each(|mut dep| {
             if dep.name == "burn" {
@@ -362,7 +324,7 @@ pub fn create_crate(
     // Generate source files
     generated_crate.src_mut().insert(FileTree::new_file(
         "main.rs",
-        generate_main_rs(user_project_name, backend),
+        generate_main_rs(user_project_name, backend, functions),
     ));
 
     generated_crate

@@ -8,6 +8,7 @@ use crate::entity::projects::ProjectContext;
 use crate::entity::projects::burn_dir::BurnDir;
 use crate::entity::projects::burn_dir::cache::CacheState;
 use crate::tools::cargo;
+use crate::tools::function_discovery::FunctionMetadata;
 use anyhow::Context;
 use clap::Parser;
 use clap::ValueHint;
@@ -46,6 +47,7 @@ pub struct BuildCommand {
     pub run_id: String,
     pub backend: BackendType,
     pub code_version_digest: String,
+    pub functions: Vec<FunctionMetadata>,
 }
 
 fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
@@ -131,10 +133,13 @@ fn remote_run(
     project_ctx: &ProjectContext,
 ) -> anyhow::Result<()> {
     context.terminal().command_title("Remote experiment run");
+
+    preload_functions(context, project_ctx)?;
+
     let bc_project = project_ctx.get_project().context("No project loaded.")?;
     let namespace = bc_project.owner.clone();
     let project = bc_project.name.clone();
-    let function = get_function_to_run(args.function, context)?;
+    let function = get_function_to_run(args.function, project_ctx)?;
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
@@ -203,6 +208,10 @@ pub fn local_run_internal(
     let kind = RunKind::Training;
     let config = ExperimentConfig::load_config(config, overrides);
     let run_id = format!("{backend}");
+    let functions = project_ctx
+        .load_functions()?
+        .get_function_references()
+        .to_vec();
 
     let res = {
         execute_build_command(
@@ -210,6 +219,7 @@ pub fn local_run_internal(
                 run_id: run_id.clone(),
                 backend,
                 code_version_digest,
+                functions,
             },
             project_ctx,
         )?;
@@ -249,17 +259,31 @@ pub fn local_run_internal(
     Ok(())
 }
 
+fn preload_functions(context: &CliContext, project: &ProjectContext) -> anyhow::Result<()> {
+    let spinner = context.terminal().spinner();
+    spinner.start("Discovering project functions...");
+    let functions = project.load_functions()?;
+    spinner.stop(format!(
+        "Discovered {} functions.",
+        functions.get_function_references().len()
+    ));
+    Ok(())
+}
+
 fn local_run(
     args: TrainingArgs,
     context: &CliContext,
     project: &ProjectContext,
 ) -> anyhow::Result<()> {
     context.terminal().command_title("Local experiment run");
+
+    preload_functions(context, project)?;
+
     let backend = args.backend.clone().unwrap_or_default();
     let bc_project = project.get_project().context("No project loaded")?;
     let namespace = bc_project.owner.clone();
     let project_name = bc_project.name.clone();
-    let function = get_function_to_run(args.function, context)?;
+    let function = get_function_to_run(args.function, project)?;
     let key = context
         .get_api_key()
         .context("Failed to get API key")?
@@ -410,6 +434,8 @@ fn generate_crate(project: &ProjectContext, build_command: &BuildCommand) -> any
         project.user_crate_dir.to_str().unwrap(),
         vec![&build_command.backend.to_string()],
         &build_command.backend,
+        &build_command.functions,
+        project.get_current_package(),
     );
 
     project.save_crate(generated_crate)?;
@@ -494,10 +520,14 @@ fn make_build_command(
     Ok(build_command)
 }
 
-fn get_function_to_run(function: Option<String>, context: &CliContext) -> anyhow::Result<String> {
+fn get_function_to_run(
+    function: Option<String>,
+    project: &ProjectContext,
+) -> anyhow::Result<String> {
+    let registry = project.load_functions()?;
     match function {
         Some(function) => {
-            let available_functions = context.function_registry.get_training_routine();
+            let available_functions = registry.get_training_routine();
             if !available_functions.contains(&function) {
                 return Err(anyhow::anyhow!(
                     "Function `{}` is not available. Available functions are: {:?}",
@@ -507,6 +537,6 @@ fn get_function_to_run(function: Option<String>, context: &CliContext) -> anyhow
             }
             Ok(function)
         }
-        None => prompt_function(context.function_registry.get_training_routine()),
+        None => prompt_function(registry.get_training_routine()),
     }
 }
