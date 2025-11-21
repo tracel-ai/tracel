@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::commands::init::ensure_git_repo_clean;
 use crate::context::CliContext;
 use crate::entity::projects::ProjectContext;
+use crate::helpers::require_linked_project;
 use crate::print_success;
 use crate::tools::cargo::package::{PackagedCrateData, package};
 use crate::tools::git::is_repo_dirty;
@@ -18,7 +19,7 @@ pub struct PackageArgs {
 }
 
 pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
-    let project = ProjectContext::discover(context.environment())?;
+    let project = require_linked_project(&context)?;
     let version = package_sequence(&context, &project, args.allow_dirty)?;
     print_success!("New project version uploaded: {version}");
 
@@ -37,7 +38,7 @@ pub fn package_sequence(
     let client = context.create_client()?;
     let package = package(
         &project.burn_dir().artifacts_dir(),
-        project.user_crate_name.as_str(),
+        project.get_crate_name(),
     )?;
 
     let registered_functions = project.load_functions()?.get_registered_functions();
@@ -46,14 +47,12 @@ pub fn package_sequence(
         functions: registered_functions,
     };
 
-    let bc_project = project
-        .get_project()
-        .context("No Burn Central project linked to this repository")?;
+    let bc_project = project.get_project();
     let digest = upload_new_project_version(
         &client,
         &bc_project.owner,
         &bc_project.name,
-        project.user_crate_name.as_str(),
+        project.get_crate_name(),
         code_metadata,
         package.crate_metadata,
         &package.digest,

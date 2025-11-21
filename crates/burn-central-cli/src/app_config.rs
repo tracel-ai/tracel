@@ -1,5 +1,6 @@
+use burn_central_lib::Credentials;
 use directories::ProjectDirs;
-use serde::{Deserialize, Serialize};
+
 use std::{fs, io, path::PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,11 +34,6 @@ pub enum ConfigError {
     Serde(#[from] serde_json::Error),
     #[error("Missing configuration directory")]
     MissingDirectory,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Credentials {
-    pub api_key: String,
 }
 
 pub struct AppConfig {

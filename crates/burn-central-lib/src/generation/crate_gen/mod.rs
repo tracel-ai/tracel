@@ -2,11 +2,13 @@ pub mod backend;
 mod cargo_toml;
 
 use crate::{
-    entity::projects::burn_dir::{BurnDir, cache::CacheState},
-    tools::function_discovery::FunctionMetadata,
+    entity::projects::burn_dir::cache::CacheState, tools::function_discovery::FunctionMetadata,
 };
 use quote::quote;
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    path::Path,
+};
 
 use crate::generation::{FileTree, crate_gen::cargo_toml::FeatureFlag};
 
@@ -71,7 +73,7 @@ impl GeneratedCrate {
 
     pub fn write_to_burn_dir(
         self,
-        burn_dir: &BurnDir,
+        crate_path: &Path,
         cache: &mut CacheState,
     ) -> std::io::Result<()> {
         let name = self.name.to_owned();
@@ -88,14 +90,14 @@ impl GeneratedCrate {
             }
         }
 
-        let burn_dir_path = burn_dir.crates_dir().join(&name);
-
-        std::fs::create_dir_all(&burn_dir_path)?;
-        file_tree.write_to(burn_dir_path.parent().unwrap())?;
+        std::fs::create_dir_all(&crate_path)?;
+        file_tree.write_to(crate_path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to get parent directory.")
+        })?)?;
 
         cache.add_crate(
             &name,
-            burn_dir_path.to_string_lossy().to_string(),
+            crate_path.to_string_lossy().to_string(),
             file_tree_hash,
         );
 

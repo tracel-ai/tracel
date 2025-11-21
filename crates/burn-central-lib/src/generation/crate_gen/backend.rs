@@ -4,7 +4,7 @@ use strum::{Display, EnumString};
 use syn::Ident;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Display, EnumString, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Display, EnumString, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum BackendType {

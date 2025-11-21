@@ -1,5 +1,4 @@
-use crate::app_config::{Credentials, Environment};
-use crate::context::{CliContext, ClientCreationError};
+use crate::{CliContext, ClientCreationError, Credentials, Environment};
 use anyhow::Context;
 use burn_central_client::Client;
 use clap::Args;

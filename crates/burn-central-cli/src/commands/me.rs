@@ -1,4 +1,4 @@
-use crate::app_config::Environment;
+use crate::Environment;
 use crate::commands::login::get_client_and_login_if_needed;
 use crate::context::CliContext;
 

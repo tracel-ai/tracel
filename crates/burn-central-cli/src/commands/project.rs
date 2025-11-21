@@ -1,32 +1,23 @@
 use crate::commands::login::get_client_and_login_if_needed;
 use crate::context::CliContext;
-use crate::entity::projects::ProjectContext;
+use crate::helpers::require_linked_project;
 
 pub fn handle_command(mut context: CliContext) -> anyhow::Result<()> {
-    let project = ProjectContext::discover(context.environment())?;
     context.terminal().command_title("Project Information");
+
+    let project = require_linked_project(&context)?;
 
     let client = match get_client_and_login_if_needed(&mut context) {
         Ok(client) => client,
         Err(_) => {
             context.terminal().cancel_finalize(
-                "Failed to connect to the server. Please run 'cargo run -- login' to authenticate.",
+                "Failed to connect to the server. Please run 'burn login' to authenticate.",
             );
             return Ok(());
         }
     };
 
-    // Get the local project metadata
-    let bc_project = match project.get_project() {
-        Some(proj) => proj,
-        None => {
-            context.terminal().cancel_finalize(
-                "Project is not configured. Please run 'cargo run -- init' to link a project.",
-            );
-            anyhow::bail!("Project not configured");
-        }
-    };
-
+    let bc_project = project.get_project();
     // Fetch project information from the server
     match client.get_project(&bc_project.owner, &bc_project.name) {
         Ok(project) => {
