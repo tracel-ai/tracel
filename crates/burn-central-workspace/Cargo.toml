@@ -2,18 +2,16 @@
 authors = ["Tracel Technologies Inc."]
 categories = ["development-tools"]
 description = "Burn Central core library for project management and code generation."
-keywords = ["tracel", "burn-central", "burn", "sdk", "library"]
+keywords = ["tracel", "burn-central", "burn", "workspace", "library"]
 edition.workspace = true
 license.workspace = true
-name = "burn-central-lib"
+name = "burn-central-workspace"
 readme = "README.md"
-repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-lib"
+repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-workspace"
 version.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-burn-central-client = { workspace = true }
-
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

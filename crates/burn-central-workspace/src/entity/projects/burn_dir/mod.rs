@@ -65,4 +65,8 @@ impl BurnDir {
     pub fn unlink_project(&self) -> io::Result<()> {
         BurnCentralProject::remove(&self.root)
     }
+
+    pub fn root(&self) -> &PathBuf {
+        &self.root
+    }
 }

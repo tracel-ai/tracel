@@ -1,5 +1,13 @@
 use cliclack::{ProgressBar, clear_screen, confirm};
 
+use colored::CustomColor;
+
+pub const BURN_ORANGE: CustomColor = CustomColor {
+    r: 254,
+    g: 75,
+    b: 0,
+};
+
 #[derive(Clone)]
 pub struct Terminal {}
 
@@ -18,6 +26,10 @@ impl Terminal {
 
     pub fn print_err(&self, message: &str) {
         cliclack::log::error(message).expect("To be able to print message");
+    }
+
+    pub fn print_success(&self, message: &str) {
+        cliclack::log::success(message).expect("To be able to print success message");
     }
 
     pub fn spinner(&self) -> ProgressBar {

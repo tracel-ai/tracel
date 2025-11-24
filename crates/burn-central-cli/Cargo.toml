@@ -18,7 +18,7 @@ path = "src/bin/burn.rs"
 
 
 [dependencies]
-burn-central-lib = { workspace = true }
+burn-central-workspace = { workspace = true }
 burn-central-client = { workspace = true }
 
 anyhow = { workspace = true }

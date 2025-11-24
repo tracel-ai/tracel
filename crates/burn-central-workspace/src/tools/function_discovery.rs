@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use quote::ToTokens;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -19,6 +20,32 @@ pub struct FunctionMetadata {
     pub routine_name: String,
     pub proc_type: String,
     pub token_stream: Vec<u8>,
+}
+
+impl FunctionMetadata {
+    pub fn get_function_code(&self) -> String {
+        if self.token_stream.is_empty() {
+            // If no token stream is available, create a placeholder function
+            format!(
+                "fn {}() {{\n    // Function implementation not available\n}}",
+                self.fn_name
+            )
+        } else {
+            match syn_serde::json::from_slice::<syn::ItemFn>(&self.token_stream) {
+                Ok(itemfn) => match syn::parse2(itemfn.into_token_stream()) {
+                    Ok(syn_tree) => prettyplease::unparse(&syn_tree),
+                    Err(_) => format!(
+                        "fn {}() {{\n    // Failed to parse token stream\n}}",
+                        self.fn_name
+                    ),
+                },
+                Err(_) => format!(
+                    "fn {}() {{\n    // Failed to deserialize token stream\n}}",
+                    self.fn_name
+                ),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

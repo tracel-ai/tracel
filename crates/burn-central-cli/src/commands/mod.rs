@@ -1,7 +1,6 @@
 use crate::commands::init::prompt_init;
 use crate::commands::training::TrainingArgs;
 use crate::helpers::{is_burn_central_project_linked, require_rust_project};
-use crate::print_info;
 use crate::{commands::login::get_client_and_login_if_needed, context::CliContext};
 
 pub mod init;
@@ -19,7 +18,9 @@ pub fn default_command(mut context: CliContext) -> anyhow::Result<()> {
     if !is_burn_central_project_linked(&context) {
         // Make sure we're at least in a Rust project before initializing
         let _crate_info = require_rust_project(&context)?;
-        print_info!("No Burn Central project linked. Running initialization sequence.");
+        context
+            .terminal()
+            .print("No Burn Central project linked, prompting for initialization.");
         prompt_init(&context, &client)?;
         return Ok(());
     }

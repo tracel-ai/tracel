@@ -1,21 +1,42 @@
 use crate::app_config::{AppConfig, Environment};
+use crate::config::Config;
 use crate::tools::terminal::Terminal;
-use burn_central_client::Client;
-use burn_central_lib::{BurnCentralContext, ClientCreationError, Config, Credentials};
+use burn_central_client::{BurnCentralCredentials, Client};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Credentials {
+    pub api_key: String,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ClientCreationError {
+    #[error("No credentials found")]
+    NoCredentials,
+    #[error("Invalid credentials")]
+    InvalidCredentials,
+    #[error("Server connection error")]
+    ServerConnectionError(String),
+}
 
 /// CLI-specific context that wraps the library context with terminal functionality
 pub struct CliContext {
     terminal: Terminal,
-    core_context: BurnCentralContext,
     environment: Environment,
+    api_endpoint: url::Url,
+    creds: Option<Credentials>,
 }
 
 impl CliContext {
     pub fn new(terminal: Terminal, config: &Config, environment: Environment) -> Self {
         Self {
             terminal,
-            core_context: BurnCentralContext::new(config),
             environment,
+            api_endpoint: config
+                .api_endpoint
+                .parse::<url::Url>()
+                .expect("API endpoint should be valid"),
+            creds: None,
         }
     }
 
@@ -23,39 +44,58 @@ impl CliContext {
         // Load credentials from AppConfig and inject into core context
         if let Ok(app_config) = AppConfig::new(self.environment()) {
             if let Ok(Some(creds)) = app_config.load_credentials() {
-                self.core_context.set_credentials(creds);
+                self.creds = Some(creds);
             }
         }
-        self.core_context = self.core_context.init();
         self
     }
 
     pub fn set_credentials(&mut self, creds: Credentials) {
         // Save credentials to AppConfig
         if let Ok(app_config) = AppConfig::new(self.environment()) {
-            let _ = app_config.save_credentials(&creds);
+            _ = app_config.save_credentials(&creds);
         }
-        self.core_context.set_credentials(creds);
+        self.creds = Some(creds);
     }
 
     pub fn get_api_key(&self) -> Option<&str> {
-        self.core_context.get_api_key()
+        self.creds.as_ref().map(|c| c.api_key.as_str())
     }
 
     pub fn create_client(&self) -> Result<Client, ClientCreationError> {
-        self.core_context.create_client()
-    }
+        let api_key = self
+            .get_api_key()
+            .ok_or(ClientCreationError::NoCredentials)?;
 
-    pub fn set_config(&mut self, config: &Config) {
-        self.core_context.set_config(config);
+        let creds = BurnCentralCredentials::new(api_key.to_owned());
+        let client = Client::new(self.api_endpoint.clone(), &creds);
+
+        client.map_err(|e| {
+            if e.is_login_error() {
+                ClientCreationError::InvalidCredentials
+            } else {
+                ClientCreationError::ServerConnectionError(e.to_string())
+            }
+        })
     }
 
     pub fn get_api_endpoint(&self) -> &url::Url {
-        self.core_context.get_api_endpoint()
+        &self.api_endpoint
     }
 
     pub fn get_frontend_endpoint(&self) -> url::Url {
-        self.core_context.get_frontend_endpoint()
+        let host = self
+            .api_endpoint
+            .host_str()
+            .expect("API endpoint should have a host");
+
+        let mut host_url =
+            url::Url::parse("https://example.com").expect("Base URL should be valid");
+        host_url.set_host(Some(host)).expect("Host should be valid");
+        host_url
+            .set_scheme(self.api_endpoint.scheme())
+            .expect("Scheme should be valid");
+        host_url
     }
 
     pub fn terminal(&self) -> &Terminal {
@@ -64,24 +104,6 @@ impl CliContext {
 
     pub fn environment(&self) -> Environment {
         self.environment
-    }
-
-    pub fn has_credentials(&self) -> bool {
-        self.core_context.has_credentials()
-    }
-
-    pub fn get_credentials(&self) -> Option<&Credentials> {
-        self.core_context.get_credentials()
-    }
-
-    /// Access the underlying library context for advanced operations
-    pub fn core_context(&self) -> &BurnCentralContext {
-        &self.core_context
-    }
-
-    /// Mutable access to the underlying library context for advanced operations
-    pub fn core_context_mut(&mut self) -> &mut BurnCentralContext {
-        &mut self.core_context
     }
 
     pub fn get_burn_dir_name(&self) -> &str {

@@ -2,14 +2,15 @@ use std::path::PathBuf;
 
 use crate::commands::init::ensure_git_repo_clean;
 use crate::context::CliContext;
-use crate::entity::projects::ProjectContext;
 use crate::helpers::require_linked_project;
-use crate::print_success;
-use crate::tools::cargo::package::{PackagedCrateData, package};
-use crate::tools::git::is_repo_dirty;
 use anyhow::Context;
 use burn_central_client::Client;
-use burn_central_client::request::{BurnCentralCodeMetadataRequest, CrateVersionMetadataRequest};
+use burn_central_client::request::{
+    BurnCentralCodeMetadataRequest, CrateVersionMetadataRequest, RegisteredFunctionRequest,
+};
+use burn_central_workspace::ProjectContext;
+use burn_central_workspace::tools::cargo::package::{PackagedCrateData, package};
+use burn_central_workspace::tools::git::is_repo_dirty;
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -21,7 +22,9 @@ pub struct PackageArgs {
 pub(crate) fn handle_command(args: PackageArgs, context: CliContext) -> anyhow::Result<()> {
     let project = require_linked_project(&context)?;
     let version = package_sequence(&context, &project, args.allow_dirty)?;
-    print_success!("New project version uploaded: {version}");
+    context
+        .terminal()
+        .print_success(&format!("New project version uploaded: {version}"));
 
     Ok(())
 }
@@ -41,10 +44,20 @@ pub fn package_sequence(
         project.get_crate_name(),
     )?;
 
-    let registered_functions = project.load_functions()?.get_registered_functions();
+    let registry = project.load_functions()?;
 
     let code_metadata = BurnCentralCodeMetadataRequest {
-        functions: registered_functions,
+        functions: registry
+            .get_function_references()
+            .into_iter()
+            .map(|f| RegisteredFunctionRequest {
+                mod_path: f.mod_path.clone(),
+                fn_name: f.fn_name.clone(),
+                proc_type: f.proc_type.clone(),
+                code: f.get_function_code(),
+                routine: f.routine_name.clone(),
+            })
+            .collect(),
     };
 
     let bc_project = project.get_project();

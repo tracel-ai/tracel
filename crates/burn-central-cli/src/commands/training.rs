@@ -1,23 +1,29 @@
-use std::collections::HashMap;
-
 use anyhow::Context;
-use burn_central_lib::{
-    ProcedureType, ProjectContext,
-    execution::parse_key_value,
-    generation::backend::BackendType,
-    job_submission::{JobSubmissionBuilder, JobSubmissionClient},
-    local_execution::{LocalExecutionConfig, LocalExecutor},
-};
+use burn_central_workspace::ProjectContext;
+use burn_central_workspace::compute_provider::ComputeProviderJobArgs;
+use burn_central_workspace::compute_provider::ProcedureTypeArg;
+use burn_central_workspace::execution::BackendType;
+use burn_central_workspace::execution::ProcedureType;
+use burn_central_workspace::execution::local::LocalExecutionConfig;
+use burn_central_workspace::execution::local::LocalExecutor;
 use clap::Parser;
 use clap::ValueHint;
 use colored::Colorize;
 
 use crate::commands::package::package_sequence;
 use crate::helpers::require_linked_project;
-use crate::{context::CliContext, logging::BURN_ORANGE, print_info};
+use crate::{context::CliContext, tools::terminal::BURN_ORANGE};
 
-fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
-    parse_key_value(s).map_err(|e| e.to_string())
+/// Parse a key=value string into a key-value pair
+pub fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Invalid key=value format: {}", s))?;
+
+    let json_value = serde_json::from_str(value)
+        .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+
+    Ok((key.to_string(), json_value))
 }
 
 #[derive(Parser, Debug)]
@@ -66,7 +72,7 @@ pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow:
     let project = require_linked_project(&context)?;
 
     match args.compute_provider {
-        Some(_) => submit_job(args, &context, &project),
+        Some(_) => execute_remotely(args, &context, &project),
         None => execute_locally(args, &context, &project),
     }
 }
@@ -84,14 +90,14 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
         .map_err(anyhow::Error::from)
 }
 
-fn submit_job(
+fn execute_remotely(
     args: TrainingArgs,
     context: &CliContext,
     project_ctx: &ProjectContext,
 ) -> anyhow::Result<()> {
     context
         .terminal()
-        .command_title("Submit training job to platform");
+        .command_title("Remote training execution");
 
     preload_functions(context, project_ctx)?;
 
@@ -99,83 +105,58 @@ fn submit_job(
     let compute_provider = args
         .compute_provider
         .context("Compute provider should be provided")?;
-    let function = get_function_to_run(args.function, context, project_ctx)?;
+    let function = get_function_to_run(args.function, project_ctx)?;
 
     let code_version = match args.code_version {
         Some(version) => {
-            print_info!("Using code version: {}", version);
+            context
+                .terminal()
+                .print(&format!("Using code version: {}", version));
             version
         }
         None => {
-            print_info!("Packaging project and using this new code version");
+            context
+                .terminal()
+                .print("Packaging project to create a new code version...");
             package_sequence(context, project_ctx, false)?
         }
     };
 
-    // Create the job submission client
-    let submission_client = JobSubmissionClient::new(context.core_context(), project_ctx);
+    let launch_args = ExperimentConfig::load_config(args.args, args.overrides)?;
 
-    // Convert overrides to HashMap
-    let overrides: HashMap<String, serde_json::Value> = args.overrides.into_iter().collect();
+    let command = ComputeProviderJobArgs {
+        function: function.clone(),
+        backend: args.backend,
+        args: Some(launch_args.data),
+        digest: code_version.clone(),
+        namespace: bc_project.owner.clone(),
+        project: bc_project.name.clone(),
+        key: context
+            .get_api_key()
+            .context("No API key available")?
+            .to_string(),
+        procedure_type: ProcedureTypeArg {
+            procedure_type: ProcedureType::Training,
+        },
+        api_endpoint: context.get_api_endpoint().to_string(),
+    };
 
-    // Get API key
-    let api_key = context
-        .core_context()
-        .get_api_key()
-        .context("No API key available")?;
-
-    // Build job submission configuration
-    let mut builder = JobSubmissionBuilder::new(
-        function.clone(),
-        ProcedureType::Training,
-        code_version,
-        compute_provider.clone(),
-        bc_project.owner.clone(),
-        bc_project.name.clone(),
-        api_key.to_string(),
-        context.core_context().get_api_endpoint().to_string(),
-    );
-
-    if let Some(backend) = args.backend {
-        builder = builder.with_backend(backend);
-    }
-
-    if let Some(config_file) = args.args {
-        builder = builder.with_config_file(config_file);
-    }
-
-    if !overrides.is_empty() {
-        builder = builder.with_overrides(overrides);
-    }
-
-    let config = builder.build();
-
-    // Submit the job
-    print_info!("Submitting job to compute provider: {}", compute_provider);
-    let result = submission_client.submit_job(config)?;
-
-    if result.success {
-        print_info!(
-            "Training job submitted successfully for function `{}`.",
-            function.custom_color(BURN_ORANGE).bold()
-        );
-        if let Some(job_id) = result.output {
-            print_info!("Job ID: {}", job_id);
-        }
-    } else {
-        if let Some(error) = result.error {
-            return Err(anyhow::anyhow!(
-                "Failed to submit training job for function `{}`: {}",
-                function.custom_color(BURN_ORANGE).bold(),
-                error
-            ));
-        } else {
-            return Err(anyhow::anyhow!(
-                "Failed to submit training job for function `{}`",
-                function.custom_color(BURN_ORANGE).bold()
-            ));
-        }
-    }
+    let client = context.create_client()?;
+    let command = serde_json::to_string(&command)?;
+    client
+        .start_remote_job(
+            &compute_provider,
+            &bc_project.owner,
+            &bc_project.name,
+            &code_version,
+            &command,
+        )
+        .with_context(|| {
+            format!(
+                "Failed to submit training job for function `{}` to compute provider `{}`",
+                function, compute_provider
+            )
+        })?;
 
     Ok(())
 }
@@ -202,15 +183,19 @@ fn execute_locally(
 
     preload_functions(context, project)?;
 
-    let function = get_function_to_run(args.function, context, project)?;
+    let function = get_function_to_run(args.function, project)?;
 
     let code_version = package_sequence(context, project, false)?;
 
-    let executor = LocalExecutor::new(context.core_context(), project);
+    let executor = LocalExecutor::new(project);
     let backend = args.backend.unwrap_or_default();
 
-    // Build local execution configuration
     let config = LocalExecutionConfig::new(
+        context
+            .get_api_key()
+            .context("No API key available")?
+            .to_string(),
+        context.get_api_endpoint().to_string(),
         function.clone(),
         backend,
         ProcedureType::Training,
@@ -218,20 +203,27 @@ fn execute_locally(
     )
     .with_args(args_json.data);
 
-    // Execute locally
-    print_info!("Executing training function locally: {}", function);
+    let spinner = context.terminal().spinner();
+    spinner.start(format!(
+        "Running training function `{}`...",
+        function.custom_color(BURN_ORANGE).bold()
+    ));
     let result = executor.execute(config)?;
 
     if result.success {
-        print_info!(
+        spinner.stop(format!(
             "Training function `{}` executed successfully.",
             function.custom_color(BURN_ORANGE).bold()
-        );
+        ));
         if let Some(output) = result.output {
-            print_info!("Training output:\n{}", output);
+            context.terminal().print(&format!("Output:\n{}", output));
         }
     } else {
+        spinner.error("Training function execution failed.");
+
         if let Some(error) = result.error {
+            context.terminal().print_err(&format!("Error:\n{}", error));
+
             return Err(anyhow::anyhow!(
                 "Failed to execute training function `{}`: {}",
                 function.custom_color(BURN_ORANGE).bold(),
@@ -250,11 +242,9 @@ fn execute_locally(
 
 fn get_function_to_run(
     function: Option<String>,
-    context: &CliContext,
     project: &ProjectContext,
 ) -> anyhow::Result<String> {
-    // Create a local executor to get available functions
-    let executor = LocalExecutor::new(context.core_context(), project);
+    let executor = LocalExecutor::new(project);
     let available_functions = executor.list_training_functions()?;
 
     match function {

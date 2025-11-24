@@ -1,7 +1,8 @@
-use burn_central_lib::Credentials;
 use directories::ProjectDirs;
 
 use std::{fs, io, path::PathBuf};
+
+use crate::context::Credentials;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {

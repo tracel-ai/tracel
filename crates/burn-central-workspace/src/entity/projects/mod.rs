@@ -105,6 +105,7 @@ impl CrateInfo {
 
         let metadata = cargo_metadata::MetadataCommand::new()
             .manifest_path(manifest_path)
+            .no_deps()
             .exec()
             .map_err(|e| {
                 ProjectContextError::new(
@@ -242,6 +243,24 @@ impl ProjectContext {
             project: project.clone(),
             function_registry: RefCell::new(Default::default()),
         })
+    }
+
+    pub fn unlink(burn_dir_name: &str) -> Result<(), ProjectContextError> {
+        let manifest_path = find_manifest()?;
+        let crate_info = CrateInfo::load_from_path(&manifest_path)?;
+
+        let burn_dir_root = crate_info.user_crate_dir.join(PathBuf::from(burn_dir_name));
+        let burn_dir = BurnDir::new(burn_dir_root);
+
+        std::fs::remove_dir_all(&burn_dir.root()).map_err(|e| {
+            ProjectContextError::new(
+                "Failed to remove Burn directory".to_string(),
+                ErrorKind::Unexpected,
+                Some(e.into()),
+            )
+        })?;
+
+        Ok(())
     }
 
     pub fn get_project(&self) -> &BurnCentralProject {

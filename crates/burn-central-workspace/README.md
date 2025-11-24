@@ -1,10 +1,10 @@
-# Burn Central Library
+# Burn Central Workspace
 
-A core library for Burn Central project management, code generation, and platform integration.
+A core workspace library for Burn Central project management, code generation, and platform integration.
 
 ## Overview
 
-`burn-central-lib` provides the foundational functionality for working with Burn Central projects. It can be used as a library in other applications or as the foundation for CLI tools, web services, or other integrations.
+`burn-central-workspace` provides the foundational functionality for working with Burn Central projects. It can be used as a library in other applications or as the foundation for CLI tools, web services, or other integrations.
 
 ## Features
 
@@ -22,13 +22,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-burn-central-lib = "0.1.0"
+burn-central-workspace = "0.1.0"
 ```
 
 ### Basic Example
 
 ```rust
-use burn_central_lib::{BurnCentralContext, Config, Environment, ProjectContext};
+use burn_central_workspace::{BurnCentralContext, Config, Environment, ProjectContext};
 
 fn main() -> anyhow::Result<()> {
     // Create a configuration
@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
 ### Function Discovery
 
 ```rust
-use burn_central_lib::tools::function_discovery::FunctionDiscovery;
+use burn_central_workspace::tools::function_discovery::FunctionDiscovery;
 use std::path::Path;
 
 fn discover_functions(project_path: &Path) -> anyhow::Result<()> {
@@ -73,8 +73,8 @@ fn discover_functions(project_path: &Path) -> anyhow::Result<()> {
 ### Code Generation
 
 ```rust
-use burn_central_lib::generation::GeneratedCrate;
-use burn_central_lib::entity::projects::ProjectContext;
+use burn_central_workspace::generation::GeneratedCrate;
+use burn_central_workspace::entity::projects::ProjectContext;
 
 fn generate_code(project: &ProjectContext) -> anyhow::Result<()> {
     // Load functions from the project
@@ -92,7 +92,7 @@ fn generate_code(project: &ProjectContext) -> anyhow::Result<()> {
 #### Local Execution
 
 ```rust
-use burn_central_lib::{BurnCentralRunner, LocalRunOptions};
+use burn_central_workspace::{BurnCentralRunner, LocalRunOptions};
 use std::collections::HashMap;
 
 fn run_training_locally(
@@ -126,7 +126,7 @@ fn run_training_locally(
 #### Remote Execution
 
 ```rust
-use burn_central_lib::{BurnCentralRunner, RemoteRunOptions};
+use burn_central_workspace::{BurnCentralRunner, RemoteRunOptions};
 
 fn run_training_remotely(
     runner: &BurnCentralRunner,
@@ -135,7 +135,7 @@ fn run_training_remotely(
 ) -> anyhow::Result<()> {
     let options = RemoteRunOptions::new()
         .with_code_version("v1.0.0-abc123".to_string())
-        .with_backend(burn_central_lib::generation::backend::BackendType::Wgpu);
+        .with_backend(burn_central_workspace::generation::backend::BackendType::Wgpu);
     
     // Submit job to remote compute provider
     let result = runner.run_training_remote(function_name, compute_provider, options)?;
@@ -153,7 +153,7 @@ fn run_training_remotely(
 #### Complete Execution Example
 
 ```rust
-use burn_central_lib::{BurnCentralContext, BurnCentralRunner, Config, Environment, ProjectContext};
+use burn_central_workspace::{BurnCentralContext, BurnCentralRunner, Config, Environment, ProjectContext};
 
 fn main() -> anyhow::Result<()> {
     // Initialize context and project
@@ -184,7 +184,7 @@ fn main() -> anyhow::Result<()> {
 ### Compute Provider Integration
 
 ```rust
-use burn_central_lib::{BurnCentralContext, BurnCentralRunner, ProjectContext};
+use burn_central_workspace::{BurnCentralContext, BurnCentralRunner, ProjectContext};
 
 // For compute providers that want to execute Burn Central jobs
 fn compute_provider_example(job_params: &str) -> anyhow::Result<()> {
@@ -192,15 +192,15 @@ fn compute_provider_example(job_params: &str) -> anyhow::Result<()> {
     let params: serde_json::Value = serde_json::from_str(job_params)?;
     
     // Initialize context and project
-    let config = burn_central_lib::Config {
+    let config = burn_central_workspace::Config {
         api_endpoint: params["api_endpoint"].as_str().unwrap().to_string(),
     };
-    let context = BurnCentralContext::new(&config, burn_central_lib::Environment::Production).init();
-    let project = ProjectContext::discover(burn_central_lib::Environment::Production)?;
+    let context = BurnCentralContext::new(&config, burn_central_workspace::Environment::Production).init();
+    let project = ProjectContext::discover(burn_central_workspace::Environment::Production)?;
     
     // Execute the job
     let runner = BurnCentralRunner::new(&context, &project);
-    let options = burn_central_lib::LocalRunOptions::new();
+    let options = burn_central_workspace::LocalRunOptions::new();
     let result = runner.run_training_local(
         params["function"].as_str().unwrap(),
         options,
@@ -218,7 +218,7 @@ fn compute_provider_example(job_params: &str) -> anyhow::Result<()> {
 // Or use the built-in compute provider main function
 fn use_builtin_compute_provider() -> anyhow::Result<()> {
     // This handles the complete compute provider workflow
-    burn_central_lib::compute_provider::compute_provider_main()
+    burn_central_workspace::compute_provider::compute_provider_main()
 }
 ```
 
@@ -251,35 +251,35 @@ The library uses `anyhow::Result<T>` for error handling, providing rich error co
 ### CLI Applications
 Build command-line tools that can manage projects, discover functions, and execute jobs:
 ```rust
-use burn_central_lib::{BurnCentralContext, BurnCentralRunner};
+use burn_central_workspace::{BurnCentralContext, BurnCentralRunner};
 // Full access to all library functionality
 ```
 
 ### Web Services  
 Create web APIs that can trigger training jobs and manage projects:
 ```rust
-use burn_central_lib::{BurnCentralRunner, RemoteRunOptions};
+use burn_central_workspace::{BurnCentralRunner, RemoteRunOptions};
 // Execute jobs on remote compute providers
 ```
 
 ### Compute Providers
 Integrate the library into compute infrastructure to execute Burn Central jobs:
 ```rust
-use burn_central_lib::compute_provider;
+use burn_central_workspace::compute_provider;
 // Built-in compute provider functionality
 ```
 
 ### Desktop Applications
 Build GUI applications for project management and job monitoring:
 ```rust
-use burn_central_lib::{ProjectContext, BurnCentralContext};
+use burn_central_workspace::{ProjectContext, BurnCentralContext};
 // Project discovery and management
 ```
 
 ### CI/CD Pipelines
 Automate training and testing workflows:
 ```rust
-use burn_central_lib::{BurnCentralRunner, LocalRunOptions};
+use burn_central_workspace::{BurnCentralRunner, LocalRunOptions};
 // Automated job execution
 ```
 
@@ -294,8 +294,8 @@ The library includes several comprehensive examples:
 
 Run examples with:
 ```bash
-cargo run --example basic_usage -p burn-central-lib
-cargo run --example execution_example -p burn-central-lib
+cargo run --example basic_usage -p burn-central-workspace
+cargo run --example execution_example -p burn-central-workspace
 ```
 
 ## License

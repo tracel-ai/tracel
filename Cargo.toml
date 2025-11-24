@@ -62,7 +62,7 @@ burn-central-client = "0.1.1"
 burn-central-core = { version = "0.1.0", path = "crates/burn-central-core" }
 burn-central-runtime = { version = "0.1.0", path = "crates/burn-central-runtime" }
 burn-central-cli-macros = { version = "0.1.0", path = "crates/burn-central-cli-macros" }
-burn-central-lib = { version = "0.1.0", path = "crates/burn-central-lib" }
+burn-central-workspace = { version = "0.1.0", path = "crates/burn-central-workspace" }
 burn-central-cli = { version = "0.1.0", path = "crates/burn-central-cli" }
 
 ### For xtask crate ###

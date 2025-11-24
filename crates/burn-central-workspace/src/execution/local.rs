@@ -6,10 +6,8 @@
 use serde::Serialize;
 
 use crate::{
-    context::BurnCentralContext,
     entity::projects::ProjectContext,
-    execution::{BuildProfile, ExecutionError, ProcedureType},
-    generation::backend::BackendType,
+    execution::{BackendType, BuildProfile, ExecutionError, ProcedureType},
     tools::{cargo, function_discovery::FunctionMetadata},
 };
 use std::{
@@ -20,6 +18,10 @@ use std::{
 /// Configuration for executing a function locally
 #[derive(Debug, Clone)]
 pub struct LocalExecutionConfig {
+    /// The API key of the user in Burn Central
+    pub api_key: String,
+    /// The API endpoint to use
+    pub api_endpoint: String,
     /// The function to execute
     pub function: String,
     /// Backend to use for execution
@@ -44,17 +46,23 @@ struct RunConfig {
     pub function: String,
     pub procedure_type: ProcedureType,
     pub args: serde_json::Value,
+    pub api_key: String,
+    pub api_endpoint: String,
 }
 
 impl LocalExecutionConfig {
     /// Create a new local execution config
     pub fn new(
+        api_key: String,
+        api_endpoint: String,
         function: String,
         backend: BackendType,
         procedure_type: ProcedureType,
         code_version: String,
     ) -> Self {
         Self {
+            api_key,
+            api_endpoint,
             function,
             backend,
             procedure_type,
@@ -113,14 +121,13 @@ impl LocalExecutionResult {
 
 /// Core local executor - handles building and running functions locally
 pub struct LocalExecutor<'a> {
-    context: &'a BurnCentralContext,
     project: &'a ProjectContext,
 }
 
 impl<'a> LocalExecutor<'a> {
     /// Create a new local executor
-    pub fn new(context: &'a BurnCentralContext, project: &'a ProjectContext) -> Self {
-        Self { context, project }
+    pub fn new(project: &'a ProjectContext) -> Self {
+        Self { project }
     }
 
     /// Execute a function locally
@@ -134,15 +141,18 @@ impl<'a> LocalExecutor<'a> {
             build_profile: config.build_profile,
             code_version: config.code_version,
         };
-        let crate_dir = self.generate_executable_crate(&build_config)?;
 
-        let executable_path = self.build_executable(&crate_dir, &build_config)?;
+        let crate_name = "burn_central_executable";
+        let crate_dir = self.generate_executable_crate(crate_name, &build_config)?;
+        let executable_path = self.build_executable(crate_name, &crate_dir, &build_config)?;
 
         // Execute the binary
         let run_config = RunConfig {
             function: config.function,
             procedure_type: config.procedure_type,
             args: config.args,
+            api_key: config.api_key,
+            api_endpoint: config.api_endpoint,
         };
         self.run_executable(&executable_path, &run_config)
     }
@@ -169,16 +179,17 @@ impl<'a> LocalExecutor<'a> {
         Ok(())
     }
 
-    fn generate_executable_crate(&self, config: &BuildConfig) -> crate::Result<PathBuf> {
+    fn generate_executable_crate(
+        &self,
+        crate_name: &str,
+        config: &BuildConfig,
+    ) -> crate::Result<PathBuf> {
         let functions = self.project.load_functions()?;
-
-        let crate_name = "burn_central_executable";
 
         let generated_crate = crate::generation::crate_gen::create_crate(
             crate_name,
             &self.project.get_crate_name(),
             self.project.get_crate_path().to_str().unwrap(),
-            vec![&config.backend.to_string()],
             &config.backend,
             functions.get_function_references(),
             self.project.get_current_package(),
@@ -191,7 +202,12 @@ impl<'a> LocalExecutor<'a> {
         Ok(crate_path)
     }
 
-    fn build_executable(&self, crate_dir: &Path, config: &BuildConfig) -> crate::Result<PathBuf> {
+    fn build_executable(
+        &self,
+        crate_name: &str,
+        crate_dir: &Path,
+        config: &BuildConfig,
+    ) -> crate::Result<PathBuf> {
         let build_dir = crate_dir;
 
         // Prepare cargo build command
@@ -199,8 +215,8 @@ impl<'a> LocalExecutor<'a> {
         build_cmd
             .current_dir(build_dir)
             .arg("build")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
 
         build_cmd.arg(config.build_profile.as_cargo_arg());
 
@@ -212,10 +228,13 @@ impl<'a> LocalExecutor<'a> {
         ]);
 
         // Execute build
-        let build_output = build_cmd.output().map_err(|e| {
+        let child = build_cmd.spawn().map_err(|e| {
             ExecutionError::BuildFailed(format!("Failed to execute cargo build: {}", e))
         })?;
 
+        let build_output = child.wait_with_output().map_err(|e| {
+            ExecutionError::BuildFailed(format!("Failed to wait for cargo build: {}", e))
+        })?;
         if !build_output.status.success() {
             let stderr = String::from_utf8_lossy(&build_output.stderr);
             return Err(
@@ -229,11 +248,7 @@ impl<'a> LocalExecutor<'a> {
             BuildProfile::Release => "release",
         };
 
-        let executable_name = if cfg!(windows) {
-            "burn_central_executable.exe"
-        } else {
-            "burn_central_executable"
-        };
+        let executable_name = format!("{crate_name}{}", std::env::consts::EXE_SUFFIX);
         let executable_path = build_dir
             .join("target")
             .join(profile_dir)
@@ -256,29 +271,15 @@ impl<'a> LocalExecutor<'a> {
     ) -> crate::Result<LocalExecutionResult> {
         let mut run_cmd = Command::new(executable_path);
 
-        /*
-        *         .current_dir(project_ctx.cwd())
-        .env("BURN_PROJECT_DIR", &project_ctx.user_crate_dir)
-        .args(["--namespace", namespace])
-        .args(["--project", project])
-        .args(["--api-key", key])
-        .args(["--endpoint", context.get_api_endpoint().as_str()])
-        .args(["--args", args])
-        .args([kind_str, function]);
-        */
         run_cmd.env("BURN_PROJECT_DIR", &self.project.get_crate_path());
 
         let project = self.project.get_project();
         run_cmd.args(["--namespace", &project.owner]);
         run_cmd.args(["--project", &project.name]);
-        let key = self
-            .context
-            .get_credentials()
-            .ok_or_else(|| ExecutionError::RuntimeFailed("No API key found in context".into()))?;
 
-        run_cmd.args(["--api-key", &key.api_key]);
+        run_cmd.args(["--api-key", &config.api_key]);
 
-        run_cmd.args(["--endpoint", self.context.get_api_endpoint().as_str()]);
+        run_cmd.args(["--endpoint", &config.api_endpoint]);
 
         let args_str = serde_json::to_string(&config.args).map_err(|e| {
             ExecutionError::RuntimeFailed(format!("Failed to serialize args: {}", e))
@@ -288,7 +289,7 @@ impl<'a> LocalExecutor<'a> {
         run_cmd.arg(&config.function);
 
         // Set up stdio
-        run_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        run_cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
         // Execute
         let run_output = run_cmd.output().map_err(|e| {

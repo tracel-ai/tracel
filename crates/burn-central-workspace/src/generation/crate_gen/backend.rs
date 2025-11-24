@@ -1,39 +1,27 @@
 use quote::quote;
-use serde::{Deserialize, Serialize};
-use strum::{Display, EnumString};
 use syn::Ident;
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Display, EnumString, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[strum(serialize_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub enum BackendType {
-    #[default]
-    Wgpu,
-    Tch,
-    Ndarray,
+use crate::execution::BackendType;
+
+fn backend_to_token_stream(backend: &BackendType) -> proc_macro2::TokenStream {
+    match backend {
+        BackendType::Wgpu => quote! { burn::backend::Wgpu<f32, i32> },
+        BackendType::Tch => quote! { burn::backend::libtorch::LibTorch<f32> },
+        BackendType::Ndarray => quote! { burn::backend::ndarray::NdArray<f32> },
+    }
 }
 
-impl BackendType {
-    /// Returns the token stream for the default device for the backend.
-    pub fn default_device_stream(&self) -> proc_macro2::TokenStream {
-        quote! {
-            Default::default()
-        }
+pub fn default_device_stream() -> proc_macro2::TokenStream {
+    quote! {
+        Default::default()
     }
+}
 
-    pub fn backend_stream(&self) -> proc_macro2::TokenStream {
-        match self {
-            BackendType::Wgpu => {
-                quote! {burn::backend::Wgpu<f32, i32>}
-            }
-            BackendType::Tch => {
-                quote! {burn::backend::libtorch::LibTorch<f32>}
-            }
-            BackendType::Ndarray => {
-                quote! {burn::backend::ndarray::NdArray<f32>}
-            }
-        }
+pub fn get_burn_feature_flags(backend: &BackendType) -> Vec<&'static str> {
+    match backend {
+        BackendType::Wgpu => vec!["wgpu"],
+        BackendType::Tch => vec!["tch"],
+        BackendType::Ndarray => vec!["ndarray"],
     }
 }
 
@@ -50,7 +38,7 @@ pub(crate) fn get_backend_type_names() -> (syn::Ident, syn::Ident) {
 /// Creates the stream of tokens that creates the type aliases for the backend and corresponding autodiff backend.
 pub(crate) fn generate_backend_typedef_stream(backend: &BackendType) -> proc_macro2::TokenStream {
     let (backend_type_name, autodiff_backend_type_name) = get_backend_type_names();
-    let backend_type = backend.backend_stream();
+    let backend_type = backend_to_token_stream(backend);
 
     quote! {
         type #backend_type_name = #backend_type;

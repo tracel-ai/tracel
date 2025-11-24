@@ -1,9 +1,9 @@
-use crate::Environment;
-use burn_central_lib::Config;
 use clap::{Parser, Subcommand};
 
+use crate::app_config::Environment;
 use crate::commands;
 use crate::commands::default_command;
+use crate::config::Config;
 use crate::context::CliContext;
 use crate::tools::terminal::Terminal;
 

@@ -238,7 +238,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "burn-central-client",
- "burn-central-lib",
+ "burn-central-workspace",
  "clap",
  "cliclack",
  "colored",
@@ -303,11 +303,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-central-lib"
+name = "burn-central-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "burn-central-client",
+ "burn",
+ "burn-central-core",
+ "clap",
+ "crossbeam",
+ "derive_more",
+ "env_logger",
+ "log",
+ "serde",
+ "serde_json",
+ "strum",
+ "syn",
+ "thiserror 2.0.17",
+ "tynm",
+ "variadics_please",
+]
+
+[[package]]
+name = "burn-central-workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "cargo-util-schemas 0.8.2",
  "cargo_metadata",
  "chrono",
@@ -343,27 +363,6 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "burn-central-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "burn",
- "burn-central-core",
- "clap",
- "crossbeam",
- "derive_more",
- "env_logger",
- "log",
- "serde",
- "serde_json",
- "strum",
- "syn",
- "thiserror 2.0.17",
- "tynm",
- "variadics_please",
 ]
 
 [[package]]

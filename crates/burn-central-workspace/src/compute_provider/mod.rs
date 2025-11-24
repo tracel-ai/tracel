@@ -1,7 +1,9 @@
 use crate::{
-    LocalExecutionConfig, config::Config, context::BurnCentralContext,
-    entity::projects::ProjectContext, execution::ProcedureType, generation::backend::BackendType,
-    local_execution::LocalExecutor,
+    entity::projects::ProjectContext,
+    execution::{
+        BackendType, ProcedureType,
+        local::{LocalExecutionConfig, LocalExecutor},
+    },
 };
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -34,34 +36,19 @@ pub struct ComputeProviderJobArgs {
 
 /// Main entry point for compute provider execution
 pub fn compute_provider_main() -> anyhow::Result<()> {
-    let config = Config {
-        api_endpoint: "https://heat.tracel.ai/api/".to_string(),
-    };
-
-    let mut context = BurnCentralContext::new(&config).init();
     let project = ProjectContext::load(".burn")?;
 
     let arg = get_arg()?;
     let args = serde_json::from_str::<ComputeProviderJobArgs>(&arg)?;
 
-    // Update context with job-specific API endpoint
-    let config = Config {
-        api_endpoint: args.api_endpoint.clone(),
-    };
-    context.set_config(&config);
-
     // Execute the job using local execution (same as CLI local mode)
-    execute_job(args, &context, &project)?;
+    execute_job(args, &project)?;
 
     Ok(())
 }
 
 /// Execute a job locally (this is what compute providers do - they run jobs locally)
-fn execute_job(
-    args: ComputeProviderJobArgs,
-    context: &BurnCentralContext,
-    project: &ProjectContext,
-) -> anyhow::Result<()> {
+fn execute_job(args: ComputeProviderJobArgs, project: &ProjectContext) -> anyhow::Result<()> {
     log::info!(
         "Compute Provider: Executing {} job",
         args.procedure_type.procedure_type
@@ -70,12 +57,14 @@ fn execute_job(
     log::info!("Backend: {:?}", args.backend);
     log::info!("Code version: {}", args.digest);
 
-    let executor = LocalExecutor::new(&context, &project);
+    let executor = LocalExecutor::new(&project);
 
     let backend = args.backend.unwrap_or_default();
 
     // Build execution configuration
     let mut config = LocalExecutionConfig::new(
+        args.key.clone(),
+        args.api_endpoint.clone(),
         args.function.clone(),
         backend,
         args.procedure_type.procedure_type,

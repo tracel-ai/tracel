@@ -2,7 +2,8 @@ pub mod backend;
 mod cargo_toml;
 
 use crate::{
-    entity::projects::burn_dir::cache::CacheState, tools::function_discovery::FunctionMetadata,
+    entity::projects::burn_dir::cache::CacheState, execution::BackendType,
+    generation::backend::default_device_stream, tools::function_discovery::FunctionMetadata,
 };
 use quote::quote;
 use std::{
@@ -12,7 +13,6 @@ use std::{
 
 use crate::generation::{FileTree, crate_gen::cargo_toml::FeatureFlag};
 
-use super::backend::BackendType;
 use cargo_toml::{CargoToml, Dependency, QueryType};
 
 pub struct GeneratedCrate {
@@ -204,7 +204,7 @@ fn generate_main_rs(
 ) -> String {
     let backend_types = backend::generate_backend_typedef_stream(main_backend);
     let (_backend_type_name, _autodiff_backend_type_name) = backend::get_backend_type_names();
-    let backend_default_device = main_backend.default_device_stream();
+    let backend_default_device = default_device_stream();
 
     let builder_ident = syn::Ident::new("builder", proc_macro2::Span::call_site());
     let builder_registration: Vec<proc_macro2::TokenStream> = functions
@@ -283,7 +283,6 @@ pub fn create_crate(
     crate_name: &str,
     user_project_name: &str,
     user_project_dir: &str,
-    burn_features: Vec<&str>,
     backend: &BackendType,
     functions: &[FunctionMetadata],
     current_pkg: &cargo_metadata::Package,
@@ -312,6 +311,9 @@ pub fn create_crate(
         None,
         vec![],
     ));
+
+    let burn_features = backend::get_burn_feature_flags(backend);
+
     find_required_dependencies(current_pkg, vec!["burn-central", "burn"])
         .drain(..)
         .for_each(|mut dep| {

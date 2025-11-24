@@ -1,13 +1,11 @@
 use crate::context::CliContext;
-use crate::entity::projects::ProjectContext;
-use crate::entity::projects::burn_dir::project::BurnCentralProject;
-use crate::entity::projects::project_path::ProjectPath;
 use crate::helpers::{can_initialize_project, require_rust_project};
-use crate::tools::git;
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::Client;
 use burn_central_client::response::ProjectResponse;
+use burn_central_workspace::tools::git;
+use burn_central_workspace::{BurnCentralProject, ProjectContext, ProjectPath};
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -18,7 +16,6 @@ pub struct InitArgs {
 }
 
 pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result<()> {
-    // Check if we can initialize (handles all the validation and user messages)
     if !can_initialize_project(&context, args.force)? {
         return Ok(());
     }

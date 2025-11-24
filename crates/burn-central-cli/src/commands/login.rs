@@ -1,7 +1,11 @@
-use crate::{CliContext, ClientCreationError, Credentials, Environment};
 use anyhow::Context;
 use burn_central_client::Client;
 use clap::Args;
+
+use crate::{
+    app_config::Environment,
+    context::{CliContext, ClientCreationError, Credentials},
+};
 
 #[derive(Args, Debug)]
 pub struct LoginArgs {
@@ -17,7 +21,7 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
         match context.create_client() {
             Ok(client) => {
                 if attempts > 0 {
-                    context.terminal().print("Successfully logged in!");
+                    context.terminal().print_success("Successfully logged in!");
                 }
                 return Ok(client);
             }
