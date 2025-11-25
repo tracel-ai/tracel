@@ -63,14 +63,12 @@ fn execute_job(args: ComputeProviderJobArgs, project: &ProjectContext) -> anyhow
 
     let executor = LocalExecutor::new(project);
 
-    let backend = args.backend.unwrap_or_default();
-
     // Build execution configuration
     let mut config = LocalExecutionConfig::new(
         args.key.clone(),
         args.api_endpoint.clone(),
         args.function.clone(),
-        backend,
+        args.backend,
         args.procedure_type.procedure_type,
         args.digest,
     );
