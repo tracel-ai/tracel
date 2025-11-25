@@ -225,6 +225,13 @@ impl ProjectContext {
 
         let burn_dir_root = crate_info.user_crate_dir.join(PathBuf::from(burn_dir_name));
         let burn_dir = BurnDir::new(burn_dir_root);
+        burn_dir.init().map_err(|e| {
+            ProjectContextError::new(
+                "Failed to initialize Burn directory".to_string(),
+                ErrorKind::BurnDirInitialization,
+                Some(e.into()),
+            )
+        })?;
 
         burn_dir.save_project(&project).map_err(|e| {
             ProjectContextError::new(
