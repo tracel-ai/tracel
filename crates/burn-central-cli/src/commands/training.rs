@@ -218,6 +218,9 @@ fn execute_locally(
         if let Some(output) = result.output {
             context.terminal().print(&format!("Output:\n{}", output));
         }
+        context
+            .terminal()
+            .finalize("Training completed successfully.");
     } else {
         spinner.error("Training function execution failed.");
 
