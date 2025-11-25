@@ -51,22 +51,45 @@ pub(crate) fn generate_flag_register_stream(
 ) -> proc_macro2::TokenStream {
     let fn_name = &item.sig.ident;
     let builder_fn_name = &builder_fn_ident;
+    let proc_type_str = procedure_type.to_string().to_lowercase();
+
     let serialized_fn_item = syn_serde::json::to_string(item);
-    let serialized_lit_arr = syn::LitByteStr::new(serialized_fn_item.as_bytes(), item.span());
-    let proc_type_str = Ident::new(
-        &procedure_type.to_string().to_lowercase(),
+    let serialized_bytes = serialized_fn_item.as_bytes();
+    let byte_array_literal = syn::LitByteStr::new(serialized_bytes, item.span());
+
+    let const_name = Ident::new(
+        &format!(
+            "BURN_CENTRAL_FUNCTION_{}",
+            fn_name.to_string().to_uppercase()
+        ),
         proc_macro2::Span::call_site(),
     );
+
+    let ast_const_name = Ident::new(
+        &format!("_BURN_FUNCTION_AST_{}", fn_name.to_string().to_uppercase()),
+        proc_macro2::Span::call_site(),
+    );
+
     quote! {
-        burn_central::cli::register_functions!(
-            burn_central::cli::tools::functions_registry::FunctionMetadata,
-            burn_central::cli::tools::functions_registry::FunctionMetadata::new(
+        const _: () = {
+            #[allow(dead_code)]
+            const #const_name: &str = concat!(
+                "BCFN1|",
                 module_path!(),
+                "|",
                 stringify!(#fn_name),
+                "|",
                 stringify!(#builder_fn_name),
+                "|",
                 #routine_name,
-                stringify!(#proc_type_str),
-                #serialized_lit_arr));
+                "|",
+                #proc_type_str,
+                "|END"
+            );
+
+            #[allow(dead_code)]
+            const #ast_const_name: &[u8] = #byte_array_literal;
+        };
     }
 }
 

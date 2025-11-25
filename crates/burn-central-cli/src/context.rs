@@ -1,6 +1,5 @@
 use crate::app_config::{AppConfig, Credentials, Environment};
 use crate::config::Config;
-use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
 use burn_central_client::{BurnCentralCredentials, Client};
 
@@ -18,17 +17,11 @@ pub struct CliContext {
     terminal: Terminal,
     api_endpoint: url::Url,
     creds: Option<Credentials>,
-    pub function_registry: FunctionRegistry,
     environment: Environment,
 }
 
 impl CliContext {
-    pub fn new(
-        terminal: Terminal,
-        config: &Config,
-        function_registry: FunctionRegistry,
-        environment: Environment,
-    ) -> Self {
+    pub fn new(terminal: Terminal, config: &Config, environment: Environment) -> Self {
         Self {
             terminal,
             api_endpoint: config
@@ -36,7 +29,6 @@ impl CliContext {
                 .parse::<url::Url>()
                 .expect("API endpoint should be valid"),
             creds: None,
-            function_registry,
             environment,
         }
     }

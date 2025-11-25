@@ -28,7 +28,14 @@ pub fn try_locate_manifest() -> Option<std::path::PathBuf> {
         .arg("locate-project")
         .output()
         .expect("Failed to run cargo locate-project");
+    if !output.status.success() {
+        return None;
+    }
+
     let output_str = String::from_utf8(output.stdout).expect("Failed to parse output");
+    if output_str.trim().is_empty() {
+        return None;
+    }
     let parsed_output: serde_json::Value =
         serde_json::from_str(&output_str).expect("Failed to parse output");
 
