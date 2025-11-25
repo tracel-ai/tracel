@@ -266,7 +266,6 @@ dependencies = [
  "syn",
  "syn-serde",
  "tar",
- "tempfile",
  "thiserror 2.0.17",
  "toml",
  "toml_edit 0.22.27",
