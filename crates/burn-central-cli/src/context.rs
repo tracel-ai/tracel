@@ -1,7 +1,13 @@
-use crate::app_config::{AppConfig, Credentials, Environment};
+use crate::app_config::{AppConfig, Environment};
 use crate::config::Config;
 use crate::tools::terminal::Terminal;
 use burn_central_client::{BurnCentralCredentials, Client};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Credentials {
+    pub api_key: String,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientCreationError {
@@ -13,46 +19,47 @@ pub enum ClientCreationError {
     ServerConnectionError(String),
 }
 
+/// CLI-specific context that wraps the library context with terminal functionality
 pub struct CliContext {
     terminal: Terminal,
+    environment: Environment,
     api_endpoint: url::Url,
     creds: Option<Credentials>,
-    environment: Environment,
 }
 
 impl CliContext {
     pub fn new(terminal: Terminal, config: &Config, environment: Environment) -> Self {
         Self {
             terminal,
+            environment,
             api_endpoint: config
                 .api_endpoint
                 .parse::<url::Url>()
                 .expect("API endpoint should be valid"),
             creds: None,
-            environment,
         }
     }
 
     pub fn init(mut self) -> Self {
-        let entry_res = AppConfig::new(self.environment);
-        if let Ok(entry) = entry_res {
-            if let Ok(Some(api_key)) = entry.load_credentials() {
-                self.creds = Some(api_key);
+        // Load credentials from AppConfig and inject into core context
+        if let Ok(app_config) = AppConfig::new(self.environment()) {
+            if let Ok(Some(creds)) = app_config.load_credentials() {
+                self.creds = Some(creds);
             }
         }
         self
     }
 
     pub fn set_credentials(&mut self, creds: Credentials) {
+        // Save credentials to AppConfig
+        if let Ok(app_config) = AppConfig::new(self.environment()) {
+            _ = app_config.save_credentials(&creds);
+        }
         self.creds = Some(creds);
-        let app_config = AppConfig::new(self.environment).expect("AppConfig should be created");
-        app_config
-            .save_credentials(self.creds.as_ref().unwrap())
-            .expect("Credentials should be saved");
     }
 
     pub fn get_api_key(&self) -> Option<&str> {
-        self.creds.as_ref().map(|creds| creds.api_key.as_str())
+        self.creds.as_ref().map(|c| c.api_key.as_str())
     }
 
     pub fn create_client(&self) -> Result<Client, ClientCreationError> {
@@ -70,13 +77,6 @@ impl CliContext {
                 ClientCreationError::ServerConnectionError(e.to_string())
             }
         })
-    }
-
-    pub fn set_config(&mut self, config: &Config) {
-        self.api_endpoint = config
-            .api_endpoint
-            .parse::<url::Url>()
-            .expect("API endpoint should be valid");
     }
 
     pub fn get_api_endpoint(&self) -> &url::Url {
@@ -104,5 +104,12 @@ impl CliContext {
 
     pub fn environment(&self) -> Environment {
         self.environment
+    }
+
+    pub fn get_burn_dir_name(&self) -> &str {
+        match self.environment {
+            Environment::Development => ".burn-dev",
+            Environment::Production => ".burn",
+        }
     }
 }

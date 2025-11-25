@@ -1,12 +1,11 @@
 use crate::context::CliContext;
-use crate::entity::projects::ProjectContext;
-use crate::entity::projects::burn_dir::project::BurnCentralProject;
-use crate::entity::projects::project_path::ProjectPath;
-use crate::tools::git;
+use crate::helpers::{can_initialize_project, require_rust_project};
 use crate::tools::terminal::Terminal;
 use anyhow::Context;
 use burn_central_client::Client;
 use burn_central_client::response::ProjectResponse;
+use burn_central_workspace::tools::git;
+use burn_central_workspace::{BurnCentralProject, ProjectContext, ProjectPath};
 use clap::Args;
 
 #[derive(Args, Debug)]
@@ -17,32 +16,23 @@ pub struct InitArgs {
 }
 
 pub fn handle_command(args: InitArgs, mut context: CliContext) -> anyhow::Result<()> {
-    let client = super::login::get_client_and_login_if_needed(&mut context)?;
-    let mut project = ProjectContext::discover(context.environment())?;
-
-    if !args.force && project.get_project().is_some() {
-        context
-            .terminal()
-            .print("Project already initialized. Use the `--force` flag to reinitialize.");
+    if !can_initialize_project(&context, args.force)? {
         return Ok(());
     }
 
-    prompt_init(&context, &client, &mut project).context("Failed to initialize the project")
+    let client = super::login::get_client_and_login_if_needed(&mut context)?;
+    prompt_init(&context, &client).context("Failed to initialize the project")
 }
 
-pub fn prompt_init(
-    context: &CliContext,
-    client: &Client,
-    project: &mut ProjectContext,
-) -> anyhow::Result<()> {
+pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> {
     let user = client.get_current_user()?;
-    let ws_root = project.get_workspace_root();
+    let crate_info = require_rust_project(context)?;
 
     context.terminal().command_title("Project Initialization");
 
     let terminal = context.terminal();
 
-    ensure_git_repo_initialized(&ws_root)?;
+    ensure_git_repo_initialized(&crate_info.get_ws_root())?;
     ensure_git_repo_clean(terminal)?;
 
     let first_commit_hash = git::get_first_commit_hash();
@@ -55,7 +45,7 @@ pub fn prompt_init(
     let _first_commit_hash = first_commit_hash?;
 
     let project_owner = prompt_owner_name(&user.username, client)?;
-    let project_name = prompt_project_name(project)?;
+    let project_name = prompt_project_name(&crate_info.user_crate_name)?;
 
     let owner_name = match &project_owner {
         ProjectKind::User => user.namespace.as_str(),
@@ -75,9 +65,17 @@ pub fn prompt_init(
     let project_name = project_path.project_name();
     let owner_name = project_path.owner_name();
 
-    project.save_project(&BurnCentralProject {
-        name: project_name.to_string(),
-        owner: owner_name.to_string(),
+    ProjectContext::init(
+        BurnCentralProject {
+            name: project_name.to_string(),
+            owner: owner_name.to_string(),
+        },
+        &crate_info.get_manifest_path(),
+        context.get_burn_dir_name(),
+    )
+    .map_err(|e| {
+        terminal.cancel_finalize(&format!("Failed to initialize project metadata: {}", e));
+        e
     })?;
     terminal.print("Created project metadata");
 
@@ -117,12 +115,12 @@ fn prompt_owner_name(user_name: &str, client: &Client) -> anyhow::Result<Project
         .map_err(anyhow::Error::from)
 }
 
-pub fn prompt_project_name(project: &ProjectContext) -> anyhow::Result<String> {
+pub fn prompt_project_name(crate_name: &str) -> anyhow::Result<String> {
     let input = cliclack::input(format!(
         "Enter the project name (default: {}) ",
-        console::style(&project.user_crate_name).bold()
+        console::style(crate_name).bold()
     ))
-    .placeholder(&project.user_crate_name)
+    .placeholder(crate_name)
     .required(false)
     .validate(|input: &String| {
         if input.is_empty()
@@ -138,7 +136,7 @@ pub fn prompt_project_name(project: &ProjectContext) -> anyhow::Result<String> {
     .interact::<String>()?;
 
     let input = if input.is_empty() {
-        project.user_crate_name.clone()
+        crate_name.to_string()
     } else {
         input
     };
