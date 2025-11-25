@@ -15,8 +15,6 @@ rust-version.workspace = true
 name = "burn"
 path = "src/bin/burn.rs"
 
-
-
 [dependencies]
 burn-central-workspace = { workspace = true }
 burn-central-client = { workspace = true }
@@ -31,14 +29,3 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = "2.5.4"
-
-[dev-dependencies]
-tempfile = "3.8"
-
-[[example]]
-name = "function_registration_example"
-path = "examples/function_registration_example.rs"
-
-[features]
-default = []
-build-tools = []

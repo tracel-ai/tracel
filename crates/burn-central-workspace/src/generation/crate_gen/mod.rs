@@ -90,10 +90,12 @@ impl GeneratedCrate {
             }
         }
 
-        std::fs::create_dir_all(&crate_path)?;
-        file_tree.write_to(crate_path.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Failed to get parent directory.")
-        })?)?;
+        std::fs::create_dir_all(crate_path)?;
+        file_tree.write_to(
+            crate_path
+                .parent()
+                .ok_or_else(|| std::io::Error::other("Failed to get parent directory."))?,
+        )?;
 
         cache.add_crate(
             &name,

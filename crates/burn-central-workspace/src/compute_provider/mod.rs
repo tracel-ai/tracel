@@ -36,12 +36,16 @@ pub struct ComputeProviderJobArgs {
 
 /// Main entry point for compute provider execution
 pub fn compute_provider_main() -> anyhow::Result<()> {
-    let project = ProjectContext::load(".burn")?;
+    let manifest_path = crate::tools::cargo::try_locate_manifest().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Could not locate Cargo.toml manifest. Please run this command inside a Burn project directory."
+        )
+    })?;
+    let project = ProjectContext::load(&manifest_path, ".burn")?;
 
     let arg = get_arg()?;
     let args = serde_json::from_str::<ComputeProviderJobArgs>(&arg)?;
 
-    // Execute the job using local execution (same as CLI local mode)
     execute_job(args, &project)?;
 
     Ok(())
@@ -57,7 +61,7 @@ fn execute_job(args: ComputeProviderJobArgs, project: &ProjectContext) -> anyhow
     log::info!("Backend: {:?}", args.backend);
     log::info!("Code version: {}", args.digest);
 
-    let executor = LocalExecutor::new(&project);
+    let executor = LocalExecutor::new(project);
 
     let backend = args.backend.unwrap_or_default();
 

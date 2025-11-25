@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
-use crate::tools::cargo;
 use crate::tools::function_discovery::{FunctionDiscovery, FunctionMetadata};
 use crate::tools::functions_registry::FunctionRegistry;
 
@@ -67,11 +66,19 @@ pub struct CrateInfo {
 
 impl CrateInfo {
     pub fn load_from_path(manifest_path: &Path) -> Result<Self, ProjectContextError> {
-        if !manifest_path.is_file() {}
-        // get the project name from the Cargo.toml
+        if !manifest_path.is_file() {
+            return Err(ProjectContextError::new(
+                format!(
+                    "Cargo.toml not found at specified path '{}'",
+                    manifest_path.display()
+                ),
+                ErrorKind::ManifestNotFound,
+                None,
+            ));
+        }
         let toml_str = std::fs::read_to_string(manifest_path).expect("Cargo.toml should exist");
-        let manifest_document = toml::de::from_str::<toml::Value>(&toml_str).or_else(|e| {
-            Err(ProjectContextError::new(
+        let manifest_document = toml::de::from_str::<toml::Value>(&toml_str).map_err(|e| {
+            ProjectContextError::new(
                 format!(
                     "Failed to parse Cargo.toml at '{}': {}",
                     manifest_path.display(),
@@ -79,7 +86,7 @@ impl CrateInfo {
                 ),
                 ErrorKind::Parsing,
                 Some(anyhow::anyhow!(e)),
-            ))
+            )
         })?;
 
         if manifest_document.get("package").is_none() {
@@ -160,28 +167,19 @@ impl CrateInfo {
     pub fn get_ws_root(&self) -> PathBuf {
         self.metadata.workspace_root.clone().into_std_path_buf()
     }
-}
 
-fn find_manifest() -> Result<PathBuf, ProjectContextError> {
-    cargo::try_locate_manifest().ok_or_else(|| {
-        ProjectContextError::new(
-            "Failed to locate Cargo.toml in the current directory or any parent directories"
-                .to_string(),
-            ErrorKind::ManifestNotFound,
-            None,
-        )
-    })
+    pub fn get_manifest_path(&self) -> PathBuf {
+        self.user_crate_dir.join(PathBuf::from("Cargo.toml"))
+    }
 }
 
 impl ProjectContext {
-    pub fn load_crate_info() -> Result<CrateInfo, ProjectContextError> {
-        let manifest_path = find_manifest()?;
-        CrateInfo::load_from_path(&manifest_path)
+    pub fn load_crate_info(manifest_path: &Path) -> Result<CrateInfo, ProjectContextError> {
+        CrateInfo::load_from_path(manifest_path)
     }
 
-    pub fn load(burn_dir_name: &str) -> Result<Self, ProjectContextError> {
-        let manifest_path = find_manifest()?;
-        let crate_info = CrateInfo::load_from_path(&manifest_path)?;
+    pub fn load(manifest_path: &Path, burn_dir_name: &str) -> Result<Self, ProjectContextError> {
+        let crate_info = CrateInfo::load_from_path(manifest_path)?;
         let burn_dir_root = crate_info.user_crate_dir.join(PathBuf::from(burn_dir_name));
         let burn_dir = BurnDir::new(burn_dir_root);
         burn_dir.init().map_err(|e| {
@@ -220,10 +218,10 @@ impl ProjectContext {
 
     pub fn init(
         project: BurnCentralProject,
+        manifest_path: &Path,
         burn_dir_name: &str,
     ) -> Result<Self, ProjectContextError> {
-        let manifest_path = find_manifest()?;
-        let crate_info = CrateInfo::load_from_path(&manifest_path)?;
+        let crate_info = CrateInfo::load_from_path(manifest_path)?;
 
         let burn_dir_root = crate_info.user_crate_dir.join(PathBuf::from(burn_dir_name));
         let burn_dir = BurnDir::new(burn_dir_root);
@@ -245,14 +243,13 @@ impl ProjectContext {
         })
     }
 
-    pub fn unlink(burn_dir_name: &str) -> Result<(), ProjectContextError> {
-        let manifest_path = find_manifest()?;
-        let crate_info = CrateInfo::load_from_path(&manifest_path)?;
+    pub fn unlink(manifest_path: &Path, burn_dir_name: &str) -> Result<(), ProjectContextError> {
+        let crate_info = CrateInfo::load_from_path(manifest_path)?;
 
         let burn_dir_root = crate_info.user_crate_dir.join(PathBuf::from(burn_dir_name));
         let burn_dir = BurnDir::new(burn_dir_root);
 
-        std::fs::remove_dir_all(&burn_dir.root()).map_err(|e| {
+        std::fs::remove_dir_all(burn_dir.root()).map_err(|e| {
             ProjectContextError::new(
                 "Failed to remove Burn directory".to_string(),
                 ErrorKind::Unexpected,
@@ -281,6 +278,10 @@ impl ProjectContext {
             .workspace_root
             .clone()
             .into_std_path_buf()
+    }
+
+    pub fn get_manifest_path(&self) -> PathBuf {
+        self.crate_info.get_manifest_path()
     }
 
     pub fn burn_dir(&self) -> &BurnDir {

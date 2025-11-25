@@ -37,7 +37,7 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
                             Environment::Development => " (development environment)",
                             Environment::Production => "",
                         };
-                        context.terminal().print(&format!(
+                        context.terminal().print_err(&format!(
                             "Failed to login{}. Please try again. Press Ctrl+C to exit.",
                             env_msg
                         ));
@@ -57,7 +57,7 @@ pub fn get_client_and_login_if_needed(context: &mut CliContext) -> anyhow::Resul
                                 msg
                             ));
                         }
-                        context.terminal().print(&format!(
+                        context.terminal().print_err(&format!(
                             "Failed to connect to the server: {msg}. Retrying..."
                         ));
                     }

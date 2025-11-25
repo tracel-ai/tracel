@@ -49,7 +49,7 @@ pub fn package_sequence(
     let code_metadata = BurnCentralCodeMetadataRequest {
         functions: registry
             .get_function_references()
-            .into_iter()
+            .iter()
             .map(|f| RegisteredFunctionRequest {
                 mod_path: f.mod_path.clone(),
                 fn_name: f.fn_name.clone(),

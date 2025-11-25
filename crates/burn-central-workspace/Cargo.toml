@@ -27,9 +27,7 @@ regex = { workspace = true }
 strum = { workspace = true }
 colored = { workspace = true }
 log = { workspace = true }
-uuid = { workspace = true }
 chrono = { workspace = true }
-
 toml_edit = "0.22.26"
 prettyplease = "0.2.33"
 url = "2.5.4"
@@ -46,10 +44,8 @@ serde-untagged = "0.1.7"
 serde_ignored = "0.1.12"
 sha2 = "0.10"
 pathdiff = "0.2.3"
-directories = "6"
 
 [dev-dependencies]
-tempfile = "3.8"
 env_logger = { workspace = true }
 
 [features]

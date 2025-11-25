@@ -3,7 +3,7 @@ use burn_central_workspace::ProjectContext;
 use crate::{context::CliContext, helpers::require_linked_project};
 
 pub fn handle_command(context: CliContext) -> anyhow::Result<()> {
-    let _project = require_linked_project(&context)?;
+    let project = require_linked_project(&context)?;
 
     context.terminal().command_title("Unlink");
 
@@ -13,7 +13,7 @@ pub fn handle_command(context: CliContext) -> anyhow::Result<()> {
         .unwrap();
 
     if confirm_value {
-        match ProjectContext::unlink(context.get_burn_dir_name()) {
+        match ProjectContext::unlink(&project.get_manifest_path(), context.get_burn_dir_name()) {
             Ok(_) => context.terminal().finalize("Project unlinked successfully"),
             Err(e) => {
                 context

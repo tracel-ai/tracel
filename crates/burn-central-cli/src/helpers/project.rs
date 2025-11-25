@@ -5,17 +5,30 @@ use burn_central_workspace::{CrateInfo, ProjectContext, tools::cargo};
 
 /// Check if current directory contains a Rust project (has Cargo.toml)
 pub fn is_rust_project() -> bool {
-    cargo::try_locate_manifest().is_some()
+    find_manifest().is_ok()
+}
+
+pub fn find_manifest() -> anyhow::Result<std::path::PathBuf> {
+    cargo::try_locate_manifest().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Could not locate Cargo.toml manifest. Please run this command inside a Burn project directory."
+        )
+    })
 }
 
 /// Check if current directory has a linked Burn Central project
 pub fn is_burn_central_project_linked(context: &CliContext) -> bool {
-    ProjectContext::load(context.get_burn_dir_name()).is_ok()
+    let manifest_path = find_manifest();
+    match manifest_path {
+        Err(_) => false,
+        Ok(p) => ProjectContext::load(&p, context.get_burn_dir_name()).is_ok(),
+    }
 }
 
 /// Require a linked Burn Central project, showing helpful errors if not found
 pub fn require_linked_project(context: &CliContext) -> anyhow::Result<ProjectContext> {
-    match ProjectContext::load(context.get_burn_dir_name()) {
+    let manifest_path = find_manifest()?;
+    match ProjectContext::load(&manifest_path, context.get_burn_dir_name()) {
         Ok(project) => Ok(project),
         Err(_) => {
             if is_rust_project() {
@@ -40,7 +53,8 @@ pub fn require_linked_project(context: &CliContext) -> anyhow::Result<ProjectCon
 
 /// Require a Rust project (with or without Burn Central linkage)
 pub fn require_rust_project(context: &CliContext) -> anyhow::Result<CrateInfo> {
-    match ProjectContext::load_crate_info() {
+    let manifest_path = find_manifest()?;
+    match ProjectContext::load_crate_info(&manifest_path) {
         Ok(crate_info) => Ok(crate_info),
         Err(_) => {
             context

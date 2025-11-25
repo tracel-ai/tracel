@@ -1,7 +1,6 @@
 //! Local execution core for Burn Central
 //!
 //! This module provides the core functionality for building and executing functions locally.
-//! It is used by both the CLI (for local execution) and compute providers (for remote job execution).
 
 use serde::Serialize;
 
@@ -146,7 +145,6 @@ impl<'a> LocalExecutor<'a> {
         let crate_dir = self.generate_executable_crate(crate_name, &build_config)?;
         let executable_path = self.build_executable(crate_name, &crate_dir, &build_config)?;
 
-        // Execute the binary
         let run_config = RunConfig {
             function: config.function,
             procedure_type: config.procedure_type,
@@ -188,7 +186,7 @@ impl<'a> LocalExecutor<'a> {
 
         let generated_crate = crate::generation::crate_gen::create_crate(
             crate_name,
-            &self.project.get_crate_name(),
+            self.project.get_crate_name(),
             self.project.get_crate_path().to_str().unwrap(),
             &config.backend,
             functions.get_function_references(),
@@ -210,7 +208,6 @@ impl<'a> LocalExecutor<'a> {
     ) -> crate::Result<PathBuf> {
         let build_dir = crate_dir;
 
-        // Prepare cargo build command
         let mut build_cmd = cargo::command();
         build_cmd
             .current_dir(build_dir)
@@ -227,7 +224,6 @@ impl<'a> LocalExecutor<'a> {
             &build_dir.join("Cargo.toml").to_string_lossy(),
         ]);
 
-        // Execute build
         let child = build_cmd.spawn().map_err(|e| {
             ExecutionError::BuildFailed(format!("Failed to execute cargo build: {}", e))
         })?;
@@ -242,7 +238,6 @@ impl<'a> LocalExecutor<'a> {
             );
         }
 
-        // Determine executable path
         let profile_dir = match config.build_profile {
             BuildProfile::Debug => "debug",
             BuildProfile::Release => "release",
@@ -271,7 +266,7 @@ impl<'a> LocalExecutor<'a> {
     ) -> crate::Result<LocalExecutionResult> {
         let mut run_cmd = Command::new(executable_path);
 
-        run_cmd.env("BURN_PROJECT_DIR", &self.project.get_crate_path());
+        run_cmd.env("BURN_PROJECT_DIR", self.project.get_crate_path());
 
         let project = self.project.get_project();
         run_cmd.args(["--namespace", &project.owner]);
@@ -285,13 +280,17 @@ impl<'a> LocalExecutor<'a> {
             ExecutionError::RuntimeFailed(format!("Failed to serialize args: {}", e))
         })?;
         run_cmd.args(["--args", &args_str]);
-        run_cmd.arg("train");
+
+        let run_kind = match config.procedure_type {
+            ProcedureType::Training => "train",
+            ProcedureType::Inference => "infer",
+        };
+
+        run_cmd.arg(run_kind);
         run_cmd.arg(&config.function);
 
-        // Set up stdio
         run_cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
-        // Execute
         let run_output = run_cmd.output().map_err(|e| {
             ExecutionError::RuntimeFailed(format!("Failed to execute binary: {}", e))
         })?;

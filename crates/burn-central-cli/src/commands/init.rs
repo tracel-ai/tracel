@@ -70,6 +70,7 @@ pub fn prompt_init(context: &CliContext, client: &Client) -> anyhow::Result<()> 
             name: project_name.to_string(),
             owner: owner_name.to_string(),
         },
+        &crate_info.get_manifest_path(),
         context.get_burn_dir_name(),
     )
     .map_err(|e| {

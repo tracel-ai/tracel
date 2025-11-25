@@ -59,18 +59,6 @@ pub enum ExecutionError {
 
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
-
-    #[error("Invalid configuration: {0}")]
-    InvalidConfiguration(String),
-
-    #[error("Job submission failed: {0}")]
-    JobSubmissionFailed(String),
-
-    #[error("Project not initialized")]
-    ProjectNotInitialized,
-
-    #[error("Authentication failed")]
-    AuthenticationFailed,
 }
 
 /// Validate that a function exists in the available functions
