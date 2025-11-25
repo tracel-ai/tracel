@@ -126,7 +126,7 @@ fn execute_remotely(
 
     let command = ComputeProviderJobArgs {
         function: function.clone(),
-        backend: args.backend,
+        backend: args.backend.unwrap_or_default(),
         args: Some(launch_args.data),
         digest: code_version.clone(),
         namespace: bc_project.owner.clone(),

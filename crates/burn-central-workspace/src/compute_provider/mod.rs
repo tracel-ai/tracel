@@ -16,7 +16,7 @@ pub struct ComputeProviderJobArgs {
     /// The function to run
     pub function: String,
     /// Backend to use
-    pub backend: Option<BackendType>,
+    pub backend: BackendType,
     /// Config file path
     pub args: Option<serde_json::Value>,
     /// Project version/digest
