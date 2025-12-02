@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
 use crate::execution::cancellable::CancellationToken;
@@ -56,7 +56,7 @@ pub struct ProjectContext {
     pub build_profile: String,
     pub burn_dir: BurnDir,
     pub project: BurnCentralProject,
-    function_registry: RefCell<Vec<FunctionMetadata>>,
+    function_registry: Mutex<Vec<FunctionMetadata>>,
 }
 
 pub struct CrateInfo {
@@ -213,7 +213,7 @@ impl ProjectContext {
             build_profile: "release".to_string(),
             burn_dir,
             project,
-            function_registry: RefCell::new(Default::default()),
+            function_registry: Mutex::new(Default::default()),
         })
     }
 
@@ -247,7 +247,7 @@ impl ProjectContext {
             build_profile: "release".to_string(),
             burn_dir,
             project: project.clone(),
-            function_registry: RefCell::new(Default::default()),
+            function_registry: Mutex::new(Default::default()),
         })
     }
 
@@ -311,7 +311,7 @@ impl ProjectContext {
     ) -> anyhow::Result<FunctionRegistry> {
         use crate::execution::cancellable::check_cancelled_anyhow;
 
-        let mut functions = self.function_registry.borrow_mut();
+        let mut functions = self.function_registry.lock().unwrap();
         if functions.is_empty() {
             check_cancelled_anyhow!(cancel_token, "Function loading was cancelled");
 
