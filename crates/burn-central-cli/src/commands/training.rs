@@ -4,8 +4,7 @@ use burn_central_workspace::compute_provider::ComputeProviderJobArgs;
 use burn_central_workspace::compute_provider::ProcedureTypeArg;
 use burn_central_workspace::execution::BackendType;
 use burn_central_workspace::execution::ProcedureType;
-use burn_central_workspace::execution::local::LocalExecutionConfig;
-use burn_central_workspace::execution::local::LocalExecutor;
+use burn_central_workspace::execution::local::{LocalExecutionConfig, LocalExecutor};
 use clap::Parser;
 use clap::ValueHint;
 use colored::Colorize;
@@ -164,7 +163,10 @@ fn execute_remotely(
 fn preload_functions(context: &CliContext, project: &ProjectContext) -> anyhow::Result<()> {
     let spinner = context.terminal().spinner();
     spinner.start("Discovering project functions...");
-    let functions = project.load_functions()?;
+    let functions = project
+        .load_functions()
+        .context("Function discovery failed")?;
+
     spinner.stop(format!(
         "Discovered {} functions.",
         functions.get_function_references().len()

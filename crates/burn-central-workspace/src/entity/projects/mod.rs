@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crate::entity::projects::burn_dir::{BurnDir, project::BurnCentralProject};
+use crate::execution::cancellable::CancellationToken;
 use crate::tools::function_discovery::{FunctionDiscovery, FunctionMetadata};
 use crate::tools::functions_registry::FunctionRegistry;
 
@@ -300,13 +301,25 @@ impl ProjectContext {
     }
 
     pub fn load_functions(&self) -> anyhow::Result<FunctionRegistry> {
+        let token = CancellationToken::new();
+        self.load_functions_cancellable(&token)
+    }
+
+    pub fn load_functions_cancellable(
+        &self,
+        cancel_token: &CancellationToken,
+    ) -> anyhow::Result<FunctionRegistry> {
+        use crate::execution::cancellable::check_cancelled_anyhow;
+
         let mut functions = self.function_registry.borrow_mut();
         if functions.is_empty() {
+            check_cancelled_anyhow!(cancel_token, "Function loading was cancelled");
+
             let current_pkg = self.get_current_package();
             let discovered_functions = FunctionDiscovery::new(&self.crate_info.user_crate_dir)
                 .with_manifest_path(current_pkg.manifest_path.clone())
                 .with_target_dir(self.burn_dir.target_dir())
-                .discover_functions()
+                .discover_functions(cancel_token)
                 .map_err(|e| {
                     anyhow::anyhow!(
                         "Failed to discover functions in crate '{}': {}",

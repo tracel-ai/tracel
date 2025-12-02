@@ -6,12 +6,18 @@ use serde::Serialize;
 
 use crate::{
     entity::projects::ProjectContext,
-    execution::{BackendType, BuildProfile, ExecutionError, ProcedureType},
+    execution::{
+        BackendType, BuildProfile, ExecutionError, ProcedureType, cancellable::CancellationToken,
+    },
     tools::{cargo, function_discovery::FunctionMetadata},
 };
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
+};
+
+use crate::execution::cancellable::{
+    CancellableProcess, CancellableResult, check_cancelled_anyhow,
 };
 
 /// Configuration for executing a function locally
@@ -116,6 +122,16 @@ impl LocalExecutionResult {
             exit_code,
         }
     }
+
+    /// Create a cancelled result
+    pub fn cancelled() -> Self {
+        Self {
+            success: false,
+            output: None,
+            error: Some("Execution cancelled by user".to_string()),
+            exit_code: Some(-1),
+        }
+    }
 }
 
 /// Core local executor - handles building and running functions locally
@@ -131,7 +147,17 @@ impl<'a> LocalExecutor<'a> {
 
     /// Execute a function locally
     pub fn execute(&self, config: LocalExecutionConfig) -> crate::Result<LocalExecutionResult> {
-        let functions = self.project.load_functions()?;
+        let cancellation_token = CancellationToken::new();
+        self.execute_cancellable(config, &cancellation_token)
+    }
+
+    /// Execute a function locally with cancellation support
+    pub fn execute_cancellable(
+        &self,
+        config: LocalExecutionConfig,
+        cancel_token: &CancellationToken,
+    ) -> crate::Result<LocalExecutionResult> {
+        let functions = self.project.load_functions_cancellable(cancel_token)?;
         let function_refs = functions.get_function_references();
         self.validate_function(&config.function, function_refs)?;
 
@@ -142,8 +168,14 @@ impl<'a> LocalExecutor<'a> {
         };
 
         let crate_name = "burn_central_executable";
-        let crate_dir = self.generate_executable_crate(crate_name, &build_config)?;
-        let executable_path = self.build_executable(crate_name, &crate_dir, &build_config)?;
+        let crate_dir = self.generate_executable_crate(crate_name, &build_config, &cancel_token)?;
+
+        if cancel_token.is_cancelled() {
+            return Ok(LocalExecutionResult::cancelled());
+        }
+
+        let executable_path =
+            self.build_executable(crate_name, &crate_dir, &build_config, &cancel_token)?;
 
         let run_config = RunConfig {
             function: config.function,
@@ -152,7 +184,11 @@ impl<'a> LocalExecutor<'a> {
             api_key: config.api_key,
             api_endpoint: config.api_endpoint,
         };
-        self.run_executable(&executable_path, &run_config)
+        if cancel_token.is_cancelled() {
+            return Ok(LocalExecutionResult::cancelled());
+        }
+
+        self.run_executable(&executable_path, &run_config, &cancel_token)
     }
 
     /// Validate that the requested function exists and matches the procedure type
@@ -181,8 +217,11 @@ impl<'a> LocalExecutor<'a> {
         &self,
         crate_name: &str,
         config: &BuildConfig,
+        cancel_token: &CancellationToken,
     ) -> crate::Result<PathBuf> {
-        let functions = self.project.load_functions()?;
+        check_cancelled_anyhow!(cancel_token, "Executable crate generation was cancelled");
+
+        let functions = self.project.load_functions_cancellable(cancel_token)?;
 
         let generated_crate = crate::generation::crate_gen::create_crate(
             crate_name,
@@ -205,6 +244,7 @@ impl<'a> LocalExecutor<'a> {
         crate_name: &str,
         crate_dir: &Path,
         config: &BuildConfig,
+        cancel_token: &CancellationToken,
     ) -> crate::Result<PathBuf> {
         let build_dir = crate_dir;
 
@@ -228,14 +268,22 @@ impl<'a> LocalExecutor<'a> {
             ExecutionError::BuildFailed(format!("Failed to execute cargo build: {}", e))
         })?;
 
-        let build_output = child.wait_with_output().map_err(|e| {
-            ExecutionError::BuildFailed(format!("Failed to wait for cargo build: {}", e))
-        })?;
-        if !build_output.status.success() {
-            let stderr = String::from_utf8_lossy(&build_output.stderr);
-            return Err(
-                ExecutionError::BuildFailed(format!("Cargo build failed:\n{}", stderr)).into(),
-            );
+        let cancellable = CancellableProcess::new(child, cancel_token.clone());
+        let result = cancellable.wait();
+
+        match result {
+            CancellableResult::Completed(status) => {
+                if !status.success() {
+                    return Err(
+                        ExecutionError::BuildFailed("Cargo build failed".to_string()).into(),
+                    );
+                }
+            }
+            CancellableResult::Cancelled => {
+                return Err(
+                    ExecutionError::RuntimeFailed("Build cancelled by user".to_string()).into(),
+                );
+            }
         }
 
         let profile_dir = match config.build_profile {
@@ -258,11 +306,12 @@ impl<'a> LocalExecutor<'a> {
         Ok(executable_path)
     }
 
-    /// Execute the built binary with the specified configuration
+    /// Execute the built binary with cancellation support
     fn run_executable(
         &self,
         executable_path: &Path,
         config: &RunConfig,
+        cancel_token: &CancellationToken,
     ) -> crate::Result<LocalExecutionResult> {
         let mut run_cmd = Command::new(executable_path);
 
@@ -289,11 +338,23 @@ impl<'a> LocalExecutor<'a> {
         run_cmd.arg(run_kind);
         run_cmd.arg(&config.function);
 
-        run_cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        run_cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdin(Stdio::piped());
 
-        let run_output = run_cmd.output().map_err(|e| {
+        let child = run_cmd.spawn().map_err(|e| {
             ExecutionError::RuntimeFailed(format!("Failed to execute binary: {}", e))
         })?;
+
+        let cancellable = CancellableProcess::new(child, cancel_token.clone());
+        let result = cancellable.wait_with_output();
+        let run_output = match result {
+            CancellableResult::Completed(output) => output,
+            CancellableResult::Cancelled => {
+                return Ok(LocalExecutionResult::cancelled());
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&run_output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&run_output.stderr).to_string();
@@ -320,6 +381,25 @@ impl<'a> LocalExecutor<'a> {
     /// List available functions of a specific type
     pub fn list_functions(&self, procedure_type: ProcedureType) -> crate::Result<Vec<String>> {
         let functions = self.project.load_functions()?;
+        let filtered_functions: Vec<String> = functions
+            .get_function_references()
+            .iter()
+            .filter(|f| f.proc_type.to_lowercase() == procedure_type.to_string().to_lowercase())
+            .map(|f| f.routine_name.clone())
+            .collect();
+
+        Ok(filtered_functions)
+    }
+
+    /// List available functions of a specific type with cancellation support
+    pub fn list_functions_cancellable(
+        &self,
+        procedure_type: ProcedureType,
+        cancellation_token: &CancellationToken,
+    ) -> crate::Result<Vec<String>> {
+        let functions = self
+            .project
+            .load_functions_cancellable(cancellation_token)?;
         let filtered_functions: Vec<String> = functions
             .get_function_references()
             .iter()

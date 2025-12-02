@@ -1,3 +1,4 @@
+pub mod cancellable;
 pub mod local;
 
 use crate::tools::function_discovery::FunctionMetadata;
@@ -59,6 +60,9 @@ pub enum ExecutionError {
 
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
+
+    #[error("Execution cancelled")]
+    Cancelled,
 }
 
 /// Validate that a function exists in the available functions
