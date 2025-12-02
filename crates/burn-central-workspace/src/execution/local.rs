@@ -168,14 +168,14 @@ impl<'a> LocalExecutor<'a> {
         };
 
         let crate_name = "burn_central_executable";
-        let crate_dir = self.generate_executable_crate(crate_name, &build_config, &cancel_token)?;
+        let crate_dir = self.generate_executable_crate(crate_name, &build_config, cancel_token)?;
 
         if cancel_token.is_cancelled() {
             return Ok(LocalExecutionResult::cancelled());
         }
 
         let executable_path =
-            self.build_executable(crate_name, &crate_dir, &build_config, &cancel_token)?;
+            self.build_executable(crate_name, &crate_dir, &build_config, cancel_token)?;
 
         let run_config = RunConfig {
             function: config.function,
@@ -188,7 +188,7 @@ impl<'a> LocalExecutor<'a> {
             return Ok(LocalExecutionResult::cancelled());
         }
 
-        self.run_executable(&executable_path, &run_config, &cancel_token)
+        self.run_executable(&executable_path, &run_config, cancel_token)
     }
 
     /// Validate that the requested function exists and matches the procedure type
