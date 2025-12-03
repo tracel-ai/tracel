@@ -13,6 +13,7 @@ ndarray-stub = ["burn/ndarray"]
 [dependencies]
 anyhow = "1.0.98"
 burn-central-core = { workspace = true }
+burn = { workspace = true }
 thiserror = { workspace = true }
 variadics_please = { workspace = true }
 tynm = { workspace = true, features = ["info"] }
