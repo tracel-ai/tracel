@@ -8,8 +8,8 @@ pub use burn_central_core::*;
 
 /// Burn Central macros
 pub mod macros {
-    pub use burn_central_cli_macros::burn_central_main;
-    pub use burn_central_cli_macros::register;
+    pub use burn_central_macros::burn_central_main;
+    pub use burn_central_macros::register;
 }
 
 /// Burn Central Runtime

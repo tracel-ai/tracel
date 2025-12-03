@@ -247,8 +247,8 @@ dependencies = [
 name = "burn-central"
 version = "0.1.0"
 dependencies = [
- "burn-central-cli-macros",
  "burn-central-core",
+ "burn-central-macros",
  "burn-central-runtime",
 ]
 
@@ -268,18 +268,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "url",
-]
-
-[[package]]
-name = "burn-central-cli-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "strum",
- "syn",
- "syn-serde",
- "uuid",
 ]
 
 [[package]]
@@ -318,6 +306,18 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "burn-central-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "strum",
+ "syn",
+ "syn-serde",
  "uuid",
 ]
 
