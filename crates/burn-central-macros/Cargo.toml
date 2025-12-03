@@ -1,13 +1,13 @@
 [package]
 authors = ["Tracel Technologies Inc."]
 categories = ["command-line-interface", "command-line-utilities", "development-tools"]
-description = "Macros for Burn Central CLI."
+description = "Macros for Burn Central SDK and CLI."
 keywords = ["tracel", "burn-central", "burn", "macros"]
 edition.workspace = true
 license.workspace = true
-name = "burn-central-cli-macros"
+name = "burn-central-macros"
 readme = "README.md"
-repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-cli-macros"
+repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central-macros"
 version.workspace = true
 rust-version.workspace = true
 

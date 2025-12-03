@@ -13,10 +13,10 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
-  burn-central-cli-macros:
+  burn-central-macros:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
-      crate: burn-central-cli-macros
+      crate: burn-central-macros
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
