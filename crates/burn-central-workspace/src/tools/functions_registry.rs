@@ -13,13 +13,6 @@ impl FunctionRegistry {
         &self.functions
     }
 
-    // pub fn get_registered_functions(&self) -> Vec<RegisteredFunctionRequest> {
-    //     self.functions
-    //         .iter()
-    //         .map(|function| function.clone().into())
-    //         .collect()
-    // }
-
     pub fn get_training_routine(&self) -> Vec<String> {
         self.functions
             .iter()
