@@ -291,6 +291,7 @@ impl CancellablePoller {
 ///
 /// # Example
 /// ```rust
+/// use burn_central_workspace::execution::cancellable::CancellationToken;
 /// use burn_central_workspace::execution::cancellable::check_cancelled_anyhow;
 ///
 /// fn my_operation(token: &CancellationToken) -> anyhow::Result<()> {
