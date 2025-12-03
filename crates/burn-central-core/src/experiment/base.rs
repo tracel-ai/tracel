@@ -74,7 +74,7 @@ impl ExperimentRunHandle {
         iteration: usize,
         items: Vec<MetricLog>,
     ) {
-        self.try_log_metric(name, epoch, iteration, value, group)
+        self.try_log_metric(epoch, split, iteration, items)
             .expect("Failed to log metric, experiment may have been closed or inactive");
     }
 

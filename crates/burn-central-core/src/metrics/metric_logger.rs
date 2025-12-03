@@ -31,7 +31,12 @@ impl RemoteMetricLogger {
         entries
             .iter()
             .filter_map(|entry| {
-                let name = &self.metric_definitions.get(&entry.metric_id).unwrap().name;
+                let name = self
+                    .metric_definitions
+                    .get(&entry.metric_id)
+                    .unwrap()
+                    .name
+                    .clone();
                 let numeric_entry: NumericEntry =
                     match NumericEntry::deserialize(&entry.serialized_entry.serialized) {
                         Ok(e) => e,
@@ -43,7 +48,7 @@ impl RemoteMetricLogger {
                         aggregated_value, ..
                     } => aggregated_value,
                 };
-                Some(MetricLog::new(name.to_string(), value))
+                Some(MetricLog { name, value })
             })
             .collect()
     }

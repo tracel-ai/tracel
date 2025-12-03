@@ -1,7 +1,6 @@
 use crate::experiment::log_store::TempLogStore;
 use burn_central_client::{ClientError, WebSocketClient, websocket::ExperimentMessage};
 use crossbeam::channel::{Receiver, Sender, select};
-use derive_new::new;
 use std::thread::JoinHandle;
 
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +22,6 @@ const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
 #[derive(Debug)]
 pub struct ThreadResult {}
 
-#[derive(new)]
 struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<ExperimentMessage>,
@@ -32,6 +30,20 @@ struct ExperimentThread {
 }
 
 impl ExperimentThread {
+    fn new(
+        ws_client: WebSocketClient,
+        message_receiver: Receiver<ExperimentMessage>,
+        abort_signal: Receiver<()>,
+        log_store: TempLogStore,
+    ) -> Self {
+        Self {
+            ws_client,
+            message_receiver,
+            abort_signal,
+            log_store,
+        }
+    }
+
     fn run(mut self) -> Result<ThreadResult, ThreadError> {
         let res = self.thread_loop();
         self.cleanup()?;

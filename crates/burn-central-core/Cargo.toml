@@ -34,7 +34,6 @@ crossbeam = { workspace = true, default-features = false, features = [
 ] }
 json-patch = { workspace = true }
 burn-central-client = { workspace = true }
-derive-new.workspace = true
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
