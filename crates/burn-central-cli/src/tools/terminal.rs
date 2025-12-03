@@ -1,4 +1,4 @@
-use cliclack::{clear_screen, confirm};
+use cliclack::{ProgressBar, clear_screen, confirm};
 
 #[derive(Clone)]
 pub struct Terminal {}
@@ -18,6 +18,10 @@ impl Terminal {
 
     pub fn print_err(&self, message: &str) {
         cliclack::log::error(message).expect("To be able to print message");
+    }
+
+    pub fn spinner(&self) -> ProgressBar {
+        cliclack::spinner()
     }
 
     #[allow(dead_code)]

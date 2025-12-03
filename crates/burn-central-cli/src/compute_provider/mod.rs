@@ -1,11 +1,7 @@
 use crate::{
-    app_config::Environment,
-    commands::training::local_run_internal,
-    config::Config,
-    context::CliContext,
-    entity::projects::ProjectContext,
-    generation::backend::BackendType,
-    tools::{functions_registry::FunctionRegistry, terminal::Terminal},
+    app_config::Environment, commands::training::local_run_internal, config::Config,
+    context::CliContext, entity::projects::ProjectContext, generation::backend::BackendType,
+    tools::terminal::Terminal,
 };
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -46,13 +42,7 @@ pub fn compute_provider_main() {
     };
 
     let terminal = Terminal {};
-    let function_registry = FunctionRegistry::new();
-    let mut context = CliContext::new(
-        terminal,
-        &config,
-        function_registry,
-        Environment::Production,
-    );
+    let mut context = CliContext::new(terminal, &config, Environment::Production);
     let project = ProjectContext::discover(context.environment())
         .expect("Should be able to discover project context.");
 

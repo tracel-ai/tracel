@@ -13,6 +13,5 @@ rust-version.workspace = true
 
 [dependencies]
 burn-central-core.workspace = true
-burn-central-cli.workspace = true
 burn-central-cli-macros.workspace = true
 burn-central-runtime.workspace = true

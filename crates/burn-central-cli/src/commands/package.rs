@@ -40,7 +40,7 @@ pub fn package_sequence(
         project.user_crate_name.as_str(),
     )?;
 
-    let registered_functions = context.function_registry.get_registered_functions();
+    let registered_functions = project.load_functions()?.get_registered_functions();
 
     let code_metadata = BurnCentralCodeMetadataRequest {
         functions: registered_functions,

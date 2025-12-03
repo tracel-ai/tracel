@@ -42,6 +42,10 @@ impl BurnDir {
         self.root.join("artifacts")
     }
 
+    pub fn target_dir(&self) -> PathBuf {
+        self.root.join("target")
+    }
+
     pub fn load_cache(&self) -> io::Result<CacheState> {
         CacheState::load(&self.root)
     }

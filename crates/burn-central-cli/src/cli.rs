@@ -5,7 +5,6 @@ use crate::commands;
 use crate::commands::default_command;
 use crate::config::Config;
 use crate::context::CliContext;
-use crate::tools::functions_registry::FunctionRegistry;
 use crate::tools::terminal::Terminal;
 
 #[derive(Parser, Debug)]
@@ -58,8 +57,7 @@ pub fn cli_main() {
             .print_warning("Running in development mode - using local server and dev credentials");
     }
 
-    let function_registry = FunctionRegistry::new();
-    let context = CliContext::new(terminal.clone(), &config, function_registry, environment).init();
+    let context = CliContext::new(terminal.clone(), &config, environment).init();
 
     let cli_res = match args.command {
         Some(command) => handle_command(command, context),
