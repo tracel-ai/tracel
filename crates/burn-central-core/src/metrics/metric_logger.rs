@@ -27,7 +27,7 @@ impl RemoteMetricLogger {
         }
     }
 
-    fn get_logs_from_entries(&self, entries: &Vec<MetricEntry>) -> Vec<MetricLog> {
+    fn get_logs_from_entries(&self, entries: &[MetricEntry]) -> Vec<MetricLog> {
         entries
             .iter()
             .filter_map(|entry| {
