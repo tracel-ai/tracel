@@ -1,59 +1,27 @@
-use std::path::PathBuf;
-
-use crate::compute_provider::ComputeProviderTrainingArgs;
-use crate::compute_provider::ProcedureType;
-use crate::compute_provider::ProcedureTypeArg;
-use crate::entity::experiments::config::ExperimentConfig;
-use crate::entity::projects::ProjectContext;
-use crate::entity::projects::burn_dir::BurnDir;
-use crate::entity::projects::burn_dir::cache::CacheState;
-use crate::tools::cargo;
-use crate::tools::function_discovery::FunctionMetadata;
 use anyhow::Context;
+use burn_central_workspace::ProjectContext;
+use burn_central_workspace::compute_provider::ComputeProviderJobArgs;
+use burn_central_workspace::compute_provider::ProcedureTypeArg;
+use burn_central_workspace::execution::BackendType;
+use burn_central_workspace::execution::ProcedureType;
+use burn_central_workspace::execution::local::{LocalExecutionConfig, LocalExecutor};
 use clap::Parser;
 use clap::ValueHint;
 use colored::Colorize;
 
 use crate::commands::package::package_sequence;
-use crate::generation::crate_gen::backend::BackendType;
-use crate::print_warn;
-use crate::{context::CliContext, logging::BURN_ORANGE, print_info};
+use crate::helpers::require_linked_project;
+use crate::{context::CliContext, tools::terminal::BURN_ORANGE};
 
-/// Contains the data necessary to run an experiment.
-#[derive(Debug, Clone)]
-pub struct RunCommand {
-    pub run_id: String,
-    pub run_params: RunParams,
-}
+/// Parse a key=value string into a key-value pair
+pub fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Invalid key=value format: {}", s))?;
 
-#[derive(Debug, Clone)]
-pub enum RunKind {
-    Training,
-}
-
-#[derive(Debug, Clone)]
-pub struct RunParams {
-    pub kind: RunKind,
-    pub function: String,
-    pub args: String,
-    pub namespace: String,
-    pub project: String,
-    pub key: String,
-}
-
-/// Contains the data necessary to build an experiment.
-#[derive(Debug)]
-pub struct BuildCommand {
-    pub run_id: String,
-    pub backend: BackendType,
-    pub code_version_digest: String,
-    pub functions: Vec<FunctionMetadata>,
-}
-
-fn parse_key_val(s: &str) -> Result<(String, serde_json::Value), String> {
-    let (key, value) = s.split_once('=').ok_or("Must be key=value")?;
     let json_value = serde_json::from_str(value)
         .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+
     Ok((key.to_string(), json_value))
 }
 
@@ -100,17 +68,11 @@ impl Default for TrainingArgs {
 }
 
 pub(crate) fn handle_command(args: TrainingArgs, context: CliContext) -> anyhow::Result<()> {
-    let project = ProjectContext::discover(context.environment())?;
+    let project = require_linked_project(&context)?;
 
-    match (&args.compute_provider, &args.code_version) {
-        (Some(_), _) => remote_run(args, &context, &project),
-        (None, None) => local_run(args, &context, &project),
-        (None, Some(_)) => {
-            print_warn!(
-                "Code version is ignored when executing locally (i.e. no compute provider is defined with --compute-provider argument). The current code will always be packaged and used."
-            );
-            local_run(args, &context, &project)
-        }
+    match args.compute_provider {
+        Some(_) => execute_remotely(args, &context, &project),
+        None => execute_locally(args, &context, &project),
     }
 }
 
@@ -127,43 +89,51 @@ fn prompt_function(functions: Vec<String>) -> anyhow::Result<String> {
         .map_err(anyhow::Error::from)
 }
 
-fn remote_run(
+fn execute_remotely(
     args: TrainingArgs,
     context: &CliContext,
     project_ctx: &ProjectContext,
 ) -> anyhow::Result<()> {
-    context.terminal().command_title("Remote experiment run");
+    context
+        .terminal()
+        .command_title("Remote training execution");
 
     preload_functions(context, project_ctx)?;
 
-    let bc_project = project_ctx.get_project().context("No project loaded.")?;
-    let namespace = bc_project.owner.clone();
-    let project = bc_project.name.clone();
+    let bc_project = project_ctx.get_project();
+    let compute_provider = args
+        .compute_provider
+        .context("Compute provider should be provided")?;
     let function = get_function_to_run(args.function, project_ctx)?;
-    let key = context
-        .get_api_key()
-        .context("Failed to get API key")?
-        .to_owned();
-    let digest = match args.code_version {
+
+    let code_version = match args.code_version {
         Some(version) => {
-            print_info!("Using code version: {}", version);
+            context
+                .terminal()
+                .print(&format!("Using code version: {}", version));
             version
         }
         None => {
-            print_info!("Packaging project and using this new code version");
+            context
+                .terminal()
+                .print("Packaging project to create a new code version...");
             package_sequence(context, project_ctx, false)?
         }
     };
 
-    let command = ComputeProviderTrainingArgs {
-        function,
-        backend: args.backend,
-        config: args.args,
-        overrides: args.overrides,
-        digest: digest.clone(),
-        namespace: namespace.clone(),
-        project: project.clone(),
-        key,
+    let launch_args = ExperimentConfig::load_config(args.args, args.overrides)?;
+
+    let command = ComputeProviderJobArgs {
+        function: function.clone(),
+        backend: args.backend.unwrap_or_default(),
+        args: Some(launch_args.data),
+        digest: code_version.clone(),
+        namespace: bc_project.owner.clone(),
+        project: bc_project.name.clone(),
+        key: context
+            .get_api_key()
+            .context("No API key available")?
+            .to_string(),
         procedure_type: ProcedureTypeArg {
             procedure_type: ProcedureType::Training,
         },
@@ -172,89 +142,20 @@ fn remote_run(
 
     let client = context.create_client()?;
     let command = serde_json::to_string(&command)?;
-    let compute_provider_group_name = args
-        .compute_provider
-        .expect("Compute provider should be provided");
     client
         .start_remote_job(
-            &compute_provider_group_name,
-            &namespace,
-            &project,
-            &digest,
+            &compute_provider,
+            &bc_project.owner,
+            &bc_project.name,
+            &code_version,
             &command,
         )
         .with_context(|| {
             format!(
-                "Failed to start remote job for {namespace}/{project}/{compute_provider_group_name}"
+                "Failed to submit training job for function `{}` to compute provider `{}`",
+                function, compute_provider
             )
         })?;
-
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn local_run_internal(
-    backend: BackendType,
-    config: Option<String>,
-    overrides: Vec<(String, serde_json::Value)>,
-    function: String,
-    namespace: String,
-    project: String,
-    code_version_digest: String,
-    key: String,
-    context: &CliContext,
-    project_ctx: &ProjectContext,
-) -> anyhow::Result<()> {
-    let kind = RunKind::Training;
-    let config = ExperimentConfig::load_config(config, overrides);
-    let run_id = format!("{backend}");
-    let functions = project_ctx
-        .load_functions()?
-        .get_function_references()
-        .to_vec();
-
-    let res = {
-        execute_build_command(
-            BuildCommand {
-                run_id: run_id.clone(),
-                backend,
-                code_version_digest,
-                functions,
-            },
-            project_ctx,
-        )?;
-        execute_run_command(
-            RunCommand {
-                run_id: run_id.clone(),
-                run_params: RunParams {
-                    kind,
-                    function: function.clone(),
-                    args: config.data.to_string(),
-                    namespace,
-                    project,
-                    key,
-                },
-            },
-            context,
-            project_ctx,
-        )
-    };
-
-    match res {
-        Ok(()) => {
-            print_info!(
-                "Training function `{}` executed successfully.",
-                function.custom_color(BURN_ORANGE).bold()
-            );
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!(format!(
-                "Failed to execute training function `{}`: {}",
-                function.custom_color(BURN_ORANGE).bold(),
-                e
-            )));
-        }
-    }
 
     Ok(())
 }
@@ -262,7 +163,10 @@ pub fn local_run_internal(
 fn preload_functions(context: &CliContext, project: &ProjectContext) -> anyhow::Result<()> {
     let spinner = context.terminal().spinner();
     spinner.start("Discovering project functions...");
-    let functions = project.load_functions()?;
+    let functions = project
+        .load_functions()
+        .context("Function discovery failed")?;
+
     spinner.stop(format!(
         "Discovered {} functions.",
         functions.get_function_references().len()
@@ -270,264 +174,86 @@ fn preload_functions(context: &CliContext, project: &ProjectContext) -> anyhow::
     Ok(())
 }
 
-fn local_run(
+fn execute_locally(
     args: TrainingArgs,
     context: &CliContext,
     project: &ProjectContext,
 ) -> anyhow::Result<()> {
-    context.terminal().command_title("Local experiment run");
+    context.terminal().command_title("Local training execution");
+
+    let args_json = ExperimentConfig::load_config(args.args, args.overrides)?;
 
     preload_functions(context, project)?;
 
-    let backend = args.backend.clone().unwrap_or_default();
-    let bc_project = project.get_project().context("No project loaded")?;
-    let namespace = bc_project.owner.clone();
-    let project_name = bc_project.name.clone();
     let function = get_function_to_run(args.function, project)?;
-    let key = context
-        .get_api_key()
-        .context("Failed to get API key")?
-        .to_owned();
-    let code_version_digest = package_sequence(context, project, false)?;
 
-    local_run_internal(
+    let code_version = package_sequence(context, project, false)?;
+
+    let executor = LocalExecutor::new(project);
+    let backend = args.backend.unwrap_or_default();
+
+    let config = LocalExecutionConfig::new(
+        context
+            .get_api_key()
+            .context("No API key available")?
+            .to_string(),
+        context.get_api_endpoint().to_string(),
+        function.clone(),
         backend,
-        args.args,
-        args.overrides,
-        function,
-        namespace,
-        project_name,
-        code_version_digest,
-        key,
-        context,
-        project,
-    )?;
-
-    Ok(())
-}
-
-fn execute_build_command(
-    build_command: BuildCommand,
-    project: &ProjectContext,
-) -> anyhow::Result<()> {
-    print_info!(
-        "Building experiment project with command: {:?}",
-        build_command
-    );
-
-    generate_crate(project, &build_command)?;
-    let build_status = make_build_command(&build_command, project)?.status();
-
-    match build_status {
-        Err(e) => {
-            return Err(anyhow::anyhow!(format!(
-                "Failed to build experiment project: {:?}",
-                e
-            )));
-        }
-        Ok(status) if !status.success() => {
-            return Err(anyhow::anyhow!(format!(
-                "Failed to build experiment project: {:?}",
-                build_command
-            )));
-        }
-        _ => {
-            print_info!("Project built successfully.");
-        }
-    }
-
-    let src_exe_path = get_target_exe_path(project);
-    let target_bin_name = bin_name_from_run_id(project, &build_command.run_id);
-
-    let burn_dir = project.burn_dir();
-    let mut cache = burn_dir.load_cache().context("Failed to load cache")?;
-
-    copy_binary(
-        burn_dir,
-        &mut cache,
-        &target_bin_name,
-        src_exe_path.to_str().unwrap(),
+        ProcedureType::Training,
+        code_version,
     )
-    .context("Failed to copy binary")?;
+    .with_args(args_json.data);
 
-    burn_dir.save_cache(&cache)?;
+    let spinner = context.terminal().spinner();
+    spinner.start(format!(
+        "Running training function `{}`...",
+        function.custom_color(BURN_ORANGE).bold()
+    ));
+    let result = executor.execute(config)?;
 
-    Ok(())
-}
-
-fn execute_run_command(
-    run_command: RunCommand,
-    context: &CliContext,
-    project: &ProjectContext,
-) -> anyhow::Result<()> {
-    print_info!("Running experiment with command: {:?}", run_command);
-
-    let mut command = make_run_command(&run_command, context, project);
-
-    let run_status = command.status();
-    match run_status {
-        Err(e) => {
-            return Err(anyhow::anyhow!(format!(
-                "Error running experiment command: {:?}",
-                e
-            )));
+    if result.success {
+        spinner.stop(format!(
+            "Training function `{}` executed successfully.",
+            function.custom_color(BURN_ORANGE).bold()
+        ));
+        if let Some(output) = result.output {
+            context.terminal().print(&format!("Output:\n{}", output));
         }
-        Ok(status) if !status.success() => {
-            return Err(anyhow::anyhow!(format!(
-                "Failed to run experiment: {:?}",
-                run_command
-            )));
-        }
-        _ => {
-            print_info!("Experiment ran successfully.");
+        context
+            .terminal()
+            .finalize("Training completed successfully.");
+    } else {
+        spinner.error("Training function execution failed.");
+
+        if let Some(error) = result.error {
+            context.terminal().print_err(&format!("Error:\n{}", error));
+
+            return Err(anyhow::anyhow!(
+                "Failed to execute training function `{}`: {}",
+                function.custom_color(BURN_ORANGE).bold(),
+                error
+            ));
+        } else {
+            return Err(anyhow::anyhow!(
+                "Failed to execute training function `{}`",
+                function.custom_color(BURN_ORANGE).bold()
+            ));
         }
     }
 
     Ok(())
-}
-
-fn copy_binary(
-    burn_dir: &BurnDir,
-    cache: &mut CacheState,
-    name: &str,
-    original_path: &str,
-) -> std::io::Result<()> {
-    let bin_path = burn_dir.bin_dir().join(name);
-    std::fs::create_dir_all(burn_dir.bin_dir())?;
-    std::fs::copy(original_path, &bin_path)?;
-
-    cache.add_binary(
-        name,
-        bin_path.file_name().unwrap().to_string_lossy().to_string(),
-    );
-    Ok(())
-}
-
-fn bin_name_from_run_id(project: &ProjectContext, run_id: &str) -> String {
-    format!(
-        "{}-{}{}",
-        &project.generated_crate_name,
-        run_id,
-        std::env::consts::EXE_SUFFIX
-    )
-}
-
-fn get_target_exe_path(project: &ProjectContext) -> PathBuf {
-    let crate_name = &project.generated_crate_name;
-    let target_path = project
-        .burn_dir()
-        .crates_dir()
-        .join(crate_name)
-        .join("target");
-
-    target_path.join(&project.build_profile).join(format!(
-        "{}{}",
-        crate_name,
-        std::env::consts::EXE_SUFFIX
-    ))
-}
-
-fn generate_crate(project: &ProjectContext, build_command: &BuildCommand) -> anyhow::Result<()> {
-    let generated_crate = crate::generation::crate_gen::create_crate(
-        &project.generated_crate_name,
-        &project.user_crate_name,
-        project.user_crate_dir.to_str().unwrap(),
-        vec![&build_command.backend.to_string()],
-        &build_command.backend,
-        &build_command.functions,
-        project.get_current_package(),
-    );
-
-    project.save_crate(generated_crate)?;
-
-    Ok(())
-}
-
-fn make_run_command(
-    cmd_desc: &RunCommand,
-    context: &CliContext,
-    project_ctx: &ProjectContext,
-) -> std::process::Command {
-    let RunParams {
-        kind,
-        function,
-        args,
-        namespace,
-        project,
-        key,
-    } = &cmd_desc.run_params;
-
-    let kind_str = match kind {
-        RunKind::Training => "train",
-    };
-    let bin_name = bin_name_from_run_id(project_ctx, &cmd_desc.run_id);
-    let bin_exe_path = project_ctx.burn_dir().bin_dir().join(&bin_name);
-    let mut command = std::process::Command::new(bin_exe_path);
-    command
-        .current_dir(project_ctx.cwd())
-        .env("BURN_PROJECT_DIR", &project_ctx.user_crate_dir)
-        .args(["--namespace", namespace])
-        .args(["--project", project])
-        .args(["--api-key", key])
-        .args(["--endpoint", context.get_api_endpoint().as_str()])
-        .args(["--args", args])
-        .args([kind_str, function]);
-    command
-}
-
-fn make_build_command(
-    cmd_desc: &BuildCommand,
-    project: &ProjectContext,
-) -> anyhow::Result<std::process::Command> {
-    let profile_arg = match project.build_profile.as_str() {
-        "release" => "--profile=release",
-        "debug" => "--profile=dev",
-        _ => {
-            return Err(anyhow::anyhow!(format!(
-                "Invalid profile: {}",
-                project.build_profile
-            )));
-        }
-    };
-
-    let new_target_dir: Option<String> = std::env::var("BURN_TARGET_DIR").ok();
-
-    let mut build_command = cargo::command();
-    build_command
-        .arg("build")
-        .arg(profile_arg)
-        .arg("--no-default-features")
-        .env("BURN_PROJECT_DIR", &project.user_crate_dir)
-        .env(
-            "BURN_CENTRAL_CODE_VERSION",
-            cmd_desc.code_version_digest.as_str(),
-        )
-        .args([
-            "--manifest-path",
-            project
-                .burn_dir()
-                .crates_dir()
-                .join(&project.generated_crate_name)
-                .join("Cargo.toml")
-                .to_str()
-                .unwrap(),
-        ])
-        .args(["--message-format", "short"]);
-    if let Some(target_dir) = &new_target_dir {
-        build_command.args(["--target-dir", target_dir]);
-    }
-
-    Ok(build_command)
 }
 
 fn get_function_to_run(
     function: Option<String>,
     project: &ProjectContext,
 ) -> anyhow::Result<String> {
-    let registry = project.load_functions()?;
+    let executor = LocalExecutor::new(project);
+    let available_functions = executor.list_training_functions()?;
+
     match function {
         Some(function) => {
-            let available_functions = registry.get_training_routine();
             if !available_functions.contains(&function) {
                 return Err(anyhow::anyhow!(
                     "Function `{}` is not available. Available functions are: {:?}",
@@ -537,6 +263,64 @@ fn get_function_to_run(
             }
             Ok(function)
         }
-        None => prompt_function(registry.get_training_routine()),
+        None => {
+            if available_functions.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No training functions found in the project"
+                ));
+            }
+            prompt_function(available_functions)
+        }
+    }
+}
+
+pub struct ExperimentConfig {
+    pub data: serde_json::Value,
+}
+
+impl ExperimentConfig {
+    fn new(value: serde_json::Value) -> Self {
+        Self { data: value }
+    }
+
+    fn apply_override(&mut self, key_path: &str, value: serde_json::Value) {
+        let mut parts = key_path.split('.').peekable();
+        let mut target = &mut self.data;
+
+        while let Some(part) = parts.next() {
+            if parts.peek().is_none() {
+                if let serde_json::Value::Object(map) = target {
+                    map.insert(part.to_string(), value.clone());
+                }
+            } else {
+                target = target
+                    .as_object_mut()
+                    .unwrap()
+                    .entry(part)
+                    .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            }
+        }
+    }
+
+    pub fn load_config(
+        path: Option<String>,
+        overrides: Vec<(String, serde_json::Value)>,
+    ) -> anyhow::Result<Self> {
+        let base_json = if let Some(path) = &path {
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read config file at {}", path))?;
+            serde_json::from_str(&text)
+                .with_context(|| format!("failed to parse config file at {}", path))?
+        } else {
+            serde_json::json!({})
+        };
+
+        let mut config = ExperimentConfig::new(base_json);
+
+        for (key, val) in &overrides {
+            config.apply_override(key, val.clone());
+        }
+
+        Ok(config)
     }
 }

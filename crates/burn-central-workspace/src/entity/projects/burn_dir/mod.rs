@@ -1,7 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::{fs, io};
 
-use crate::app_config::Environment;
 use crate::entity::projects::burn_dir::cache::CacheState;
 use crate::entity::projects::burn_dir::project::BurnCentralProject;
 
@@ -13,15 +12,8 @@ pub struct BurnDir {
 }
 
 impl BurnDir {
-    pub fn new(user_crate_dir: &Path, environment: Environment) -> Self {
-        let dir_name = match environment {
-            Environment::Production => ".burn",
-            Environment::Development => ".burn-dev",
-        };
-
-        BurnDir {
-            root: user_crate_dir.join(dir_name),
-        }
+    pub fn new(root: PathBuf) -> Self {
+        BurnDir { root }
     }
 
     pub fn init(&self) -> std::io::Result<()> {
@@ -72,5 +64,9 @@ impl BurnDir {
 
     pub fn unlink_project(&self) -> io::Result<()> {
         BurnCentralProject::remove(&self.root)
+    }
+
+    pub fn root(&self) -> &PathBuf {
+        &self.root
     }
 }

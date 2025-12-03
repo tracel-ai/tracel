@@ -1,6 +1,6 @@
-use crate::app_config::Environment;
 use clap::{Parser, Subcommand};
 
+use crate::app_config::Environment;
 use crate::commands;
 use crate::commands::default_command;
 use crate::config::Config;

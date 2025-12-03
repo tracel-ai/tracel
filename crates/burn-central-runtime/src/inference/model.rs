@@ -1,4 +1,4 @@
-﻿use std::any::Any;
+use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 use std::thread::JoinHandle;
 

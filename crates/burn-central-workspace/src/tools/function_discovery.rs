@@ -2,8 +2,9 @@
 //!
 //! Uses `cargo rustc -- -Zunpretty=expanded` to extract `BCFN1|mod_path|fn|builder|routine|proc_type|END` markers from the expanded source code.
 
+use crate::execution::cancellable::{CancellableProcess, CancellableResult, CancellationToken};
+use quote::ToTokens;
 use serde::{Deserialize, Serialize};
-
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -19,6 +20,32 @@ pub struct FunctionMetadata {
     pub routine_name: String,
     pub proc_type: String,
     pub token_stream: Vec<u8>,
+}
+
+impl FunctionMetadata {
+    pub fn get_function_code(&self) -> String {
+        if self.token_stream.is_empty() {
+            // If no token stream is available, create a placeholder function
+            format!(
+                "fn {}() {{\n    // Function implementation not available\n}}",
+                self.fn_name
+            )
+        } else {
+            match syn_serde::json::from_slice::<syn::ItemFn>(&self.token_stream) {
+                Ok(itemfn) => match syn::parse2(itemfn.into_token_stream()) {
+                    Ok(syn_tree) => prettyplease::unparse(&syn_tree),
+                    Err(_) => format!(
+                        "fn {}() {{\n    // Failed to parse token stream\n}}",
+                        self.fn_name
+                    ),
+                },
+                Err(_) => format!(
+                    "fn {}() {{\n    // Failed to deserialize token stream\n}}",
+                    self.fn_name
+                ),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -47,14 +74,20 @@ impl FunctionDiscovery {
         self
     }
 
-    /// Expand and extract in one call.
-    pub fn discover_functions(&self) -> Result<Vec<FunctionMetadata>, String> {
-        let expanded = self.expand_with_cargo()?;
+    /// Expand and extract with cancellation support
+    pub fn discover_functions(
+        &self,
+        cancellation_token: &CancellationToken,
+    ) -> Result<Vec<FunctionMetadata>, String> {
+        let expanded = self.expand_with_cargo(cancellation_token)?;
+        if cancellation_token.is_cancelled() {
+            return Err("Function discovery was cancelled".to_string());
+        }
         let functions = parse_expanded_output(&expanded);
         Ok(functions)
     }
 
-    fn expand_with_cargo(&self) -> Result<String, String> {
+    fn expand_with_cargo(&self, cancellation_token: &CancellationToken) -> Result<String, String> {
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&self.project_root)
             .arg("rustc")
@@ -69,26 +102,29 @@ impl FunctionDiscovery {
         }
 
         cmd.arg("--");
-
         cmd.arg("-Zunpretty=expanded");
-
         cmd.env("RUSTC_BOOTSTRAP", "1");
         cmd.env("RUST_LOG", "error");
 
-        // We want to read both streams.
         let child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("failed to spawn cargo rustc: {e}"))?;
 
-        let output = child.wait_with_output().map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(format!("cargo rustc failed (status {})", output.status));
-        }
-        let expanded = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+        let cancellable = CancellableProcess::new(child, cancellation_token.clone());
+        let result = cancellable.wait_with_output();
 
-        Ok(expanded)
+        match result {
+            CancellableResult::Completed(output) => {
+                if !output.status.success() {
+                    return Err(format!("cargo rustc failed (status {})", output.status));
+                }
+                let expanded = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+                Ok(expanded)
+            }
+            CancellableResult::Cancelled => Err("Function discovery was cancelled".to_string()),
+        }
     }
 }
 
@@ -177,7 +213,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_marker() {
-        let bad = "BCFN1|a|b|c|d|END"; // missing one field
+        let bad = "BCFN1|a|b|c|d|END";
         assert!(parse_bcfn_marker(bad).is_none());
     }
 

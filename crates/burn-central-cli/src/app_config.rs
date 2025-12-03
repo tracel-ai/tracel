@@ -1,6 +1,8 @@
 use directories::ProjectDirs;
-use serde::{Deserialize, Serialize};
+
 use std::{fs, io, path::PathBuf};
+
+use crate::context::Credentials;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -33,11 +35,6 @@ pub enum ConfigError {
     Serde(#[from] serde_json::Error),
     #[error("Missing configuration directory")]
     MissingDirectory,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Credentials {
-    pub api_key: String,
 }
 
 pub struct AppConfig {
