@@ -12,7 +12,6 @@ pub mod macros {
     pub use burn_central_cli_macros::register;
 }
 
-
 /// Burn Central Runtime
 pub mod runtime {
     pub use burn_central_runtime::*;
