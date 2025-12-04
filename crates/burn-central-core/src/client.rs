@@ -94,7 +94,7 @@ impl BurnCentralBuilder {
                 Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid")
             }
         };
-        let client = Client::new(url, &self.credentials)?;
+        let client = Client::from_url(url, &self.credentials)?;
         Ok(BurnCentral::new(client))
     }
 }

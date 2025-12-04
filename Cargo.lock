@@ -243,9 +243,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-client"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99d989744c2b50fde146402d691cd70073897006de6d8060fcd03e5215a78bf9"
+version = "0.3.0"
 dependencies = [
  "reqwest",
  "serde",
