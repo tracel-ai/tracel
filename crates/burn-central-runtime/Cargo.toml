@@ -1,38 +1,32 @@
 [package]
 name = "burn-central-runtime"
+authors.workspace = true
+categories.workspace = true
+description = "Runtime library for Burn Central SDK."
+keywords.workspace = true
+repository.workspace = true
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[features]
-default = []
-ndarray-stub = ["burn/ndarray"]
-
 [dependencies]
-anyhow = "1.0.98"
-burn-central-core = { workspace = true }
-burn = { workspace = true }
-thiserror = { workspace = true }
-variadics_please = { workspace = true }
-tynm = { workspace = true, features = ["info"] }
-syn = { workspace = true }
-strum = { workspace = true }
-derive_more = { workspace = true, features = [
-    "deref",
-    "from",
-    "display",
-    "unwrap",
-] }
-clap = { workspace = true, features = ["derive"] }
-log = { workspace = true, features = ["std"] }
-env_logger = { workspace = true }
-serde_json = { workspace = true }
-crossbeam = { workspace = true, default-features = false, features = [
-    "crossbeam-channel",
-    "std",
-] }
+anyhow.workspace = true
+burn-central-core.workspace = true
+burn.workspace = true
+thiserror.workspace = true
+variadics_please.workspace = true
+syn.workspace = true
+strum.workspace = true
+env_logger.workspace = true
+serde_json.workspace = true
+tynm.workspace = true
+derive_more.workspace = true
+clap.workspace = true
+log.workspace = true
+crossbeam.workspace = true
+
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
-serde = { workspace = true }
+serde.workspace = true
