@@ -1,13 +1,13 @@
 [package]
-authors = ["Tracel Technologies Inc."]
-categories = ["development-tools"]
-description = "Burn Central."
-keywords = ["tracel", "burn-central", "burn", "sdk"]
+name = "burn-central"
+authors.workspace = true
+categories.workspace = true
+description = "Burn Central SDK toolkit"
+keywords.workspace = true
+repository.workspace = true
 edition.workspace = true
 license.workspace = true
-name = "burn-central"
 readme.workspace = true
-repository = "https://github.com/tracel-ai/tracel/tree/main/crates/burn-central"
 version.workspace = true
 rust-version.workspace = true
 
