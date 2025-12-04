@@ -14,7 +14,7 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
 
 [workspace.dependencies]
-burn = { version = "0.20.0-pre.1", default-features = false }
+burn = { version = "0.20.0-pre.4", default-features = false }
 
 anyhow = "1.0.98"
 toml = "0.8.22"
@@ -55,8 +55,8 @@ env_logger = "0.11.8"
 chrono = "0.4.41"
 
 ## External Crate
-# burn-central-client = { version = "0.1.1", path = "../burn-central-client/burn-central-client" }
-burn-central-client = "0.1.1"
+# burn-central-client = { version = "0.2.0", path = "../burn-central-client/burn-central-client" }
+burn-central-client = "0.2.0"
 
 ## Crate
 burn-central-core = { version = "0.1.0", path = "crates/burn-central-core" }
