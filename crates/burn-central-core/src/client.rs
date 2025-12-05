@@ -94,6 +94,7 @@ impl BurnCentralBuilder {
                 Url::parse("https://central.burn.dev/api/").expect("Default URL should be valid")
             }
         };
+        #[allow(deprecated)]
         let client = Client::from_url(url, &self.credentials)?;
         Ok(BurnCentral::new(client))
     }
@@ -115,23 +116,6 @@ impl BurnCentral {
     /// Creates a new [BurnCentralBuilder] to configure the client.
     pub fn builder(credentials: impl Into<BurnCentralCredentials>) -> BurnCentralBuilder {
         BurnCentralBuilder::new(credentials)
-    }
-
-    /// Creates a new [BurnCentral] instance from environment variables.
-    ///
-    /// This function reads the `BURN_CENTRAL_ENDPOINT` and `BURN_CENTRAL_API_KEY` environment variables.
-    /// If the `BURN_CENTRAL_ENDPOINT` is not set, it defaults to `https://central.burn.dev/api/`.
-    pub fn from_env() -> Result<Self, InitError> {
-        let endpoint = std::env::var("BURN_CENTRAL_ENDPOINT")
-            .unwrap_or_else(|_| "https://central.burn.dev/api/".to_string())
-            .parse::<Url>()
-            .map_err(|_| InitError::InvalidEndpointUrl("BURN_CENTRAL_ENDPOINT".to_string()))?;
-        let credentials = BurnCentralCredentials::from_env()
-            .map_err(|_| InitError::EnvNotSet("BURN_CENTRAL_API_KEY".to_string()))?;
-
-        BurnCentralBuilder::new(credentials)
-            .with_endpoint(endpoint.as_str())
-            .build()
     }
 
     /// Creates a new instance of [BurnCentral] with the given [Client].
