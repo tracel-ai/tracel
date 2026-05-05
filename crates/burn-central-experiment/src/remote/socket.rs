@@ -7,7 +7,7 @@ use std::{thread::JoinHandle, time::Duration};
 
 use crate::CancelToken;
 
-use super::log_store::TempLogStore;
+use super::logs::TempLogStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {

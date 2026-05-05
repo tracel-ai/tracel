@@ -7,7 +7,7 @@ use crate::{
 
 mod artifacts;
 mod base;
-mod log_store;
+mod logs;
 mod socket;
 
 #[derive(Debug, Clone)]

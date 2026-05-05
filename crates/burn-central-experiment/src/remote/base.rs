@@ -13,7 +13,7 @@ use crossbeam::channel::Sender;
 
 use super::ExperimentPath;
 use super::artifacts::ExperimentArtifactClient;
-use super::log_store::TempLogStore;
+use super::logs::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -64,6 +64,7 @@ impl BurnCentralSession {
             )
             .map_err(|e| BurnCentralError::ExperimentConnection(e.to_string()))?;
 
+        let log_uploader = 
         let log_store = TempLogStore::new(burn_client.clone(), experiment_path.clone());
         let (sender, receiver) = crossbeam::channel::unbounded();
         let socket = ExperimentSocket::new(ws_client, log_store, receiver, cancel_token);
