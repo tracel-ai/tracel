@@ -299,9 +299,6 @@ impl From<&ExperimentRun> for ExperimentRunHandle {
 
 impl ExperimentRun {
     /// Create a run backed by Burn Central.
-    ///
-    /// Use this when you want to log directly to the remote service without going through the
-    /// higher-level runtime executor.
     pub fn central(
         client: Client,
         namespace: &str,
@@ -319,6 +316,7 @@ impl ExperimentRun {
             })
     }
 
+    /// Create a run backed by Burn Station.
     #[cfg(feature = "station")]
     pub fn station(client: StationClient, routine: String) -> Result<Self, ExperimentError> {
         remote::create_station_experiment_run(client, routine).map_err(|e| {
