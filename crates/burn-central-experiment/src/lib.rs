@@ -310,7 +310,7 @@ impl ExperimentRun {
             .map_err(|e| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Internal,
-                    "Failed to start remote experiment run",
+                    "Failed to start Burn Central experiment run",
                     e,
                 )
             })
@@ -322,7 +322,7 @@ impl ExperimentRun {
         remote::create_station_experiment_run(client, routine).map_err(|e| {
             ExperimentError::with_source(
                 ExperimentErrorKind::Internal,
-                "Failed to start station experiment run",
+                "Failed to start Burn Station experiment run",
                 e,
             )
         })
