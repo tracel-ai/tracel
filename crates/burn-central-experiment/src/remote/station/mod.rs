@@ -158,7 +158,7 @@ impl ExperimentArtifactClient {
         let resp = self
             .client
             .experiments()
-            .presign_artifact_download(self.exp_path.experiment_num(), &artifact.id.to_string())?;
+            .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string())?;
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {

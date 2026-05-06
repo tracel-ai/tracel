@@ -62,7 +62,7 @@ impl LogUploader for StationLogUploader {
                     artifact_id,
                     AddFilesRequest { files: specs },
                 )
-                .map_err(|e| LogStoreError::new(format!("Failed to add log files to artifact"), e))?
+                .map_err(|e| LogStoreError::new("Failed to add log files to artifact".to_string(), e))?
                 .files
         } else {
             // First flush, create the artifact
@@ -75,7 +75,7 @@ impl LogUploader for StationLogUploader {
                         files: specs,
                     },
                 )
-                .map_err(|e| LogStoreError::new(format!("Failed to create log artifact"), e))?;
+                .map_err(|e| LogStoreError::new("Failed to create log artifact".to_string(), e))?;
 
             // Store artifact ID for future flushes
             self.artifact_id = Some(response.id.clone());
@@ -99,7 +99,7 @@ impl LogUploader for StationLogUploader {
                     ))
                 })
                 .map_err(|e| {
-                    LogStoreError::new(format!("Failed to get upload URLs for logs"), e)
+                    LogStoreError::new("Failed to get upload URLs for logs".to_string(), e)
                 })?;
 
             let parts = multipart_info
@@ -119,7 +119,7 @@ impl LogUploader for StationLogUploader {
         }
 
         upload_bundle_multipart(&bundle, &uploads)
-            .map_err(|e| LogStoreError::new(format!("Failed to upload logs"), e))?;
+            .map_err(|e| LogStoreError::new("Failed to upload logs".to_string(), e))?;
 
         if let Some(artifact_id) = &self.artifact_id {
             client
@@ -137,7 +137,7 @@ impl LogUploader for StationLogUploader {
                     },
                 )
                 .map_err(|e| {
-                    LogStoreError::new(format!("Failed to complete log artifact upload"), e)
+                    LogStoreError::new("Failed to complete log artifact upload".to_string(), e)
                 })?;
         }
 

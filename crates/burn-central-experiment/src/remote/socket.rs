@@ -58,7 +58,7 @@ impl ExperimentThread {
             .map_err(|_| ThreadError::WebSocket(WEBSOCKET_CLOSE_ERROR.to_string()))?;
         self.log_store
             .flush()
-            .map_err(|e| ThreadError::LogFlushError(e))?;
+            .map_err(ThreadError::LogFlushError)?;
         self.ws_client
             .wait_until_closed()
             .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
