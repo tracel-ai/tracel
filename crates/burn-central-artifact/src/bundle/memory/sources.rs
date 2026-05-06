@@ -1,6 +1,8 @@
 use std::io::Read;
 
-use crate::{bundle::BundleSink, tools::path::normalize_bundle_path};
+use crate::{
+    bundle::BundleSink, tools::path::normalize_bundle_path, upload::MultipartUploadSource,
+};
 
 /// A builder for creating bundles with multiple files
 #[derive(Default, Clone)]
@@ -66,6 +68,55 @@ impl BundleSink for InMemoryBundleSources {
             source: buf,
         });
         Ok(())
+    }
+}
+
+impl MultipartUploadSource for InMemoryBundleSources {
+    fn file_len(&self, rel_path: &str) -> Result<u64, crate::upload::UploadError> {
+        self.files
+            .iter()
+            .find(|f| f.dest_path() == rel_path)
+            .map(|f| f.size() as u64)
+            .ok_or_else(|| crate::upload::UploadError::MultipartReader {
+                rel_path: rel_path.to_string(),
+                source: format!("File not found in bundle sources: {}", rel_path).into(),
+            })
+    }
+
+    fn open_part(
+        &self,
+        rel_path: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<Box<dyn Read + Send>, crate::upload::UploadError> {
+        let file = self
+            .files
+            .iter()
+            .find(|f| f.dest_path() == rel_path)
+            .ok_or_else(|| crate::upload::UploadError::MultipartReader {
+                rel_path: rel_path.to_string(),
+                source: format!("File not found in bundle sources: {}", rel_path).into(),
+            })?;
+
+        let data = file.source();
+        let end = (offset + size) as usize;
+        if end > data.len() {
+            return Err(crate::upload::UploadError::MultipartReader {
+                rel_path: rel_path.to_string(),
+                source: format!(
+                    "Requested part exceeds file size for {}: offset {} + size {} > file size {}",
+                    rel_path,
+                    offset,
+                    size,
+                    data.len()
+                )
+                .into(),
+            });
+        }
+
+        Ok(Box::new(std::io::Cursor::new(
+            data[offset as usize..end].to_vec(),
+        )))
     }
 }
 

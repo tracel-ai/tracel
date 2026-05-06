@@ -1,20 +1,20 @@
 use burn_central_client::{
-    ClientError, WebSocketClient,
+    WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use std::{thread::JoinHandle, time::Duration};
 
-use crate::CancelToken;
+use crate::{CancelToken, remote::logs::LogStoreError};
 
-use super::log_store::TempLogStore;
+use super::logs::TempLogStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
     #[error("Log storage failed: {0}")]
-    LogFlushError(ClientError),
+    LogFlushError(LogStoreError),
     #[error("Unexpected panic in thread")]
     Panic,
 }

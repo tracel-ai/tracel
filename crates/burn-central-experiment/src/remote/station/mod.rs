@@ -5,24 +5,74 @@ use burn_central_artifact::download::{
 use burn_central_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
 };
-use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
-use burn_central_client::response::ArtifactResponse;
-use burn_central_client::{Client, ClientError};
+use burn_central_client::station::experiment::{
+    ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
+    CreateExperimentRequest, ListArtifactsQuery,
+};
+use burn_central_client::websocket::WebSocketError;
+use burn_central_client::{ClientError, StationClient};
 use std::collections::BTreeMap;
 
-use crate::ArtifactKind;
+mod artifacts;
+mod logs;
 
-use super::ExperimentPath;
+use crate::remote::base::RemoteExperimentSession;
+use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+
+pub use artifacts::{StationArtifactReader, StationArtifactUploader};
+pub use logs::StationLogUploader;
+
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub enum BurnStationError {
+    Http(#[from] ClientError),
+    WebSocket(#[from] WebSocketError),
+}
+
+pub struct StationExperimentId(i32);
+
+impl StationExperimentId {
+    pub fn new(num: i32) -> Self {
+        Self(num)
+    }
+
+    pub fn to_experiment_id(&self) -> ExperimentId {
+        ExperimentId::from(format!("{}", self.0))
+    }
+
+    pub fn from_experiment_id(id: &ExperimentId) -> Option<Self> {
+        id.parse().map(StationExperimentId)
+    }
+
+    pub fn num(&self) -> i32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExperimentPath {
+    experiment_num: i32,
+}
+
+impl ExperimentPath {
+    pub fn new(experiment_num: i32) -> Self {
+        Self { experiment_num }
+    }
+
+    pub fn experiment_num(&self) -> i32 {
+        self.experiment_num
+    }
+}
 
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
 pub struct ExperimentArtifactClient {
-    client: Client,
+    client: StationClient,
     exp_path: ExperimentPath,
 }
 
 impl ExperimentArtifactClient {
-    pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
+    pub fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
 
@@ -32,6 +82,8 @@ impl ExperimentArtifactClient {
         kind: ArtifactKind,
         bundle: &FsBundle,
     ) -> Result<String, ArtifactError> {
+        let client = self.client.experiments();
+
         let name = name.into();
 
         let mut specs = Vec::with_capacity(bundle.files().len());
@@ -49,9 +101,7 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let res = self.client.create_artifact(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
+        let res = client.create_artifact(
             self.exp_path.experiment_num(),
             CreateArtifactRequest {
                 name: name.clone(),
@@ -92,12 +142,10 @@ impl ExperimentArtifactClient {
         }
         upload_bundle_multipart(bundle, &uploads)?;
 
-        self.client.complete_artifact_upload(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
+        client.complete_artifact_upload(
             self.exp_path.experiment_num(),
             &res.id,
-            None,
+            CompleteUploadRequest { file_names: None },
         )?;
 
         Ok(res.id)
@@ -107,12 +155,10 @@ impl ExperimentArtifactClient {
     pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
-        let resp = self.client.presign_artifact_download(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            &artifact.id.to_string(),
-        )?;
+        let resp = self
+            .client
+            .experiments()
+            .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string())?;
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {
@@ -136,11 +182,12 @@ impl ExperimentArtifactClient {
     pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
         self.client
-            .list_artifacts_by_name(
-                self.exp_path.owner_name(),
-                self.exp_path.project_name(),
+            .experiments()
+            .list_artifacts(
                 self.exp_path.experiment_num(),
-                name,
+                ListArtifactsQuery {
+                    name: Some(name.to_string()),
+                },
             )?
             .items
             .into_iter()
@@ -169,4 +216,37 @@ pub enum ArtifactError {
     Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+pub fn create_station_experiment_run(
+    client: StationClient,
+    routine: String,
+) -> Result<ExperimentRun, BurnStationError> {
+    let experiments_client = client.experiments();
+    let experiment = experiments_client.create(CreateExperimentRequest {
+        description: None,
+        routine_run: routine,
+    })?;
+
+    let experiment_num = experiment.experiment_num;
+    let path = ExperimentPath::new(experiment_num);
+    let cancel_token = CancelToken::new();
+
+    let log_uploader = StationLogUploader::new(client.clone(), path.clone());
+    let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
+
+    let ws = experiments_client.create_run_websocket(experiment_num)?;
+
+    let session = RemoteExperimentSession::new(
+        Box::new(log_uploader),
+        Box::new(artifact_uploader),
+        ws,
+        cancel_token.clone(),
+    );
+
+    let reader = StationArtifactReader::new(client);
+
+    let id = StationExperimentId::new(experiment_num).to_experiment_id();
+
+    Ok(ExperimentRun::new(id, session, reader, cancel_token))
 }
