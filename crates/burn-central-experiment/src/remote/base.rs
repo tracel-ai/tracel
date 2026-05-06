@@ -10,7 +10,6 @@ use burn_central_client::websocket::{
 };
 use crossbeam::channel::Sender;
 
-// use super::artifacts::ExperimentArtifactClient;
 use super::logs::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
