@@ -13,7 +13,7 @@ rust-version.workspace = true
 
 [features]
 default = []
-station = ["burn-central-client/station", "burn-central-experiment/station"]
+station = ["burn-central-experiment/station"]
 
 [dependencies]
 burn-central-macros.workspace = true
