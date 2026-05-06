@@ -60,7 +60,9 @@ impl LogUploader for CentralLogUploader {
                     artifact_id,
                     specs,
                 )
-                .map_err(|e| LogStoreError::new("Failed to add log files to artifact".to_string(), e))?
+                .map_err(|e| {
+                    LogStoreError::new("Failed to add log files to artifact".to_string(), e)
+                })?
                 .files
         } else {
             // First flush, create the artifact
