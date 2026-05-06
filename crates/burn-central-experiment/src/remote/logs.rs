@@ -1,6 +1,9 @@
 use burn_central_artifact::bundle::InMemoryBundleSources;
 
-mod uploader;
+pub trait LogUploader {
+    fn upload(&mut self, bundle: InMemoryBundleSources) -> Result<(), LogStoreError>;
+}
+type BoxedLogUploader = Box<dyn LogUploader + Send>;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
@@ -11,14 +14,7 @@ pub struct LogStoreError {
 }
 
 impl LogStoreError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            source: None,
-        }
-    }
-
-    pub fn with_source<E>(message: impl Into<String>, source: E) -> Self
+    pub fn new<E>(message: impl Into<String>, source: E) -> Self
     where
         E: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
     {
@@ -32,7 +28,6 @@ impl LogStoreError {
 pub struct TempLogStore {
     logs: Vec<String>,
     bytes: usize,
-    artifact_id: Option<String>,
     file_counter: usize,
     num_digits: usize,
     uploader: BoxedLogUploader,
@@ -48,7 +43,6 @@ impl TempLogStore {
         TempLogStore {
             logs: Vec::new(),
             bytes: 0,
-            artifact_id: None,
             file_counter: 0,
             num_digits: Self::NUM_DIGITS,
             uploader,

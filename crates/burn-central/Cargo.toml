@@ -11,6 +11,10 @@ readme.workspace = true
 version.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+station = ["burn-central-client/station", "burn-central-experiment/station"]
+
 [dependencies]
 burn-central-macros.workspace = true
 burn-central-runtime.workspace = true

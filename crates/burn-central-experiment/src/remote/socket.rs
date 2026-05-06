@@ -1,11 +1,11 @@
 use burn_central_client::{
-    ClientError, WebSocketClient,
+    WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use std::{thread::JoinHandle, time::Duration};
 
-use crate::CancelToken;
+use crate::{CancelToken, remote::logs::LogStoreError};
 
 use super::logs::TempLogStore;
 
@@ -14,7 +14,7 @@ pub enum ThreadError {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
     #[error("Log storage failed: {0}")]
-    LogFlushError(ClientError),
+    LogFlushError(LogStoreError),
     #[error("Unexpected panic in thread")]
     Panic,
 }
@@ -56,7 +56,9 @@ impl ExperimentThread {
         self.ws_client
             .close()
             .map_err(|_| ThreadError::WebSocket(WEBSOCKET_CLOSE_ERROR.to_string()))?;
-        self.log_store.flush().map_err(ThreadError::LogFlushError)?;
+        self.log_store
+            .flush()
+            .map_err(|e| ThreadError::LogFlushError(e))?;
         self.ws_client
             .wait_until_closed()
             .map_err(|e| ThreadError::WebSocket(e.to_string()))?;

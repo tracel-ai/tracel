@@ -11,14 +11,24 @@ use burn_central_client::{
 use sha2::Digest;
 
 use crate::remote::{
-    ExperimentPath,
-    logs::{LogStoreError, uploader::LogUploader},
+    central::ExperimentPath,
+    logs::{LogStoreError, LogUploader},
 };
 
-struct CentralLogUploader {
+pub struct CentralLogUploader {
     artifact_id: Option<String>,
     client: Client,
     experiment_path: ExperimentPath,
+}
+
+impl CentralLogUploader {
+    pub fn new(client: Client, experiment_path: ExperimentPath) -> Self {
+        Self {
+            artifact_id: None,
+            client,
+            experiment_path,
+        }
+    }
 }
 
 impl LogUploader for CentralLogUploader {
@@ -50,9 +60,7 @@ impl LogUploader for CentralLogUploader {
                     artifact_id,
                     specs,
                 )
-                .map_err(|e| {
-                    LogStoreError::with_source(format!("Failed to add log files to artifact"), e)
-                })?
+                .map_err(|e| LogStoreError::new(format!("Failed to add log files to artifact"), e))?
                 .files
         } else {
             // First flush, create the artifact
@@ -68,9 +76,7 @@ impl LogUploader for CentralLogUploader {
                         files: specs,
                     },
                 )
-                .map_err(|e| {
-                    LogStoreError::with_source(format!("Failed to create log artifact"), e)
-                })?;
+                .map_err(|e| LogStoreError::new(format!("Failed to create log artifact"), e))?;
 
             // Store artifact ID for future flushes
             self.artifact_id = Some(response.id.clone());
@@ -94,7 +100,7 @@ impl LogUploader for CentralLogUploader {
                     ))
                 })
                 .map_err(|e| {
-                    LogStoreError::with_source(format!("Failed to get upload URLs for logs"), e)
+                    LogStoreError::new(format!("Failed to get upload URLs for logs"), e)
                 })?;
 
             let parts = multipart_info
@@ -114,7 +120,7 @@ impl LogUploader for CentralLogUploader {
         }
 
         upload_bundle_multipart(&bundle, &uploads)
-            .map_err(|e| LogStoreError::with_source(format!("Failed to upload logs"), e))?;
+            .map_err(|e| LogStoreError::new(format!("Failed to upload logs"), e))?;
 
         if let Some(artifact_id) = &self.artifact_id {
             self.client
@@ -132,7 +138,7 @@ impl LogUploader for CentralLogUploader {
                     ),
                 )
                 .map_err(|e| {
-                    LogStoreError::with_source(format!("Failed to complete log artifact upload"), e)
+                    LogStoreError::new(format!("Failed to complete log artifact upload"), e)
                 })?;
         }
 

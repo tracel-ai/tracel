@@ -7,12 +7,78 @@ use burn_central_artifact::upload::{
 };
 use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
 use burn_central_client::response::ArtifactResponse;
+use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{Client, ClientError};
 use std::collections::BTreeMap;
 
-use crate::ArtifactKind;
+mod artifacts;
+mod logs;
 
-use super::ExperimentPath;
+use crate::remote::base::RemoteExperimentSession;
+use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+
+pub use artifacts::{CentralArtifactReader, CentralArtifactUploader};
+pub use logs::CentralLogUploader;
+
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub enum BurnCentralError {
+    Http(#[from] ClientError),
+    WebSocket(#[from] WebSocketError),
+}
+
+pub struct CentralExperimentId(i32);
+
+impl CentralExperimentId {
+    pub fn new(num: i32) -> Self {
+        Self(num)
+    }
+
+    pub fn to_experiment_id(&self) -> ExperimentId {
+        ExperimentId::from(format!("{}", self.0))
+    }
+
+    pub fn from_experiment_id(id: &ExperimentId) -> Option<Self> {
+        id.parse().map(CentralExperimentId)
+    }
+
+    pub fn num(&self) -> i32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExperimentPath {
+    owner_name: String,
+    project_name: String,
+    experiment_num: i32,
+}
+
+impl ExperimentPath {
+    pub fn new(
+        owner_name: impl Into<String>,
+        project_name: impl Into<String>,
+        experiment_num: i32,
+    ) -> Self {
+        Self {
+            owner_name: owner_name.into(),
+            project_name: project_name.into(),
+            experiment_num,
+        }
+    }
+
+    pub fn owner_name(&self) -> &str {
+        &self.owner_name
+    }
+
+    pub fn project_name(&self) -> &str {
+        &self.project_name
+    }
+
+    pub fn experiment_num(&self) -> i32 {
+        self.experiment_num
+    }
+}
 
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
@@ -169,4 +235,36 @@ pub enum ArtifactError {
     Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+pub fn create_central_experiment_run(
+    client: Client,
+    namespace: &str,
+    project_name: &str,
+    digest: String,
+    routine: String,
+) -> Result<ExperimentRun, BurnCentralError> {
+    let experiment = client.create_experiment(namespace, project_name, None, digest, routine)?;
+
+    let experiment_num = experiment.experiment_num;
+    let path = ExperimentPath::new(namespace, project_name, experiment_num);
+    let cancel_token = CancelToken::new();
+
+    let log_uploader = CentralLogUploader::new(client.clone(), path.clone());
+    let artifact_uploader = CentralArtifactUploader::new(client.clone(), path.clone());
+
+    let ws = client.create_experiment_run_websocket(namespace, project_name, experiment_num)?;
+
+    let session = RemoteExperimentSession::new(
+        Box::new(log_uploader),
+        Box::new(artifact_uploader),
+        ws,
+        cancel_token.clone(),
+    );
+
+    let reader = CentralArtifactReader::new(client, path);
+
+    let id = CentralExperimentId::new(experiment_num).to_experiment_id();
+
+    Ok(ExperimentRun::new(id, session, reader, cancel_token))
 }

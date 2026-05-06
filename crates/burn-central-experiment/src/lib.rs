@@ -49,6 +49,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 use burn_central_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 use burn_central_client::Client;
+#[cfg(feature = "station")]
+use burn_central_client::StationClient;
+
 use serde::Serialize;
 
 mod cancellation;
@@ -299,22 +302,32 @@ impl ExperimentRun {
     ///
     /// Use this when you want to log directly to the remote service without going through the
     /// higher-level runtime executor.
-    pub fn remote(
+    pub fn central(
         client: Client,
         namespace: &str,
         project_name: &str,
         digest: String,
         routine: String,
     ) -> Result<Self, ExperimentError> {
-        remote::create_experiment_run(client, namespace, project_name, digest, routine).map_err(
-            |e| {
+        remote::create_central_experiment_run(client, namespace, project_name, digest, routine)
+            .map_err(|e| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Internal,
                     "Failed to start remote experiment run",
                     e,
                 )
-            },
-        )
+            })
+    }
+
+    #[cfg(feature = "station")]
+    pub fn station(client: StationClient, routine: String) -> Result<Self, ExperimentError> {
+        remote::create_station_experiment_run(client, routine).map_err(|e| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Internal,
+                "Failed to start station experiment run",
+                e,
+            )
+        })
     }
 }
 

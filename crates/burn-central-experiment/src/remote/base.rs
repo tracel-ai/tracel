@@ -1,79 +1,68 @@
 use std::sync::Mutex;
 
-use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-use crate::remote::RemoteExperimentId;
+use crate::remote::logs::LogUploader;
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 
 use burn_central_artifact::bundle::FsBundle;
+use burn_central_client::WebSocketClient;
 use burn_central_client::websocket::{
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
 };
-use burn_central_client::{Client, ClientError};
 use crossbeam::channel::Sender;
 
-use super::ExperimentPath;
-use super::artifacts::ExperimentArtifactClient;
+// use super::artifacts::ExperimentArtifactClient;
 use super::logs::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
 use crate::error::{ExperimentError, ExperimentErrorKind};
-use crate::{ArtifactKind, CancelToken, ExperimentId, MetricSpec, MetricValue};
-
-#[derive(Debug, thiserror::Error)]
-pub enum BurnCentralError {
-    /// Represents an error related to client operations.
-    ///
-    /// This error variant is used to encapsulate client-specific errors along with additional context
-    /// and the underlying source error for more detailed debugging.
-    ///
-    /// # Fields
-    /// - `context` (String): A description or additional information about the client error context.
-    /// - `source` (ClientError): The underlying source of the client error, providing more details about the cause.
-    #[error("Client error: {context}\nSource: {source}")]
-    Client {
-        context: String,
-        source: ClientError,
-    },
-    /// Failed to connect the experiment run to the live backend stream.
-    #[error("Failed to connect the experiment run to the server: {0}")]
-    ExperimentConnection(String),
-}
+use crate::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
 
 struct ActiveSession {
     sender: Sender<ExperimentMessage>,
     socket: ExperimentSocket,
 }
 
-pub struct BurnCentralSession {
-    exp_path: ExperimentPath,
-    http_client: Client,
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to upload artifact: {message}")]
+pub struct ArtifactUploadError {
+    pub message: String,
+    #[source]
+    pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
+}
+
+pub trait ArtifactUploader {
+    fn upload(
+        &self,
+        name: &str,
+        kind: ArtifactKind,
+        bundle: &FsBundle,
+    ) -> Result<(), ArtifactUploadError>;
+}
+
+pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
+
+pub struct RemoteExperimentSession {
+    // exp_path: ExperimentPath,
+    // http_client: Client,
+    artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
 }
 
-impl BurnCentralSession {
+impl RemoteExperimentSession {
     pub fn new(
-        burn_client: Client,
-        experiment_path: ExperimentPath,
+        log_uploader: Box<dyn LogUploader + Send>,
+        artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
+        websocket: WebSocketClient,
         cancel_token: CancelToken,
-    ) -> Result<Self, BurnCentralError> {
-        let ws_client = burn_client
-            .create_experiment_run_websocket(
-                experiment_path.owner_name(),
-                experiment_path.project_name(),
-                experiment_path.experiment_num(),
-            )
-            .map_err(|e| BurnCentralError::ExperimentConnection(e.to_string()))?;
-
-        let log_uploader = 
-        let log_store = TempLogStore::new(burn_client.clone(), experiment_path.clone());
+    ) -> Self {
+        let log_store = TempLogStore::new(log_uploader);
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(ws_client, log_store, receiver, cancel_token);
+        let socket = ExperimentSocket::new(websocket, log_store, receiver, cancel_token);
 
-        Ok(Self {
-            exp_path: experiment_path,
-            http_client: burn_client,
+        Self {
+            artifact_uploader,
             active: Mutex::new(Some(ActiveSession { sender, socket })),
-        })
+        }
     }
 
     fn send(&self, message: ExperimentMessage) -> Result<(), ExperimentError> {
@@ -94,7 +83,7 @@ impl BurnCentralSession {
     }
 }
 
-impl ExperimentSession for BurnCentralSession {
+impl ExperimentSession for RemoteExperimentSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         let message = match event {
             Event::Args(value) => ExperimentMessage::Arguments(value),
@@ -158,9 +147,8 @@ impl ExperimentSession for BurnCentralSession {
 
         artifact(&mut bundle)?;
 
-        ExperimentArtifactClient::new(self.http_client.clone(), self.exp_path.clone())
+        self.artifact_uploader
             .upload(name, kind, &bundle)
-            .map(|_| ())
             .map_err(|err| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Artifact,
@@ -210,53 +198,6 @@ impl ExperimentSession for BurnCentralSession {
                 "Experiment background thread panicked",
             )),
         }
-    }
-}
-
-pub struct BurnCentralArtifactReader {
-    client: Client,
-    exp_path: ExperimentPath,
-}
-
-impl BurnCentralArtifactReader {
-    pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
-        Self { client, exp_path }
-    }
-}
-
-impl ExperimentArtifactReader for BurnCentralArtifactReader {
-    fn load_artifact_raw(
-        &self,
-        experiment_id: ExperimentId,
-        name: &str,
-    ) -> Result<LoadedArtifact, ExperimentReaderError> {
-        let id = RemoteExperimentId::from_experiment_id(&experiment_id)
-            .ok_or_else(|| ExperimentReaderError::new("Invalid experiment ID format"))?;
-
-        let experiment_path = ExperimentPath::new(
-            self.exp_path.owner_name().to_string(),
-            self.exp_path.project_name().to_string(),
-            id.num(),
-        );
-        let scope = ExperimentArtifactClient::new(self.client.clone(), experiment_path);
-        let artifact = scope.fetch(name).map_err(|err| {
-            ExperimentReaderError::with_source("Failed to resolve experiment artifact", err)
-        })?;
-
-        scope
-            .download(name)
-            .map_err(|err| {
-                ExperimentReaderError::with_source("Failed to download experiment artifact", err)
-            })
-            .map(|bundle| {
-                LoadedArtifact::new(
-                    ArtifactRef {
-                        id: artifact.id.to_string(),
-                        name: name.to_string(),
-                    },
-                    bundle,
-                )
-            })
     }
 }
 

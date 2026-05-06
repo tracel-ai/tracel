@@ -244,7 +244,7 @@ impl<B: AutodiffBackend> Executor<B> {
                 ctx.project
             );
 
-            let experiment = burn_central_experiment::ExperimentRun::remote(
+            let experiment = burn_central_experiment::ExperimentRun::central(
                 client.clone(),
                 &ctx.namespace,
                 &ctx.project,

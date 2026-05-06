@@ -11,6 +11,10 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["station"]
+station = ["burn-central-client/station"]
+
 [dependencies]
 thiserror.workspace = true
 burn-central-artifact.workspace = true
@@ -21,7 +25,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 burn.workspace = true
 
 # Remote experiment dependencies
-burn-central-client.workspace = true
+burn-central-client = { workspace = true, features = ["central"] }
 crossbeam.workspace = true
 sha2.workspace = true
 
