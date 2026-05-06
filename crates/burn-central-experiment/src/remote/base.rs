@@ -42,8 +42,6 @@ pub trait ArtifactUploader {
 pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 
 pub struct RemoteExperimentSession {
-    // exp_path: ExperimentPath,
-    // http_client: Client,
     artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
 }
