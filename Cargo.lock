@@ -344,6 +344,7 @@ version = "0.6.0"
 dependencies = [
  "burn-central-artifact",
  "burn-central-client",
+ "burn-central-dataset",
  "burn-central-experiment",
  "burn-central-fleet",
  "burn-central-inference",
@@ -366,8 +367,6 @@ dependencies = [
 [[package]]
 name = "burn-central-client"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa5902babcc14874fe8e4f1edfdcc8b686b9dbc3f8e0dfe20519af6a028aad4e"
 dependencies = [
  "reqwest",
  "serde",
@@ -383,6 +382,19 @@ dependencies = [
 [[package]]
 name = "burn-central-core"
 version = "0.6.0"
+
+[[package]]
+name = "burn-central-dataset"
+version = "0.6.0"
+dependencies = [
+ "burn",
+ "burn-central-client",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "burn-central-experiment"

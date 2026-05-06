@@ -1,0 +1,25 @@
+[package]
+name = "burn-central-dataset"
+description = "Dataset utilities for Burn Central SDK."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["station"]
+station = ["burn-central-client/station"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+burn = { workspace = true }
+burn-central-client = { workspace = true }
+serde_with = "3.19.0"

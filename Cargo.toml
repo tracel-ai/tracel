@@ -69,6 +69,7 @@ burn-central-inference = { path = "crates/burn-central-inference", version = "0.
 burn-central-fleet = { path = "crates/burn-central-fleet", version = "0.6.0" }
 burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.6.0" }
 burn-central-experiment = { path = "crates/burn-central-experiment", version = "0.6.0" }
+burn-central-dataset = { path = "crates/burn-central-dataset", version = "0.6.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.13.7"
