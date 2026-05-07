@@ -21,14 +21,15 @@ impl AnnotationDataset {
     }
 }
 
+/// Specific item serialization format for a dataset of type "annotation_set".
 #[derive(Debug, Clone, Deserialize)]
 #[serde_with::serde_as]
 pub struct AnnotationItem {
-    pub source_item_id: String,
+    pub source_item_id: Option<String>,
     #[serde_as(as = "serde_with::base64::Base64")]
     pub example_payload: Vec<u8>,
     pub example_size_bytes: u64,
-    pub annotation: serde_json::Value,
+    pub annotation: Option<serde_json::Value>,
 }
 
 impl Dataset<AnnotationItem> for AnnotationDataset {
@@ -46,13 +47,23 @@ impl Dataset<AnnotationItem> for AnnotationDataset {
             )
             .ok()?;
 
-        let items = items
+        let mut errors = String::new();
+
+        let item = items
             .items
             .into_iter()
-            .map(|payload| serde_json::from_slice(&payload.payload).ok())
-            .collect::<Option<Vec<AnnotationItem>>>()?;
+            .find(|item| item.entry_idx == index as u64)?;
 
-        items.into_iter().next()
+        match serde_json::from_slice::<AnnotationItem>(&item.payload) {
+            Ok(item) => return Some(item),
+            Err(e) => errors.push_str(&format!("Failed to parse item: {}\n", e)),
+        }
+
+        if !errors.is_empty() {
+            eprintln!("Errors occurred while parsing items:\n{}", errors);
+        }
+
+        None
     }
 
     fn len(&self) -> usize {
