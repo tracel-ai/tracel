@@ -18,7 +18,7 @@ keywords = ["tracel", "burn-central", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { version = "0.20.0", default-features = false, features = ["train"] }
+burn = { version = "0.21.0", default-features = false, features = ["train"] }
 
 url = "2.5.8"
 anyhow = "1.0.101"

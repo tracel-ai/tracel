@@ -7,6 +7,12 @@ pub struct DatasetRef {
     pub version: u32,
 }
 
+impl DatasetRef {
+    pub fn new(name: String, version: u32) -> Self {
+        Self { name, version }
+    }
+}
+
 pub struct AnnotationDataset {
     client: StationClient,
     dataset_ref: DatasetRef,
