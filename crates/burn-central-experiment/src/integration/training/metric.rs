@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use burn::train::logger::MetricLogger;
 use burn::train::metric::store::{EpochSummary, MetricsUpdate, NumericMetricUpdate, Split};
@@ -45,8 +44,7 @@ impl MetricLogger for ExperimentMetricLogger {
         &mut self,
         update: MetricsUpdate,
         epoch: usize,
-        split: Split,
-        _tag: Option<Arc<String>>,
+        split: &Split,
     ) {
         self.iteration_count += 1;
 
@@ -93,7 +91,7 @@ impl MetricLogger for ExperimentMetricLogger {
         &mut self,
         _name: &str,
         _epoch: usize,
-        _split: Split,
+        _split: &Split,
     ) -> Result<Vec<NumericEntry>, String> {
         Ok(vec![]) // Not implemented
     }
