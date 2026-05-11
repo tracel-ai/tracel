@@ -40,12 +40,7 @@ impl ExperimentMetricLogger {
 }
 
 impl MetricLogger for ExperimentMetricLogger {
-    fn log(
-        &mut self,
-        update: MetricsUpdate,
-        epoch: usize,
-        split: &Split,
-    ) {
+    fn log(&mut self, update: MetricsUpdate, epoch: usize, split: &Split) {
         self.iteration_count += 1;
 
         let mut logs = vec![];

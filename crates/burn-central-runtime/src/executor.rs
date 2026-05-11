@@ -314,7 +314,7 @@ mod test {
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
     use burn::tensor::backend::BackendTypes;
-use burn_central_artifact::bundle::{BundleEncode, BundleSink};
+    use burn_central_artifact::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
     impl<B: AutodiffBackend> ExecutorBuilder<B> {
