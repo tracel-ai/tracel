@@ -313,6 +313,7 @@ mod test {
     use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
+    use burn::tensor::backend::BackendTypes;
     use burn_central_artifact::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
@@ -324,7 +325,7 @@ mod test {
 
     // A backend stub for testing purposes.
     type TestBackend = Autodiff<NdArray<f32>>;
-    type TestDevice = <NdArray<f32> as Backend>::Device;
+    type TestDevice = <NdArray<f32> as BackendTypes>::Device;
 
     #[derive(Module, Debug)]
     struct TestModel<B: Backend> {
