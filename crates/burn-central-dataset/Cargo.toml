@@ -22,4 +22,4 @@ thiserror = { workspace = true }
 sha2 = { workspace = true }
 burn = { workspace = true }
 burn-central-client = { workspace = true }
-serde_with = "3.19.0"
+serde_with = { version = "3.19.0", features = ["base64", "macros"] }

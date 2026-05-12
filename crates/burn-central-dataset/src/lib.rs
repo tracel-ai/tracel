@@ -28,8 +28,8 @@ impl AnnotationDataset {
 }
 
 /// Specific item serialization format for a dataset of type "annotation_set".
-#[derive(Debug, Clone, Deserialize)]
 #[serde_with::serde_as]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AnnotationItem {
     pub source_item_id: Option<String>,
     #[serde_as(as = "serde_with::base64::Base64")]
