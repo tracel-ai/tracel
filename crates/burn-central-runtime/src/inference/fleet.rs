@@ -1,4 +1,4 @@
-use burn::prelude::Backend;
+use burn::tensor::Device;
 use burn_central_client::Env;
 use burn_central_fleet::{
     FleetDeviceSession, FleetManagedFactory, FleetManagedInference, FleetRegistrationToken,
@@ -15,14 +15,13 @@ use crate::{
 };
 
 /// Build a typed inference instance directly from a factory routine.
-pub fn build_fleet_managed_inference<B, I, M, R>(
-    factory: impl IntoRoutine<InferenceContext<B>, (), I, M>,
+pub fn build_fleet_managed_inference<I, M, R>(
+    factory: impl IntoRoutine<InferenceContext, (), I, M>,
     token: impl Into<FleetRegistrationToken>,
     metadata: impl Serialize,
-    device: B::Device,
-) -> Result<FleetManagedInference<B, I::Inference>, InferenceError>
+    device: Device,
+) -> Result<FleetManagedInference<I::Inference>, InferenceError>
 where
-    B: Backend,
     I: InferenceFactoryReturn<R>,
     I::Inference: Inference + Send + Sync + 'static,
     M: 'static,
@@ -37,8 +36,8 @@ where
     let inference_name = routine.name().to_string();
     let error_name = inference_name.clone();
 
-    let inference_factory: Box<dyn FleetManagedFactory<B, I::Inference>> = Box::new(
-        move |model_source, runtime_config: serde_json::Value, device: B::Device| {
+    let inference_factory: Box<dyn FleetManagedFactory<I::Inference>> = Box::new(
+        move |model_source, runtime_config: serde_json::Value, device: Device| {
             let init = InferenceInit {
                 model: Some(ModelSource::from(model_source)).into(),
                 device,

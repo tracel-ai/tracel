@@ -2,7 +2,7 @@ use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine};
 use crate::{Args, MultiDevice};
-use burn::prelude::Backend;
+use burn::tensor::Device;
 use burn_central_artifact::bundle::{BundleDecode, FsBundle};
 use burn_central_inference::{ErasedInference, Inference, JsonInference};
 use derive_more::{Deref, From};
@@ -33,9 +33,9 @@ impl ModelSource {
     }
 }
 
-pub struct InferenceInit<B: Backend> {
+pub struct InferenceInit {
     pub model: RefCell<Option<ModelSource>>,
-    pub device: B::Device,
+    pub device: Device,
 }
 
 /// Optional inference arguments passed at model-build time.
@@ -78,13 +78,13 @@ where
 }
 
 /// The execution context for inference initialization routines.
-pub struct InferenceContext<B: Backend> {
-    init: InferenceInit<B>,
+pub struct InferenceContext {
+    init: InferenceInit,
     args: InferenceArgs,
 }
 
-impl<B: Backend> InferenceContext<B> {
-    pub fn new(init: InferenceInit<B>, args: impl Into<InferenceArgs>) -> Self {
+impl InferenceContext {
+    pub fn new(init: InferenceInit, args: impl Into<InferenceArgs>) -> Self {
         Self {
             init,
             args: args.into(),
@@ -105,40 +105,40 @@ impl<B: Backend> InferenceContext<B> {
             .expect("model source should be set in inference context")
     }
 
-    pub fn device(&self) -> &B::Device {
+    pub fn device(&self) -> &Device {
         &self.init.device
     }
 }
 
-impl<B: Backend> RoutineParam<InferenceContext<B>> for ModelSource {
+impl RoutineParam<InferenceContext> for ModelSource {
     type Item<'new> = ModelSource;
 
-    fn try_retrieve(ctx: &InferenceContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &InferenceContext) -> anyhow::Result<Self::Item<'_>> {
         Ok(ctx.model())
     }
 }
 
-impl<B: Backend> RoutineParam<InferenceContext<B>> for MultiDevice<B> {
-    type Item<'new> = MultiDevice<B>;
+impl RoutineParam<InferenceContext> for MultiDevice {
+    type Item<'new> = MultiDevice;
 
-    fn try_retrieve(ctx: &InferenceContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &InferenceContext) -> anyhow::Result<Self::Item<'_>> {
         Ok(MultiDevice(vec![ctx.device().clone()]))
     }
 }
 
-impl<B: Backend, C: LaunchArgs> RoutineParam<InferenceContext<B>> for Args<C> {
+impl<C: LaunchArgs> RoutineParam<InferenceContext> for Args<C> {
     type Item<'new> = Args<C>;
 
-    fn try_retrieve(ctx: &InferenceContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &InferenceContext) -> anyhow::Result<Self::Item<'_>> {
         let cfg = ctx.use_merged_args();
         Ok(Args(cfg))
     }
 }
 
-type InferenceRoutine<B, I> = BoxedRoutine<InferenceContext<B>, (), I>;
+type InferenceRoutine<I> = BoxedRoutine<InferenceContext, (), I>;
 
-trait ErasedFactory<B: Backend>: Send + Sync {
-    fn build(&self, ctx: InferenceContext<B>) -> Result<Box<dyn ErasedInference>, InferenceError>;
+trait ErasedFactory: Send + Sync {
+    fn build(&self, ctx: InferenceContext) -> Result<Box<dyn ErasedInference>, InferenceError>;
 }
 
 pub trait InferenceFactoryReturn<M>: Send + 'static {
@@ -172,24 +172,20 @@ where
     }
 }
 
-struct RoutineFactory<B: Backend, I, R> {
+struct RoutineFactory<I, R> {
     name: String,
-    routine: InferenceRoutine<B, I>,
+    routine: InferenceRoutine<I>,
     _types: PhantomData<fn(I) -> R>,
 }
 
-impl<B, I, R> ErasedFactory<B> for RoutineFactory<B, I, R>
+impl<I, R> ErasedFactory for RoutineFactory<I, R>
 where
-    B: Backend,
     I: InferenceFactoryReturn<R>,
     I::Inference: Inference + Send + Sync + 'static,
     <I::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
     <I::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
 {
-    fn build(
-        &self,
-        mut ctx: InferenceContext<B>,
-    ) -> Result<Box<dyn ErasedInference>, InferenceError> {
+    fn build(&self, mut ctx: InferenceContext) -> Result<Box<dyn ErasedInference>, InferenceError> {
         let factory_output =
             self.routine
                 .run((), &mut ctx)
@@ -210,17 +206,17 @@ where
 }
 
 /// Registry of inference factories keyed by name.
-pub struct InferenceRegistry<B: Backend> {
-    factories: HashMap<String, Box<dyn ErasedFactory<B>>>,
+pub struct InferenceRegistry {
+    factories: HashMap<String, Box<dyn ErasedFactory>>,
 }
 
-impl<B: Backend> Default for InferenceRegistry<B> {
+impl Default for InferenceRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<B: Backend> InferenceRegistry<B> {
+impl InferenceRegistry {
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
@@ -233,7 +229,7 @@ impl<B: Backend> InferenceRegistry<B> {
         I::Inference: Inference + Send + Sync + 'static,
         <I::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
         <I::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
-        S: IntoRoutine<InferenceContext<B>, (), I, M> + 'static,
+        S: IntoRoutine<InferenceContext, (), I, M> + 'static,
         M: 'static,
         R: 'static,
     {
@@ -252,7 +248,7 @@ impl<B: Backend> InferenceRegistry<B> {
     pub fn build_inference(
         &self,
         name: impl AsRef<str>,
-        init: InferenceInit<B>,
+        init: InferenceInit,
         args: Option<impl Into<InferenceArgs>>,
     ) -> Result<Box<dyn ErasedInference>, InferenceError> {
         let factory = self
