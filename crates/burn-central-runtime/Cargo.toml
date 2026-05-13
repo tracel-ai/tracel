@@ -19,7 +19,6 @@ burn-central-inference.workspace = true
 burn-central-artifact.workspace = true
 burn-central-experiment.workspace = true
 burn-central-client.workspace = true
-burn.workspace = true
 thiserror.workspace = true
 variadics_please.workspace = true
 syn.workspace = true

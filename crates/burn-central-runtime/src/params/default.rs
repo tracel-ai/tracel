@@ -1,18 +1,6 @@
 use crate::{executor::ExecutionContext, params::RoutineParam};
-use burn::tensor::Device;
 use burn_central_experiment::ExperimentRun;
 use derive_more::{Deref, From};
-
-/// Wrapper around multiple devices.
-///
-/// Since Burn Central CLI support selecting different backend on the fly. We handle the device
-/// selection in the generated crate. This structure is simply a marker for us to know where to
-/// inject the devices selected by the CLI.
-///
-/// We are planning to support multi device training in the future, however we currently only
-/// support one so this vector will always contains one device for now.
-#[derive(Clone, Debug, Deref, From)]
-pub struct MultiDevice(pub Vec<Device>);
 
 /// Wrapper around the model returned by a routine.
 ///
@@ -21,14 +9,6 @@ pub struct MultiDevice(pub Vec<Device>);
 /// artifact.
 #[derive(Clone, From, Deref)]
 pub struct Model<M>(pub M);
-
-impl RoutineParam<ExecutionContext> for MultiDevice {
-    type Item<'new> = MultiDevice;
-
-    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
-        Ok(MultiDevice(ctx.devices().into()))
-    }
-}
 
 impl RoutineParam<ExecutionContext> for &ExecutionContext {
     type Item<'new> = &'new ExecutionContext;

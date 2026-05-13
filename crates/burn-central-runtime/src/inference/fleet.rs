@@ -1,4 +1,3 @@
-use burn::tensor::Device;
 use burn_central_client::Env;
 use burn_central_fleet::{
     FleetDeviceSession, FleetManagedFactory, FleetManagedInference, FleetRegistrationToken,
@@ -19,7 +18,6 @@ pub fn build_fleet_managed_inference<I, M, R>(
     factory: impl IntoRoutine<InferenceContext, (), I, M>,
     token: impl Into<FleetRegistrationToken>,
     metadata: impl Serialize,
-    device: Device,
 ) -> Result<FleetManagedInference<I::Inference>, InferenceError>
 where
     I: InferenceFactoryReturn<R>,
@@ -36,11 +34,10 @@ where
     let inference_name = routine.name().to_string();
     let error_name = inference_name.clone();
 
-    let inference_factory: Box<dyn FleetManagedFactory<I::Inference>> = Box::new(
-        move |model_source, runtime_config: serde_json::Value, device: Device| {
+    let inference_factory: Box<dyn FleetManagedFactory<I::Inference>> =
+        Box::new(move |model_source, runtime_config: serde_json::Value| {
             let init = InferenceInit {
                 model: Some(ModelSource::from(model_source)).into(),
-                device,
             };
             let mut ctx = InferenceContext::new(init, InferenceArgs::new(Some(runtime_config)));
 
@@ -51,8 +48,7 @@ where
             factory_output.into_inference().map_err(|message| {
                 format!("inference handler '{error_name}' failed to initialize: {message}")
             })
-        },
-    );
+        });
 
     let metadata = serde_json::json!({
         "name": inference_name,
@@ -66,16 +62,12 @@ where
             message: e.to_string(),
         })?;
 
-    let inference = FleetManagedInference::init(
-        inference_name.clone(),
-        fleet_session,
-        inference_factory,
-        device,
-    )
-    .map_err(|e| InferenceError::FactoryFailed {
-        name: inference_name,
-        message: e.to_string(),
-    })?;
+    let inference =
+        FleetManagedInference::init(inference_name.clone(), fleet_session, inference_factory)
+            .map_err(|e| InferenceError::FactoryFailed {
+                name: inference_name,
+                message: e.to_string(),
+            })?;
 
     Ok(inference)
 }

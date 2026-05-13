@@ -3,7 +3,6 @@ use crate::output::{ExperimentOutput, TrainOutput};
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use anyhow::Result;
-use burn::tensor::Device;
 use burn_central_experiment::integration::tracing::try_init_tracing_subscriber;
 use burn_central_experiment::{CancelToken, ExperimentRun, ExperimentRunHandleExt};
 use std::collections::HashMap;
@@ -16,7 +15,6 @@ pub struct ExecutionContext {
     namespace: String,
     project: String,
     args_override: Option<serde_json::Value>,
-    devices: Vec<Device>,
     experiment: Option<ExperimentRun>,
     cancel_token: CancelToken,
 }
@@ -47,10 +45,6 @@ impl ExecutionContext {
 
     pub fn cancel_token(&self) -> &CancelToken {
         &self.cancel_token
-    }
-
-    pub fn devices(&self) -> &[Device] {
-        &self.devices
     }
 
     pub fn client(&self) -> Option<&burn_central_client::Client> {
@@ -185,7 +179,6 @@ impl Executor {
         &self,
         kind: ActionKind,
         name: impl AsRef<str>,
-        devices: impl IntoIterator<Item = Device>,
         args_override: Option<String>,
     ) -> Result<(), RuntimeError> {
         let routine = name.as_ref();
@@ -224,7 +217,6 @@ impl Executor {
             namespace: self.namespace.clone().unwrap_or_default(),
             project: self.project.clone().unwrap_or_default(),
             args_override,
-            devices: devices.into_iter().collect(),
             experiment: None,
             cancel_token: CancelToken::new(),
         };
@@ -304,12 +296,10 @@ impl Executor {
 mod test {
     use std::convert::Infallible;
 
+    use crate::Model;
     use crate::params::args::Args;
-    use crate::{Model, MultiDevice};
 
     use super::*;
-    use burn::nn::{Linear, LinearConfig};
-    use burn::prelude::*;
     use burn_central_artifact::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
@@ -319,12 +309,8 @@ mod test {
         }
     }
 
-    type TestDevice = Device;
-
-    #[derive(Module, Debug)]
-    struct TestModel {
-        linear: Linear,
-    }
+    #[derive(Debug)]
+    struct TestModel;
 
     impl BundleEncode for TestModel {
         type Settings = ();
@@ -338,13 +324,6 @@ mod test {
         }
     }
 
-    impl TestModel {
-        fn new(device: &Device) -> Self {
-            let linear = LinearConfig::new(10, 5).init(device);
-            TestModel { linear }
-        }
-    }
-
     #[derive(Serialize, Deserialize, Debug, Default, Clone)]
     struct TestArgs {
         lr: f32,
@@ -354,17 +333,12 @@ mod test {
     // --- Test Routines ---
 
     fn simple_train_step() -> Result<Model<TestModel>, String> {
-        let device = Device::default();
-        let model = TestModel::new(&device);
+        let model = TestModel;
         Ok(model.into())
     }
 
-    fn train_with_params(
-        args: Args<TestArgs>,
-        devices: MultiDevice,
-        cancel: CancelToken,
-    ) -> Model<TestModel> {
-        let model = TestModel::new(&devices[0]);
+    fn train_with_params(args: Args<TestArgs>, cancel: CancelToken) -> Model<TestModel> {
+        let model = TestModel;
         assert_eq!(args.lr, 0.01);
         assert_eq!(args.epochs, 10);
         println!("Cancel token available: {}", cancel.is_cancelled());
@@ -384,12 +358,7 @@ mod test {
         builder.train("simple_task", simple_train_step);
         let executor = builder.build_offline();
 
-        let result = executor.run(
-            "train".parse().unwrap(),
-            "simple_task",
-            [TestDevice::default()],
-            None,
-        );
+        let result = executor.run("train".parse().unwrap(), "simple_task", None);
         assert!(result.is_ok());
     }
 
@@ -401,12 +370,7 @@ mod test {
 
         let args_json = r#"{"lr": 0.01, "epochs": 10}"#.to_string();
 
-        let result = executor.run(
-            "train".parse().unwrap(),
-            "complex_task",
-            [TestDevice::default()],
-            Some(args_json),
-        );
+        let result = executor.run("train".parse().unwrap(), "complex_task", Some(args_json));
         assert!(result.is_ok());
     }
 
@@ -415,12 +379,7 @@ mod test {
         let builder = Executor::builder();
         let executor = builder.build_offline();
 
-        let result = executor.run(
-            "train".parse().unwrap(),
-            "non_existent_task",
-            [TestDevice::default()],
-            None,
-        );
+        let result = executor.run("train".parse().unwrap(), "non_existent_task", None);
 
         assert!(matches!(result, Err(RuntimeError::HandlerNotFound(_))));
     }
@@ -431,12 +390,7 @@ mod test {
         builder.train("failing_task", failing_routine);
         let executor = builder.build_offline();
 
-        let result = executor.run(
-            "train".parse().unwrap(),
-            "failing_task",
-            [TestDevice::default()],
-            None,
-        );
+        let result = executor.run("train".parse().unwrap(), "failing_task", None);
 
         assert!(matches!(result, Err(RuntimeError::HandlerFailed(_))));
     }
@@ -448,8 +402,8 @@ mod test {
         builder.train("task2", ("custom_name_2", simple_train_step));
         let executor = builder.build_offline();
 
-        let res1 = executor.run("train".parse().unwrap(), "task1", [], None);
-        let res2 = executor.run("train".parse().unwrap(), "task2", [], None);
+        let res1 = executor.run("train".parse().unwrap(), "task1", None);
+        let res2 = executor.run("train".parse().unwrap(), "task2", None);
 
         assert!(res1.is_ok());
         assert!(res2.is_ok());

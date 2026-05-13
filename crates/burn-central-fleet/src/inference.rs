@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
-use burn::tensor::Device;
 use burn_central_artifact::bundle::FsBundle;
 use burn_central_inference::{Inference, InferenceWriter};
 
@@ -16,25 +15,20 @@ pub enum FleetManagedInferenceError {
 }
 
 pub trait FleetManagedFactory<I>: Send + Sync {
-    fn build(
-        &self,
-        model_source: FsBundle,
-        runtime_config: serde_json::Value,
-        device: Device,
-    ) -> Result<I, String>;
+    fn build(&self, model_source: FsBundle, runtime_config: serde_json::Value)
+    -> Result<I, String>;
 }
 
 impl<F, I> FleetManagedFactory<I> for F
 where
-    F: Fn(FsBundle, serde_json::Value, Device) -> Result<I, String> + Send + Sync,
+    F: Fn(FsBundle, serde_json::Value) -> Result<I, String> + Send + Sync,
 {
     fn build(
         &self,
         model_source: FsBundle,
         runtime_config: serde_json::Value,
-        device: Device,
     ) -> Result<I, String> {
-        self(model_source, runtime_config, device)
+        self(model_source, runtime_config)
     }
 }
 
@@ -48,7 +42,6 @@ pub struct FleetManagedInference<I> {
     inference_name: String,
     fleet_session: RwLock<FleetDeviceSession>,
     factory: Box<dyn FleetManagedFactory<I>>,
-    device: Device,
     active: ArcSwapOption<ActiveInference<I>>,
     reconcile_gate: Mutex<()>,
     last_sync_at: Mutex<Option<Instant>>,
@@ -63,13 +56,11 @@ where
         inference_name: impl Into<String>,
         fleet_session: FleetDeviceSession,
         factory: Box<dyn FleetManagedFactory<I>>,
-        device: Device,
     ) -> Result<Self, FleetManagedInferenceError> {
         let inference = Self {
             inference_name: inference_name.into(),
             fleet_session: RwLock::new(fleet_session),
             factory,
-            device,
             active: ArcSwapOption::empty(),
             reconcile_gate: Mutex::new(()),
             last_sync_at: Mutex::new(None),
@@ -151,7 +142,7 @@ where
 
         let built = self
             .factory
-            .build(model_source, config, self.device.clone())
+            .build(model_source, config)
             .map_err(|message| FleetManagedInferenceError::FactoryFailed {
                 name: self.inference_name.clone(),
                 message,

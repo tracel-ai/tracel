@@ -1,8 +1,7 @@
+use crate::Args;
 use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine};
-use crate::{Args, MultiDevice};
-use burn::tensor::Device;
 use burn_central_artifact::bundle::{BundleDecode, FsBundle};
 use burn_central_inference::{ErasedInference, Inference, JsonInference};
 use derive_more::{Deref, From};
@@ -35,7 +34,6 @@ impl ModelSource {
 
 pub struct InferenceInit {
     pub model: RefCell<Option<ModelSource>>,
-    pub device: Device,
 }
 
 /// Optional inference arguments passed at model-build time.
@@ -104,10 +102,6 @@ impl InferenceContext {
             .take()
             .expect("model source should be set in inference context")
     }
-
-    pub fn device(&self) -> &Device {
-        &self.init.device
-    }
 }
 
 impl RoutineParam<InferenceContext> for ModelSource {
@@ -115,14 +109,6 @@ impl RoutineParam<InferenceContext> for ModelSource {
 
     fn try_retrieve(ctx: &InferenceContext) -> anyhow::Result<Self::Item<'_>> {
         Ok(ctx.model())
-    }
-}
-
-impl RoutineParam<InferenceContext> for MultiDevice {
-    type Item<'new> = MultiDevice;
-
-    fn try_retrieve(ctx: &InferenceContext) -> anyhow::Result<Self::Item<'_>> {
-        Ok(MultiDevice(vec![ctx.device().clone()]))
     }
 }
 
