@@ -1,6 +1,5 @@
 use crate::executor::ExecutionContext;
 use crate::params::default::Model;
-use burn::prelude::Backend;
 use burn_central_artifact::bundle::BundleEncode;
 use burn_central_experiment::ArtifactKind;
 use std::fmt::Display;
@@ -12,14 +11,14 @@ pub trait RoutineOutput<Ctx>: Sized + Send + 'static {
     fn apply_output(self, ctx: &mut Ctx) -> anyhow::Result<()>;
 }
 
-pub trait ExperimentOutput<B: Backend>: RoutineOutput<ExecutionContext<B>> {}
+pub trait ExperimentOutput: RoutineOutput<ExecutionContext> {}
 
 /// This trait is a marker for outputs that are specifically related to training routines.
-pub trait TrainOutput<B: Backend>: ExperimentOutput<B> {}
+pub trait TrainOutput: ExperimentOutput {}
 
 /// This implementation is for the case where the output is simply `()`, meaning no output to apply.
-impl<B: Backend> RoutineOutput<ExecutionContext<B>> for () {
-    fn apply_output(self, _ctx: &mut ExecutionContext<B>) -> anyhow::Result<()> {
+impl RoutineOutput<ExecutionContext> for () {
+    fn apply_output(self, _ctx: &mut ExecutionContext) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -37,8 +36,8 @@ where
     }
 }
 
-impl<B: Backend, M: BundleEncode + Send + 'static> RoutineOutput<ExecutionContext<B>> for Model<M> {
-    fn apply_output(self, ctx: &mut ExecutionContext<B>) -> anyhow::Result<()> {
+impl<M: BundleEncode + Send + 'static> RoutineOutput<ExecutionContext> for Model<M> {
+    fn apply_output(self, ctx: &mut ExecutionContext) -> anyhow::Result<()> {
         if let Some(experiment) = ctx.experiment() {
             experiment.save_artifact("model", ArtifactKind::Model, self.0, &Default::default())?;
         }
@@ -46,25 +45,25 @@ impl<B: Backend, M: BundleEncode + Send + 'static> RoutineOutput<ExecutionContex
     }
 }
 
-impl<B: Backend, M: BundleEncode + Send + 'static> ExperimentOutput<B> for Model<M> {}
+impl<M: BundleEncode + Send + 'static> ExperimentOutput for Model<M> {}
 
-impl<B: Backend> ExperimentOutput<B> for () {}
+impl ExperimentOutput for () {}
 
 /// --- TrainOutput ---
-impl<B: Backend, M: BundleEncode + Send + 'static> TrainOutput<B> for Model<M> {}
+impl<M: BundleEncode + Send + 'static> TrainOutput for Model<M> {}
 
-impl<T, E, B: Backend> ExperimentOutput<B> for Result<T, E>
+impl<T, E> ExperimentOutput for Result<T, E>
 where
     E: 'static + Display + Send + Sync,
-    T: TrainOutput<B>,
+    T: TrainOutput,
 {
 }
 
-impl<T, E, B: Backend> TrainOutput<B> for Result<T, E>
+impl<T, E> TrainOutput for Result<T, E>
 where
-    T: TrainOutput<B>,
+    T: TrainOutput,
     E: Display + Send + Sync + 'static,
 {
 }
 
-impl<B: Backend> TrainOutput<B> for () {}
+impl TrainOutput for () {}
