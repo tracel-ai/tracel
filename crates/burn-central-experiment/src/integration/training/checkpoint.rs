@@ -6,22 +6,18 @@ use crate::ExperimentRunHandle;
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
-use burn::tensor::backend::Backend;
+use burn::tensor::Device;
 use burn_central_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 use serde::Deserialize;
 use serde::{Serialize, de::DeserializeOwned};
 
-struct CheckpointRecordSources<B, R> {
-    pub backend: std::marker::PhantomData<B>,
+struct CheckpointRecordSources<R> {
     pub record: R,
 }
 
-impl<B, R> CheckpointRecordSources<B, R> {
+impl<R> CheckpointRecordSources<R> {
     pub fn new(record: R) -> Self {
-        Self {
-            backend: std::marker::PhantomData,
-            record,
-        }
+        Self { record }
     }
 }
 
@@ -38,10 +34,9 @@ impl Default for CheckpointRecordArtifactSettings {
     }
 }
 
-impl<B, R> BundleEncode for CheckpointRecordSources<B, R>
+impl<R> BundleEncode for CheckpointRecordSources<R>
 where
-    R: Record<B>,
-    B: Backend,
+    R: Record,
 {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
@@ -60,10 +55,9 @@ where
     }
 }
 
-impl<B, R> BundleDecode for CheckpointRecordSources<B, R>
+impl<R> BundleDecode for CheckpointRecordSources<R>
 where
-    R: Record<B>,
-    B: Backend,
+    R: Record,
 {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
@@ -84,7 +78,7 @@ where
         })?;
         let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
         let record = recorder
-            .load::<R>(bytes, &B::Device::default())
+            .load::<R>(bytes, &Device::default())
             .map_err(|e| format!("Failed to load record from bytes: {}", e))?;
         Ok(Self::new(record))
     }
@@ -115,7 +109,7 @@ impl ExperimentCheckpointRecorder {
     }
 }
 
-impl<B: Backend> FileRecorder<B> for ExperimentCheckpointRecorder {
+impl FileRecorder for ExperimentCheckpointRecorder {
     fn file_extension() -> &'static str {
         "mpk"
     }
@@ -129,7 +123,7 @@ impl Default for ExperimentCheckpointRecorder {
     }
 }
 
-impl<B: Backend> Recorder<B> for ExperimentCheckpointRecorder {
+impl Recorder for ExperimentCheckpointRecorder {
     type Settings = FullPrecisionSettings;
     type RecordArgs = PathBuf;
     type RecordOutput = ();
@@ -141,7 +135,7 @@ impl<B: Backend> Recorder<B> for ExperimentCheckpointRecorder {
         args: Self::RecordArgs,
     ) -> Result<Self::RecordOutput, RecorderError>
     where
-        R: Record<B>,
+        R: Record,
     {
         let file_name = args
             .file_name()
@@ -165,9 +159,9 @@ impl<B: Backend> Recorder<B> for ExperimentCheckpointRecorder {
             .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))
     }
 
-    fn load<R>(&self, args: Self::LoadArgs, _device: &B::Device) -> Result<R, RecorderError>
+    fn load<R>(&self, args: Self::LoadArgs, _device: &Device) -> Result<R, RecorderError>
     where
-        R: Record<B>,
+        R: Record,
     {
         let name = args
             .file_name()
@@ -184,7 +178,7 @@ impl<B: Backend> Recorder<B> for ExperimentCheckpointRecorder {
         };
         let artifact = self
             .experiment_handle
-            .use_artifact::<CheckpointRecordSources<B, R>>(
+            .use_artifact::<CheckpointRecordSources<R>>(
                 self.experiment_handle.id().clone(),
                 name,
                 &settings,
