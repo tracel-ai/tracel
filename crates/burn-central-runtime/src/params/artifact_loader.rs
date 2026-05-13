@@ -15,7 +15,6 @@ use burn_central_experiment::{ExperimentId, ExperimentRun, error::ExperimentErro
 /// # use burn_central_artifact::bundle::BundleDecode;
 /// # use burn_central::register;
 /// # use burn_central_runtime::Model;
-/// # use burn_central_runtime::MultiDevice;
 /// # use serde::*;
 /// #[derive(Deserialize, Serialize, Default)]
 /// pub struct LaunchArgs {
@@ -25,7 +24,6 @@ use burn_central_experiment::{ExperimentId, ExperimentRun, error::ExperimentErro
 /// #[register(training, name = "mnist")]
 /// pub fn training(
 ///     config: Args<LaunchArgs>,
-///     devices: MultiDevice,
 ///     loader: ArtifactLoader<MyModel>,
 /// ) -> Result<Model<MyModel>, String> {
 ///     // Load a pretrained model if an experiment number is provided.
