@@ -33,21 +33,3 @@ impl Station {
         AnnotationDataset::new(self.client.clone(), dataset_ref)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn user_main() {
-        let station = Station::connect("http://localhost:8000").unwrap();
-
-        let dataset = station.get_annotation_dataset(DatasetRef::new("my_dataset".to_string(), 1));
-
-        let experiment = station
-            .create_experiment("test_experiment".to_string())
-            .unwrap();
-
-        // experiment.
-    }
-}
