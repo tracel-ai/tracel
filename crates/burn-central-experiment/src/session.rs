@@ -50,7 +50,7 @@ pub enum ExperimentCompletion {
 
 pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError> + 'a;
 
-/// Backend-specific implementation for the active experiment run.
+/// Session-level implementation for the active experiment run.
 pub trait ExperimentSession: Send + Sync {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
     fn save_artifact(

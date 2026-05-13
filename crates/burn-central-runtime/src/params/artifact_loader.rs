@@ -23,11 +23,11 @@ use burn_central_experiment::{ExperimentId, ExperimentRun, error::ExperimentErro
 /// }
 ///
 /// #[register(training, name = "mnist")]
-/// pub fn training<B: AutodiffBackend>(
+/// pub fn training(
 ///     config: Args<LaunchArgs>,
-///     MultiDevice(devices): MultiDevice<B>,
-///     loader: ArtifactLoader<ModelArtifact<B>>,
-/// ) -> Result<Model<ModelArtifact<B::InnerBackend>>, String> {
+///     devices: MultiDevice,
+///     loader: ArtifactLoader<MyModel>,
+/// ) -> Result<Model<MyModel>, String> {
 ///     // Load a pretrained model if an experiment number is provided.
 ///     if let Some(experiment_num) = config.experiment_num {
 ///         let pretrained_model = loader
