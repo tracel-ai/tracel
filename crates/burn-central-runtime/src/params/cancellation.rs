@@ -1,12 +1,11 @@
-use burn::prelude::Backend;
 use burn_central_experiment::CancelToken;
 
 use crate::{executor::ExecutionContext, params::RoutineParam};
 
-impl<B: Backend> RoutineParam<ExecutionContext<B>> for CancelToken {
+impl RoutineParam<ExecutionContext> for CancelToken {
     type Item<'new> = CancelToken;
 
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
         Ok(ctx.cancel_token().clone())
     }
 }
