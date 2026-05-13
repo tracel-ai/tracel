@@ -1,5 +1,5 @@
 use crate::{executor::ExecutionContext, params::RoutineParam};
-use burn::prelude::Backend;
+use burn::tensor::Device;
 use burn_central_experiment::ExperimentRun;
 use derive_more::{Deref, From};
 
@@ -12,7 +12,7 @@ use derive_more::{Deref, From};
 /// We are planning to support multi device training in the future, however we currently only
 /// support one so this vector will always contains one device for now.
 #[derive(Clone, Debug, Deref, From)]
-pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
+pub struct MultiDevice(pub Vec<Device>);
 
 /// Wrapper around the model returned by a routine.
 ///
@@ -22,26 +22,26 @@ pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 #[derive(Clone, From, Deref)]
 pub struct Model<M>(pub M);
 
-impl<B: Backend> RoutineParam<ExecutionContext<B>> for MultiDevice<B> {
-    type Item<'new> = MultiDevice<B>;
+impl RoutineParam<ExecutionContext> for MultiDevice {
+    type Item<'new> = MultiDevice;
 
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
         Ok(MultiDevice(ctx.devices().into()))
     }
 }
 
-impl<B: Backend> RoutineParam<ExecutionContext<B>> for &ExecutionContext<B> {
-    type Item<'new> = &'new ExecutionContext<B>;
+impl RoutineParam<ExecutionContext> for &ExecutionContext {
+    type Item<'new> = &'new ExecutionContext;
 
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
         Ok(ctx)
     }
 }
 
-impl<B: Backend> RoutineParam<ExecutionContext<B>> for &ExperimentRun {
+impl RoutineParam<ExecutionContext> for &ExperimentRun {
     type Item<'new> = &'new ExperimentRun;
 
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
         ctx.experiment()
             .ok_or_else(|| anyhow::anyhow!("Experiment run not found"))
     }

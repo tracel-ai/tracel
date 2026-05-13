@@ -1,29 +1,27 @@
-use anyhow::Result;
-use burn::prelude::Backend;
-use burn::tensor::backend::AutodiffBackend;
-
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
+use anyhow::Result;
+use burn::tensor::Device;
 use burn_central_experiment::integration::tracing::try_init_tracing_subscriber;
 use burn_central_experiment::{CancelToken, ExperimentRun, ExperimentRunHandleExt};
 use std::collections::HashMap;
 
-type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
+type ExecutorRoutine = BoxedRoutine<ExecutionContext, (), ()>;
 
 /// The execution context for a routine, containing the necessary information to run it.
-pub struct ExecutionContext<B: Backend> {
+pub struct ExecutionContext {
     client: Option<burn_central_client::Client>,
     namespace: String,
     project: String,
     args_override: Option<serde_json::Value>,
-    devices: Vec<B::Device>,
+    devices: Vec<Device>,
     experiment: Option<ExperimentRun>,
     cancel_token: CancelToken,
 }
 
-impl<B: Backend> ExecutionContext<B> {
+impl ExecutionContext {
     /// Retrieve args merged on top of `A::default()`.
     ///
     /// This powers the `Args<A>` routine extractor for training routines.
@@ -51,7 +49,7 @@ impl<B: Backend> ExecutionContext<B> {
         &self.cancel_token
     }
 
-    pub fn devices(&self) -> &[B::Device] {
+    pub fn devices(&self) -> &[Device] {
         &self.devices
     }
 
@@ -96,11 +94,11 @@ impl std::fmt::Display for TargetId {
 // Hide element that are only used internally by the gen crate.
 #[doc(hidden)]
 /// A builder for creating an `Executor` instance with registered routines.
-pub struct ExecutorBuilder<B: AutodiffBackend> {
-    executor: Executor<B>,
+pub struct ExecutorBuilder {
+    executor: Executor,
 }
 
-impl<B: AutodiffBackend> ExecutorBuilder<B> {
+impl ExecutorBuilder {
     fn new() -> Self {
         Self {
             executor: Executor {
@@ -113,11 +111,11 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
         }
     }
 
-    fn register<M, O: ExperimentOutput<B>>(
+    fn register<M, O: ExperimentOutput>(
         &mut self,
         kind: ActionKind,
         name: impl Into<String>,
-        handler: impl IntoRoutine<ExecutionContext<B>, (), O, M>,
+        handler: impl IntoRoutine<ExecutionContext, (), O, M>,
     ) -> &mut Self {
         let wrapper = ExecutorRoutineWrapper::new(IntoRoutine::into_routine(handler));
         let routine = Box::new(wrapper);
@@ -134,10 +132,10 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
         self
     }
 
-    pub fn train<M, O: TrainOutput<B>>(
+    pub fn train<M, O: TrainOutput>(
         &mut self,
         name: impl Into<String>,
-        handler: impl IntoRoutine<ExecutionContext<B>, (), O, M>,
+        handler: impl IntoRoutine<ExecutionContext, (), O, M>,
     ) -> &mut Self {
         self.register(ActionKind::Train, name, handler);
         self
@@ -149,7 +147,7 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
         env: burn_central_client::Env,
         namespace: impl Into<String>,
         project: impl Into<String>,
-    ) -> Executor<B> {
+    ) -> Executor {
         let mut executor = self.executor;
         executor.credentials = Some(credentials.into());
         executor.env = Some(env);
@@ -163,17 +161,17 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
 // Hide element that are only used internally by the gen crate.
 #[doc(hidden)]
 /// An executor that manages the execution of routines for different targets.
-pub struct Executor<B: Backend> {
+pub struct Executor {
     credentials: Option<burn_central_client::BurnCentralCredentials>,
     env: Option<burn_central_client::Env>,
     namespace: Option<String>,
     project: Option<String>,
-    handlers: HashMap<TargetId, ExecutorRoutine<B>>,
+    handlers: HashMap<TargetId, ExecutorRoutine>,
 }
 
-impl<B: AutodiffBackend> Executor<B> {
+impl Executor {
     /// Creates a new `ExecutorBuilder` to configure and build an `Executor`.
-    pub fn builder() -> ExecutorBuilder<B> {
+    pub fn builder() -> ExecutorBuilder {
         ExecutorBuilder::new()
     }
 
@@ -187,7 +185,7 @@ impl<B: AutodiffBackend> Executor<B> {
         &self,
         kind: ActionKind,
         name: impl AsRef<str>,
-        devices: impl IntoIterator<Item = B::Device>,
+        devices: impl IntoIterator<Item = Device>,
         args_override: Option<String>,
     ) -> Result<(), RuntimeError> {
         let routine = name.as_ref();
@@ -310,29 +308,25 @@ mod test {
     use crate::{Model, MultiDevice};
 
     use super::*;
-    use burn::backend::{Autodiff, NdArray};
     use burn::nn::{Linear, LinearConfig};
     use burn::prelude::*;
-    use burn::tensor::backend::BackendTypes;
     use burn_central_artifact::bundle::{BundleEncode, BundleSink};
     use serde::{Deserialize, Serialize};
 
-    impl<B: AutodiffBackend> ExecutorBuilder<B> {
-        pub fn build_offline(self) -> Executor<B> {
+    impl ExecutorBuilder {
+        pub fn build_offline(self) -> Executor {
             self.executor
         }
     }
 
-    // A backend stub for testing purposes.
-    type TestBackend = Autodiff<NdArray<f32>>;
-    type TestDevice = <NdArray<f32> as BackendTypes>::Device;
+    type TestDevice = Device;
 
     #[derive(Module, Debug)]
-    struct TestModel<B: Backend> {
-        linear: Linear<B>,
+    struct TestModel {
+        linear: Linear,
     }
 
-    impl<B: Backend> BundleEncode for TestModel<B> {
+    impl BundleEncode for TestModel {
         type Settings = ();
         type Error = Infallible;
         fn encode<E: BundleSink>(
@@ -344,8 +338,8 @@ mod test {
         }
     }
 
-    impl<B: AutodiffBackend> TestModel<B> {
-        fn new(device: &B::Device) -> Self {
+    impl TestModel {
+        fn new(device: &Device) -> Self {
             let linear = LinearConfig::new(10, 5).init(device);
             TestModel { linear }
         }
@@ -359,17 +353,17 @@ mod test {
 
     // --- Test Routines ---
 
-    fn simple_train_step<B: AutodiffBackend>() -> Result<Model<TestModel<B>>, String> {
-        let device = B::Device::default();
+    fn simple_train_step() -> Result<Model<TestModel>, String> {
+        let device = Device::default();
         let model = TestModel::new(&device);
         Ok(model.into())
     }
 
-    fn train_with_params<B: AutodiffBackend>(
+    fn train_with_params(
         args: Args<TestArgs>,
-        devices: MultiDevice<B>,
+        devices: MultiDevice,
         cancel: CancelToken,
-    ) -> Model<TestModel<B>> {
+    ) -> Model<TestModel> {
         let model = TestModel::new(&devices[0]);
         assert_eq!(args.lr, 0.01);
         assert_eq!(args.epochs, 10);
@@ -378,7 +372,7 @@ mod test {
         model.into()
     }
 
-    fn failing_routine<B: AutodiffBackend>() -> Result<Model<TestModel<B>>> {
+    fn failing_routine() -> Result<Model<TestModel>> {
         anyhow::bail!("Failing routine");
     }
 
@@ -386,8 +380,8 @@ mod test {
 
     #[test]
     fn should_run_simple_routine_successfully() {
-        let mut builder = Executor::<TestBackend>::builder();
-        builder.train("simple_task", simple_train_step::<TestBackend>);
+        let mut builder = Executor::builder();
+        builder.train("simple_task", simple_train_step);
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -401,7 +395,7 @@ mod test {
 
     #[test]
     fn should_inject_parameters_and_handle_output() {
-        let mut builder = Executor::<TestBackend>::builder();
+        let mut builder = Executor::builder();
         builder.train("complex_task", train_with_params);
         let executor = builder.build_offline();
 
@@ -418,7 +412,7 @@ mod test {
 
     #[test]
     fn should_return_handler_not_found_error() {
-        let builder = Executor::<TestBackend>::builder();
+        let builder = Executor::builder();
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -433,8 +427,8 @@ mod test {
 
     #[test]
     fn should_handle_failing_routine() {
-        let mut builder = Executor::<TestBackend>::builder();
-        builder.train("failing_task", failing_routine::<TestBackend>);
+        let mut builder = Executor::builder();
+        builder.train("failing_task", failing_routine);
         let executor = builder.build_offline();
 
         let result = executor.run(
@@ -449,12 +443,9 @@ mod test {
 
     #[test]
     fn should_support_named_routines() {
-        let mut builder = Executor::<TestBackend>::builder();
-        builder.train(
-            "task1",
-            simple_train_step::<TestBackend>.with_name("custom_name_1"),
-        );
-        builder.train("task2", ("custom_name_2", simple_train_step::<TestBackend>));
+        let mut builder = Executor::builder();
+        builder.train("task1", simple_train_step.with_name("custom_name_1"));
+        builder.train("task2", ("custom_name_2", simple_train_step));
         let executor = builder.build_offline();
 
         let res1 = executor.run("train".parse().unwrap(), "task1", [], None);
