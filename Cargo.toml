@@ -18,7 +18,7 @@ keywords = ["tracel", "burn-central", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "dbf03c516bac61efa3186ba9cafdb92ddf294021", default-features = false, features = [
+burn = { git = "https://github.com/tracel-ai/burn", rev = "924d5d9ee9f87c411a103e1178a9baeb3e6c3f1a", default-features = false, features = [
     "train",
 ] }
 
