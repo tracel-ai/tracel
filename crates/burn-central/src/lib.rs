@@ -64,7 +64,3 @@ pub use burn_central_fleet as fleet;
 /// Artifact bundle utilities and adapters.
 #[doc(inline)]
 pub use burn_central_artifact as artifact;
-
-/// Dataset utilities and adapters.
-#[doc(inline)]
-pub use burn_central_dataset as dataset;
