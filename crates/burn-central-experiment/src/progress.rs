@@ -156,7 +156,7 @@ pub struct ProgressBuilder {
 
 impl ProgressBuilder {
     /// Create a root progress builder.
-    pub fn new(
+    pub(crate) fn new(
         reporter: Arc<dyn ProgressEventReporter>,
         id_allocator: Arc<dyn ProgressIdAllocator>,
         name: impl Into<String>,
