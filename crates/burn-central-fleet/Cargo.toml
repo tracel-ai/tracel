@@ -12,7 +12,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-burn.workspace = true
 burn-central-client.workspace = true
 burn-central-inference.workspace = true
 burn-central-artifact.workspace = true

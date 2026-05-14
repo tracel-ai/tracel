@@ -174,7 +174,7 @@ impl Executor {
         self.handlers.keys().cloned().collect()
     }
 
-    /// Runs a routine for the specified target with the given devices and arguments override.
+    /// Runs a routine for the specified target with the given arguments override.
     pub fn run(
         &self,
         kind: ActionKind,

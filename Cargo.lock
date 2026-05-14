@@ -446,7 +446,6 @@ name = "burn-central-fleet"
 version = "0.6.0"
 dependencies = [
  "arc-swap",
- "burn",
  "burn-central-artifact",
  "burn-central-client",
  "burn-central-inference",
