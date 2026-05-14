@@ -4,7 +4,7 @@ use burn_central_artifact::bundle::FsBundle;
 
 use crate::{
     ArtifactKind, ExperimentId, MetricSpec, MetricValue, error::ExperimentError,
-    reader::ArtifactRef,
+    progress::ProgressEvent, reader::ArtifactRef,
 };
 
 #[derive(Debug, Clone)]
@@ -33,6 +33,7 @@ pub enum Event {
         experiment_id: ExperimentId,
         reference: ArtifactRef,
     },
+    Progress(ProgressEvent),
 }
 
 /// Final completion state recorded for an experiment run.

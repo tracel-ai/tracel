@@ -236,7 +236,7 @@ pub struct ProgressGuard {
 
 impl ProgressGuard {
     /// Create a guard for an already-started node.
-    pub fn new(
+    fn new(
         reporter: Arc<dyn ProgressEventReporter>,
         id_allocator: Arc<dyn ProgressIdAllocator>,
         node: ProgressNode,

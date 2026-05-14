@@ -123,6 +123,7 @@ impl ExperimentSession for RemoteExperimentSession {
             } => ExperimentMessage::InputUsed(InputUsed::Artifact {
                 artifact_id: reference.id,
             }),
+            Event::Progress(progress_event) => todo!(),
         };
 
         self.send(message)

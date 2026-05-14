@@ -69,12 +69,13 @@ pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
-pub use session::ExperimentCompletion;
+pub use progress::{ProgressBuilder, ProgressGuard};
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
+use crate::progress::AtomicProgressIdAllocator;
 use crate::reader::ExperimentArtifactReader;
-use crate::session::{Event, ExperimentSession};
+use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 
 /// Opaque identifier for an experiment run.
 ///
@@ -212,6 +213,7 @@ struct RunInner {
     state: Mutex<RunState>,
     session: Box<dyn ExperimentSession>,
     reader: Box<dyn ExperimentArtifactReader>,
+    progress_id_allocator: Arc<AtomicProgressIdAllocator>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +243,7 @@ impl ExperimentRun {
             state: Mutex::new(RunState::Active),
             session: Box::new(session),
             reader: Box::new(reader),
+            progress_id_allocator: Arc::new(AtomicProgressIdAllocator::new()),
         });
 
         let handle = ExperimentRunHandle {
@@ -424,6 +427,13 @@ impl ExperimentRun {
     ) -> Result<D, ExperimentError> {
         self.handle.use_artifact(experiment_id, name, settings)
     }
+
+    /// Create a progress builder for the run with the provided name.
+    ///
+    /// The returned builder can be used to start a progress node and receive a guard for updating and finishing it.
+    pub fn progress(&self, name: impl Into<String>) -> ProgressBuilder {
+        self.handle.progress(name)
+    }
 }
 
 /// Extension trait for cloning shareable handles from an [`ExperimentRun`].
@@ -596,6 +606,32 @@ impl ExperimentRunHandle {
                 e,
             )
         })
+    }
+
+    /// See [`ExperimentRun::progress`].
+    ///
+    /// If the originating run has already been finished or dropped, the progress builder will be a no-op.
+    pub fn progress(&self, name: impl Into<String>) -> ProgressBuilder {
+        let inner = match self.upgrade() {
+            Ok(inner) => inner,
+            Err(_) => {
+                return ProgressBuilder::new(
+                    Arc::new(|_| {}),
+                    Arc::new(AtomicProgressIdAllocator::new()),
+                    name.into(),
+                );
+            }
+        };
+        ProgressBuilder::new(
+            Arc::new({
+                let handle = self.clone();
+                move |e| {
+                    handle.record_event(Event::Progress(e)).ok();
+                }
+            }),
+            inner.progress_id_allocator.clone(),
+            name.into(),
+        )
     }
 }
 
