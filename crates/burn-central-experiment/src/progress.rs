@@ -1,75 +1,152 @@
-use std::{num::NonZeroU64, sync::atomic::AtomicU64};
+//! Progress tracking primitives for experiment runs.
+//!
+//! Progress is modeled as a tree of named nodes. Starting a node emits a
+//! [`ProgressEvent::Started`] event, updates emit [`ProgressEvent::Updated`], and
+//! explicit or drop-based completion emits [`ProgressEvent::Finished`].
 
-use std::sync::atomic::Ordering;
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
-use crate::ExperimentRunHandle;
+/// Opaque non-zero identifier for a progress node.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+pub struct ProgressId(NonZeroU64);
 
+impl ProgressId {
+    /// Create an identifier from a non-zero numeric value.
+    pub fn new(id: NonZeroU64) -> Self {
+        Self(id)
+    }
+}
+
+/// Metadata describing a progress node when it starts.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProgressNode {
+    /// Unique identifier for this node.
+    pub id: ProgressId,
+    /// Parent node identifier, when this node is nested under another node.
+    pub parent: Option<ProgressId>,
+    /// Human-readable node name.
+    pub name: String,
+    /// Optional unit for progress values, such as `steps` or `bytes`.
+    pub unit: Option<String>,
+    /// Optional expected total for the node.
+    pub total: Option<u64>,
+    /// Extra structured metadata attached by the caller.
+    pub attributes: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Terminal state for a progress node.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum ProgressStatus {
+    /// The node completed successfully.
+    Success,
+    /// The node stopped before successful completion.
+    Abandonned,
+}
+
+/// Event emitted by a progress node.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum ProgressEvent {
+    /// A node was started.
+    Started {
+        /// The started node metadata.
+        node: ProgressNode,
+    },
+    /// A node's numeric progress changed.
+    Updated {
+        /// The updated node identifier.
+        id: ProgressId,
+        /// The current progress value.
+        current: u64,
+        /// The expected total, if known.
+        total: Option<u64>,
+    },
+    /// A node emitted a human-readable message.
+    Message {
+        /// The node identifier.
+        id: ProgressId,
+        /// The message text.
+        message: String,
+    },
+    /// A node reached a terminal state.
+    Finished {
+        /// The finished node identifier.
+        id: ProgressId,
+        /// The terminal status.
+        status: ProgressStatus,
+        /// Optional completion message.
+        message: Option<String>,
+    },
+}
+
+/// Sink for progress events.
+pub trait ProgressEventReporter: Send + Sync {
+    /// Report one progress event.
+    fn report(&self, event: ProgressEvent);
+}
+
+impl<F> ProgressEventReporter for F
+where
+    F: Fn(ProgressEvent) + Send + Sync,
+{
+    fn report(&self, event: ProgressEvent) {
+        self(event);
+    }
+}
+
+/// Allocates unique progress node identifiers.
+pub trait ProgressIdAllocator: Send + Sync {
+    /// Return the next identifier.
+    fn next_id(&self) -> ProgressId;
+}
+
+/// Lock-free progress identifier allocator.
 #[derive(Debug)]
-pub struct ProgressIdAllocator {
+pub struct AtomicProgressIdAllocator {
     next: AtomicU64,
 }
 
-impl ProgressIdAllocator {
+impl AtomicProgressIdAllocator {
+    /// Create an allocator that starts at identifier `1`.
     pub fn new() -> Self {
         Self {
             next: AtomicU64::new(1),
         }
     }
 
+    /// Allocate the next progress identifier.
     pub fn next(&self) -> ProgressId {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
 
-        // Starts at 1, so this should only fail after overflow/wraparound.
+        // Starts at 1, so this should only fail after overflow or wraparound.
         let id = NonZeroU64::new(id).expect("progress id allocator overflowed or produced zero");
 
         ProgressId(id)
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", content = "data")]
-pub enum ProgressEvent {
-    Started {
-        node: ProgressNode,
-    },
-    Updated {
-        id: ProgressId,
-        current: u64,
-        total: Option<u64>,
-    },
-    Finished {
-        id: ProgressId,
-        status: ProgressStatus,
-        message: Option<String>,
-    },
+impl Default for AtomicProgressIdAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum ProgressStatus {
-    Success,
-    Abandonned,
+impl ProgressIdAllocator for AtomicProgressIdAllocator {
+    fn next_id(&self) -> ProgressId {
+        self.next()
+    }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
-pub struct ProgressId(NonZeroU64);
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProgressNode {
-    pub id: ProgressId,
-    pub parent: Option<ProgressId>,
-    pub name: String,
-    pub unit: Option<String>,
-    pub total: Option<u64>,
-    pub attributes: serde_json::Map<String, serde_json::Value>,
-}
-
-pub trait ProgressEventReporter {
-    fn report(&self, event: ProgressEvent);
-}
-
+/// Builder used to configure and start a progress node.
 pub struct ProgressBuilder {
-    reporter: Box<dyn ProgressEventReporter>,
-    id_allocator: ProgressIdAllocator,
+    reporter: Arc<dyn ProgressEventReporter>,
+    id_allocator: Arc<dyn ProgressIdAllocator>,
     parent: Option<ProgressId>,
     name: String,
     unit: Option<String>,
@@ -78,16 +155,36 @@ pub struct ProgressBuilder {
 }
 
 impl ProgressBuilder {
+    /// Create a root progress builder.
+    pub fn new(
+        reporter: Arc<dyn ProgressEventReporter>,
+        id_allocator: Arc<dyn ProgressIdAllocator>,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            reporter,
+            id_allocator,
+            parent: None,
+            name: name.into(),
+            unit: None,
+            total: None,
+            attributes: serde_json::Map::new(),
+        }
+    }
+
+    /// Set the expected total for this node.
     pub fn total(mut self, total: u64) -> Self {
         self.total = Some(total);
         self
     }
 
+    /// Set the unit used by progress values.
     pub fn unit(mut self, unit: impl Into<String>) -> Self {
         self.unit = Some(unit.into());
         self
     }
 
+    /// Add one serializable attribute.
     pub fn attr<T>(mut self, key: impl Into<String>, value: T) -> Result<Self, serde_json::Error>
     where
         T: serde::Serialize,
@@ -97,79 +194,133 @@ impl ProgressBuilder {
         Ok(self)
     }
 
+    /// Add pre-serialized attributes.
+    pub fn attrs<T>(mut self, attributes: T) -> Result<Self, serde_json::Error>
+    where
+        T: IntoIterator<Item = (String, serde_json::Value)>,
+    {
+        for (key, value) in attributes {
+            self.attributes.insert(key, value);
+        }
+        Ok(self)
+    }
+
+    /// Start this node and return a guard for sending updates.
     pub fn start(self) -> ProgressGuard {
-        let id = self.id_allocator.next();
+        let id = self.id_allocator.next_id();
 
         let node = ProgressNode {
             id,
             parent: self.parent,
             name: self.name,
-            total: self.total,
             unit: self.unit,
+            total: self.total,
             attributes: self.attributes,
         };
 
         self.reporter
             .report(ProgressEvent::Started { node: node.clone() });
 
-        ProgressGuard::new(self.reporter, node)
+        ProgressGuard::new(self.reporter, self.id_allocator, node)
     }
 }
 
+/// Active progress node that reports updates and completion.
 pub struct ProgressGuard {
-    reporter: Box<dyn ProgressEventReporter>,
+    reporter: Arc<dyn ProgressEventReporter>,
+    id_allocator: Arc<dyn ProgressIdAllocator>,
     node: ProgressNode,
     current: u64,
+    finished: bool,
 }
 
 impl ProgressGuard {
-    pub fn new(reporter: Box<dyn ProgressEventReporter>, node: ProgressNode) -> Self {
+    /// Create a guard for an already-started node.
+    pub fn new(
+        reporter: Arc<dyn ProgressEventReporter>,
+        id_allocator: Arc<dyn ProgressIdAllocator>,
+        node: ProgressNode,
+    ) -> Self {
         Self {
             reporter,
+            id_allocator,
             node,
             current: 0,
+            finished: false,
         }
     }
 
+    /// Create a builder for a child node.
+    pub fn child(&self, name: impl Into<String>) -> ProgressBuilder {
+        ProgressBuilder {
+            reporter: self.reporter.clone(),
+            id_allocator: self.id_allocator.clone(),
+            parent: Some(self.node.id),
+            name: name.into(),
+            unit: None,
+            total: None,
+            attributes: serde_json::Map::new(),
+        }
+    }
+
+    /// Increase the current progress value by `delta`.
     pub fn inc(&mut self, delta: u64) {
         self.current = self.current.saturating_add(delta);
 
         self.reporter.report(ProgressEvent::Updated {
-            id: self.node.id.clone(),
+            id: self.node.id,
             current: self.current,
             total: self.node.total,
         });
     }
 
+    /// Set the current progress value.
     pub fn set(&mut self, current: u64) {
         self.current = current;
 
         self.reporter.report(ProgressEvent::Updated {
-            id: self.node.id.clone(),
+            id: self.node.id,
             current,
             total: self.node.total,
         });
     }
 
-    pub fn finish(self) {
+    /// Emit a message for this node.
+    pub fn message(&self, message: impl Into<String>) {
+        self.reporter.report(ProgressEvent::Message {
+            id: self.node.id,
+            message: message.into(),
+        });
+    }
+
+    /// Mark the node as successful.
+    pub fn finish(mut self) {
         self.finish_inner(ProgressStatus::Success, None);
     }
 
-    pub fn finish_with_message(self, message: impl Into<String>) {
+    /// Mark the node as successful with a message.
+    pub fn finish_with_message(mut self, message: impl Into<String>) {
         self.finish_inner(ProgressStatus::Success, Some(message.into()));
     }
 
-    pub fn abandon(self) {
+    /// Mark the node as abandoned.
+    pub fn abandon(mut self) {
         self.finish_inner(ProgressStatus::Abandonned, None);
     }
 
-    pub fn abandon_with_message(self, message: impl Into<String>) {
+    /// Mark the node as abandoned with a message.
+    pub fn abandon_with_message(mut self, message: impl Into<String>) {
         self.finish_inner(ProgressStatus::Abandonned, Some(message.into()));
     }
 
-    fn finish_inner(&self, status: ProgressStatus, message: Option<String>) {
+    fn finish_inner(&mut self, status: ProgressStatus, message: Option<String>) {
+        if self.finished {
+            return;
+        }
+
+        self.finished = true;
         self.reporter.report(ProgressEvent::Finished {
-            id: self.node.id.clone(),
+            id: self.node.id,
             status,
             message,
         });
