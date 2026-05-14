@@ -210,8 +210,8 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
         ProcedureType::Training => {
             quote! {
                 #[doc(hidden)]
-                pub fn #builder_fn_name<B: burn::tensor::backend::AutodiffBackend>(
-                    exec: &mut burn_central::runtime::ExecutorBuilder<B>,
+                pub fn #builder_fn_name(
+                    exec: &mut burn_central::runtime::ExecutorBuilder,
                 ) {
                     exec.train(#registered_name_str, #fn_name);
                 }
@@ -220,8 +220,8 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
         ProcedureType::Inference => {
             quote! {
                 #[doc(hidden)]
-                pub fn #builder_fn_name<B: burn::prelude::Backend>(
-                    reg: &mut burn_central::runtime::inference::InferenceRegistry<B>,
+                pub fn #builder_fn_name(
+                    reg: &mut burn_central::runtime::inference::InferenceRegistry,
                 ) {
                     reg.infer(#registered_name_str, #fn_name);
                 }

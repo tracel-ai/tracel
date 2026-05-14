@@ -33,5 +33,5 @@ pub use executor::{Executor, ExecutorBuilder};
 pub use params::{
     args::{Args, LaunchArgs},
     artifact_loader::ArtifactLoader,
-    default::{Model, MultiDevice},
+    default::Model,
 };

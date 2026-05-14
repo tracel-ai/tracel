@@ -1,4 +1,4 @@
-//! Backend-agnostic experiment tracking primitives.
+//! Experiment tracking primitives.
 //!
 //! This crate revolves around two core types:
 //! - [`ExperimentRun`], which owns the lifecycle of an active experiment.

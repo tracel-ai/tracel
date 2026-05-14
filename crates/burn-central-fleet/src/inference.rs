@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
-use burn::prelude::Backend;
 use burn_central_artifact::bundle::FsBundle;
 use burn_central_inference::{Inference, InferenceWriter};
 
@@ -15,27 +14,21 @@ pub enum FleetManagedInferenceError {
     FactoryFailed { name: String, message: String },
 }
 
-pub trait FleetManagedFactory<B: Backend, I>: Send + Sync {
-    fn build(
-        &self,
-        model_source: FsBundle,
-        runtime_config: serde_json::Value,
-        device: B::Device,
-    ) -> Result<I, String>;
+pub trait FleetManagedFactory<I>: Send + Sync {
+    fn build(&self, model_source: FsBundle, runtime_config: serde_json::Value)
+    -> Result<I, String>;
 }
 
-impl<F, B, I> FleetManagedFactory<B, I> for F
+impl<F, I> FleetManagedFactory<I> for F
 where
-    F: Fn(FsBundle, serde_json::Value, B::Device) -> Result<I, String> + Send + Sync,
-    B: Backend,
+    F: Fn(FsBundle, serde_json::Value) -> Result<I, String> + Send + Sync,
 {
     fn build(
         &self,
         model_source: FsBundle,
         runtime_config: serde_json::Value,
-        device: B::Device,
     ) -> Result<I, String> {
-        self(model_source, runtime_config, device)
+        self(model_source, runtime_config)
     }
 }
 
@@ -45,33 +38,29 @@ struct ActiveInference<I> {
 }
 
 /// Inference wrapper that bootstraps burn-central features like fleet registration and telemetry on top of a typed inference implementation.
-pub struct FleetManagedInference<B: Backend, I> {
+pub struct FleetManagedInference<I> {
     inference_name: String,
     fleet_session: RwLock<FleetDeviceSession>,
-    factory: Box<dyn FleetManagedFactory<B, I>>,
-    device: B::Device,
+    factory: Box<dyn FleetManagedFactory<I>>,
     active: ArcSwapOption<ActiveInference<I>>,
     reconcile_gate: Mutex<()>,
     last_sync_at: Mutex<Option<Instant>>,
     sync_interval: Duration,
 }
 
-impl<B, I> FleetManagedInference<B, I>
+impl<I> FleetManagedInference<I>
 where
-    B: Backend,
     I: Inference,
 {
     pub fn init(
         inference_name: impl Into<String>,
         fleet_session: FleetDeviceSession,
-        factory: Box<dyn FleetManagedFactory<B, I>>,
-        device: B::Device,
+        factory: Box<dyn FleetManagedFactory<I>>,
     ) -> Result<Self, FleetManagedInferenceError> {
         let inference = Self {
             inference_name: inference_name.into(),
             fleet_session: RwLock::new(fleet_session),
             factory,
-            device,
             active: ArcSwapOption::empty(),
             reconcile_gate: Mutex::new(()),
             last_sync_at: Mutex::new(None),
@@ -153,7 +142,7 @@ where
 
         let built = self
             .factory
-            .build(model_source, config, self.device.clone())
+            .build(model_source, config)
             .map_err(|message| FleetManagedInferenceError::FactoryFailed {
                 name: self.inference_name.clone(),
                 message,
@@ -200,9 +189,8 @@ where
     }
 }
 
-impl<B, I> Inference for FleetManagedInference<B, I>
+impl<I> Inference for FleetManagedInference<I>
 where
-    B: Backend,
     I: Inference,
 {
     type Input = <I as Inference>::Input;

@@ -1,6 +1,5 @@
 use crate::executor::ExecutionContext;
 use crate::params::RoutineParam;
-use burn::prelude::Backend;
 use burn_central_artifact::bundle::BundleDecode;
 use burn_central_experiment::{ExperimentId, ExperimentRun, error::ExperimentError};
 
@@ -16,7 +15,6 @@ use burn_central_experiment::{ExperimentId, ExperimentRun, error::ExperimentErro
 /// # use burn_central_artifact::bundle::BundleDecode;
 /// # use burn_central::register;
 /// # use burn_central_runtime::Model;
-/// # use burn_central_runtime::MultiDevice;
 /// # use serde::*;
 /// #[derive(Deserialize, Serialize, Default)]
 /// pub struct LaunchArgs {
@@ -24,11 +22,10 @@ use burn_central_experiment::{ExperimentId, ExperimentRun, error::ExperimentErro
 /// }
 ///
 /// #[register(training, name = "mnist")]
-/// pub fn training<B: AutodiffBackend>(
+/// pub fn training(
 ///     config: Args<LaunchArgs>,
-///     MultiDevice(devices): MultiDevice<B>,
-///     loader: ArtifactLoader<ModelArtifact<B>>,
-/// ) -> Result<Model<ModelArtifact<B::InnerBackend>>, String> {
+///     loader: ArtifactLoader<MyModel>,
+/// ) -> Result<Model<MyModel>, String> {
 ///     // Load a pretrained model if an experiment number is provided.
 ///     if let Some(experiment_num) = config.experiment_num {
 ///         let pretrained_model = loader
@@ -75,13 +72,13 @@ impl<'a, T: BundleDecode> ArtifactLoader<'a, T> {
     }
 }
 
-impl<B: Backend, T: BundleDecode> RoutineParam<ExecutionContext<B>> for ArtifactLoader<'_, T> {
+impl<T: BundleDecode> RoutineParam<ExecutionContext> for ArtifactLoader<'_, T> {
     type Item<'new>
         = ArtifactLoader<'new, T>
     where
-        ExecutionContext<B>: 'new;
+        ExecutionContext: 'new;
 
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
         let experiment = ctx.experiment().ok_or_else(|| {
             anyhow::anyhow!("Burn Central client is not configured in the execution context")
         })?;

@@ -1,4 +1,3 @@
-use burn::prelude::Backend;
 use derive_more::{Deref, From};
 use json_patch::merge;
 use serde::{Deserialize, Serialize};
@@ -35,10 +34,10 @@ pub fn deserialize_and_merge_with_default<T: LaunchArgs>(
 #[derive(From, Deref)]
 pub struct Args<T: LaunchArgs>(pub T);
 
-impl<B: Backend, C: LaunchArgs> RoutineParam<ExecutionContext<B>> for Args<C> {
+impl<C: LaunchArgs> RoutineParam<ExecutionContext> for Args<C> {
     type Item<'new> = Args<C>;
 
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+    fn try_retrieve(ctx: &ExecutionContext) -> anyhow::Result<Self::Item<'_>> {
         let cfg = ctx.use_merged_args();
         Ok(Args(cfg))
     }
