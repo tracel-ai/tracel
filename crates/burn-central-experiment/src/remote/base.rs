@@ -123,7 +123,10 @@ impl ExperimentSession for RemoteExperimentSession {
             } => ExperimentMessage::InputUsed(InputUsed::Artifact {
                 artifact_id: reference.id,
             }),
-            Event::Progress(_progress_event) => todo!(),
+            Event::Progress(_progress_event) => {
+                // TODO: Implement progress event forwarding to remote session
+                return Ok(());
+            }
         };
 
         self.send(message)
