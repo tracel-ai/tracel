@@ -332,3 +332,122 @@ impl Drop for ProgressGuard {
         self.finish_inner(ProgressStatus::Abandonned, None);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct MockReporter {
+        events: Mutex<Vec<ProgressEvent>>,
+    }
+
+    impl MockReporter {
+        fn events(&self) -> Vec<ProgressEvent> {
+            self.events.lock().unwrap().clone()
+        }
+    }
+
+    impl ProgressEventReporter for MockReporter {
+        fn report(&self, event: ProgressEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    fn builder(reporter: Arc<MockReporter>, name: &str) -> ProgressBuilder {
+        ProgressBuilder::new(
+            reporter,
+            Arc::new(AtomicProgressIdAllocator::new()),
+            name.to_string(),
+        )
+    }
+
+    #[test]
+    fn start_reports_configured_node() {
+        let reporter = Arc::new(MockReporter::default());
+
+        let _guard = builder(reporter.clone(), "load")
+            .total(12)
+            .unit("items")
+            .attr("split", "train")
+            .unwrap()
+            .start();
+
+        let events = reporter.events();
+        let ProgressEvent::Started { node } = &events[0] else {
+            panic!("unexpected event: {:?}", events[0]);
+        };
+        assert_eq!(node.name, "load");
+        assert_eq!(node.total, Some(12));
+        assert_eq!(node.unit.as_deref(), Some("items"));
+        assert_eq!(node.attributes.get("split"), Some(&json!("train")));
+    }
+
+    #[test]
+    fn child_start_reports_parent_id() {
+        let reporter = Arc::new(MockReporter::default());
+        let parent = builder(reporter.clone(), "parent").start();
+
+        let _child = parent.child("child").start();
+
+        let events = reporter.events();
+        let ProgressEvent::Started { node: parent } = events[0].clone() else {
+            panic!("unexpected event: {:?}", events[0]);
+        };
+        let ProgressEvent::Started { node: child } = events[1].clone() else {
+            panic!("unexpected event: {:?}", events[1]);
+        };
+        assert_eq!(child.parent, Some(parent.id));
+    }
+
+    #[test]
+    fn inc_reports_updated_progress() {
+        let reporter = Arc::new(MockReporter::default());
+        let mut guard = builder(reporter.clone(), "items").total(8).start();
+
+        guard.inc(3);
+
+        let events = reporter.events();
+        let ProgressEvent::Updated { current, total, .. } = &events[1] else {
+            panic!("unexpected event: {:?}", events[1]);
+        };
+        assert_eq!((*current, *total), (3, Some(8)));
+    }
+
+    #[test]
+    fn finish_reports_one_success_completion() {
+        let reporter = Arc::new(MockReporter::default());
+
+        builder(reporter.clone(), "node").start().finish();
+
+        let events = reporter.events();
+        let finished: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::Finished { status, .. } => Some(status),
+                _ => None,
+            })
+            .collect();
+        assert!(matches!(finished.as_slice(), [ProgressStatus::Success]));
+    }
+
+    #[test]
+    fn drop_reports_abandoned_completion() {
+        let reporter = Arc::new(MockReporter::default());
+
+        drop(builder(reporter.clone(), "node").start());
+
+        let events = reporter.events();
+        assert!(matches!(
+            events.last(),
+            Some(ProgressEvent::Finished {
+                status: ProgressStatus::Abandonned,
+                ..
+            })
+        ));
+    }
+}

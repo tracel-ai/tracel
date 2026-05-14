@@ -697,6 +697,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::progress::ProgressEvent;
     use crate::reader::{ExperimentReaderError, LoadedArtifact};
     use crate::session::BundleFn;
     use burn_central_artifact::bundle::{BundleSink, BundleSource};
@@ -820,6 +821,33 @@ mod tests {
             Event::Log { message } => assert_eq!(message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    #[test]
+    fn run_progress_start_records_progress_event() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+
+        let _progress = run.progress("load").start();
+
+        let events = session.events.lock().unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [Event::Progress(ProgressEvent::Started { node })] if node.name == "load"
+        ));
+    }
+
+    #[test]
+    fn dropped_run_handle_progress_records_no_event() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let handle = run.handle();
+        drop(run);
+
+        let _progress = handle.progress("late").start();
+
+        let events = session.events.lock().unwrap();
+        assert!(events.is_empty());
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
