@@ -46,7 +46,7 @@ pub enum ProgressStatus {
     /// The node completed successfully.
     Success,
     /// The node stopped before successful completion.
-    Abandonned,
+    Abandoned,
 }
 
 /// Event emitted by a progress node.
@@ -119,16 +119,6 @@ impl AtomicProgressIdAllocator {
             next: AtomicU64::new(1),
         }
     }
-
-    /// Allocate the next progress identifier.
-    pub fn next(&self) -> ProgressId {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-
-        // Starts at 1, so this should only fail after overflow or wraparound.
-        let id = NonZeroU64::new(id).expect("progress id allocator overflowed or produced zero");
-
-        ProgressId(id)
-    }
 }
 
 impl Default for AtomicProgressIdAllocator {
@@ -139,7 +129,12 @@ impl Default for AtomicProgressIdAllocator {
 
 impl ProgressIdAllocator for AtomicProgressIdAllocator {
     fn next_id(&self) -> ProgressId {
-        self.next()
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+
+        // Starts at 1, so this should only fail after overflow or wraparound.
+        let id = NonZeroU64::new(id).expect("progress id allocator overflowed or produced zero");
+
+        ProgressId(id)
     }
 }
 
@@ -305,12 +300,12 @@ impl ProgressGuard {
 
     /// Mark the node as abandoned.
     pub fn abandon(mut self) {
-        self.finish_inner(ProgressStatus::Abandonned, None);
+        self.finish_inner(ProgressStatus::Abandoned, None);
     }
 
     /// Mark the node as abandoned with a message.
     pub fn abandon_with_message(mut self, message: impl Into<String>) {
-        self.finish_inner(ProgressStatus::Abandonned, Some(message.into()));
+        self.finish_inner(ProgressStatus::Abandoned, Some(message.into()));
     }
 
     fn finish_inner(&mut self, status: ProgressStatus, message: Option<String>) {
@@ -329,7 +324,7 @@ impl ProgressGuard {
 
 impl Drop for ProgressGuard {
     fn drop(&mut self) {
-        self.finish_inner(ProgressStatus::Abandonned, None);
+        self.finish_inner(ProgressStatus::Abandoned, None);
     }
 }
 
@@ -445,7 +440,7 @@ mod tests {
         assert!(matches!(
             events.last(),
             Some(ProgressEvent::Finished {
-                status: ProgressStatus::Abandonned,
+                status: ProgressStatus::Abandoned,
                 ..
             })
         ));
