@@ -9,12 +9,18 @@ use tracel_artifact::bundle::FsBundle;
 use tracel_client::WebSocketClient;
 use tracel_client::websocket::{
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
+    ProgressEventRequest, ProgressNodeRequest, ProgressStatusRequest,
 };
 
 use super::log_store::LogUploader;
 use super::log_store::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
+use crate::error::{ExperimentError, ExperimentErrorKind};
+use crate::{
+    ArtifactKind, CancelToken, MetricSpec, MetricValue,
+    progress::{ProgressEvent, ProgressStatus},
+};
 
 struct ActiveSession {
     sender: Sender<ExperimentMessage>,
@@ -123,9 +129,8 @@ impl ExperimentSession for RemoteExperimentSession {
             } => ExperimentMessage::InputUsed(InputUsed::Artifact {
                 artifact_id: reference.id,
             }),
-            Event::Progress(_progress_event) => {
-                // TODO: Implement progress event forwarding to remote session
-                return Ok(());
+            Event::Progress(progress_event) => {
+                ExperimentMessage::Progress(to_remote_progress_event(progress_event))
             }
         };
 
@@ -210,6 +215,42 @@ fn to_remote_metric_logs(items: Vec<MetricValue>) -> Vec<MetricLog> {
             value: item.value,
         })
         .collect()
+}
+
+fn to_remote_progress_event(event: ProgressEvent) -> ProgressEventRequest {
+    match event {
+        ProgressEvent::Started { node } => ProgressEventRequest::Started {
+            node: ProgressNodeRequest {
+                id: node.id.as_u64(),
+                parent: node.parent.map(|parent| parent.as_u64()),
+                name: node.name,
+                unit: node.unit,
+                total: node.total,
+                attributes: node.attributes,
+            },
+        },
+        ProgressEvent::Updated { id, current, total } => ProgressEventRequest::Updated {
+            id: id.as_u64(),
+            current,
+            total,
+        },
+        ProgressEvent::Message { id, message } => ProgressEventRequest::Message {
+            id: id.as_u64(),
+            message,
+        },
+        ProgressEvent::Finished {
+            id,
+            status,
+            message,
+        } => ProgressEventRequest::Finished {
+            id: id.as_u64(),
+            status: match status {
+                ProgressStatus::Success => ProgressStatusRequest::Success,
+                ProgressStatus::Abandoned => ProgressStatusRequest::Abandoned,
+            },
+            message,
+        },
+    }
 }
 
 fn to_remote_completion(completion: ExperimentCompletion) -> RemoteExperimentCompletion {
