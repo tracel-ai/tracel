@@ -20,15 +20,15 @@
 //! let _interrupter = experiment.interrupter();
 //! ```
 
-mod Progress;
 mod checkpoint;
 mod interrupter;
 mod metric;
+mod progress;
 
-pub use Progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 pub use checkpoint::ExperimentCheckpointRecorder;
 pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
+pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
 use crate::ExperimentRun;
 

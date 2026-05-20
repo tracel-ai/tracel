@@ -1,5 +1,4 @@
 use burn::train::logger::{EvaluationProgressLogger, TrainingProgressLogger};
-use burn::train::renderer::{EvaluationProgress, TrainingProgress};
 
 use crate::{ExperimentRunHandle, progress::ProgressGuard};
 
@@ -10,9 +9,7 @@ use crate::{ExperimentRunHandle, progress::ProgressGuard};
 pub struct ExperimentTrainingProgressLogger {
     experiment: ExperimentRunHandle,
     training_guard: Option<ProgressGuard>,
-    epoch_guard: Option<ProgressGuard>,
-    train_guard: Option<ProgressGuard>,
-    valid_guard: Option<ProgressGuard>,
+    split_guard: Option<ProgressGuard>,
 }
 
 impl ExperimentTrainingProgressLogger {
@@ -21,95 +18,52 @@ impl ExperimentTrainingProgressLogger {
         Self {
             experiment: experiment.into(),
             training_guard: None,
-            epoch_guard: None,
-            train_guard: None,
-            valid_guard: None,
+            split_guard: None,
         }
     }
 }
 
 impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
-    fn update_train(&mut self, progress: &TrainingProgress) {
-        if self.training_guard.is_none() {
-            self.training_guard = Some(
-                self.experiment
-                    .progress("Training")
-                    .total(progress.global_progress.items_total as u64)
-                    .unit("steps")
-                    .start(),
-            );
-        }
+    fn start(&mut self, total_epochs: usize, _total_items: Option<usize>) {
+        self.training_guard = Some(
+            self.experiment
+                .progress("Training")
+                .total(total_epochs as u64)
+                .unit("epochs")
+                .start(),
+        );
+    }
 
-        if self.epoch_guard.is_none() {
-            let builder = if let Some(training) = &self.training_guard {
-                training.child("Epoch")
-            } else {
-                self.experiment.progress("Epoch")
-            };
-            let builder = match &progress.progress {
-                Some(p) => builder.total(p.items_total as u64).unit("steps"),
-                None => builder.unit("steps"),
-            };
-            self.epoch_guard = Some(builder.start());
-        }
+    fn start_split(&mut self, name: String, total_items: usize) {
+        let builder = if let Some(guard) = &self.training_guard {
+            guard.child(&name)
+        } else {
+            self.experiment.progress(&name)
+        };
+        self.split_guard = Some(builder.total(total_items as u64).unit("steps").start());
+    }
 
-        if self.train_guard.is_none() {
-            let builder = if let Some(epoch) = &self.epoch_guard {
-                epoch.child("Train")
-            } else {
-                self.experiment.progress("Train")
-            };
-            let builder = match &progress.progress {
-                Some(p) => builder.total(p.items_total as u64).unit("steps"),
-                None => builder.unit("steps"),
-            };
-            self.train_guard = Some(builder.start());
+    fn update_split(&mut self, items_processed: usize) {
+        if let Some(guard) = &mut self.split_guard {
+            guard.set(items_processed as u64);
         }
+    }
 
-        if let Some(guard) = &mut self.train_guard {
-            if let Some(p) = &progress.progress {
-                guard.set(p.items_processed as u64);
-            }
+    fn end_split(&mut self) {
+        if let Some(guard) = self.split_guard.take() {
+            guard.finish();
         }
+    }
+
+    fn update_epoch(&mut self, epoch: usize) {
         if let Some(guard) = &mut self.training_guard {
-            guard.set(progress.global_progress.items_processed as u64);
+            guard.set(epoch as u64);
         }
     }
 
-    fn update_valid(&mut self, progress: &TrainingProgress) {
-        if self.valid_guard.is_none() {
-            if let Some(guard) = self.train_guard.take() {
-                guard.finish();
-            }
-
-            let builder = if let Some(epoch) = &self.epoch_guard {
-                epoch.child("Valid")
-            } else {
-                self.experiment.progress("Valid")
-            };
-            let builder = match &progress.progress {
-                Some(p) => builder.total(p.items_total as u64).unit("steps"),
-                None => builder.unit("steps"),
-            };
-            self.valid_guard = Some(builder.start());
-        }
-
-        if let Some(guard) = &mut self.valid_guard {
-            if let Some(p) = &progress.progress {
-                guard.set(p.items_processed as u64);
-            }
-        }
-    }
-
-    fn end_epoch(&mut self, epoch: usize) {
-        if let Some(guard) = self.valid_guard.take() {
+    fn end(&mut self) {
+        if let Some(guard) = self.training_guard.take() {
             guard.finish();
-        }
-        if let Some(guard) = self.train_guard.take() {
-            guard.finish();
-        }
-        if let Some(guard) = self.epoch_guard.take() {
-            guard.finish_with_message(format!("Epoch {epoch} complete"));
         }
     }
 }
@@ -136,40 +90,38 @@ impl ExperimentEvaluationProgressLogger {
 }
 
 impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
-    fn update_test(&mut self, progress: &EvaluationProgress) {
-        if self.eval_guard.is_none() {
-            self.eval_guard = Some(
-                self.experiment
-                    .progress("Evaluation")
-                    .total(progress.progress.items_total as u64)
-                    .unit("steps")
-                    .start(),
-            );
-        }
+    fn start(&mut self, total_tests: usize) {
+        self.eval_guard = Some(
+            self.experiment
+                .progress("Evaluation")
+                .total(total_tests as u64)
+                .unit("tests")
+                .start(),
+        );
+    }
 
-        if self.test_guard.is_none() {
-            let builder = if let Some(eval) = &self.eval_guard {
-                eval.child("Test")
-            } else {
-                self.experiment.progress("Test")
-            };
-            self.test_guard = Some(
-                builder
-                    .total(progress.progress.items_total as u64)
-                    .unit("steps")
-                    .start(),
-            );
-        }
+    fn start_test(&mut self, name: String, total_items: usize) {
+        let builder = if let Some(guard) = &self.eval_guard {
+            guard.child(&name)
+        } else {
+            self.experiment.progress(&name)
+        };
+        self.test_guard = Some(builder.total(total_items as u64).unit("steps").start());
+    }
 
+    fn update_test(&mut self, items_processed: usize) {
         if let Some(guard) = &mut self.test_guard {
-            guard.set(progress.progress.items_processed as u64);
+            guard.set(items_processed as u64);
         }
     }
 
-    fn end_eval(&mut self) {
+    fn end_test(&mut self) {
         if let Some(guard) = self.test_guard.take() {
             guard.finish();
         }
+    }
+
+    fn end(&mut self) {
         if let Some(guard) = self.eval_guard.take() {
             guard.finish();
         }
