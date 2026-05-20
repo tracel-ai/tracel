@@ -34,11 +34,11 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         );
     }
 
-    fn start_split(&mut self, name: String, total_items: usize) {
+    fn start_split(&mut self, name: &str, total_items: usize) {
         let builder = if let Some(guard) = &self.training_guard {
-            guard.child(&name)
+            guard.child(name)
         } else {
-            self.experiment.progress(&name)
+            self.experiment.progress(name)
         };
         self.split_guard = Some(builder.total(total_items as u64).unit("steps").start());
     }
@@ -100,11 +100,11 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         );
     }
 
-    fn start_test(&mut self, name: String, total_items: usize) {
+    fn start_test(&mut self, name: &str, total_items: usize) {
         let builder = if let Some(guard) = &self.eval_guard {
-            guard.child(&name)
+            guard.child(name)
         } else {
-            self.experiment.progress(&name)
+            self.experiment.progress(name)
         };
         self.test_guard = Some(builder.total(total_items as u64).unit("steps").start());
     }
