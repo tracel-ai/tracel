@@ -8142,3 +8142,8 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "burn-central-client"
+version = "0.7.0"
+source = "git+https://github.com/tracel-ai/burn-central-client?rev=6668f50563cd46bed8abaa1d399622830d4a18e3#6668f50563cd46bed8abaa1d399622830d4a18e3"
