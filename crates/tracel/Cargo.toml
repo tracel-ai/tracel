@@ -1,0 +1,25 @@
+[package]
+name = "tracel"
+authors.workspace = true
+categories.workspace = true
+description = "High-level Tracel SDK"
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+station = ["tracel-experiment/station"]
+
+[dependencies]
+tracel-macros.workspace = true
+tracel-runtime.workspace = true
+tracel-experiment.workspace = true
+tracel-inference.workspace = true
+tracel-fleet.workspace = true
+tracel-artifact.workspace = true
+burn-central-client.workspace = true

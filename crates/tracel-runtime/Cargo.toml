@@ -1,0 +1,35 @@
+[package]
+name = "tracel-runtime"
+authors.workspace = true
+categories.workspace = true
+description = "Runtime library for Tracel SDK."
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracel-fleet.workspace = true
+tracel-inference.workspace = true
+tracel-artifact.workspace = true
+tracel-experiment.workspace = true
+burn-central-client.workspace = true
+thiserror.workspace = true
+variadics_please.workspace = true
+syn.workspace = true
+strum.workspace = true
+serde_json.workspace = true
+tynm.workspace = true
+derive_more.workspace = true
+clap.workspace = true
+log.workspace = true
+serde.workspace = true
+json-patch.workspace = true
+
+[dev-dependencies]
+burn = { workspace = true, features = ["ndarray"] }
+serde.workspace = true
