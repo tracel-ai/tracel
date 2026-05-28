@@ -66,6 +66,8 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
             guard.finish();
         }
     }
+
+    fn log_event_training(&mut self, _event: String) {} // no-op
 }
 
 /// Experiment-backed implementation of Burn's [`EvaluationProgressLogger`] trait.
@@ -90,7 +92,7 @@ impl ExperimentEvaluationProgressLogger {
 }
 
 impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
-    fn start(&mut self, total_tests: usize) {
+    fn start_global_progress(&mut self, total_tests: usize) {
         self.eval_guard = Some(
             self.experiment
                 .progress("Evaluation")
@@ -109,7 +111,7 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         self.test_guard = Some(builder.total(total_items as u64).unit("steps").start());
     }
 
-    fn update_test(&mut self, items_processed: usize) {
+    fn update_test_progress(&mut self, items_processed: usize) {
         if let Some(guard) = &mut self.test_guard {
             guard.set(items_processed as u64);
         }
@@ -121,9 +123,11 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         }
     }
 
-    fn end(&mut self) {
+    fn end_global_progress(&mut self) {
         if let Some(guard) = self.eval_guard.take() {
             guard.finish();
         }
     }
+
+    fn log_event_evaluation(&mut self, _event: String) {} // no-op
 }
