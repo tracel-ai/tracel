@@ -1,9 +1,9 @@
 use burn_central_client::Env;
+use serde::Serialize;
 use tracel_fleet::{
     FleetDeviceSession, FleetManagedFactory, FleetManagedInference, FleetRegistrationToken,
 };
 use tracel_inference::Inference;
-use serde::Serialize;
 
 use crate::{
     inference::{

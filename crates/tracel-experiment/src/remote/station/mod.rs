@@ -1,10 +1,3 @@
-use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::{
-    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink,
-};
-use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
-};
 use burn_central_client::station::experiment::{
     ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
     CreateExperimentRequest, ListArtifactsQuery,
@@ -12,6 +5,11 @@ use burn_central_client::station::experiment::{
 use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{ClientError, StationClient};
 use std::collections::BTreeMap;
+use tracel_artifact::bundle::FsBundle;
+use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
+use tracel_artifact::upload::{
+    MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
+};
 
 mod artifacts;
 mod logs;

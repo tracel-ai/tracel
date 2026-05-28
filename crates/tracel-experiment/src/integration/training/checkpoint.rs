@@ -7,9 +7,9 @@ use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
 use burn::tensor::Device;
-use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 use serde::Deserialize;
 use serde::{Serialize, de::DeserializeOwned};
+use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 
 struct CheckpointRecordSources<R> {
     pub record: R,

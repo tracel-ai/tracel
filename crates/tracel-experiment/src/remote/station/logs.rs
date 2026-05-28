@@ -1,9 +1,5 @@
 use std::collections::BTreeMap;
 
-use tracel_artifact::{
-    bundle::InMemoryBundleSources,
-    upload::{MultipartUploadFile, MultipartUploadPart, upload_bundle_multipart},
-};
 use burn_central_client::{
     ClientError, StationClient,
     station::experiment::{
@@ -12,6 +8,10 @@ use burn_central_client::{
     },
 };
 use sha2::Digest;
+use tracel_artifact::{
+    bundle::InMemoryBundleSources,
+    upload::{MultipartUploadFile, MultipartUploadPart, upload_bundle_multipart},
+};
 
 use crate::remote::{
     logs::{LogStoreError, LogUploader},

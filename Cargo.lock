@@ -5873,7 +5873,7 @@ dependencies = [
  "tracel-fleet",
  "tracel-inference",
  "tynm",
- "variadics_please",
+ "variadics_please 1.1.0",
 ]
 
 [[package]]

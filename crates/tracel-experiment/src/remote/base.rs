@@ -3,12 +3,12 @@ use std::sync::Mutex;
 use crate::remote::logs::LogUploader;
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 
-use tracel_artifact::bundle::FsBundle;
 use burn_central_client::WebSocketClient;
 use burn_central_client::websocket::{
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
 };
 use crossbeam::channel::Sender;
+use tracel_artifact::bundle::FsBundle;
 
 use super::logs::TempLogStore;
 use super::socket::ExperimentSocket;

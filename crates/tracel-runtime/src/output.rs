@@ -1,8 +1,8 @@
 use crate::executor::ExecutionContext;
 use crate::params::default::Model;
+use std::fmt::Display;
 use tracel_artifact::bundle::BundleEncode;
 use tracel_experiment::ArtifactKind;
-use std::fmt::Display;
 
 /// This trait defines how a specific return type (Output) from a handler apply its effects to the execution context.
 pub trait RoutineOutput<Ctx>: Sized + Send + 'static {

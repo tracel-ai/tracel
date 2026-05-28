@@ -1,6 +1,6 @@
 use crate::{executor::ExecutionContext, params::RoutineParam};
-use tracel_experiment::ExperimentRun;
 use derive_more::{Deref, From};
+use tracel_experiment::ExperimentRun;
 
 /// Wrapper around the model returned by a routine.
 ///

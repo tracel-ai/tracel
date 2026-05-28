@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 
-use tracel_artifact::bundle::FsBundle;
 use crossbeam::channel::{Sender, unbounded};
+use tracel_artifact::bundle::FsBundle;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};

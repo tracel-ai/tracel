@@ -2,13 +2,13 @@ use crate::Args;
 use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine};
-use tracel_artifact::bundle::{BundleDecode, FsBundle};
-use tracel_inference::{ErasedInference, Inference, JsonInference};
 use derive_more::{Deref, From};
 use serde::{Serialize, de::DeserializeOwned};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use tracel_artifact::bundle::{BundleDecode, FsBundle};
+use tracel_inference::{ErasedInference, Inference, JsonInference};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
