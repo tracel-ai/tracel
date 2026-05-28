@@ -301,19 +301,19 @@ impl From<&ExperimentRun> for ExperimentRunHandle {
 }
 
 impl ExperimentRun {
-    /// Create a run backed by Console.
-    pub fn console(
+    /// Create a run backed by Cloud.
+    pub fn cloud(
         client: Client,
         namespace: &str,
         project_name: &str,
         digest: String,
         routine: String,
     ) -> Result<Self, ExperimentError> {
-        remote::create_console_experiment_run(client, namespace, project_name, digest, routine)
+        remote::create_cloud_experiment_run(client, namespace, project_name, digest, routine)
             .map_err(|e| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Internal,
-                    "Failed to start Console experiment run",
+                    "Failed to start Cloud experiment run",
                     e,
                 )
             })

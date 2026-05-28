@@ -1,10 +1,10 @@
 mod base;
-mod console;
+mod cloud;
 mod logs;
 mod socket;
 #[cfg(feature = "station")]
 mod station;
 
-pub use console::create_console_experiment_run;
+pub use cloud::create_cloud_experiment_run;
 #[cfg(feature = "station")]
 pub use station::create_station_experiment_run;

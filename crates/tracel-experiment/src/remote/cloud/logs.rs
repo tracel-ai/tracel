@@ -11,7 +11,7 @@ use tracel_artifact::{
 };
 
 use crate::remote::{
-    console::ExperimentPath,
+    cloud::ExperimentPath,
     logs::{LogStoreError, LogUploader},
 };
 

@@ -235,7 +235,7 @@ pub enum ArtifactError {
     Internal(String),
 }
 
-pub fn create_console_experiment_run(
+pub fn create_cloud_experiment_run(
     client: Client,
     namespace: &str,
     project_name: &str,

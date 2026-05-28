@@ -6,7 +6,7 @@ use crate::{
     reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
     remote::{
         base::{ArtifactUploadError, ArtifactUploader},
-        console::{ConsoleExperimentId, ExperimentArtifactClient, ExperimentPath},
+        cloud::{ConsoleExperimentId, ExperimentArtifactClient, ExperimentPath},
     },
 };
 
