@@ -1,0 +1,18 @@
+[package]
+name = "tracel-cloud"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+burn-central-client.workspace = true
+tracel-experiment.workspace = true
+tracel-macros.workspace = true
+ctrlc = "3.5.2"
+serde_json.workspace = true

@@ -175,6 +175,23 @@ struct ExperimentMetadata {
     pub id: ExperimentId,
 }
 
+pub struct ExperimentJob<T> {
+    job: Box<dyn Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync>,
+}
+
+impl<T> ExperimentJob<T> {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync + 'static,
+    {
+        Self { job: Box::new(f) }
+    }
+
+    pub fn run(&self, input: T) -> Result<(), Box<dyn std::error::Error>> {
+        (self.job)(input)
+    }
+}
+
 /// An active experiment run.
 ///
 /// `ExperimentRun` owns finalization. As long as the run remains active, it can log structured
