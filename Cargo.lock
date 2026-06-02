@@ -5735,7 +5735,11 @@ version = "0.6.0"
 dependencies = [
  "burn-central-client",
  "ctrlc",
+ "directories",
+ "serde",
  "serde_json",
+ "thiserror 2.0.18",
+ "toml 1.1.2+spec-1.1.0",
  "tracel-experiment",
  "tracel-macros",
 ]
