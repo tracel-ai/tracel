@@ -23,6 +23,7 @@ impl<P: RunProvider> Experiment<P> {
     {
         let provider = self.provider.clone();
         let job_closure = move |input: T| {
+            let _ = tracel_experiment::integration::tracing::try_init_tracing_subscriber();
             let experiment = provider.setup_experiment(std::any::type_name::<F>().to_string())?;
             let handle = experiment.handle();
             let result = handle.in_scope(|| f(&experiment, input));

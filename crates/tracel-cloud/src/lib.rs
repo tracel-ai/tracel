@@ -4,6 +4,7 @@ use burn_central_client::BurnCentralCredentials;
 use burn_central_client::Client;
 use burn_central_client::ClientError;
 use burn_central_client::Env;
+use burn_central_client::StationClient;
 use module::experiment::Experiment;
 use module::experiment::RunProvider;
 use serde::Deserialize;
@@ -30,10 +31,13 @@ pub struct Context {
     pub project: String,
 }
 
+// make a concrete type for each context backend that implements the module traits, and then Context can just delegate to the backend's implementation. This way we can avoid having a lot of conditional logic in the module implementations about which backend is being used, and instead isolate that logic to the Context struct.
+// it also facilitates moving to dynamic dispatch of modules in the future
 #[derive(Debug, Clone)]
 pub enum Backend {
     Cloud(Client),
     Local,
+    Station(StationClient),
 }
 
 #[derive(Deserialize)]
@@ -62,6 +66,7 @@ impl Context {
         Self::discover(env)
     }
 
+    // todo: add a root path for the local context to store its runs and other module persistence needs, instead of hardcoding "./runs"
     pub fn local() -> Result<Self, DiscoverError> {
         eprintln!(
             "[tracel] running in local mode (no credentials or connection to Burn Central will be used)"
@@ -97,12 +102,10 @@ impl Context {
 
 impl RunProvider for Context {
     fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, String> {
-        let _ = tracel_experiment::integration::tracing::try_init_tracing_subscriber();
-
-        let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
-
         match self.backend.clone() {
             Backend::Cloud(client) => {
+                let digest =
+                    "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
                 ExperimentRun::cloud(client, &self.namespace, &self.project, digest, routine)
                     .map_err(|e| {
                         use std::error::Error;
@@ -116,6 +119,17 @@ impl RunProvider for Context {
                         msg
                     })
             }
+            Backend::Station(station_client) => ExperimentRun::station(station_client, routine)
+                .map_err(|e| {
+                    use std::error::Error;
+                    let mut msg = format!("An error occured while creating the experiment: {e}");
+                    let mut src = e.source();
+                    while let Some(s) = src {
+                        msg.push_str(&format!("caused by: {s}"));
+                        src = s.source();
+                    }
+                    msg
+                }),
             Backend::Local => ExperimentRun::local("./runs").map_err(|e| e.to_string()),
         }
     }
