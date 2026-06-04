@@ -13,6 +13,7 @@ categories.workspace = true
 [dependencies]
 burn-central-client.workspace = true
 tracel-experiment.workspace = true
+url.workspace = true
 tracel-macros.workspace = true
 ctrlc = "3.5.2"
 serde.workspace = true

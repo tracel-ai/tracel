@@ -61,6 +61,7 @@ opentelemetry = { version = "0.31.0", features = ["metrics"] }
 ## External Crate
 burn-central-client = { version = "0.7.0", default-features = false, features = [
     "central",
+    "station",
 ] }
 
 ## Crate

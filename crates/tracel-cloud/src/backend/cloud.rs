@@ -4,7 +4,9 @@ use burn_central_client::{BurnCentralCredentials, Client, Env};
 use serde::Deserialize;
 use tracel_experiment::ExperimentRun;
 
-use crate::{Backend, Context, DiscoverError};
+use tracel_experiment::error::ExperimentError;
+
+use crate::{Backend, CloudError, Context};
 
 #[derive(Debug, Clone)]
 pub struct CloudBackend {
@@ -35,45 +37,38 @@ impl CloudBackend {
         }
     }
 
-    pub fn create_context(env: Env) -> Result<Context, DiscoverError> {
-        let cloud_backend = discover_client_info(env)?;
+    pub fn create_context(env: Env) -> Result<Context, CloudError> {
+        let credentials = discover_credentials(&env)?;
+        let (namespace, project) = discover_namespace_project()?;
+
+        let client = Client::new(env, &credentials).map_err(CloudError::Client)?;
+        let cloud_backend = CloudBackend::new(client, namespace, project);
+
         let backend = Backend::Cloud(cloud_backend);
 
         Ok(Context::new(backend))
     }
 
-    pub fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, String> {
+    pub fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
         let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
-        let client = self.client.clone();
-        ExperimentRun::cloud(client, &self.namespace, &self.project, digest, routine).map_err(|e| {
-            use std::error::Error;
-            let mut msg = format!("An error occured while creating the experiment: {e}");
-            let mut src = e.source();
-            while let Some(s) = src {
-                msg.push_str(&format!("caused by: {s}"));
-                src = s.source();
-            }
-            msg
-        })
+        ExperimentRun::cloud(
+            self.client.clone(),
+            &self.namespace,
+            &self.project,
+            digest,
+            routine,
+        )
     }
 }
 
-fn discover_client_info(env: Env) -> Result<CloudBackend, DiscoverError> {
-    let credentials = discover_credentials(&env)?;
-    let (namespace, project) = discover_namespace_project()?;
-
-    let client = Client::new(env, &credentials).map_err(DiscoverError::Client)?;
-    Ok(CloudBackend::new(client, namespace, project))
-}
-
-fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, DiscoverError> {
+fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, CloudError> {
     if let Ok(creds) = BurnCentralCredentials::from_env() {
         eprintln!("[tracel] credentials found via environment variable");
         return Ok(creds);
     }
 
     let proj_dirs = directories::ProjectDirs::from("com", "tracel", "burncentral")
-        .ok_or(DiscoverError::NoCredentials)?;
+        .ok_or(CloudError::NoCredentials)?;
 
     let filename = match env {
         Env::Production => "credentials.json".to_string(),
@@ -87,16 +82,16 @@ fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, DiscoverErr
             "[tracel] credentials found in CLI config file: {}",
             path.display()
         );
-        let contents = std::fs::read_to_string(path).map_err(|_| DiscoverError::NoCredentials)?;
+        let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
         let creds: CliCredentials =
-            serde_json::from_str(&contents).map_err(|_| DiscoverError::NoCredentials)?;
+            serde_json::from_str(&contents).map_err(|_| CloudError::NoCredentials)?;
         return Ok(BurnCentralCredentials::new(creds.api_key));
     }
 
-    Err(DiscoverError::NoCredentials)
+    Err(CloudError::NoCredentials)
 }
 
-fn discover_namespace_project() -> Result<(String, String), DiscoverError> {
+fn discover_namespace_project() -> Result<(String, String), CloudError> {
     let namespace_env = std::env::var("TRACEL_NAMESPACE").ok();
     let project_env = std::env::var("TRACEL_PROJECT").ok();
 
@@ -120,11 +115,11 @@ fn discover_namespace_project() -> Result<(String, String), DiscoverError> {
 
     let namespace = namespace_env
         .or_else(|| toml_config.namespace)
-        .ok_or(DiscoverError::NoNamespace)?;
+        .ok_or(CloudError::NoNamespace)?;
 
     let project = project_env
         .or_else(|| toml_config.project)
-        .ok_or(DiscoverError::NoProject)?;
+        .ok_or(CloudError::NoProject)?;
 
     eprintln!("[tracel] namespace found via {ns_source}: {namespace}");
     eprintln!("[tracel] project found via {proj_source}: {project}");

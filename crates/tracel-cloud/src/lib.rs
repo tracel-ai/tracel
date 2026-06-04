@@ -1,11 +1,14 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use backend::cloud::CloudBackend;
 use burn_central_client::ClientError;
 use burn_central_client::Env;
 use module::experiment::Experiment;
-use module::experiment::RunProvider;
+use module::experiment::ExperimentProvider;
 use tracel_experiment::ExperimentRun;
+use tracel_experiment::error::ExperimentError;
+use url::Url;
 
 use crate::backend::local::LocalBackend;
 use crate::backend::station::StationBackend;
@@ -14,7 +17,7 @@ mod backend;
 mod module;
 
 #[derive(Debug, thiserror::Error)]
-pub enum DiscoverError {
+pub enum CloudError {
     #[error("No API key found — set BURN_CENTRAL_API_KEY or run `burn login`")]
     NoCredentials,
     #[error("No namespace found — set TRACEL_NAMESPACE or add namespace to tracel.toml")]
@@ -44,36 +47,29 @@ impl Context {
         Self { backend }
     }
 
-    pub fn cloud(env: Env) -> Result<Self, DiscoverError> {
+    pub fn cloud(env: Env) -> Result<Self, CloudError> {
         CloudBackend::create_context(env)
     }
 
-    pub fn local(path: impl Into<PathBuf>) -> Result<Self, DiscoverError> {
+    pub fn local(path: impl Into<PathBuf>) -> Self {
         LocalBackend::create_context(path)
     }
 
-    pub fn experiment(&self) -> Experiment<Context> {
-        Experiment::new(self.clone())
+    pub fn station(url: Url) -> Self {
+        StationBackend::create_context(url)
+    }
+
+    pub fn experiment(&self) -> Experiment {
+        Experiment::new(Arc::new(self.clone()))
     }
 }
 
-impl RunProvider for Context {
-    fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, String> {
-        match self.backend.clone() {
+impl ExperimentProvider for Context {
+    fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
+        match &self.backend {
             Backend::Cloud(backend) => backend.setup_experiment(routine),
-            Backend::Station(backend) => {
-                ExperimentRun::station(backend.client, routine).map_err(|e| {
-                    use std::error::Error;
-                    let mut msg = format!("An error occured while creating the experiment: {e}");
-                    let mut src = e.source();
-                    while let Some(s) = src {
-                        msg.push_str(&format!("caused by: {s}"));
-                        src = s.source();
-                    }
-                    msg
-                })
-            }
             Backend::Local(backend) => backend.setup_experiment(routine),
+            Backend::Station(backend) => backend.setup_experiment(routine),
         }
     }
 }
