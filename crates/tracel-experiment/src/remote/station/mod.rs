@@ -2,7 +2,6 @@ use burn_central_client::station::experiment::{
     ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
     CreateExperimentRequest, ListArtifactsQuery,
 };
-use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{ClientError, StationClient};
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
@@ -19,13 +18,6 @@ use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
 
 pub use artifacts::{StationArtifactReader, StationArtifactUploader};
 pub use logs::StationLogUploader;
-
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub enum BurnStationError {
-    Http(#[from] ClientError),
-    WebSocket(#[from] WebSocketError),
-}
 
 pub struct StationExperimentId(i32);
 
@@ -219,7 +211,7 @@ pub enum ArtifactError {
 pub fn create_station_experiment_run(
     client: StationClient,
     routine: String,
-) -> Result<ExperimentRun, BurnStationError> {
+) -> Result<ExperimentRun, Box<dyn std::error::Error + Send + Sync>> {
     let experiments_client = client.experiments();
     let experiment = experiments_client.create(CreateExperimentRequest {
         description: None,

@@ -35,7 +35,7 @@ pub struct ExperimentError {
 }
 
 impl ExperimentError {
-    pub(crate) fn new(kind: ExperimentErrorKind, message: impl Into<String>) -> Self {
+    pub fn new(kind: ExperimentErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -43,7 +43,7 @@ impl ExperimentError {
         }
     }
 
-    pub(crate) fn with_source<E>(
+    pub fn with_source<E>(
         kind: ExperimentErrorKind,
         message: impl Into<String>,
         source: E,

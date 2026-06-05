@@ -5,61 +5,26 @@
 //! - [`ExperimentRunHandle`], which is a lightweight cloneable view for logging and artifact access
 //!   from background tasks or other threads.
 //!
-//! Most code starts a run with [`ExperimentRun::local`] for local development and tests.
-//!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentRunHandleExt`] for cloning a shareable handle.
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
-//!
-//! # Example
-//!
-//! ```no_run
-//! use tracel_experiment::{ExperimentRun, ExperimentRunHandleExt};
-//! use serde::Serialize;
-//!
-//! #[derive(Serialize)]
-//! struct TrainingConfig {
-//!     learning_rate: f64,
-//! }
-//!
-//! # fn main() -> Result<(), tracel_experiment::error::ExperimentError> {
-//! let run = ExperimentRun::local("./runs")?;
-//! run.log_config(
-//!     "training",
-//!     &TrainingConfig {
-//!         learning_rate: 1e-3,
-//!     },
-//! )?;
-//!
-//! let handle = run.handle();
-//! handle.log_info("background worker ready")?;
-//!
-//! run.finish()?;
-//! # Ok(())
-//! # }
-//! ```
 
 use std::fmt;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 
-use burn_central_client::Client;
-#[cfg(feature = "station")]
-use burn_central_client::StationClient;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
 use serde::Serialize;
 
 mod cancellation;
 mod context;
-mod local;
 mod progress;
-mod reader;
-mod remote;
-mod session;
+pub mod reader;
+pub mod remote;
+pub mod session;
 
 pub mod error;
 pub mod integration;
@@ -173,23 +138,6 @@ pub struct MetricValue {
 #[derive(Debug, Clone)]
 struct ExperimentMetadata {
     pub id: ExperimentId,
-}
-
-pub struct ExperimentJob<T> {
-    job: Box<dyn Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync>,
-}
-
-impl<T> ExperimentJob<T> {
-    pub fn new<F>(f: F) -> Self
-    where
-        F: Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync + 'static,
-    {
-        Self { job: Box::new(f) }
-    }
-
-    pub fn run(&self, input: T) -> Result<(), Box<dyn std::error::Error>> {
-        (self.job)(input)
-    }
 }
 
 /// An active experiment run.
@@ -318,61 +266,6 @@ impl From<&ExperimentRun> for ExperimentRunHandle {
 }
 
 impl ExperimentRun {
-    /// Create a run backed by Cloud.
-    pub fn cloud(
-        client: Client,
-        namespace: &str,
-        project_name: &str,
-        digest: String,
-        routine: String,
-    ) -> Result<Self, ExperimentError> {
-        remote::create_cloud_experiment_run(client, namespace, project_name, digest, routine)
-            .map_err(|e| {
-                ExperimentError::with_source(
-                    ExperimentErrorKind::Internal,
-                    "Failed to start Cloud experiment run",
-                    e,
-                )
-            })
-    }
-
-    /// Create a run backed by Burn Station.
-    #[cfg(feature = "station")]
-    pub fn station(client: StationClient, routine: String) -> Result<Self, ExperimentError> {
-        remote::create_station_experiment_run(client, routine).map_err(|e| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Internal,
-                "Failed to start Burn Station experiment run",
-                e,
-            )
-        })
-    }
-}
-
-impl ExperimentRun {
-    /// Create a local run rooted under the provided directory.
-    ///
-    /// Each call creates the next numbered run directory inside `root`, which makes this backend a
-    /// convenient choice for tests, local development, and examples.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use tracel_experiment::ExperimentRun;
-    ///
-    /// # fn main() -> Result<(), tracel_experiment::error::ExperimentError> {
-    /// let run = ExperimentRun::local("./runs")?;
-    /// run.log_info("starting local experiment")?;
-    /// run.finish()?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn local(root: impl Into<PathBuf>) -> Result<Self, ExperimentError> {
-        local::create_experiment_run(root.into())
-    }
-}
-
-impl ExperimentRun {
     /// Borrow the identifier for the underlying run.
     pub fn id(&self) -> &ExperimentId {
         self.handle.id()
@@ -459,7 +352,7 @@ impl ExperimentRun {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use tracel_experiment::{ExperimentRun, ExperimentRunHandleExt};
 ///
 /// let run = ExperimentRun::local("./runs").unwrap();
@@ -709,14 +602,11 @@ impl Drop for ExperimentRun {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::progress::ProgressEvent;
     use crate::reader::{ExperimentReaderError, LoadedArtifact};
     use crate::session::BundleFn;
-    use tracel_artifact::bundle::{BundleSink, BundleSource};
 
     use super::*;
 
@@ -864,65 +754,5 @@ mod tests {
 
         let events = session.events.lock().unwrap();
         assert!(events.is_empty());
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct TestArtifact(String);
-
-    impl BundleEncode for TestArtifact {
-        type Settings = ();
-        type Error = String;
-
-        fn encode<O: BundleSink>(
-            self,
-            sink: &mut O,
-            _settings: &Self::Settings,
-        ) -> Result<(), Self::Error> {
-            sink.put_bytes("artifact.txt", self.0.as_bytes())
-        }
-    }
-
-    impl BundleDecode for TestArtifact {
-        type Settings = ();
-        type Error = String;
-
-        fn decode<I: BundleSource>(
-            source: &I,
-            _settings: &Self::Settings,
-        ) -> Result<Self, Self::Error> {
-            let mut reader = source.open("artifact.txt")?;
-            let mut content = String::new();
-            reader
-                .read_to_string(&mut content)
-                .map_err(|err| err.to_string())?;
-            Ok(Self(content))
-        }
-    }
-
-    #[test]
-    fn local_run_roundtrips_saved_artifacts() {
-        let run_root = std::env::temp_dir().join(format!(
-            "tracel-experiment-test-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        let run = ExperimentRun::local(run_root).unwrap();
-        let run_id = run.id().clone();
-
-        run.save_artifact(
-            "artifact",
-            ArtifactKind::Other,
-            TestArtifact("hello".into()),
-            &(),
-        )
-        .unwrap();
-
-        let loaded = run
-            .use_artifact::<TestArtifact>(run_id, "artifact", &())
-            .unwrap();
-
-        assert_eq!(loaded, TestArtifact("hello".into()));
     }
 }

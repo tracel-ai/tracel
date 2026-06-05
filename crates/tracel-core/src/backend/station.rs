@@ -1,10 +1,15 @@
-use burn_central_client::StationClient;
-use tracel_experiment::ExperimentRun;
+use burn_central_client::websocket::WebSocketError;
+use burn_central_client::{ClientError, StationClient};
 use url::Url;
 
-use tracel_experiment::error::ExperimentError;
+use crate::context::{Backend, Context};
 
-use crate::{Backend, Context};
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub(crate) enum BurnStationError {
+    Http(#[from] ClientError),
+    WebSocket(#[from] WebSocketError),
+}
 
 #[derive(Debug, Clone)]
 pub struct StationBackend {
@@ -17,9 +22,5 @@ impl StationBackend {
             client: StationClient::from_url(url),
         });
         Context::new(backend)
-    }
-
-    pub fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
-        ExperimentRun::station(self.client.clone(), routine)
     }
 }

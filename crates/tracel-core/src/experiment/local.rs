@@ -7,12 +7,24 @@ use std::thread::{self, JoinHandle};
 use crossbeam::channel::{Sender, unbounded};
 use tracel_artifact::bundle::FsBundle;
 
-use crate::error::{ExperimentError, ExperimentErrorKind};
-use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use crate::{ArtifactKind, ExperimentId, ExperimentRun};
+use crate::experiment::ExperimentProvider;
+use tracel_experiment::ExperimentRun;
+use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
+use tracel_experiment::reader::{
+    ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact,
+};
+use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+use tracel_experiment::{ArtifactKind, ExperimentId};
 
-pub fn create_experiment_run(root: PathBuf) -> Result<ExperimentRun, ExperimentError> {
+use crate::backend::local::LocalBackend;
+
+impl ExperimentProvider for LocalBackend {
+    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
+        create_experiment_run(self.path.join(name))
+    }
+}
+
+fn create_experiment_run(root: PathBuf) -> Result<ExperimentRun, ExperimentError> {
     let root = root
         .canonicalize()
         .or_else(|_| {

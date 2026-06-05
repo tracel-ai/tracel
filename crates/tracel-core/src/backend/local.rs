@@ -1,14 +1,10 @@
 use std::path::PathBuf;
 
-use tracel_experiment::ExperimentRun;
-
-use tracel_experiment::error::ExperimentError;
-
-use crate::{Backend, Context};
+use crate::context::{Backend, Context};
 
 #[derive(Debug, Clone)]
 pub struct LocalBackend {
-    path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 impl LocalBackend {
@@ -20,9 +16,5 @@ impl LocalBackend {
 
     fn new(path: PathBuf) -> Self {
         Self { path }
-    }
-
-    pub fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
-        ExperimentRun::local(self.path.join(routine))
     }
 }

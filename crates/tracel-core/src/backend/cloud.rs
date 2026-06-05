@@ -1,18 +1,27 @@
 use std::path::Path;
 
-use burn_central_client::{BurnCentralCredentials, Client, Env};
+use burn_central_client::{BurnCentralCredentials, Client, ClientError, Env};
 use serde::Deserialize;
-use tracel_experiment::ExperimentRun;
 
-use tracel_experiment::error::ExperimentError;
+use crate::context::{Backend, Context};
 
-use crate::{Backend, CloudError, Context};
+#[derive(Debug, thiserror::Error)]
+pub enum CloudError {
+    #[error("No API key found — set BURN_CENTRAL_API_KEY or run `burn login`")]
+    NoCredentials,
+    #[error("No namespace found — set TRACEL_NAMESPACE or add namespace to tracel.toml")]
+    NoNamespace,
+    #[error("No project found — set TRACEL_PROJECT or add project to tracel.toml")]
+    NoProject,
+    #[error(transparent)]
+    Client(#[from] ClientError),
+}
 
 #[derive(Debug, Clone)]
 pub struct CloudBackend {
-    client: Client,
-    namespace: String,
-    project: String,
+    pub(crate) client: Client,
+    pub(crate) namespace: String,
+    pub(crate) project: String,
 }
 
 #[derive(Deserialize)]
@@ -47,17 +56,6 @@ impl CloudBackend {
         let backend = Backend::Cloud(cloud_backend);
 
         Ok(Context::new(backend))
-    }
-
-    pub fn setup_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
-        let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
-        ExperimentRun::cloud(
-            self.client.clone(),
-            &self.namespace,
-            &self.project,
-            digest,
-            routine,
-        )
     }
 }
 

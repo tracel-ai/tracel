@@ -234,13 +234,18 @@ impl Executor {
                 ctx.project
             );
 
-            let experiment = tracel_experiment::ExperimentRun::cloud(
+            let experiment = tracel_experiment::remote::create_cloud_experiment_run(
                 client.clone(),
                 &ctx.namespace,
                 &ctx.project,
                 code_version,
                 routine.to_string(),
-            )?;
+            )
+            .map_err(|e| tracel_experiment::error::ExperimentError::with_source(
+                tracel_experiment::error::ExperimentErrorKind::Internal,
+                "Failed to create cloud experiment run",
+                e,
+            ))?;
 
             let experiment_num = experiment
                 .id()

@@ -5730,18 +5730,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracel-cloud"
+name = "tracel-core"
 version = "0.6.0"
 dependencies = [
  "burn-central-client",
- "ctrlc",
+ "crossbeam",
  "directories",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
+ "tracel-artifact",
  "tracel-experiment",
- "tracel-macros",
  "url",
 ]
 

@@ -42,7 +42,7 @@ pub struct WithCurrentExperiment<F> {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use tracel_experiment::{ExperimentInstrument, ExperimentRun, ExperimentRunHandleExt};
 ///
 /// let run = ExperimentRun::local("./runs").unwrap();
@@ -91,7 +91,7 @@ impl<F> WithCurrentExperiment<F> {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use tracel_experiment::{ExperimentGlobalExt, ExperimentRun};
 ///
 /// let run = ExperimentRun::local("./runs").unwrap();

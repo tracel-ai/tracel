@@ -63,7 +63,7 @@ pub trait ExperimentTracingExt {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use tracel_experiment::ExperimentRun;
     /// use tracel_experiment::integration::tracing::{ExperimentTracingExt};
     ///

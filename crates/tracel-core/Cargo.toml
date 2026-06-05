@@ -1,5 +1,5 @@
 [package]
-name = "tracel-cloud"
+name = "tracel-core"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -10,14 +10,18 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+station = ["burn-central-client/station", "tracel-experiment/station"]
+
 [dependencies]
 burn-central-client.workspace = true
 tracel-experiment.workspace = true
 url.workspace = true
-tracel-macros.workspace = true
-ctrlc = "3.5.2"
-serde.workspace = true
 thiserror.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 directories = "6.0"
 toml = "1.0.0"
+crossbeam.workspace = true
+tracel-artifact.workspace = true

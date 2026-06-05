@@ -71,7 +71,7 @@ tracel-inference = { path = "crates/tracel-inference", version = "0.6.0" }
 tracel-fleet = { path = "crates/tracel-fleet", version = "0.6.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.6.0" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.6.0" }
-tracel-cloud = { path = "crates/tracel-cloud", version = "0.6.0" }
+tracel-core = { path = "crates/tracel-core", version = "0.6.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.13.7"
