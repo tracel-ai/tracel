@@ -16,6 +16,7 @@ anyhow.workspace = true
 tracel-fleet.workspace = true
 tracel-inference.workspace = true
 tracel-artifact.workspace = true
+tracel-core.workspace = true
 tracel-experiment.workspace = true
 burn-central-client.workspace = true
 thiserror.workspace = true

@@ -3,6 +3,8 @@ mod local;
 #[cfg(feature = "station")]
 mod station;
 
+pub use cloud::create_cloud_experiment_run;
+
 use std::error::Error;
 use std::sync::Arc;
 

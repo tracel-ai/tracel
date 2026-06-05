@@ -6,7 +6,7 @@ use crate::{
     reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
     remote::{
         base::{ArtifactUploadError, ArtifactUploader},
-        cloud::{ConsoleExperimentId, ExperimentArtifactClient, ExperimentPath},
+        cloud::{ExperimentArtifactClient, ExperimentPath},
     },
 };
 
@@ -27,13 +27,14 @@ impl ExperimentArtifactReader for ConsoleArtifactReader {
         experiment_id: ExperimentId,
         name: &str,
     ) -> Result<LoadedArtifact, ExperimentReaderError> {
-        let id = ConsoleExperimentId::from_experiment_id(&experiment_id)
+        let num = experiment_id
+            .parse::<i32>()
             .ok_or_else(|| ExperimentReaderError::new("Invalid experiment ID format"))?;
 
         let experiment_path = ExperimentPath::new(
             self.exp_path.owner_name().to_string(),
             self.exp_path.project_name().to_string(),
-            id.num(),
+            num,
         );
         let scope = ExperimentArtifactClient::new(self.client.clone(), experiment_path);
         let artifact = scope.fetch(name).map_err(|err| {

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use burn_central_client::Env;
 #[cfg(feature = "station")]
 use url::Url;
 
@@ -33,8 +32,8 @@ impl Context {
         Self { backend }
     }
 
-    pub fn cloud(env: Env) -> Result<Self, CloudError> {
-        CloudBackend::create_context(env)
+    pub fn cloud() -> Result<Self, CloudError> {
+        CloudBackend::create_context()
     }
 
     pub fn local(path: impl Into<PathBuf>) -> Self {

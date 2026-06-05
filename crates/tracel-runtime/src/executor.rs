@@ -234,7 +234,7 @@ impl Executor {
                 ctx.project
             );
 
-            let experiment = tracel_experiment::remote::create_cloud_experiment_run(
+            let experiment = tracel_core::experiment::create_cloud_experiment_run(
                 client.clone(),
                 &ctx.namespace,
                 &ctx.project,

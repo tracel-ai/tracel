@@ -1,6 +1,6 @@
 use burn_central_client::station::experiment::{
     ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
-    CreateExperimentRequest, ListArtifactsQuery,
+    ListArtifactsQuery,
 };
 use burn_central_client::{ClientError, StationClient};
 use std::collections::BTreeMap;
@@ -13,31 +13,10 @@ use tracel_artifact::upload::{
 mod artifacts;
 mod logs;
 
-use crate::remote::base::RemoteExperimentSession;
-use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
-
 pub use artifacts::{StationArtifactReader, StationArtifactUploader};
 pub use logs::StationLogUploader;
 
-pub struct StationExperimentId(i32);
-
-impl StationExperimentId {
-    pub fn new(num: i32) -> Self {
-        Self(num)
-    }
-
-    pub fn to_experiment_id(&self) -> ExperimentId {
-        ExperimentId::from(format!("{}", self.0))
-    }
-
-    pub fn from_experiment_id(id: &ExperimentId) -> Option<Self> {
-        id.parse().map(StationExperimentId)
-    }
-
-    pub fn num(&self) -> i32 {
-        self.0
-    }
-}
+use crate::ArtifactKind;
 
 #[derive(Debug, Clone)]
 pub struct ExperimentPath {
@@ -208,35 +187,3 @@ pub enum ArtifactError {
     Internal(String),
 }
 
-pub fn create_station_experiment_run(
-    client: StationClient,
-    routine: String,
-) -> Result<ExperimentRun, Box<dyn std::error::Error + Send + Sync>> {
-    let experiments_client = client.experiments();
-    let experiment = experiments_client.create(CreateExperimentRequest {
-        description: None,
-        routine_run: routine,
-    })?;
-
-    let experiment_num = experiment.experiment_num;
-    let path = ExperimentPath::new(experiment_num);
-    let cancel_token = CancelToken::new();
-
-    let log_uploader = StationLogUploader::new(client.clone(), path.clone());
-    let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
-
-    let ws = experiments_client.create_run_websocket(experiment_num)?;
-
-    let session = RemoteExperimentSession::new(
-        Box::new(log_uploader),
-        Box::new(artifact_uploader),
-        ws,
-        cancel_token.clone(),
-    );
-
-    let reader = StationArtifactReader::new(client);
-
-    let id = StationExperimentId::new(experiment_num).to_experiment_id();
-
-    Ok(ExperimentRun::new(id, session, reader, cancel_token))
-}

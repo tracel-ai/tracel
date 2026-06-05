@@ -13,6 +13,8 @@ pub enum CloudError {
     NoNamespace,
     #[error("No project found — set TRACEL_PROJECT or add project to tracel.toml")]
     NoProject,
+    #[error("Invalid TRACEL_ENV value — expected Production, Development, or Staging(N)")]
+    InvalidEnv,
     #[error(transparent)]
     Client(#[from] ClientError),
 }
@@ -46,7 +48,8 @@ impl CloudBackend {
         }
     }
 
-    pub fn create_context(env: Env) -> Result<Context, CloudError> {
+    pub fn create_context() -> Result<Context, CloudError> {
+        let env = discover_env()?;
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
 
@@ -123,6 +126,13 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
     eprintln!("[tracel] project found via {proj_source}: {project}");
 
     Ok((namespace, project))
+}
+
+fn discover_env() -> Result<Env, CloudError> {
+    match std::env::var("TRACEL_ENV") {
+        Ok(val) => serde_json::from_str(&val).map_err(|_| CloudError::InvalidEnv),
+        Err(_) => Ok(Env::Production),
+    }
 }
 
 fn read_tracel_toml() -> TracelTomlConfig {

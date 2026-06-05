@@ -1,13 +1,14 @@
-use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{ClientError, StationClient};
+use burn_central_client::websocket::WebSocketError;
 use url::Url;
 
 use crate::context::{Backend, Context};
 
 #[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub(crate) enum BurnStationError {
-    Http(#[from] ClientError),
+pub enum StationError {
+    #[error("Failed to create experiment on Station — check your Station URL and connectivity")]
+    ExperimentCreation(#[from] ClientError),
+    #[error("Failed to establish WebSocket connection to Station")]
     WebSocket(#[from] WebSocketError),
 }
 

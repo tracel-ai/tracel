@@ -1,6 +1,5 @@
 use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
 use burn_central_client::response::ArtifactResponse;
-use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{Client, ClientError};
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
@@ -12,38 +11,10 @@ use tracel_artifact::upload::{
 mod artifacts;
 mod logs;
 
-use crate::remote::base::RemoteExperimentSession;
-use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
-
 pub use artifacts::{ConsoleArtifactReader, ConsoleArtifactUploader};
 pub use logs::ConsoleLogUploader;
 
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub enum ConsoleError {
-    Http(#[from] ClientError),
-    WebSocket(#[from] WebSocketError),
-}
-
-pub struct ConsoleExperimentId(i32);
-
-impl ConsoleExperimentId {
-    pub fn new(num: i32) -> Self {
-        Self(num)
-    }
-
-    pub fn to_experiment_id(&self) -> ExperimentId {
-        ExperimentId::from(format!("{}", self.0))
-    }
-
-    pub fn from_experiment_id(id: &ExperimentId) -> Option<Self> {
-        id.parse().map(ConsoleExperimentId)
-    }
-
-    pub fn num(&self) -> i32 {
-        self.0
-    }
-}
+use crate::ArtifactKind;
 
 #[derive(Debug, Clone)]
 pub struct ExperimentPath {
@@ -235,34 +206,3 @@ pub enum ArtifactError {
     Internal(String),
 }
 
-pub fn create_cloud_experiment_run(
-    client: Client,
-    namespace: &str,
-    project_name: &str,
-    digest: String,
-    routine: String,
-) -> Result<ExperimentRun, ConsoleError> {
-    let experiment = client.create_experiment(namespace, project_name, None, digest, routine)?;
-
-    let experiment_num = experiment.experiment_num;
-    let path = ExperimentPath::new(namespace, project_name, experiment_num);
-    let cancel_token = CancelToken::new();
-
-    let log_uploader = ConsoleLogUploader::new(client.clone(), path.clone());
-    let artifact_uploader = ConsoleArtifactUploader::new(client.clone(), path.clone());
-
-    let ws = client.create_experiment_run_websocket(namespace, project_name, experiment_num)?;
-
-    let session = RemoteExperimentSession::new(
-        Box::new(log_uploader),
-        Box::new(artifact_uploader),
-        ws,
-        cancel_token.clone(),
-    );
-
-    let reader = ConsoleArtifactReader::new(client, path);
-
-    let id = ConsoleExperimentId::new(experiment_num).to_experiment_id();
-
-    Ok(ExperimentRun::new(id, session, reader, cancel_token))
-}

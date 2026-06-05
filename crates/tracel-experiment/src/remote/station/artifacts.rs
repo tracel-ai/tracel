@@ -6,7 +6,7 @@ use crate::{
     reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
     remote::{
         base::{ArtifactUploadError, ArtifactUploader},
-        station::{ExperimentArtifactClient, ExperimentPath, StationExperimentId},
+        station::{ExperimentArtifactClient, ExperimentPath},
     },
 };
 
@@ -26,10 +26,11 @@ impl ExperimentArtifactReader for StationArtifactReader {
         experiment_id: ExperimentId,
         name: &str,
     ) -> Result<LoadedArtifact, ExperimentReaderError> {
-        let id = StationExperimentId::from_experiment_id(&experiment_id)
+        let num = experiment_id
+            .parse::<i32>()
             .ok_or_else(|| ExperimentReaderError::new("Invalid experiment ID format"))?;
 
-        let experiment_path = ExperimentPath::new(id.num());
+        let experiment_path = ExperimentPath::new(num);
         let scope = ExperimentArtifactClient::new(self.client.clone(), experiment_path);
         let artifact = scope.fetch(name).map_err(|err| {
             ExperimentReaderError::with_source("Failed to resolve experiment artifact", err)
