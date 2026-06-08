@@ -1,5 +1,5 @@
-use burn_central_client::{ClientError, StationClient};
 use burn_central_client::websocket::WebSocketError;
+use burn_central_client::{ClientError, StationClient};
 use url::Url;
 
 use crate::context::{Backend, Context};

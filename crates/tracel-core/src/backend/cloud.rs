@@ -5,16 +5,21 @@ use serde::Deserialize;
 
 use crate::context::{Backend, Context};
 
+const TRACEL_ENV: &str = "TRACEL_ENV";
+const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
+const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
+const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
+
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
-    #[error("No API key found — set BURN_CENTRAL_API_KEY or run `burn login`")]
+    #[error("No API key found: set {TRACEL_API_KEY} or run `burn login`")]
     NoCredentials,
-    #[error("No namespace found — set TRACEL_NAMESPACE or add namespace to tracel.toml")]
+    #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
-    #[error("No project found — set TRACEL_PROJECT or add project to tracel.toml")]
+    #[error("No project found: set {TRACEL_PROJECT} or add project to tracel.toml")]
     NoProject,
-    #[error("Invalid TRACEL_ENV value — expected Production, Development, or Staging(N)")]
-    InvalidEnv,
+    #[error("Invalid environment variable {env_var}: {message}")]
+    InvalidEnv { env_var: String, message: String },
     #[error(transparent)]
     Client(#[from] ClientError),
 }
@@ -115,11 +120,11 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
     };
 
     let namespace = namespace_env
-        .or_else(|| toml_config.namespace)
+        .or(toml_config.namespace)
         .ok_or(CloudError::NoNamespace)?;
 
     let project = project_env
-        .or_else(|| toml_config.project)
+        .or(toml_config.project)
         .ok_or(CloudError::NoProject)?;
 
     eprintln!("[tracel] namespace found via {ns_source}: {namespace}");
@@ -129,8 +134,12 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
 }
 
 fn discover_env() -> Result<Env, CloudError> {
-    match std::env::var("TRACEL_ENV") {
-        Ok(val) => serde_json::from_str(&val).map_err(|_| CloudError::InvalidEnv),
+    match std::env::var(TRACEL_ENV) {
+        Ok(val) => serde_json::from_str(&val).map_err(|_| CloudError::InvalidEnv {
+            env_var: TRACEL_ENV.to_string(),
+            message: "expected value to be one of: 'Production', 'Development', or 'Staging(N)'"
+                .to_string(),
+        }),
         Err(_) => Ok(Env::Production),
     }
 }

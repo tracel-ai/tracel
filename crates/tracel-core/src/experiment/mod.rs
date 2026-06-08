@@ -31,14 +31,14 @@ impl Experiment {
         F: Fn(&ExperimentRun, T) -> Result<(), Box<dyn Error>> + Send + Sync + 'static,
     {
         let provider = self.provider.clone();
-        let name_for_closure = name.to_string();
+        let name = name.to_string();
 
         let job_closure = move |input: T| -> Result<(), Box<dyn Error>> {
-            validate_name(&name_for_closure)?;
+            validate_name(&name)?;
 
             let _ = tracel_experiment::integration::tracing::try_init_tracing_subscriber();
 
-            let experiment = provider.create_experiment(name_for_closure.clone())?;
+            let experiment = provider.create_experiment(name.clone())?;
             let handle = experiment.handle();
             let result = handle.in_scope(|| f(&experiment, input));
 
@@ -55,24 +55,22 @@ impl Experiment {
             }
         };
 
-        ExperimentJob::new(name, job_closure)
+        ExperimentJob::new(job_closure)
     }
 }
 
+type JobFn<T> = dyn Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync;
+
 pub struct ExperimentJob<T> {
-    pub name: String,
-    job: Box<dyn Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync>,
+    job: Box<JobFn<T>>,
 }
 
 impl<T> ExperimentJob<T> {
-    pub fn new<F>(name: impl Into<String>, f: F) -> Self
+    pub fn new<F>(f: F) -> Self
     where
         F: Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync + 'static,
     {
-        Self {
-            name: name.into(),
-            job: Box::new(f),
-        }
+        Self { job: Box::new(f) }
     }
 
     pub fn run(&self, input: T) -> Result<(), Box<dyn std::error::Error>> {

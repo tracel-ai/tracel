@@ -43,11 +43,7 @@ impl ExperimentError {
         }
     }
 
-    pub fn with_source<E>(
-        kind: ExperimentErrorKind,
-        message: impl Into<String>,
-        source: E,
-    ) -> Self
+    pub fn with_source<E>(kind: ExperimentErrorKind, message: impl Into<String>, source: E) -> Self
     where
         E: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
     {

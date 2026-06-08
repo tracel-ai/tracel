@@ -186,4 +186,3 @@ pub enum ArtifactError {
     #[error("Internal error: {0}")]
     Internal(String),
 }
-
