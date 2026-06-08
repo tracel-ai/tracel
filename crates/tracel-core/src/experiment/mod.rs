@@ -1,13 +1,8 @@
-mod cloud;
 mod local;
-mod log_store;
-mod session;
-mod socket;
-#[cfg(feature = "station")]
-mod station;
+mod remote;
 
 // TODO: te3mporary re-export for the runtime crate, will be erased when we detach ourself completely from runtime
-pub use cloud::create_cloud_experiment_run;
+pub use remote::cloud::create_cloud_experiment_run;
 
 use std::error::Error;
 use std::sync::Arc;

@@ -6,7 +6,7 @@ use tracel_experiment::{
     reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
 };
 
-use crate::experiment::session::{ArtifactUploadError, ArtifactUploader};
+use crate::experiment::remote::session::{ArtifactUploadError, ArtifactUploader};
 
 use super::{ExperimentArtifactClient, ExperimentPath};
 

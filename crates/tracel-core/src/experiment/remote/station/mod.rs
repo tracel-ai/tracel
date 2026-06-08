@@ -23,7 +23,7 @@ use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
 
 use crate::backend::station::{StationBackend, StationError};
 use crate::experiment::ExperimentProvider;
-use crate::experiment::session::RemoteExperimentSession;
+use crate::experiment::remote::session::RemoteExperimentSession;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExperimentPath {
