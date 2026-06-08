@@ -1,5 +1,6 @@
 use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
 use burn_central_client::response::ArtifactResponse;
+use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{Client, ClientError};
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
@@ -11,20 +12,26 @@ use tracel_artifact::upload::{
 mod artifacts;
 mod logs;
 
-pub use artifacts::{ConsoleArtifactReader, ConsoleArtifactUploader};
-pub use logs::ConsoleLogUploader;
+pub(crate) use artifacts::{ConsoleArtifactReader, ConsoleArtifactUploader};
+pub(crate) use logs::ConsoleLogUploader;
 
-use crate::ArtifactKind;
+use tracel_experiment::ArtifactKind;
+use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
+use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
+
+use crate::backend::cloud::CloudBackend;
+use crate::experiment::ExperimentProvider;
+use crate::experiment::session::RemoteExperimentSession;
 
 #[derive(Debug, Clone)]
-pub struct ExperimentPath {
+pub(crate) struct ExperimentPath {
     owner_name: String,
     project_name: String,
     experiment_num: i32,
 }
 
 impl ExperimentPath {
-    pub fn new(
+    pub(crate) fn new(
         owner_name: impl Into<String>,
         project_name: impl Into<String>,
         experiment_num: i32,
@@ -36,32 +43,32 @@ impl ExperimentPath {
         }
     }
 
-    pub fn owner_name(&self) -> &str {
+    pub(crate) fn owner_name(&self) -> &str {
         &self.owner_name
     }
 
-    pub fn project_name(&self) -> &str {
+    pub(crate) fn project_name(&self) -> &str {
         &self.project_name
     }
 
-    pub fn experiment_num(&self) -> i32 {
+    pub(crate) fn experiment_num(&self) -> i32 {
         self.experiment_num
     }
 }
 
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
-pub struct ExperimentArtifactClient {
+pub(crate) struct ExperimentArtifactClient {
     client: Client,
     exp_path: ExperimentPath,
 }
 
 impl ExperimentArtifactClient {
-    pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
+    pub(crate) fn new(client: Client, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
 
-    pub fn upload(
+    pub(crate) fn upload(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
@@ -139,7 +146,7 @@ impl ExperimentArtifactClient {
     }
 
     /// Download an artifact as a filesystem-backed bundle.
-    pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
+    pub(crate) fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
         let resp = self.client.presign_artifact_download(
@@ -168,7 +175,7 @@ impl ExperimentArtifactClient {
     }
 
     /// Fetch information about an artifact by name.
-    pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
+    pub(crate) fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
         self.client
             .list_artifacts_by_name(
@@ -193,7 +200,7 @@ fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ArtifactError {
+pub(crate) enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
@@ -204,4 +211,76 @@ pub enum ArtifactError {
     Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub(crate) enum ConsoleError {
+    Http(#[from] ClientError),
+    WebSocket(#[from] WebSocketError),
+}
+
+impl ExperimentProvider for CloudBackend {
+    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
+        let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
+        create_run(
+            self.client.clone(),
+            &self.namespace,
+            &self.project,
+            digest,
+            name,
+        )
+        .map_err(|e| ExperimentError {
+            kind: ExperimentErrorKind::Internal,
+            message: "Failed to start Cloud experiment run".to_string(),
+            source: Some(Box::new(e)),
+        })
+    }
+}
+
+pub fn create_cloud_experiment_run(
+    client: Client,
+    namespace: &str,
+    project_name: &str,
+    digest: String,
+    routine: String,
+) -> Result<ExperimentRun, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(create_run(
+        client,
+        namespace,
+        project_name,
+        digest,
+        routine,
+    )?)
+}
+
+fn create_run(
+    client: Client,
+    namespace: &str,
+    project_name: &str,
+    digest: String,
+    routine: String,
+) -> Result<ExperimentRun, ConsoleError> {
+    let experiment = client.create_experiment(namespace, project_name, None, digest, routine)?;
+
+    let experiment_num = experiment.experiment_num;
+    let path = ExperimentPath::new(namespace, project_name, experiment_num);
+    let cancel_token = CancelToken::new();
+
+    let log_uploader = ConsoleLogUploader::new(client.clone(), path.clone());
+    let artifact_uploader = ConsoleArtifactUploader::new(client.clone(), path.clone());
+
+    let ws = client.create_experiment_run_websocket(namespace, project_name, experiment_num)?;
+
+    let session = RemoteExperimentSession::new(
+        Box::new(log_uploader),
+        Box::new(artifact_uploader),
+        ws,
+        cancel_token.clone(),
+    );
+
+    let reader = ConsoleArtifactReader::new(client, path);
+    let id = ExperimentId::from(format!("{}", experiment_num));
+
+    Ok(ExperimentRun::new(id, session, reader, cancel_token))
 }

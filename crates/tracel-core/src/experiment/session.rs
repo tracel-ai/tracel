@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 
-use crate::remote::logs::LogUploader;
-use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
+use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+use tracel_experiment::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
 
 use burn_central_client::WebSocketClient;
 use burn_central_client::websocket::{
@@ -10,11 +11,10 @@ use burn_central_client::websocket::{
 use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
 
-use super::logs::TempLogStore;
+use super::log_store::TempLogStore;
+use super::log_store::LogUploader;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
-use crate::error::{ExperimentError, ExperimentErrorKind};
-use crate::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
 
 struct ActiveSession {
     sender: Sender<ExperimentMessage>,
@@ -23,13 +23,13 @@ struct ActiveSession {
 
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to upload artifact: {message}")]
-pub struct ArtifactUploadError {
-    pub message: String,
+pub(crate) struct ArtifactUploadError {
+    pub(crate) message: String,
     #[source]
-    pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    pub(crate) source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-pub trait ArtifactUploader {
+pub(crate) trait ArtifactUploader {
     fn upload(
         &self,
         name: &str,
@@ -38,15 +38,15 @@ pub trait ArtifactUploader {
     ) -> Result<(), ArtifactUploadError>;
 }
 
-pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
+pub(crate) type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 
-pub struct RemoteExperimentSession {
+pub(crate) struct RemoteExperimentSession {
     artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
 }
 
 impl RemoteExperimentSession {
-    pub fn new(
+    pub(crate) fn new(
         log_uploader: Box<dyn LogUploader + Send>,
         artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
         websocket: WebSocketClient,

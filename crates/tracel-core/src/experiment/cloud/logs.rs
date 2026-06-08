@@ -1,11 +1,8 @@
 use std::collections::BTreeMap;
 
 use burn_central_client::{
-    ClientError, StationClient,
-    station::experiment::{
-        AddFilesRequest, CompleteUploadRequest,
-        request::{ArtifactFileSpecRequest, CreateArtifactRequest},
-    },
+    Client, ClientError,
+    request::{ArtifactFileSpecRequest, CreateArtifactRequest},
 };
 use sha2::Digest;
 use tracel_artifact::{
@@ -13,19 +10,18 @@ use tracel_artifact::{
     upload::{MultipartUploadFile, MultipartUploadPart, upload_bundle_multipart},
 };
 
-use crate::remote::{
-    logs::{LogStoreError, LogUploader},
-    station::ExperimentPath,
-};
+use crate::experiment::log_store::{LogStoreError, LogUploader};
 
-pub struct StationLogUploader {
+use super::ExperimentPath;
+
+pub(crate) struct ConsoleLogUploader {
     artifact_id: Option<String>,
-    client: StationClient,
+    client: Client,
     experiment_path: ExperimentPath,
 }
 
-impl StationLogUploader {
-    pub fn new(client: StationClient, experiment_path: ExperimentPath) -> Self {
+impl ConsoleLogUploader {
+    pub(crate) fn new(client: Client, experiment_path: ExperimentPath) -> Self {
         Self {
             artifact_id: None,
             client,
@@ -34,9 +30,8 @@ impl StationLogUploader {
     }
 }
 
-impl LogUploader for StationLogUploader {
+impl LogUploader for ConsoleLogUploader {
     fn upload(&mut self, bundle: InMemoryBundleSources) -> Result<(), LogStoreError> {
-        let client = self.client.experiments();
         let mut specs = Vec::with_capacity(bundle.files().len());
         for file in bundle.files() {
             let size_bytes = file.size();
@@ -56,11 +51,13 @@ impl LogUploader for StationLogUploader {
 
         let upload_urls = if let Some(artifact_id) = &self.artifact_id {
             // Artifact exists, add files to it
-            client
-                .add_artifact_files(
+            self.client
+                .add_files_to_artifact(
+                    self.experiment_path.owner_name(),
+                    self.experiment_path.project_name(),
                     self.experiment_path.experiment_num(),
                     artifact_id,
-                    AddFilesRequest { files: specs },
+                    specs,
                 )
                 .map_err(|e| {
                     LogStoreError::new("Failed to add log files to artifact".to_string(), e)
@@ -68,8 +65,11 @@ impl LogUploader for StationLogUploader {
                 .files
         } else {
             // First flush, create the artifact
-            let response = client
+            let response = self
+                .client
                 .create_artifact(
+                    self.experiment_path.owner_name(),
+                    self.experiment_path.project_name(),
                     self.experiment_path.experiment_num(),
                     CreateArtifactRequest {
                         name: "logs".to_string(),
@@ -124,19 +124,19 @@ impl LogUploader for StationLogUploader {
             .map_err(|e| LogStoreError::new("Failed to upload logs".to_string(), e))?;
 
         if let Some(artifact_id) = &self.artifact_id {
-            client
+            self.client
                 .complete_artifact_upload(
+                    self.experiment_path.owner_name(),
+                    self.experiment_path.project_name(),
                     self.experiment_path.experiment_num(),
                     artifact_id,
-                    CompleteUploadRequest {
-                        file_names: Some(
-                            bundle
-                                .files()
-                                .iter()
-                                .map(|f| f.dest_path().to_string())
-                                .collect(),
-                        ),
-                    },
+                    Some(
+                        bundle
+                            .files()
+                            .iter()
+                            .map(|f| f.dest_path().to_string())
+                            .collect(),
+                    ),
                 )
                 .map_err(|e| {
                     LogStoreError::new("Failed to complete log artifact upload".to_string(), e)

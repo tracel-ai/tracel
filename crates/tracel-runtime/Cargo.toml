@@ -11,6 +11,10 @@ readme.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+station = ["tracel-core/station"]
+
 [dependencies]
 anyhow.workspace = true
 tracel-fleet.workspace = true

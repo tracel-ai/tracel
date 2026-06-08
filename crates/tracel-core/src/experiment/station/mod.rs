@@ -13,39 +13,46 @@ use tracel_artifact::upload::{
 mod artifacts;
 mod logs;
 
-pub use artifacts::{StationArtifactReader, StationArtifactUploader};
-pub use logs::StationLogUploader;
+pub(crate) use artifacts::{StationArtifactReader, StationArtifactUploader};
+pub(crate) use logs::StationLogUploader;
 
-use crate::ArtifactKind;
+use burn_central_client::station::experiment::CreateExperimentRequest;
+use tracel_experiment::ArtifactKind;
+use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
+use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
+
+use crate::backend::station::{StationBackend, StationError};
+use crate::experiment::ExperimentProvider;
+use crate::experiment::session::RemoteExperimentSession;
 
 #[derive(Debug, Clone)]
-pub struct ExperimentPath {
+pub(crate) struct ExperimentPath {
     experiment_num: i32,
 }
 
 impl ExperimentPath {
-    pub fn new(experiment_num: i32) -> Self {
+    pub(crate) fn new(experiment_num: i32) -> Self {
         Self { experiment_num }
     }
 
-    pub fn experiment_num(&self) -> i32 {
+    pub(crate) fn experiment_num(&self) -> i32 {
         self.experiment_num
     }
 }
 
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
-pub struct ExperimentArtifactClient {
+pub(crate) struct ExperimentArtifactClient {
     client: StationClient,
     exp_path: ExperimentPath,
 }
 
 impl ExperimentArtifactClient {
-    pub fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
+    pub(crate) fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
 
-    pub fn upload(
+    pub(crate) fn upload(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
@@ -121,7 +128,7 @@ impl ExperimentArtifactClient {
     }
 
     /// Download an artifact as a filesystem-backed bundle.
-    pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
+    pub(crate) fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
         let resp = self
@@ -148,7 +155,7 @@ impl ExperimentArtifactClient {
     }
 
     /// Fetch information about an artifact by name.
-    pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
+    pub(crate) fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
         self.client
             .experiments()
@@ -174,7 +181,7 @@ fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ArtifactError {
+pub(crate) enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
@@ -185,4 +192,43 @@ pub enum ArtifactError {
     Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+impl ExperimentProvider for StationBackend {
+    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
+        create_run(self.client.clone(), name).map_err(|e| ExperimentError {
+            kind: ExperimentErrorKind::Internal,
+            message: "Failed to start Station experiment run".to_string(),
+            source: Some(Box::new(e)),
+        })
+    }
+}
+
+fn create_run(client: StationClient, routine: String) -> Result<ExperimentRun, StationError> {
+    let experiments_client = client.experiments();
+    let experiment = experiments_client.create(CreateExperimentRequest {
+        description: None,
+        routine_run: routine,
+    })?;
+
+    let experiment_num = experiment.experiment_num;
+    let path = ExperimentPath::new(experiment_num);
+    let cancel_token = CancelToken::new();
+
+    let log_uploader = StationLogUploader::new(client.clone(), path.clone());
+    let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
+
+    let ws = experiments_client.create_run_websocket(experiment_num)?;
+
+    let session = RemoteExperimentSession::new(
+        Box::new(log_uploader),
+        Box::new(artifact_uploader),
+        ws,
+        cancel_token.clone(),
+    );
+
+    let reader = StationArtifactReader::new(client);
+    let id = ExperimentId::from(format!("{}", experiment_num));
+
+    Ok(ExperimentRun::new(id, session, reader, cancel_token))
 }

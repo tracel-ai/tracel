@@ -1,5 +1,8 @@
 mod cloud;
 mod local;
+mod log_store;
+mod session;
+mod socket;
 #[cfg(feature = "station")]
 mod station;
 

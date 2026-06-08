@@ -1,27 +1,26 @@
-use burn_central_client::Client;
+use burn_central_client::StationClient;
 use tracel_artifact::bundle::FsBundle;
 
-use crate::{
+use tracel_experiment::{
     ArtifactKind, ExperimentId,
     reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
-    remote::{
-        base::{ArtifactUploadError, ArtifactUploader},
-        cloud::{ExperimentArtifactClient, ExperimentPath},
-    },
 };
 
-pub struct ConsoleArtifactReader {
-    client: Client,
-    exp_path: ExperimentPath,
+use crate::experiment::session::{ArtifactUploadError, ArtifactUploader};
+
+use super::{ExperimentArtifactClient, ExperimentPath};
+
+pub(crate) struct StationArtifactReader {
+    client: StationClient,
 }
 
-impl ConsoleArtifactReader {
-    pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
-        Self { client, exp_path }
+impl StationArtifactReader {
+    pub(crate) fn new(client: StationClient) -> Self {
+        Self { client }
     }
 }
 
-impl ExperimentArtifactReader for ConsoleArtifactReader {
+impl ExperimentArtifactReader for StationArtifactReader {
     fn load_artifact_raw(
         &self,
         experiment_id: ExperimentId,
@@ -31,11 +30,7 @@ impl ExperimentArtifactReader for ConsoleArtifactReader {
             .parse::<i32>()
             .ok_or_else(|| ExperimentReaderError::new("Invalid experiment ID format"))?;
 
-        let experiment_path = ExperimentPath::new(
-            self.exp_path.owner_name().to_string(),
-            self.exp_path.project_name().to_string(),
-            num,
-        );
+        let experiment_path = ExperimentPath::new(num);
         let scope = ExperimentArtifactClient::new(self.client.clone(), experiment_path);
         let artifact = scope.fetch(name).map_err(|err| {
             ExperimentReaderError::with_source("Failed to resolve experiment artifact", err)
@@ -58,19 +53,19 @@ impl ExperimentArtifactReader for ConsoleArtifactReader {
     }
 }
 
-pub struct ConsoleArtifactUploader {
+pub(crate) struct StationArtifactUploader {
     client: ExperimentArtifactClient,
 }
 
-impl ConsoleArtifactUploader {
-    pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
+impl StationArtifactUploader {
+    pub(crate) fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
         Self {
             client: ExperimentArtifactClient::new(client, exp_path),
         }
     }
 }
 
-impl ArtifactUploader for ConsoleArtifactUploader {
+impl ArtifactUploader for StationArtifactUploader {
     fn upload(
         &self,
         name: &str,

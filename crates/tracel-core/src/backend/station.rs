@@ -5,7 +5,7 @@ use url::Url;
 use crate::context::{Backend, Context};
 
 #[derive(Debug, thiserror::Error)]
-pub enum StationError {
+pub(crate) enum StationError {
     #[error("Failed to create experiment on Station — check your Station URL and connectivity")]
     ExperimentCreation(#[from] ClientError),
     #[error("Failed to establish WebSocket connection to Station")]
@@ -14,11 +14,11 @@ pub enum StationError {
 
 #[derive(Debug, Clone)]
 pub struct StationBackend {
-    pub client: StationClient,
+    pub(crate) client: StationClient,
 }
 
 impl StationBackend {
-    pub fn create_context(url: Url) -> Context {
+    pub(crate) fn create_context(url: Url) -> Context {
         let backend = Backend::Station(StationBackend {
             client: StationClient::from_url(url),
         });

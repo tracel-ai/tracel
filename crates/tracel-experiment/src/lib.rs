@@ -23,7 +23,6 @@ mod cancellation;
 mod context;
 mod progress;
 pub mod reader;
-pub mod remote;
 pub mod session;
 
 pub mod error;

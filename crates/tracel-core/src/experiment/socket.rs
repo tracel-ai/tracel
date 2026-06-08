@@ -5,12 +5,12 @@ use burn_central_client::{
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use std::{thread::JoinHandle, time::Duration};
 
-use crate::{CancelToken, remote::logs::LogStoreError};
+use tracel_experiment::CancelToken;
 
-use super::logs::TempLogStore;
+use super::log_store::{LogStoreError, TempLogStore};
 
 #[derive(Debug, thiserror::Error)]
-pub enum ThreadError {
+pub(crate) enum ThreadError {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
     #[error("Log storage failed: {0}")]
@@ -22,7 +22,7 @@ pub enum ThreadError {
 const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
 
 #[derive(Debug)]
-pub struct ThreadResult {}
+pub(crate) struct ThreadResult {}
 
 struct ExperimentThread {
     ws_client: WebSocketClient,
@@ -124,12 +124,12 @@ impl ExperimentThread {
     }
 }
 
-pub struct ExperimentSocket {
+pub(crate) struct ExperimentSocket {
     handle: JoinHandle<Result<ThreadResult, ThreadError>>,
 }
 
 impl ExperimentSocket {
-    pub fn new(
+    pub(crate) fn new(
         ws_client: WebSocketClient,
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
@@ -140,7 +140,7 @@ impl ExperimentSocket {
         Self { handle }
     }
 
-    pub fn join(self) -> Result<ThreadResult, ThreadError> {
+    pub(crate) fn join(self) -> Result<ThreadResult, ThreadError> {
         self.handle.join().unwrap_or(Err(ThreadError::Panic))
     }
 }
