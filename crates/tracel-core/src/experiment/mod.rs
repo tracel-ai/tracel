@@ -6,7 +6,7 @@ mod socket;
 #[cfg(feature = "station")]
 mod station;
 
-// TODO: te3mporary re-export fopr the runtime crate, will be erased when we detach ourself completely from runtime
+// TODO: te3mporary re-export for the runtime crate, will be erased when we detach ourself completely from runtime
 pub use cloud::create_cloud_experiment_run;
 
 use std::error::Error;
