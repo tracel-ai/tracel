@@ -69,7 +69,6 @@ impl CloudBackend {
 
 fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, CloudError> {
     if let Ok(creds) = BurnCentralCredentials::from_env() {
-        eprintln!("[tracel] credentials found via environment variable");
         return Ok(creds);
     }
 
@@ -84,10 +83,6 @@ fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, CloudError>
 
     let path = proj_dirs.config_dir().join(&filename);
     if path.exists() {
-        eprintln!(
-            "[tracel] credentials found in CLI config file: {}",
-            path.display()
-        );
         let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
         let creds: CliCredentials =
             serde_json::from_str(&contents).map_err(|_| CloudError::NoCredentials)?;
@@ -102,22 +97,10 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
     let project_env = std::env::var(TRACEL_PROJECT).ok();
 
     if let (Some(ns), Some(proj)) = (&namespace_env, &project_env) {
-        eprintln!("[tracel] namespace and project found via environment variables: {ns}/{proj}");
         return Ok((ns.clone(), proj.clone()));
     }
 
     let toml_config = read_tracel_toml();
-
-    let ns_source = if namespace_env.is_some() {
-        "env"
-    } else {
-        "tracel.toml"
-    };
-    let proj_source = if project_env.is_some() {
-        "env"
-    } else {
-        "tracel.toml"
-    };
 
     let namespace = namespace_env
         .or(toml_config.namespace)
@@ -126,9 +109,6 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
     let project = project_env
         .or(toml_config.project)
         .ok_or(CloudError::NoProject)?;
-
-    eprintln!("[tracel] namespace found via {ns_source}: {namespace}");
-    eprintln!("[tracel] project found via {proj_source}: {project}");
 
     Ok((namespace, project))
 }
