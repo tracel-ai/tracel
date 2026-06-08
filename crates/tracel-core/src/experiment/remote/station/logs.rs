@@ -17,14 +17,14 @@ use crate::experiment::remote::log_store::{LogStoreError, LogUploader};
 
 use super::ExperimentPath;
 
-pub(crate) struct StationLogUploader {
+pub struct StationLogUploader {
     artifact_id: Option<String>,
     client: StationClient,
     experiment_path: ExperimentPath,
 }
 
 impl StationLogUploader {
-    pub(crate) fn new(client: StationClient, experiment_path: ExperimentPath) -> Self {
+    pub fn new(client: StationClient, experiment_path: ExperimentPath) -> Self {
         Self {
             artifact_id: None,
             client,

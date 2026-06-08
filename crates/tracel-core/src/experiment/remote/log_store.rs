@@ -1,20 +1,20 @@
 use tracel_artifact::bundle::InMemoryBundleSources;
 
-pub(crate) trait LogUploader {
+pub trait LogUploader {
     fn upload(&mut self, bundle: InMemoryBundleSources) -> Result<(), LogStoreError>;
 }
 type BoxedLogUploader = Box<dyn LogUploader + Send>;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
-pub(crate) struct LogStoreError {
+pub struct LogStoreError {
     message: String,
     #[source]
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl LogStoreError {
-    pub(crate) fn new<E>(message: impl Into<String>, source: E) -> Self
+    pub fn new<E>(message: impl Into<String>, source: E) -> Self
     where
         E: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
     {
@@ -25,7 +25,7 @@ impl LogStoreError {
     }
 }
 
-pub(crate) struct TempLogStore {
+pub struct TempLogStore {
     logs: Vec<String>,
     bytes: usize,
     file_counter: usize,
@@ -39,7 +39,7 @@ impl TempLogStore {
     // Assume max 1000 log files (10GB of logs), use 3 digits padding
     const NUM_DIGITS: usize = 3;
 
-    pub(crate) fn new(uploader: BoxedLogUploader) -> TempLogStore {
+    pub fn new(uploader: BoxedLogUploader) -> TempLogStore {
         TempLogStore {
             logs: Vec::new(),
             bytes: 0,
@@ -49,7 +49,7 @@ impl TempLogStore {
         }
     }
 
-    pub(crate) fn push(&mut self, log: String) -> Result<(), LogStoreError> {
+    pub fn push(&mut self, log: String) -> Result<(), LogStoreError> {
         if self.bytes + log.len() > Self::CHUNK_SIZE {
             self.flush()?;
         }
@@ -58,7 +58,7 @@ impl TempLogStore {
         Ok(())
     }
 
-    pub(crate) fn flush(&mut self) -> Result<(), LogStoreError> {
+    pub fn flush(&mut self) -> Result<(), LogStoreError> {
         if self.logs.is_empty() {
             return Ok(());
         }

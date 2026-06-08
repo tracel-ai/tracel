@@ -14,14 +14,14 @@ use crate::experiment::remote::log_store::{LogStoreError, LogUploader};
 
 use super::ExperimentPath;
 
-pub(crate) struct ConsoleLogUploader {
+pub struct ConsoleLogUploader {
     artifact_id: Option<String>,
     client: Client,
     experiment_path: ExperimentPath,
 }
 
 impl ConsoleLogUploader {
-    pub(crate) fn new(client: Client, experiment_path: ExperimentPath) -> Self {
+    pub fn new(client: Client, experiment_path: ExperimentPath) -> Self {
         Self {
             artifact_id: None,
             client,

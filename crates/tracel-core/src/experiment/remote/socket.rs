@@ -10,7 +10,7 @@ use tracel_experiment::CancelToken;
 use super::log_store::{LogStoreError, TempLogStore};
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ThreadError {
+pub enum ThreadError {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
     #[error("Log storage failed: {0}")]
@@ -22,7 +22,7 @@ pub(crate) enum ThreadError {
 const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
 
 #[derive(Debug)]
-pub(crate) struct ThreadResult {}
+pub struct ThreadResult {}
 
 struct ExperimentThread {
     ws_client: WebSocketClient,
@@ -124,12 +124,12 @@ impl ExperimentThread {
     }
 }
 
-pub(crate) struct ExperimentSocket {
+pub struct ExperimentSocket {
     handle: JoinHandle<Result<ThreadResult, ThreadError>>,
 }
 
 impl ExperimentSocket {
-    pub(crate) fn new(
+    pub fn new(
         ws_client: WebSocketClient,
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
@@ -140,7 +140,7 @@ impl ExperimentSocket {
         Self { handle }
     }
 
-    pub(crate) fn join(self) -> Result<ThreadResult, ThreadError> {
+    pub fn join(self) -> Result<ThreadResult, ThreadError> {
         self.handle.join().unwrap_or(Err(ThreadError::Panic))
     }
 }

@@ -23,13 +23,13 @@ struct ActiveSession {
 
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to upload artifact: {message}")]
-pub(crate) struct ArtifactUploadError {
+pub struct ArtifactUploadError {
     pub(crate) message: String,
     #[source]
     pub(crate) source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-pub(crate) trait ArtifactUploader {
+pub trait ArtifactUploader {
     fn upload(
         &self,
         name: &str,
@@ -38,15 +38,15 @@ pub(crate) trait ArtifactUploader {
     ) -> Result<(), ArtifactUploadError>;
 }
 
-pub(crate) type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
+pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 
-pub(crate) struct RemoteExperimentSession {
+pub struct RemoteExperimentSession {
     artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
 }
 
 impl RemoteExperimentSession {
-    pub(crate) fn new(
+    pub fn new(
         log_uploader: Box<dyn LogUploader + Send>,
         artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
         websocket: WebSocketClient,
