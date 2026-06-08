@@ -16,6 +16,7 @@ default = []
 station = ["tracel-runtime/station"]
 
 [dependencies]
+tracel-core = { workspace = true }
 tracel-macros.workspace = true
 tracel-runtime.workspace = true
 tracel-experiment.workspace = true

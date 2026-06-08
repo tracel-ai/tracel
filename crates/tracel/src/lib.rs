@@ -40,8 +40,12 @@
 pub use burn_central_client::BurnCentralCredentials;
 pub use burn_central_client::Env;
 
-#[doc(inline)]
-pub use tracel_experiment as experiment;
+/// Experiment tracking and management.
+pub mod experiment {
+    pub use tracel_core::experiment::*;
+    #[doc(inline)]
+    pub use tracel_experiment::*;
+}
 
 /// Attribute macros for registering routines discoverable by the Tracel CLI.
 #[doc(inline)]
@@ -64,3 +68,5 @@ pub use tracel_fleet as fleet;
 /// Artifact bundle utilities and adapters.
 #[doc(inline)]
 pub use tracel_artifact as artifact;
+
+pub use tracel_core::Context;

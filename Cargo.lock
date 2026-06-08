@@ -363,6 +363,7 @@ version = "0.6.0"
 dependencies = [
  "burn-central-client",
  "tracel-artifact",
+ "tracel-core",
  "tracel-experiment",
  "tracel-fleet",
  "tracel-inference",
