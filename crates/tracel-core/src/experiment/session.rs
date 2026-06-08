@@ -11,8 +11,8 @@ use burn_central_client::websocket::{
 use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
 
-use super::log_store::TempLogStore;
 use super::log_store::LogUploader;
+use super::log_store::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
 

@@ -98,8 +98,8 @@ fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, CloudError>
 }
 
 fn discover_namespace_project() -> Result<(String, String), CloudError> {
-    let namespace_env = std::env::var("TRACEL_NAMESPACE").ok();
-    let project_env = std::env::var("TRACEL_PROJECT").ok();
+    let namespace_env = std::env::var(TRACEL_NAMESPACE).ok();
+    let project_env = std::env::var(TRACEL_PROJECT).ok();
 
     if let (Some(ns), Some(proj)) = (&namespace_env, &project_env) {
         eprintln!("[tracel] namespace and project found via environment variables: {ns}/{proj}");
@@ -134,12 +134,23 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
 }
 
 fn discover_env() -> Result<Env, CloudError> {
+    let invalid_env = || CloudError::InvalidEnv {
+        env_var: TRACEL_ENV.to_string(),
+        message: "expected value to be one of: 'Production', 'Development', or 'Staging(N)'"
+            .to_string(),
+    };
+
     match std::env::var(TRACEL_ENV) {
-        Ok(val) => serde_json::from_str(&val).map_err(|_| CloudError::InvalidEnv {
-            env_var: TRACEL_ENV.to_string(),
-            message: "expected value to be one of: 'Production', 'Development', or 'Staging(N)'"
-                .to_string(),
-        }),
+        Ok(val) => match val.as_str() {
+            "Production" => Ok(Env::Production),
+            "Development" => Ok(Env::Development),
+            other => other
+                .strip_prefix("Staging(")
+                .and_then(|rest| rest.strip_suffix(')'))
+                .and_then(|n| n.parse::<u8>().ok())
+                .map(Env::Staging)
+                .ok_or_else(invalid_env),
+        },
         Err(_) => Ok(Env::Production),
     }
 }
