@@ -13,8 +13,8 @@ use tracel_artifact::upload::{
 mod artifacts;
 mod logs;
 
-pub(crate) use artifacts::{StationArtifactReader, StationArtifactUploader};
-pub(crate) use logs::StationLogUploader;
+use artifacts::{StationArtifactReader, StationArtifactUploader};
+use logs::StationLogUploader;
 
 use burn_central_client::station::experiment::CreateExperimentRequest;
 use tracel_experiment::ArtifactKind;
@@ -26,33 +26,33 @@ use crate::experiment::ExperimentProvider;
 use crate::experiment::remote::session::RemoteExperimentSession;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ExperimentPath {
+pub struct ExperimentPath {
     experiment_num: i32,
 }
 
 impl ExperimentPath {
-    pub(crate) fn new(experiment_num: i32) -> Self {
+    pub fn new(experiment_num: i32) -> Self {
         Self { experiment_num }
     }
 
-    pub(crate) fn experiment_num(&self) -> i32 {
+    pub fn experiment_num(&self) -> i32 {
         self.experiment_num
     }
 }
 
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
-pub(crate) struct ExperimentArtifactClient {
+pub struct ExperimentArtifactClient {
     client: StationClient,
     exp_path: ExperimentPath,
 }
 
 impl ExperimentArtifactClient {
-    pub(crate) fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
+    pub fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
 
-    pub(crate) fn upload(
+    pub fn upload(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
@@ -128,7 +128,7 @@ impl ExperimentArtifactClient {
     }
 
     /// Download an artifact as a filesystem-backed bundle.
-    pub(crate) fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
+    pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
         let resp = self
@@ -155,7 +155,7 @@ impl ExperimentArtifactClient {
     }
 
     /// Fetch information about an artifact by name.
-    pub(crate) fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
+    pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
         self.client
             .experiments()
@@ -181,7 +181,7 @@ fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ArtifactError {
+pub enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
