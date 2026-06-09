@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>Burn central</h1>
+<h1>Burn Central</h1>
 
 [![Current Crates.io Version](https://img.shields.io/crates/v/burn-central)](https://crates.io/crates/burn-central)
 [![Minimum Supported Rust Version](https://img.shields.io/crates/msrv/burn-central)](https://crates.io/crates/burn-central)
@@ -13,7 +13,7 @@
 
 ## Description
 
-Burn Central is a new way of using Burn. It aims at providing a central platform for experiment tracking, model sharing, and deployment for all Burn users!
+Tracel is a new way of using Burn. It aims at providing a central platform for experiment tracking, model sharing, and deployment for all Burn users!
 
 This repository contains the SDK associated with the project. It offers macros that help attach to your code and send training data to our application. To use this project you must first create an account on the [application](https://s1-central.burn.dev/).
 
@@ -21,23 +21,23 @@ Also needed to use this is the new [burn-cli](https://github.com/tracel-ai/burn-
 
 ## Installation
 
-Add Burn Central to your `Cargo.toml`:
+Add Tracel to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-burn-central = "0.6.0"
+tracel = "0.6.0"
 ```
 
 ## Quick Start
 
-Currently, we only support training. Here's how to integrate Burn Central into your training workflow:
+Currently, we only support training. Here's how to integrate Tracel into your training workflow:
 
 ### 1. Register your training function
 
 Use the `#[register]` macro to register your training function:
 
 ```rust
-use burn_central::{
+use tracel::{
     experiment::ExperimentRun,
     macros::register,
     runtime::{Args, ArtifactLoader, Model, MultiDevice},

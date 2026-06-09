@@ -18,7 +18,7 @@ keywords = ["tracel", "burn-central", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "e3566dba26d63ffcf9c0fb2bfb999cdce445461b", default-features = false, features = [
+burn = { git = "https://github.com/tracel-ai/burn", rev = "1b6dd60361115a0efb5b67c43cb75cd856b30498", default-features = false, features = [
     "train",
 ] }
 
@@ -61,16 +61,17 @@ opentelemetry = { version = "0.31.0", features = ["metrics"] }
 ## External Crate
 burn-central-client = { version = "0.7.0", default-features = false, features = [
     "central",
+    "station",
 ] }
 
 ## Crate
-burn-central-core = { path = "crates/burn-central-core", version = "0.6.0" }
-burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.6.0" }
-burn-central-macros = { path = "crates/burn-central-macros", version = "0.6.0" }
-burn-central-inference = { path = "crates/burn-central-inference", version = "0.6.0" }
-burn-central-fleet = { path = "crates/burn-central-fleet", version = "0.6.0" }
-burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.6.0" }
-burn-central-experiment = { path = "crates/burn-central-experiment", version = "0.6.0" }
+tracel-runtime = { path = "crates/tracel-runtime", version = "0.6.0" }
+tracel-macros = { path = "crates/tracel-macros", version = "0.6.0" }
+tracel-inference = { path = "crates/tracel-inference", version = "0.6.0" }
+tracel-fleet = { path = "crates/tracel-fleet", version = "0.6.0" }
+tracel-artifact = { path = "crates/tracel-artifact", version = "0.6.0" }
+tracel-experiment = { path = "crates/tracel-experiment", version = "0.6.0" }
+tracel-core = { path = "crates/tracel-core", version = "0.6.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.13.7"
