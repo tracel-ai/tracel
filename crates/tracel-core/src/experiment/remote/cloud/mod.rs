@@ -2,7 +2,8 @@ use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactReques
 use burn_central_client::response::ArtifactResponse;
 use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{Client, ClientError};
-use std::collections::BTreeMap;
+use serde_json::Value;
+use std::collections::{BTreeMap, HashMap};
 use tracel_artifact::bundle::FsBundle;
 use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
 use tracel_artifact::upload::{
@@ -221,7 +222,11 @@ pub enum ConsoleError {
 }
 
 impl ExperimentProvider for CloudBackend {
-    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
+    fn create_experiment(
+        &self,
+        name: String,
+        _attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError> {
         let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
         create_run(
             self.client.clone(),

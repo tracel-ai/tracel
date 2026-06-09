@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use crate::backend::local::LocalBackend;
 use crate::backend::station::StationBackend;
 use crate::experiment::Experiment;
 use crate::experiment::ExperimentProvider;
+use serde_json::Value;
 use tracel_experiment::ExperimentRun;
 use tracel_experiment::error::ExperimentError;
 
@@ -51,12 +53,16 @@ impl Context {
 }
 
 impl ExperimentProvider for Context {
-    fn create_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
+    fn create_experiment(
+        &self,
+        routine: String,
+        attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError> {
         match &self.backend {
-            Backend::Cloud(backend) => backend.create_experiment(routine),
-            Backend::Local(backend) => backend.create_experiment(routine),
+            Backend::Cloud(backend) => backend.create_experiment(routine, attributes),
+            Backend::Local(backend) => backend.create_experiment(routine, attributes),
             #[cfg(feature = "station")]
-            Backend::Station(backend) => backend.create_experiment(routine),
+            Backend::Station(backend) => backend.create_experiment(routine, attributes),
         }
     }
 }

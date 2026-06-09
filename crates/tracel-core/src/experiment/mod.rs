@@ -3,17 +3,24 @@ mod remote;
 
 // TODO: te3mporary re-export for the runtime crate, will be erased when we detach ourself completely from runtime
 pub use remote::cloud::create_cloud_experiment_run;
+use serde::Serialize;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
+use serde_json::Value;
 use tracel_experiment::ExperimentRun;
 use tracel_experiment::ExperimentRunHandleExt;
 use tracel_experiment::error::ExperimentError;
 use tracel_experiment::error::ExperimentErrorKind;
 
 pub trait ExperimentProvider: Send + Sync + 'static {
-    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError>;
+    fn create_experiment(
+        &self,
+        name: String,
+        attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError>;
 }
 
 pub struct Experiment {
@@ -25,55 +32,66 @@ impl Experiment {
         Self { provider }
     }
 
-    pub fn create<T, F>(&self, name: &str, f: F) -> ExperimentJob<T>
+    pub fn create_job<T, F>(&self, name: &str, f: F) -> ExperimentJob<T>
     where
         F: Fn(&ExperimentRun, T) -> Result<(), Box<dyn Error>> + Send + Sync + 'static,
     {
-        let provider = self.provider.clone();
-        let name = name.to_string();
-
-        let job_closure = move |input: T| -> Result<(), Box<dyn Error>> {
-            validate_name(&name)?;
-
-            let _ = tracel_experiment::integration::tracing::try_init_tracing_subscriber();
-
-            let experiment = provider.create_experiment(name.clone())?;
-            let handle = experiment.handle();
-            let result = handle.in_scope(|| f(&experiment, input));
-
-            match result {
-                Ok(()) => {
-                    experiment.finish()?;
-                    Ok(())
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    let _ = experiment.fail(msg);
-                    Err(e)
-                }
-            }
-        };
-
-        ExperimentJob::new(job_closure)
+        ExperimentJob::new(self.provider.clone(), name.to_string(), f)
     }
 }
 
-type JobFn<T> = dyn Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync;
+type UserFn<T> = dyn Fn(&ExperimentRun, T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync;
 
 pub struct ExperimentJob<T> {
-    job: Box<JobFn<T>>,
+    provider: Arc<dyn ExperimentProvider>,
+    name: String,
+    attributes: HashMap<String, Value>,
+    f: Box<UserFn<T>>,
 }
 
 impl<T> ExperimentJob<T> {
-    pub fn new<F>(f: F) -> Self
+    fn new<F>(provider: Arc<dyn ExperimentProvider>, name: String, f: F) -> Self
     where
-        F: Fn(T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync + 'static,
+        F: Fn(&ExperimentRun, T) -> Result<(), Box<dyn std::error::Error>> + Send + Sync + 'static,
     {
-        Self { job: Box::new(f) }
+        Self {
+            provider,
+            name,
+            attributes: HashMap::new(),
+            f: Box::new(f),
+        }
+    }
+
+    pub fn attribute(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
+        self.attributes.insert(
+            key.into(),
+            serde_json::to_value(value).expect("attribute value must be serializable"),
+        );
+        self
     }
 
     pub fn run(&self, input: T) -> Result<(), Box<dyn std::error::Error>> {
-        (self.job)(input)
+        validate_name(&self.name)?;
+
+        let _ = tracel_experiment::integration::tracing::try_init_tracing_subscriber();
+
+        let experiment = self
+            .provider
+            .create_experiment(self.name.clone(), self.attributes.clone())?;
+        let handle = experiment.handle();
+        let result = handle.in_scope(|| (self.f)(&experiment, input));
+
+        match result {
+            Ok(()) => {
+                experiment.finish()?;
+                Ok(())
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let _ = experiment.fail(msg);
+                Err(e)
+            }
+        }
     }
 }
 

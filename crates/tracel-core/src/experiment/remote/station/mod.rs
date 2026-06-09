@@ -16,7 +16,10 @@ mod logs;
 use artifacts::{StationArtifactReader, StationArtifactUploader};
 use logs::StationLogUploader;
 
+use std::collections::HashMap;
+
 use burn_central_client::station::experiment::CreateExperimentRequest;
+use serde_json::Value;
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
@@ -195,7 +198,11 @@ pub enum ArtifactError {
 }
 
 impl ExperimentProvider for StationBackend {
-    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
+    fn create_experiment(
+        &self,
+        name: String,
+        _attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError> {
         create_run(self.client.clone(), name).map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
