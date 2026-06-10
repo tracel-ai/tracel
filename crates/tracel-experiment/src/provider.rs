@@ -39,7 +39,7 @@ impl ExperimentClient {
         Self { provider }
     }
 
-    // On pourais rajouter des settings ici comme un builde d'experiemnt module
+    // On pourais rajouter des settings ici comme un builde d'experiment module
 
     pub fn create_job<I, O>(
         &self,
