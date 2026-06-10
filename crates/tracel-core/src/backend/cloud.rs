@@ -3,8 +3,6 @@ use std::path::Path;
 use burn_central_client::{BurnCentralCredentials, Client, ClientError, Env};
 use serde::Deserialize;
 
-use crate::context::{Backend, Context};
-
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
 const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
@@ -53,17 +51,13 @@ impl CloudBackend {
         }
     }
 
-    pub fn create_context() -> Result<Context, CloudError> {
+    pub fn create_context() -> Result<CloudBackend, CloudError> {
         let env = discover_env()?;
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
 
         let client = Client::new(env, &credentials).map_err(CloudError::Client)?;
-        let cloud_backend = CloudBackend::new(client, namespace, project);
-
-        let backend = Backend::Cloud(cloud_backend);
-
-        Ok(Context::new(backend))
+        Ok(CloudBackend::new(client, namespace, project))
     }
 }
 
