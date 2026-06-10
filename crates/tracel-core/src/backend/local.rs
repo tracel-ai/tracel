@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-
 #[derive(Debug, Clone)]
 pub struct LocalBackend {
     pub(crate) path: PathBuf,
