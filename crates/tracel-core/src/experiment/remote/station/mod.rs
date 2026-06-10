@@ -198,11 +198,7 @@ pub enum ArtifactError {
 }
 
 impl ExperimentProvider for StationBackend {
-    fn create_experiment(
-        &self,
-        name: String,
-        _attributes: HashMap<String, Value>,
-    ) -> Result<ExperimentRun, ExperimentError> {
+    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
         create_run(self.client.clone(), name).map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),

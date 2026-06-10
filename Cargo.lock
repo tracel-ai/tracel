@@ -358,20 +358,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-central"
-version = "0.6.0"
-dependencies = [
- "burn-central-client",
- "tracel-artifact",
- "tracel-core",
- "tracel-experiment",
- "tracel-fleet",
- "tracel-inference",
- "tracel-macros",
- "tracel-runtime",
-]
-
-[[package]]
 name = "burn-central-client"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5717,6 +5703,20 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "tracel"
+version = "0.6.0"
+dependencies = [
+ "burn-central-client",
+ "tracel-artifact",
+ "tracel-core",
+ "tracel-experiment",
+ "tracel-fleet",
+ "tracel-inference",
+ "tracel-macros",
+ "tracel-runtime",
+]
 
 [[package]]
 name = "tracel-artifact"

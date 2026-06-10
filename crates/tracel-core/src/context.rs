@@ -18,7 +18,7 @@ use tracel_experiment::error::ExperimentError;
 
 #[derive(Debug, Clone)]
 pub struct Context {
-    pub backend: Backend,
+    backend: Backend,
 }
 
 #[derive(Debug, Clone)]
