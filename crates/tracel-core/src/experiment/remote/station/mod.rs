@@ -2,6 +2,7 @@ use burn_central_client::station::experiment::{
     ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
     ListArtifactsQuery,
 };
+use burn_central_client::websocket::WebSocketError;
 use burn_central_client::{ClientError, StationClient};
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
@@ -26,8 +27,16 @@ use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
 
 use tracel_experiment::ExperimentProvider;
 
-use crate::backend::station::{StationBackend, StationError};
+use crate::backend::station::StationBackend;
 use crate::experiment::remote::session::RemoteExperimentSession;
+
+#[derive(Debug, thiserror::Error)]
+enum StationError {
+    #[error("Failed to create experiment on Station: check your Station URL and connectivity")]
+    ExperimentCreation(#[from] ClientError),
+    #[error("Failed to establish WebSocket connection to Station")]
+    WebSocket(#[from] WebSocketError),
+}
 
 #[derive(Debug, Clone)]
 pub struct ExperimentPath {

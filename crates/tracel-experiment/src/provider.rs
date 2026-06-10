@@ -35,11 +35,10 @@ pub struct ExperimentClient {
 }
 
 impl ExperimentClient {
+    // On pourais rajouter des settings ici comme un builde d'experiment module
     pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
         Self { provider }
     }
-
-    // On pourais rajouter des settings ici comme un builde d'experiment module
 
     pub fn create_job<I, O>(
         &self,
@@ -81,6 +80,11 @@ impl<I, O> ExperimentJob<I, O> {
             key.into(),
             serde_json::to_value(value).expect("attribute value must be serializable"),
         );
+        self
+    }
+
+    pub fn attributes(mut self, attrs: HashMap<String, Value>) -> Self {
+        self.attributes.extend(attrs);
         self
     }
 

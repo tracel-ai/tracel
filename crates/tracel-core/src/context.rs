@@ -18,26 +18,26 @@ pub struct Context {
 }
 
 impl Context {
-    fn new(experiment_provider: impl ExperimentProvider) -> Self {
-        Self {
-            experiment_provider: Arc::new(experiment_provider),
-        }
-    }
-
     pub fn cloud() -> Result<Self, CloudError> {
         let backend = CloudBackend::create_context()?;
-        Ok(Context::new(backend))
+        Ok(Self {
+            experiment_provider: Arc::new(backend),
+        })
     }
 
     pub fn local(path: impl Into<PathBuf>) -> Self {
         let backend = LocalBackend::create_context(path);
-        Context::new(backend)
+        Self {
+            experiment_provider: Arc::new(backend),
+        }
     }
 
     #[cfg(feature = "station")]
     pub fn station(url: Url) -> Self {
         let backend = StationBackend::create_context(url);
-        Context::new(backend)
+        Self {
+            experiment_provider: Arc::new(backend),
+        }
     }
 
     pub fn experiment(&self) -> ExperimentClient {

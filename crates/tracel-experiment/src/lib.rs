@@ -32,18 +32,17 @@ pub mod session;
 pub mod error;
 pub mod integration;
 
+use crate::error::{ExperimentError, ExperimentErrorKind};
+use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
+use crate::progress::AtomicProgressIdAllocator;
+use crate::reader::ExperimentArtifactReader;
+use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
 pub use progress::{ProgressBuilder, ProgressGuard};
 pub use provider::{ExperimentClient, ExperimentFn, ExperimentJob, ExperimentProvider};
-
-use crate::error::{ExperimentError, ExperimentErrorKind};
-use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
-use crate::progress::AtomicProgressIdAllocator;
-use crate::reader::ExperimentArtifactReader;
-use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 
 /// Opaque identifier for an experiment run.
 ///

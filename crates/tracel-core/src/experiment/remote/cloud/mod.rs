@@ -218,7 +218,7 @@ pub enum ArtifactError {
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub enum ConsoleError {
+enum CloudError {
     Http(#[from] ClientError),
     WebSocket(#[from] WebSocketError),
 }
@@ -267,7 +267,7 @@ fn create_run(
     project_name: &str,
     digest: String,
     routine: String,
-) -> Result<ExperimentRun, ConsoleError> {
+) -> Result<ExperimentRun, CloudError> {
     let experiment = client.create_experiment(namespace, project_name, None, digest, routine)?;
 
     let experiment_num = experiment.experiment_num;
