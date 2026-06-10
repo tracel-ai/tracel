@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::experiment::ExperimentProvider;
+use tracel_experiment::ExperimentProvider;
 use tracel_experiment::ExperimentRun;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::reader::{

@@ -24,8 +24,9 @@ use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
 
+use tracel_experiment::ExperimentProvider;
+
 use crate::backend::station::{StationBackend, StationError};
-use crate::experiment::ExperimentProvider;
 use crate::experiment::remote::session::RemoteExperimentSession;
 
 #[derive(Debug, Clone)]

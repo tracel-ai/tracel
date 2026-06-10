@@ -10,6 +10,9 @@
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
+//!
+//! Backends are connected through the [`ExperimentProvider`] port. [`Experiment`] and
+//! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
 
 use std::fmt;
 use std::str::FromStr;
@@ -22,6 +25,7 @@ use serde::Serialize;
 mod cancellation;
 mod context;
 mod progress;
+mod provider;
 pub mod reader;
 pub mod session;
 
@@ -33,6 +37,7 @@ pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
 pub use progress::{ProgressBuilder, ProgressGuard};
+pub use provider::{ExperimentClient, ExperimentFn, ExperimentJob, ExperimentProvider};
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
