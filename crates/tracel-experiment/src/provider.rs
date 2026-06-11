@@ -75,12 +75,21 @@ impl<I, O> ExperimentJob<I, O> {
         })
     }
 
-    pub fn attribute(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
-        self.attributes.insert(
-            key.into(),
-            serde_json::to_value(value).expect("attribute value must be serializable"),
-        );
-        self
+    pub fn attribute(
+        mut self,
+        key: impl Into<String>,
+        value: impl Serialize,
+    ) -> Result<Self, ExperimentError> {
+        let value = serde_json::to_value(value).map_err(|e| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Internal,
+                "Failed to serialize experiment attribute",
+                e,
+            )
+        })?;
+
+        self.attributes.insert(key.into(), value);
+        Ok(self)
     }
 
     pub fn attributes(mut self, attrs: HashMap<String, Value>) -> Self {
