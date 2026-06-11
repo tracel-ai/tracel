@@ -44,7 +44,7 @@ impl ExperimentModule {
         &self,
         name: &str,
         f: impl ExperimentFn<I, O> + 'static,
-    ) -> Result<ExperimentJob<I, O>, ExperimentError> {
+    ) -> ExperimentJob<I, O> {
         ExperimentJob::new(self.provider.clone(), name.to_string(), f)
     }
 }
@@ -57,22 +57,16 @@ pub struct ExperimentJob<I, O> {
 }
 
 impl<I, O> ExperimentJob<I, O> {
-    fn new<F>(
-        provider: Arc<dyn ExperimentProvider>,
-        name: String,
-        f: F,
-    ) -> Result<Self, ExperimentError>
+    fn new<F>(provider: Arc<dyn ExperimentProvider>, name: String, f: F) -> Self
     where
         F: ExperimentFn<I, O> + 'static,
     {
-        validate_name(&name)?;
-
-        Ok(Self {
+        Self {
             provider,
             name,
             attributes: HashMap::new(),
             f: Box::new(f),
-        })
+        }
     }
 
     pub fn attribute(
@@ -118,29 +112,4 @@ impl<I, O> ExperimentJob<I, O> {
             }
         }
     }
-}
-
-fn validate_name(name: &str) -> Result<(), ExperimentError> {
-    if name.is_empty() {
-        return Err(ExperimentError::new(
-            ExperimentErrorKind::Internal,
-            "Experiment name must not be empty",
-        ));
-    }
-    if name.len() > 128 {
-        return Err(ExperimentError::new(
-            ExperimentErrorKind::Internal,
-            "Experiment name must not exceed 128 characters",
-        ));
-    }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(ExperimentError::new(
-            ExperimentErrorKind::Internal,
-            "Experiment name must contain only ASCII alphanumeric characters, hyphens, or underscores",
-        ));
-    }
-    Ok(())
 }
