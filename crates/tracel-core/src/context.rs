@@ -4,9 +4,8 @@ use crate::connexion::{Connexion, ContextError};
 use tracel_experiment::ExperimentModule;
 use tracel_experiment::ExperimentProvider;
 
-#[derive(Clone, Clone)]
+#[derive(Clone)]
 pub struct Context {
-    experiment_provider: Arc<dyn ExperimentProvider>,
     experiment_provider: Arc<dyn ExperimentProvider>,
 }
 
