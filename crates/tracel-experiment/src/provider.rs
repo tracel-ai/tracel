@@ -18,29 +18,29 @@ pub trait ExperimentProvider: Send + Sync + 'static {
 }
 
 pub trait ExperimentFn<I, O>: Send + Sync {
-    fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error>>;
+    fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error + Send + Sync>>;
 }
 
 impl<I, O, F> ExperimentFn<I, O> for F
 where
-    F: Fn(&ExperimentRun, I) -> Result<O, Box<dyn Error>> + Send + Sync,
+    F: Fn(&ExperimentRun, I) -> Result<O, Box<dyn Error + Send + Sync>> + Send + Sync,
 {
-    fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error>> {
+    fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error + Send + Sync>> {
         (self)(run, input)
     }
 }
 
-pub struct ExperimentClient {
+pub struct ExperimentModule {
     provider: Arc<dyn ExperimentProvider>,
 }
 
-impl ExperimentClient {
+impl ExperimentModule {
     // On pourais rajouter des settings ici comme un builde d'experiment module
     pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
         Self { provider }
     }
 
-    pub fn create_job<I, O>(
+    pub fn create<I, O>(
         &self,
         name: &str,
         f: impl ExperimentFn<I, O> + 'static,
@@ -88,7 +88,7 @@ impl<I, O> ExperimentJob<I, O> {
         self
     }
 
-    pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error>> {
+    pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
         let _ = try_init_tracing_subscriber();
 
         let experiment = self

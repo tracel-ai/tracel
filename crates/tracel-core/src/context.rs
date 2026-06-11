@@ -9,7 +9,7 @@ use crate::backend::cloud::CloudError;
 use crate::backend::local::LocalBackend;
 #[cfg(feature = "station")]
 use crate::backend::station::StationBackend;
-use tracel_experiment::ExperimentClient;
+use tracel_experiment::ExperimentModule;
 use tracel_experiment::ExperimentProvider;
 
 #[derive(Clone)]
@@ -40,7 +40,7 @@ impl Context {
         }
     }
 
-    pub fn experiment(&self) -> ExperimentClient {
-        ExperimentClient::new(self.experiment_provider.clone())
+    pub fn experiment(&self) -> ExperimentModule {
+        ExperimentModule::new(self.experiment_provider.clone())
     }
 }

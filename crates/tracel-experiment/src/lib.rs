@@ -42,7 +42,7 @@ pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
 pub use progress::{ProgressBuilder, ProgressGuard};
-pub use provider::{ExperimentClient, ExperimentFn, ExperimentJob, ExperimentProvider};
+pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 
 /// Opaque identifier for an experiment run.
 ///
