@@ -11,7 +11,7 @@
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
-//! Backends are connected through the [`ExperimentProvider`] port. [`Experiment`] and
+//! Backends are connected through the [`ExperimentProvider`] port. [`ExperimentModule`] and
 //! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
 
 use std::fmt;
