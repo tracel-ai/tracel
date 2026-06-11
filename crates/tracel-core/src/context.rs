@@ -1,14 +1,6 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-#[cfg(feature = "station")]
-use url::Url;
-
-use crate::backend::cloud::CloudBackend;
-use crate::backend::cloud::CloudError;
-use crate::backend::local::LocalBackend;
-#[cfg(feature = "station")]
-use crate::backend::station::StationBackend;
+use crate::connexion::{Connexion, ContextError};
 use tracel_experiment::ExperimentModule;
 use tracel_experiment::ExperimentProvider;
 
@@ -18,26 +10,10 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn cloud() -> Result<Self, CloudError> {
-        let backend = CloudBackend::create_context()?;
+    pub fn new(connexion: Connexion) -> Result<Self, ContextError> {
         Ok(Self {
-            experiment_provider: Arc::new(backend),
+            experiment_provider: connexion.into_provider()?,
         })
-    }
-
-    pub fn local(path: impl Into<PathBuf>) -> Self {
-        let backend = LocalBackend::create_context(path);
-        Self {
-            experiment_provider: Arc::new(backend),
-        }
-    }
-
-    #[cfg(feature = "station")]
-    pub fn station(url: Url) -> Self {
-        let backend = StationBackend::create_context(url);
-        Self {
-            experiment_provider: Arc::new(backend),
-        }
     }
 
     pub fn experiment(&self) -> ExperimentModule {

@@ -178,14 +178,6 @@ No existing call sites of `Context::cloud()` / `Context::local()` /
 `Context::station()` were found in the repo. No migration of downstream code
 is needed.
 
-## Testing
-
-- Unit tests for `Connexion::into_provider()` covering all three variants
-  (`Cloud`, `None`, and `Station` under the `station` feature), mirroring any
-  existing coverage of `Context::cloud()` / `local()` / `station()`.
-- Verify `#[cfg(feature = "station")]` gating compiles correctly both with and
-  without the `station` feature enabled.
-
 ## Open follow-ups (out of scope for this change)
 
 - If a future module beyond `.experiment()` only applies to some `Connexion`
