@@ -103,7 +103,6 @@ impl<I, O> ExperimentJob<I, O> {
         let experiment = self
             .provider
             .create_experiment(self.name.clone(), self.attributes.clone())?;
-        experiment.cancel_token().cancel_on_ctrlc();
         let handle = experiment.handle();
         let result = handle.in_scope(|| self.f.call(&experiment, input));
 

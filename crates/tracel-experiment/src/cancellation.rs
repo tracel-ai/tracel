@@ -114,18 +114,6 @@ impl CancelToken {
         self.link(child.clone());
         child
     }
-
-    /// Cancel this token when the process receives Ctrl-C.
-    ///
-    /// `ctrlc::set_handler` can only succeed once per process, so any error
-    /// from a prior or concurrent registration is ignored.
-    pub fn cancel_on_ctrlc(&self) {
-        let token = self.clone();
-        let _ = ctrlc::set_handler(move || {
-            token.cancel();
-            println!("Received Ctrl-C, sending cancellation request...");
-        });
-    }
 }
 
 impl Cancellable for CancelToken {
