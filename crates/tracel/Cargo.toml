@@ -1,5 +1,5 @@
 [package]
-name = "burn-central"
+name = "tracel"
 authors.workspace = true
 categories.workspace = true
 description = "High-level Tracel SDK"

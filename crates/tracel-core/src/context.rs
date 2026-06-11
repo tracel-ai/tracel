@@ -9,54 +9,38 @@ use crate::backend::cloud::CloudError;
 use crate::backend::local::LocalBackend;
 #[cfg(feature = "station")]
 use crate::backend::station::StationBackend;
-use crate::experiment::Experiment;
-use crate::experiment::ExperimentProvider;
-use tracel_experiment::ExperimentRun;
-use tracel_experiment::error::ExperimentError;
+use tracel_experiment::ExperimentModule;
+use tracel_experiment::ExperimentProvider;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Context {
-    pub backend: Backend,
-}
-
-#[derive(Debug, Clone)]
-pub enum Backend {
-    Cloud(CloudBackend),
-    Local(LocalBackend),
-    #[cfg(feature = "station")]
-    Station(StationBackend),
+    experiment_provider: Arc<dyn ExperimentProvider>,
 }
 
 impl Context {
-    pub(crate) fn new(backend: Backend) -> Self {
-        Self { backend }
-    }
-
     pub fn cloud() -> Result<Self, CloudError> {
-        CloudBackend::create_context()
+        let backend = CloudBackend::create_context()?;
+        Ok(Self {
+            experiment_provider: Arc::new(backend),
+        })
     }
 
     pub fn local(path: impl Into<PathBuf>) -> Self {
-        LocalBackend::create_context(path)
+        let backend = LocalBackend::create_context(path);
+        Self {
+            experiment_provider: Arc::new(backend),
+        }
     }
 
     #[cfg(feature = "station")]
     pub fn station(url: Url) -> Self {
-        StationBackend::create_context(url)
-    }
-
-    pub fn experiment(&self) -> Experiment {
-        Experiment::new(Arc::new(self.clone()))
-    }
-}
-
-impl ExperimentProvider for Context {
-    fn create_experiment(&self, routine: String) -> Result<ExperimentRun, ExperimentError> {
-        match &self.backend {
-            Backend::Cloud(backend) => backend.create_experiment(routine),
-            Backend::Local(backend) => backend.create_experiment(routine),
-            #[cfg(feature = "station")]
-            Backend::Station(backend) => backend.create_experiment(routine),
+        let backend = StationBackend::create_context(url);
+        Self {
+            experiment_provider: Arc::new(backend),
         }
+    }
+
+    pub fn experiment(&self) -> ExperimentModule {
+        ExperimentModule::new(self.experiment_provider.clone())
     }
 }

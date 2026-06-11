@@ -7,7 +7,11 @@ use std::thread::{self, JoinHandle};
 use crossbeam::channel::{Sender, unbounded};
 use tracel_artifact::bundle::FsBundle;
 
-use crate::experiment::ExperimentProvider;
+use std::collections::HashMap;
+
+use serde_json::Value;
+
+use tracel_experiment::ExperimentProvider;
 use tracel_experiment::ExperimentRun;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::reader::{
@@ -19,7 +23,11 @@ use tracel_experiment::{ArtifactKind, ExperimentId};
 use crate::backend::local::LocalBackend;
 
 impl ExperimentProvider for LocalBackend {
-    fn create_experiment(&self, name: String) -> Result<ExperimentRun, ExperimentError> {
+    fn create_experiment(
+        &self,
+        name: String,
+        _attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError> {
         create_experiment_run(self.path.join(name))
     }
 }
