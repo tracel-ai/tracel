@@ -12,13 +12,8 @@ const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 pub enum CloudError {
     #[error("No API key found: set {TRACEL_API_KEY} or run `burn login`")]
     NoCredentials,
-    #[error(
-        "API key is invalid or has expired for the {env} environment: run `{login_hint}` to log in again"
-    )]
-    InvalidCredentials {
-        env: &'static str,
-        login_hint: String,
-    },
+    #[error("API key is invalid or has expired: run `burn login` to log in again")]
+    InvalidCredentials,
     #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
     #[error("No project found: set {TRACEL_PROJECT} or add project to tracel.toml")]
@@ -63,35 +58,14 @@ impl CloudBackend {
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
 
-        let env_label = env_label(&env);
-        let login_hint = login_hint(&env);
         let client = Client::new(env, &credentials).map_err(|err| {
             if err.is_login_error() {
-                CloudError::InvalidCredentials {
-                    env: env_label,
-                    login_hint,
-                }
+                CloudError::InvalidCredentials
             } else {
                 CloudError::Client(err)
             }
         })?;
         Ok(CloudBackend::new(client, namespace, project))
-    }
-}
-
-fn env_label(env: &Env) -> &'static str {
-    match env {
-        Env::Production => "production",
-        Env::Staging(_) => "staging",
-        Env::Development => "development",
-    }
-}
-
-fn login_hint(env: &Env) -> String {
-    match env {
-        Env::Production => "burn login".to_string(),
-        Env::Staging(version) => format!("burn login --staging {version}"),
-        Env::Development => "burn login --dev".to_string(),
     }
 }
 

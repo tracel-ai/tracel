@@ -53,7 +53,6 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "unwrap",
 ] }
 chrono = "0.4.43"
-ctrlc = "3.5"
 tracing = "0.1.44"
 tracing-core = "0.1.36"
 tracing-subscriber = "0.3.22"
