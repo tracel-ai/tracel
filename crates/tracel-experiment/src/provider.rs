@@ -35,7 +35,7 @@ pub struct ExperimentModule {
 }
 
 impl ExperimentModule {
-    // On pourais rajouter des settings ici comme un builde d'experiment module
+    // TODO: Add settings here (e.g., an ExperimentModule builder).
     pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
         Self { provider }
     }
