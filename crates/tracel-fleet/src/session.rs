@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use burn_central_client::{Env, FleetClient};
+use tracel_client::{Env, FleetClient};
 use directories::{BaseDirs, ProjectDirs};
 
 use crate::{

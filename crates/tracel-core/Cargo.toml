@@ -12,10 +12,10 @@ categories.workspace = true
 
 [features]
 default = []
-station = ["burn-central-client/station"]
+station = ["tracel-client/station"]
 
 [dependencies]
-burn-central-client.workspace = true
+tracel-client.workspace = true
 tracel-experiment.workspace = true
 url.workspace = true
 thiserror.workspace = true
