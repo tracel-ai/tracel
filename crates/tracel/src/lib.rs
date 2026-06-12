@@ -37,8 +37,8 @@
 //!
 //! The `name` attribute is optional. If omitted, the function name is used.
 
-pub use tracel_client::TracelCredentials;
 pub use tracel_client::Env;
+pub use tracel_client::TracelCredentials;
 
 /// Experiment tracking and management.
 pub mod experiment {
