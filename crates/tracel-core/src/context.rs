@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::connexion::{Connexion, ContextError};
+use crate::connection::{Connection, ContextError};
 use tracel_experiment::ExperimentModule;
 use tracel_experiment::ExperimentProvider;
 
@@ -10,9 +10,10 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(connexion: Connexion) -> Result<Self, ContextError> {
+    pub fn new(connexion: Connection) -> Result<Self, ContextError> {
+        let providers = connexion.into_providers()?;
         Ok(Self {
-            experiment_provider: connexion.into_provider()?,
+            experiment_provider: providers.experiment,
         })
     }
 

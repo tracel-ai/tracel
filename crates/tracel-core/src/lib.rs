@@ -1,8 +1,8 @@
 mod backend;
-mod connexion;
+mod connection;
 mod context;
 
 pub mod experiment;
 
-pub use connexion::{Connexion, ContextError};
+pub use connection::{Connection, ContextError};
 pub use context::Context;
