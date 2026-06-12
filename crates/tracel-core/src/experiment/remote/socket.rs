@@ -1,9 +1,9 @@
-use burn_central_client::{
+use crossbeam::channel::{Receiver, RecvTimeoutError};
+use std::{thread::JoinHandle, time::Duration};
+use tracel_client::{
     WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
-use crossbeam::channel::{Receiver, RecvTimeoutError};
-use std::{thread::JoinHandle, time::Duration};
 
 use tracel_experiment::CancelToken;
 
@@ -109,6 +109,7 @@ impl ExperimentThread {
                     tracing::info!("Received server cancel request, triggering cancellation token");
                     self.cancel_token.cancel();
                 }
+                Ok(Some(ServerMessage::ActivityCancelRequested { .. })) => {}
                 Ok(None) => {}
                 Err(e) => tracing::error!(error = ?e, "WebSocket receive error"),
             }

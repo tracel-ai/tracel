@@ -4,12 +4,12 @@ use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
 
-use burn_central_client::WebSocketClient;
-use burn_central_client::websocket::{
-    ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
-};
 use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
+use tracel_client::WebSocketClient;
+use tracel_client::websocket::{
+    ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
+};
 
 use super::log_store::LogUploader;
 use super::log_store::TempLogStore;
