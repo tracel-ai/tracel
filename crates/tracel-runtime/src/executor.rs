@@ -239,7 +239,7 @@ impl Executor {
                 &ctx.namespace,
                 &ctx.project,
                 code_version,
-                HashMap::new(), // No additional metadata for now, but this can be extended to include more info about the run
+                HashMap::new(),
             )
             .map_err(|e| {
                 tracel_experiment::error::ExperimentError::with_source(
