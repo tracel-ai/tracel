@@ -1,15 +1,15 @@
-use burn_central_client::station::experiment::{
-    ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
-    ListArtifactsQuery,
-};
-use burn_central_client::websocket::WebSocketError;
-use burn_central_client::{ClientError, StationClient};
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
 use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
 };
+use tracel_client::station::experiment::{
+    ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
+    ListArtifactsQuery,
+};
+use tracel_client::websocket::WebSocketError;
+use tracel_client::{ClientError, StationClient};
 
 mod artifacts;
 mod logs;
@@ -19,8 +19,8 @@ use logs::StationLogUploader;
 
 use std::collections::HashMap;
 
-use burn_central_client::station::experiment::CreateExperimentRequest;
 use serde_json::Value;
+use tracel_client::station::experiment::CreateExperimentRequest;
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
@@ -211,9 +211,9 @@ impl ExperimentProvider for StationBackend {
     fn create_experiment(
         &self,
         name: String,
-        _attributes: HashMap<String, Value>,
+        attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        create_run(self.client.clone(), name).map_err(|e| ExperimentError {
+        create_run(self.client.clone(), name, attributes).map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
             source: Some(Box::new(e)),
@@ -221,11 +221,16 @@ impl ExperimentProvider for StationBackend {
     }
 }
 
-fn create_run(client: StationClient, routine: String) -> Result<ExperimentRun, StationError> {
+fn create_run(
+    client: StationClient,
+    name: String,
+    attributes: HashMap<String, Value>,
+) -> Result<ExperimentRun, StationError> {
     let experiments_client = client.experiments();
     let experiment = experiments_client.create(CreateExperimentRequest {
+        name: Some(name),
         description: None,
-        routine_run: routine,
+        attributes,
     })?;
 
     let experiment_num = experiment.experiment_num;
