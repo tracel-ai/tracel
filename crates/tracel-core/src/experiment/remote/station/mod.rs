@@ -211,9 +211,9 @@ impl ExperimentProvider for StationBackend {
     fn create_experiment(
         &self,
         name: String,
-        _attributes: HashMap<String, Value>,
+        attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        create_run(self.client.clone(), name).map_err(|e| ExperimentError {
+        create_run(self.client.clone(), name, attributes).map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
             source: Some(Box::new(e)),
@@ -221,11 +221,16 @@ impl ExperimentProvider for StationBackend {
     }
 }
 
-fn create_run(client: StationClient, routine: String) -> Result<ExperimentRun, StationError> {
+fn create_run(
+    client: StationClient,
+    name: String,
+    attributes: HashMap<String, Value>,
+) -> Result<ExperimentRun, StationError> {
     let experiments_client = client.experiments();
     let experiment = experiments_client.create(CreateExperimentRequest {
+        name: Some(name),
         description: None,
-        routine_run: routine,
+        attributes,
     })?;
 
     let experiment_num = experiment.experiment_num;
