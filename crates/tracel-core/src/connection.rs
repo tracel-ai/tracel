@@ -17,7 +17,7 @@ pub struct Providers {
 #[derive(Debug, Clone)]
 pub enum Connection {
     Cloud,
-    None(PathBuf),
+    Offline(PathBuf),
     #[cfg(feature = "station")]
     Station(Url),
 }
@@ -31,7 +31,7 @@ impl Connection {
                     experiment: backend,
                 })
             }
-            Connection::None(path) => {
+            Connection::Offline(path) => {
                 let backend = Arc::new(LocalBackend::create_context(path));
                 Ok(Providers {
                     experiment: backend,
