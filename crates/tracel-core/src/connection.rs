@@ -12,9 +12,6 @@ use tracel_experiment::ExperimentProvider;
 
 pub struct Providers {
     pub experiment: Arc<dyn ExperimentProvider>,
-    // we can add here more providers in the future:
-    // metrics: Option<Arc<dyn MetricsProvider>>>
-    // Option is for the modules that are not implemented in every backend
 }
 
 #[derive(Debug, Clone)]
@@ -32,14 +29,12 @@ impl Connection {
                 let backend = Arc::new(CloudBackend::create_context()?);
                 Ok(Providers {
                     experiment: backend,
-                    // metrics = backend.clone(),
                 })
             }
             Connection::None(path) => {
                 let backend = Arc::new(LocalBackend::create_context(path));
                 Ok(Providers {
                     experiment: backend,
-                    // metrics =
                 })
             }
             #[cfg(feature = "station")]

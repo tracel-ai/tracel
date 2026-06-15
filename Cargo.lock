@@ -5751,7 +5751,6 @@ name = "tracel-experiment"
 version = "0.6.0"
 dependencies = [
  "burn",
- "ctrlc",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
