@@ -8,7 +8,7 @@ use tracel_client::{
 
 use crate::{
     CancelToken,
-    activity::{ActivityCancellationRegistry, ActivityId},
+    activity::{ActivityCancellationRegistry, ActivityId, ExperimentRunControl},
     remote::logs::LogStoreError,
 };
 
@@ -33,8 +33,7 @@ struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<ExperimentMessage>,
     log_store: TempLogStore,
-    cancel_token: CancelToken,
-    activity_cancellations: std::sync::Arc<ActivityCancellationRegistry>,
+    control: ExperimentRunControl,
 }
 
 impl ExperimentThread {
@@ -42,15 +41,13 @@ impl ExperimentThread {
         ws_client: WebSocketClient,
         message_receiver: Receiver<ExperimentMessage>,
         log_store: TempLogStore,
-        cancel_token: CancelToken,
-        activity_cancellations: std::sync::Arc<ActivityCancellationRegistry>,
+        control: ExperimentRunControl,
     ) -> Self {
         Self {
             ws_client,
             message_receiver,
             log_store,
-            cancel_token,
-            activity_cancellations,
+            control,
         }
     }
 
@@ -115,7 +112,7 @@ impl ExperimentThread {
             match self.ws_client.receive::<ServerMessage>() {
                 Ok(Some(ServerMessage::CancelRequested)) => {
                     tracing::info!("Received server cancel request, triggering cancellation token");
-                    self.cancel_token.cancel();
+                    self.control.cancel_run();
                 }
                 Ok(Some(ServerMessage::ActivityCancelRequested { id })) => {
                     let Some(id) = NonZeroU64::new(id).map(ActivityId::new) else {
@@ -123,7 +120,7 @@ impl ExperimentThread {
                         continue;
                     };
 
-                    if self.activity_cancellations.cancel(id) {
+                    if self.control.cancel_activity(id) {
                         tracing::info!(
                             activity_id = id.as_u64(),
                             "Received activity cancel request"
@@ -159,16 +156,9 @@ impl ExperimentSocket {
         ws_client: WebSocketClient,
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
-        cancel_token: CancelToken,
-        activity_cancellations: std::sync::Arc<ActivityCancellationRegistry>,
+        control: ExperimentRunControl,
     ) -> Self {
-        let thread = ExperimentThread::new(
-            ws_client,
-            message_receiver,
-            log_store,
-            cancel_token,
-            activity_cancellations,
-        );
+        let thread = ExperimentThread::new(ws_client, message_receiver, log_store, control);
         let handle = std::thread::spawn(move || thread.run());
         Self { handle }
     }
