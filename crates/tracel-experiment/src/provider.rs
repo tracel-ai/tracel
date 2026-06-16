@@ -69,6 +69,11 @@ impl<I, O> ExperimentJob<I, O> {
         }
     }
 
+    #[doc(hidden)]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn attribute(
         mut self,
         key: impl Into<String>,
