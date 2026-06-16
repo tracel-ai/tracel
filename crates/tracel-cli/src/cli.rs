@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::{collections::HashMap, error::Error};
 use tracel_experiment::ExperimentJob;
 
@@ -9,28 +9,44 @@ type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>>>
 #[derive(Parser)]
 #[command(about = "Run a registered job")]
 struct Args {
-    /// Job type: "experiment" or "inference"
-    job_type: Option<String>,
-    /// Job name to run (uses default if omitted)
-    job: Option<String>,
-    /// Config string passed to the job's mapper
-    config: Option<String>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run an experiment job
+    Experiment {
+        /// Job name to run (uses default if omitted)
+        job: Option<String>,
+        /// Config string passed to the job's mapper
+        config: Option<String>,
+    },
+    /// Run an inference job
+    Inference {
+        /// Job name to run (uses default if omitted)
+        job: Option<String>,
+        /// Config string passed to the job's mapper
+        config: Option<String>,
+    },
 }
 
 pub struct Cli {
-    jobs: HashMap<String, JobFunction>,
+    experiment_jobs: HashMap<String, JobFunction>,
+    inference_jobs: HashMap<String, JobFunction>,
     default: Option<String>,
 }
 
 impl Cli {
     pub fn new() -> Self {
         Self {
-            jobs: HashMap::new(),
+            experiment_jobs: HashMap::new(),
+            inference_jobs: HashMap::new(),
             default: None,
         }
     }
 
-    fn register<J, I, O, F>(mut self, name: &str, job: J, mapper: F) -> Self
+    fn insert_job<J, I, O, F>(jobs: &mut HashMap<String, JobFunction>, name: &str, job: J, mapper: F)
     where
         J: CliJob<I, O> + 'static,
         F: Fn(&str) -> Result<I, Box<dyn Error + Send + Sync>> + 'static,
@@ -41,19 +57,18 @@ impl Cli {
             let input = mapper(config_str)?;
             job.execute(input).map(|_| ())
         });
-        self.jobs.insert(name.to_string(), erased);
-        self
+        jobs.insert(name.to_string(), erased);
     }
 
-    /// Convenience wrapper for ExperimentJob. Calls register() internally.
-    pub fn register_exp<I, O, F>(self, job: ExperimentJob<I, O>, mapper: F) -> Self
+    pub fn register_exp<I, O, F>(mut self, job: ExperimentJob<I, O>, mapper: F) -> Self
     where
         F: Fn(&str) -> Result<I, Box<dyn Error + Send + Sync>> + 'static,
         I: 'static,
         O: 'static,
     {
         let name = job.name().to_string();
-        self.register(&name, job, mapper)
+        Self::insert_job(&mut self.experiment_jobs, &name, job, mapper);
+        self
     }
 
     /// Set the job that runs when no job name is given on the CLI.
@@ -65,26 +80,30 @@ impl Cli {
     /// Parse CLI args and dispatch to the matching job.
     pub fn run(self) -> Result<(), CliError> {
         let args = Args::parse();
-        self.dispatch(args.job.as_deref(), args.config.as_deref())
+        self.dispatch(args.command)
     }
 
-    fn dispatch(self, job: Option<&str>, config: Option<&str>) -> Result<(), CliError> {
+    fn dispatch(self, command: Command) -> Result<(), CliError> {
+        let (jobs, job, config) = match command {
+            Command::Experiment { job, config } => (&self.experiment_jobs, job, config),
+            Command::Inference { job, config } => (&self.inference_jobs, job, config),
+        };
+
         let job_name = match job {
-            Some(j) => j.to_string(),
+            Some(j) => j,
             None => self
                 .default
                 .as_deref()
                 .ok_or(CliError::MissingDefault)?
                 .to_string(),
         };
-        let config_str = config.unwrap_or("");
+        let config_str = config.as_deref().unwrap_or("");
 
-        let runner = self
-            .jobs
+        let runner = jobs
             .get(&job_name)
             .ok_or_else(|| CliError::UnknownJob {
                 name: job_name.clone(),
-                available: self.jobs.keys().cloned().collect(),
+                available: jobs.keys().cloned().collect(),
             })?;
 
         runner(config_str).map_err(CliError::JobError)
