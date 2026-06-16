@@ -7,8 +7,10 @@ use crate::{error::CliError, job::CliJob};
 type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>>>;
 
 #[derive(Parser)]
-#[command(about = "Run a registered experiment job")]
+#[command(about = "Run a registered job")]
 struct Args {
+    /// Job type: "experiment" or "inference"
+    job_type: Option<String>,
     /// Job name to run (uses default if omitted)
     job: Option<String>,
     /// Config string passed to the job's mapper
@@ -44,13 +46,14 @@ impl Cli {
     }
 
     /// Convenience wrapper for ExperimentJob. Calls register() internally.
-    pub fn register_exp<I, O, F>(self, name: &str, job: ExperimentJob<I, O>, mapper: F) -> Self
+    pub fn register_exp<I, O, F>(self, job: ExperimentJob<I, O>, mapper: F) -> Self
     where
         F: Fn(&str) -> Result<I, Box<dyn Error + Send + Sync>> + 'static,
         I: 'static,
         O: 'static,
     {
-        self.register(name, job, mapper)
+        let name = job.name().to_string();
+        self.register(&name, job, mapper)
     }
 
     /// Set the job that runs when no job name is given on the CLI.
@@ -68,7 +71,11 @@ impl Cli {
     fn dispatch(self, job: Option<&str>, config: Option<&str>) -> Result<(), CliError> {
         let job_name = match job {
             Some(j) => j.to_string(),
-            None => self.default.as_deref().ok_or(CliError::MissingDefault)?.to_string(),
+            None => self
+                .default
+                .as_deref()
+                .ok_or(CliError::MissingDefault)?
+                .to_string(),
         };
         let config_str = config.unwrap_or("");
 
