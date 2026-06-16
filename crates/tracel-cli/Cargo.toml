@@ -11,3 +11,5 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+clap.workspace = true
+tracel-experiment.workspace = true
