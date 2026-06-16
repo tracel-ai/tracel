@@ -24,3 +24,4 @@ tracel-inference.workspace = true
 tracel-fleet.workspace = true
 tracel-artifact.workspace = true
 tracel-client.workspace = true
+tracel-cli.workspace = true
