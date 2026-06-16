@@ -5691,6 +5691,7 @@ name = "tracel"
 version = "0.6.0"
 dependencies = [
  "tracel-artifact",
+ "tracel-cli",
  "tracel-client",
  "tracel-core",
  "tracel-experiment",
