@@ -27,7 +27,7 @@ impl Error for CliError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             CliError::ConfigError(e) | CliError::JobError(e) => Some(e.as_ref()),
-            _ => None,
+            CliError::UnknownJob { .. } | CliError::MissingDefault => None,
         }
     }
 }
