@@ -72,7 +72,7 @@ tracel-fleet = { path = "crates/tracel-fleet", version = "0.6.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.6.0" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.6.0" }
 tracel-core = { path = "crates/tracel-core", version = "0.6.0" }
-tracel-cli = { path = "crates/your-crate-name", version = "0.6.0" }
+tracel-cli = { path = "crates/tracel-cli", version = "0.6.0" }
 
 
 ### For xtask crate ###
