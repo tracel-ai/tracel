@@ -49,11 +49,12 @@ impl ExperimentModule {
     }
 }
 
+#[derive(Clone)]
 pub struct ExperimentJob<I, O> {
     provider: Arc<dyn ExperimentProvider>,
     name: String,
     attributes: HashMap<String, Value>,
-    f: Box<dyn ExperimentFn<I, O>>,
+    f: Arc<dyn ExperimentFn<I, O>>,
 }
 
 impl<I, O> ExperimentJob<I, O> {
@@ -65,7 +66,7 @@ impl<I, O> ExperimentJob<I, O> {
             provider,
             name,
             attributes: HashMap::new(),
-            f: Box::new(f),
+            f: Arc::new(f),
         }
     }
 
