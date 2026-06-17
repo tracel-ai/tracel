@@ -13,3 +13,5 @@ categories.workspace = true
 [dependencies]
 clap.workspace = true
 tracel-experiment.workspace = true
+serde.workspace = true
+serde_json.workspace = true
