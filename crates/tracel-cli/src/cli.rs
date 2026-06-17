@@ -6,6 +6,11 @@ use crate::{error::CliError, job::CliJob};
 
 type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>>>;
 
+struct DefaultJob {
+    name: String,
+    config: String,
+}
+
 #[derive(Parser)]
 #[command(about = "Run a registered job")]
 struct Args {
@@ -34,7 +39,8 @@ enum Command {
 pub struct Cli {
     experiment_jobs: HashMap<String, JobFunction>,
     inference_jobs: HashMap<String, JobFunction>,
-    default: Option<String>,
+    experiment_default: Option<DefaultJob>,
+    inference_default: Option<DefaultJob>,
 }
 
 impl Cli {
@@ -42,12 +48,17 @@ impl Cli {
         Self {
             experiment_jobs: HashMap::new(),
             inference_jobs: HashMap::new(),
-            default: None,
+            experiment_default: None,
+            inference_default: None,
         }
     }
 
-    fn insert_job<J, I, O, F>(jobs: &mut HashMap<String, JobFunction>, name: &str, job: J, mapper: F)
-    where
+    fn insert_job<J, I, O, F>(
+        jobs: &mut HashMap<String, JobFunction>,
+        name: &str,
+        job: J,
+        mapper: F,
+    ) where
         J: CliJob<I, O> + 'static,
         F: Fn(&str) -> Result<I, Box<dyn Error + Send + Sync>> + 'static,
         I: 'static,
@@ -71,9 +82,21 @@ impl Cli {
         self
     }
 
-    /// Set the job that runs when no job name is given on the CLI.
-    pub fn default(mut self, name: &str) -> Self {
-        self.default = Some(name.to_string());
+    /// Set the default experiment job and config to run when no arguments are given.
+    pub fn default_exp(mut self, name: &str, config: &str) -> Self {
+        self.experiment_default = Some(DefaultJob {
+            name: name.to_string(),
+            config: config.to_string(),
+        });
+        self
+    }
+
+    /// Set the default inference job and config to run when no arguments are given.
+    pub fn default_inf(mut self, name: &str, config: &str) -> Self {
+        self.inference_default = Some(DefaultJob {
+            name: name.to_string(),
+            config: config.to_string(),
+        });
         self
     }
 
@@ -84,28 +107,34 @@ impl Cli {
     }
 
     fn dispatch(self, command: Command) -> Result<(), CliError> {
-        let (jobs, job, config) = match command {
-            Command::Experiment { job, config } => (&self.experiment_jobs, job, config),
-            Command::Inference { job, config } => (&self.inference_jobs, job, config),
+        let (jobs, job, config, default) = match command {
+            Command::Experiment { job, config } => (
+                &self.experiment_jobs,
+                job,
+                config,
+                self.experiment_default.as_ref(),
+            ),
+            Command::Inference { job, config } => (
+                &self.inference_jobs,
+                job,
+                config,
+                self.inference_default.as_ref(),
+            ),
         };
 
-        let job_name = match job {
-            Some(j) => j,
-            None => self
-                .default
-                .as_deref()
-                .ok_or(CliError::MissingDefault)?
-                .to_string(),
+        let (job_name, config_str) = match job {
+            Some(j) => (j, config.as_deref().unwrap_or("").to_string()),
+            None => {
+                let d = default.ok_or(CliError::MissingDefault)?;
+                (d.name.clone(), d.config.clone())
+            }
         };
-        let config_str = config.as_deref().unwrap_or("");
 
-        let runner = jobs
-            .get(&job_name)
-            .ok_or_else(|| CliError::UnknownJob {
-                name: job_name.clone(),
-                available: jobs.keys().cloned().collect(),
-            })?;
+        let runner = jobs.get(&job_name).ok_or_else(|| CliError::UnknownJob {
+            name: job_name.clone(),
+            available: jobs.keys().cloned().collect(),
+        })?;
 
-        runner(config_str).map_err(CliError::JobError)
+        runner(&config_str).map_err(CliError::JobError)
     }
 }
