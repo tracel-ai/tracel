@@ -9,7 +9,7 @@ pub struct ClapMapper<I> {
 }
 
 impl<I> ClapMapper<I> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             _marker: PhantomData,
         }

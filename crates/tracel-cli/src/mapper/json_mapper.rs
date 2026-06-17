@@ -5,7 +5,6 @@ use serde_json::Value;
 
 use crate::mapper::Mapper;
 
-
 pub struct JsonMapper<I> {
     default: Option<Value>,
     _marker: std::marker::PhantomData<I>,
@@ -24,7 +23,9 @@ impl<I> JsonMapper<I> {
         I: Serialize,
     {
         Self {
-            default: Some(serde_json::to_value(default).expect("default config must be serializable")),
+            default: Some(
+                serde_json::to_value(default).expect("default config must be serializable"),
+            ),
             _marker: std::marker::PhantomData,
         }
     }

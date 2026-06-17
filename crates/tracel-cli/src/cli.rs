@@ -1,40 +1,20 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::collections::HashMap;
-use tracel_experiment::ExperimentJob;
-
 use crate::{
     Mapper,
     error::CliError,
-    job::{CliJob, DefaultJob, JobFunction, RegisteredJob},
+    job::{CliJob, DefaultJob, JobFunction},
 };
 
 #[derive(Parser)]
 #[command(about = "Run a registered job")]
 struct Args {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// Run an experiment job
-    Experiment {
-        /// Job name to run (uses default if omitted)
-        job: Option<String>,
-        /// Config string passed to the job's mapper
-        config: Option<String>,
-    },
-    /// Run an inference job
-    Inference {
-        /// Job name to run (uses default if omitted)
-        job: Option<String>,
-        /// Config string passed to the job's mapper
-        config: Option<String>,
-    },
+    job: Option<String>,
+    config: Option<String>,
 }
 
 pub struct Cli {
-    jobs: HashMap<String, RegisteredJob>,
+    jobs: HashMap<String, JobFunction>,
     default: Option<DefaultJob>,
 }
 
@@ -59,15 +39,16 @@ impl Cli {
         })
     }
 
-    pub fn register_exp<I, O, F>(mut self, job: ExperimentJob<I, O>, mapper: F) -> Self
+    pub fn register<J, I, O, F>(mut self, job: J, mapper: F) -> Self
     where
+        J: CliJob<I, O> + 'static,
         F: Mapper<I> + 'static,
         I: 'static,
         O: 'static,
     {
         let name = job.name().to_string();
         let erased = Self::erase_job(job, mapper);
-        self.jobs.insert(name, RegisteredJob::Experiment(erased));
+        self.jobs.insert(name, erased);
         self
     }
 
@@ -85,21 +66,13 @@ impl Cli {
 
     pub fn run(self) -> Result<(), CliError> {
         let args = Args::parse();
-        self.dispatch(args.command)
+        self.dispatch(args.job, args.config)
     }
 
-    fn dispatch(self, command: Option<Command>) -> Result<(), CliError> {
-        match command {
-            Some(cmd) => {
-                let (job_name, config_str) = match &cmd {
-                    Command::Experiment { job, config }
-                    | Command::Inference { job, config } => (
-                        job.clone().unwrap_or_default(),
-                        config.clone().unwrap_or_default(),
-                    ),
-                };
-
-                let registered = self
+    fn dispatch(self, job: Option<String>, config: Option<String>) -> Result<(), CliError> {
+        match job {
+            Some(job_name) => {
+                let runner = self
                     .jobs
                     .get(&job_name)
                     .ok_or_else(|| CliError::UnknownJob {
@@ -107,17 +80,7 @@ impl Cli {
                         available: self.jobs.keys().cloned().collect(),
                     })?;
 
-                let runner = match (registered, &cmd) {
-                    (RegisteredJob::Experiment(f), Command::Experiment { .. }) => f,
-                    (RegisteredJob::Inference(f), Command::Inference { .. }) => f,
-                    _ => {
-                        return Err(CliError::UnknownJob {
-                            name: job_name,
-                            available: self.jobs.keys().cloned().collect(),
-                        });
-                    }
-                };
-
+                let config_str = config.unwrap_or_default();
                 runner(&config_str).map_err(CliError::JobError)
             }
             None => {
