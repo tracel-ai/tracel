@@ -5718,6 +5718,7 @@ name = "tracel-cli"
 version = "0.6.0"
 dependencies = [
  "clap",
+ "json-patch",
  "serde",
  "serde_json",
  "tracel-experiment",
