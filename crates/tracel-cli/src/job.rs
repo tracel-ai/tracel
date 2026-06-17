@@ -1,6 +1,17 @@
 use std::error::Error;
 use tracel_experiment::ExperimentJob;
 
+pub type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>>>;
+
+pub enum RegisteredJob {
+    Experiment(JobFunction),
+    Inference(JobFunction),
+}
+
+pub struct DefaultJob {
+    pub runner: Box<dyn FnOnce() -> Result<(), Box<dyn Error + Send + Sync>>>,
+}
+
 pub trait CliJob<I, O> {
     fn execute(&self, input: I) -> Result<O, Box<dyn Error + Send + Sync>>;
 }
