@@ -25,12 +25,14 @@ mod interrupter;
 mod metric;
 mod progress;
 
-pub use checkpoint::ExperimentCheckpointRecorder;
+use std::path::PathBuf;
+
+pub use checkpoint::ExperimentCheckpointer;
 pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
 pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
-use crate::ExperimentRun;
+use crate::{ExperimentRun, integration::training::checkpoint::ExperimentCheckpointError};
 
 /// Extension trait adding Burn `train` adapter constructors to [`ExperimentRun`].
 pub trait ExperimentTrainingExt {
@@ -38,7 +40,10 @@ pub trait ExperimentTrainingExt {
     fn metric_logger(&self) -> ExperimentMetricLogger;
 
     /// Create a new [`ExperimentCheckpointRecorder`] for this run.
-    fn checkpoint_recorder(&self) -> ExperimentCheckpointRecorder;
+    fn checkpoint_recorder(
+        &self,
+        path: PathBuf,
+    ) -> Result<ExperimentCheckpointer, ExperimentCheckpointError>;
 
     /// Create a new [`burn::train::Interrupter`] linked to this run's cancellation token.
     fn interrupter(&self) -> burn::train::Interrupter;
@@ -55,8 +60,11 @@ impl ExperimentTrainingExt for ExperimentRun {
         ExperimentMetricLogger::new(self)
     }
 
-    fn checkpoint_recorder(&self) -> ExperimentCheckpointRecorder {
-        ExperimentCheckpointRecorder::new(self)
+    fn checkpoint_recorder(
+        &self,
+        path: PathBuf,
+    ) -> Result<ExperimentCheckpointer, ExperimentCheckpointError> {
+        ExperimentCheckpointer::try_new(self, path)
     }
 
     fn interrupter(&self) -> burn::train::Interrupter {
@@ -77,8 +85,11 @@ impl ExperimentTrainingExt for crate::ExperimentRunHandle {
         ExperimentMetricLogger::new(self.clone())
     }
 
-    fn checkpoint_recorder(&self) -> ExperimentCheckpointRecorder {
-        ExperimentCheckpointRecorder::new(self.clone())
+    fn checkpoint_recorder(
+        &self,
+        path: PathBuf,
+    ) -> Result<ExperimentCheckpointer, ExperimentCheckpointError> {
+        ExperimentCheckpointer::try_new(self.clone(), path)
     }
 
     fn interrupter(&self) -> burn::train::Interrupter {

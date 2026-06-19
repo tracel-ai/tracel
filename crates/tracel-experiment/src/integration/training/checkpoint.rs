@@ -1,22 +1,37 @@
+use burn::train::checkpoint::Checkpoint;
+use burn::train::checkpoint::Checkpointer;
+use burn::train::checkpoint::CheckpointerError;
+use std::any::Any;
 use std::fmt;
 use std::path::PathBuf;
+use thiserror;
 
 use crate::ArtifactKind;
 use crate::ExperimentRunHandle;
-use burn::record::{
-    FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
-};
-use burn::tensor::Device;
+use burn::store::ModuleRecord;
+use burn::tensor::Bytes;
 use serde::Deserialize;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 
-struct CheckpointRecordSources<R> {
-    pub record: R,
+#[derive(thiserror::Error, Debug)]
+pub enum ExperimentCheckpointError {
+    #[error("File name should be a valid string")]
+    InvalidFileName,
+
+    #[error("File name should be present")]
+    MissingFileName,
+
+    #[error("{0} items directly is not supported by ExperimentCheckpointRecorder")]
+    NotSupported(String),
 }
 
-impl<R> CheckpointRecordSources<R> {
-    pub fn new(record: R) -> Self {
+struct CheckpointRecordSources {
+    pub record: Box<dyn Any>,
+}
+
+impl CheckpointRecordSources {
+    pub fn new(record: Box<dyn Any>) -> Self {
         Self { record }
     }
 }
@@ -34,10 +49,7 @@ impl Default for CheckpointRecordArtifactSettings {
     }
 }
 
-impl<R> BundleEncode for CheckpointRecordSources<R>
-where
-    R: Record,
-{
+impl BundleEncode for CheckpointRecordSources {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
     fn encode<E: BundleSink>(
@@ -45,20 +57,20 @@ where
         sink: &mut E,
         settings: &Self::Settings,
     ) -> Result<(), Self::Error> {
-        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
-        let bytes = recorder
-            .record(self.record, ())
+        let bytes = self
+            .record
+            .downcast::<ModuleRecord>()
+            .expect("Should be a ModuleRecord")
+            .into_bytes()
             .map_err(|e| format!("Failed to record to bytes: {}", e))?;
+
         sink.put_bytes(&settings.name, &bytes)
             .map_err(|e| format!("Failed to write bytes to sink: {}", e))?;
         Ok(())
     }
 }
 
-impl<R> BundleDecode for CheckpointRecordSources<R>
-where
-    R: Record,
-{
+impl BundleDecode for CheckpointRecordSources {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
 
@@ -76,11 +88,9 @@ where
                 settings.name, e
             )
         })?;
-        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
-        let record = recorder
-            .load::<R>(bytes, &Device::default())
+        let record = ModuleRecord::from_bytes(Bytes::from_bytes_vec(bytes))
             .map_err(|e| format!("Failed to load record from bytes: {}", e))?;
-        Ok(Self::new(record))
+        Ok(Self::new(Box::new(record)))
     }
 }
 
@@ -89,33 +99,44 @@ where
 /// Prefer [`crate::integration::training::ExperimentTrainingExt::checkpoint_recorder`] when you
 /// already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 #[derive(Clone)]
-pub struct ExperimentCheckpointRecorder {
+pub struct ExperimentCheckpointer {
     experiment_handle: ExperimentRunHandle,
+    file_name: String,
 }
 
-impl fmt::Debug for ExperimentCheckpointRecorder {
+impl fmt::Debug for ExperimentCheckpointer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExperimentCheckpointRecorder")
             .finish_non_exhaustive()
     }
 }
 
-impl ExperimentCheckpointRecorder {
+impl ExperimentCheckpointer {
     /// Create a recorder backed by the provided experiment run.
-    pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
-        Self {
+    pub fn try_new(
+        experiment: impl Into<ExperimentRunHandle>,
+        path: PathBuf,
+    ) -> Result<Self, ExperimentCheckpointError> {
+        let file_name = path
+            .file_name()
+            .ok_or(ExperimentCheckpointError::MissingFileName)?
+            .to_str()
+            .ok_or(ExperimentCheckpointError::InvalidFileName)?
+            .to_string();
+        Ok(Self {
             experiment_handle: experiment.into(),
-        }
+            file_name,
+        })
     }
 }
 
-impl FileRecorder for ExperimentCheckpointRecorder {
-    fn file_extension() -> &'static str {
-        "mpk"
-    }
-}
+// impl FileRecorder for ExperimentCheckpointRecorder {
+//     fn file_extension() -> &'static str {
+//         "mpk"
+//     }
+// }
 
-impl Default for ExperimentCheckpointRecorder {
+impl Default for ExperimentCheckpointer {
     fn default() -> Self {
         unimplemented!(
             "Default is not implemented for ExperimentCheckpointRecorder, as it requires an experiment run."
@@ -123,86 +144,45 @@ impl Default for ExperimentCheckpointRecorder {
     }
 }
 
-impl Recorder for ExperimentCheckpointRecorder {
-    type Settings = FullPrecisionSettings;
-    type RecordArgs = PathBuf;
-    type RecordOutput = ();
-    type LoadArgs = PathBuf;
-
-    fn record<R>(
+impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
+    fn save(
         &self,
-        record: R,
-        args: Self::RecordArgs,
-    ) -> Result<Self::RecordOutput, RecorderError>
-    where
-        R: Record,
-    {
-        let file_name = args
-            .file_name()
-            .ok_or(RecorderError::Unknown(
-                "File name should be present".to_string(),
-            ))?
-            .to_str()
-            .ok_or(RecorderError::Unknown(
-                "File name should be a valid string".to_string(),
-            ))?;
+        _epoch: usize,
+        record: C,
+    ) -> Result<(), burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: file_name.to_string(),
+            name: self.file_name.clone(),
         };
         self.experiment_handle
             .save_artifact(
-                file_name,
+                self.file_name.clone(),
                 ArtifactKind::Other,
-                CheckpointRecordSources::new(record),
+                CheckpointRecordSources::new(Box::new(record)),
                 &settings,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))
+            .map_err(|e| {
+                burn::train::checkpoint::CheckpointerError::Unknown(format!(
+                    "Failed to save artifact: {e}"
+                ))
+            })
     }
 
-    fn load<R>(&self, args: Self::LoadArgs, _device: &Device) -> Result<R, RecorderError>
-    where
-        R: Record,
-    {
-        let name = args
-            .file_name()
-            .ok_or(RecorderError::Unknown(
-                "File name should be present".to_string(),
-            ))?
-            .to_str()
-            .ok_or(RecorderError::Unknown(
-                "File name should be a valid string".to_string(),
-            ))?;
+    fn delete(&self, _epoch: usize) -> Result<(), burn::train::checkpoint::CheckpointerError> {
+        Ok(())
+    }
 
+    fn restore(&self, _epoch: usize) -> Result<C, burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: name.to_string(),
+            name: self.file_name.clone(),
         };
         let artifact = self
             .experiment_handle
-            .use_artifact::<CheckpointRecordSources<R>>(
+            .use_artifact::<CheckpointRecordSources>(
                 self.experiment_handle.id().clone(),
-                name,
+                self.file_name.clone(),
                 &settings,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))?;
-        Ok(artifact.record)
-    }
-
-    fn save_item<I: Serialize>(
-        &self,
-        _item: I,
-        _args: Self::RecordArgs,
-    ) -> Result<Self::RecordOutput, RecorderError> {
-        Err(RecorderError::Unknown(
-            "Saving items directly is not supported by ExperimentCheckpointRecorder".to_string(),
-        ))
-    }
-
-    fn load_item<I>(&self, _args: &mut Self::LoadArgs) -> Result<I, RecorderError>
-    where
-        I: DeserializeOwned,
-    {
-        Err(RecorderError::Unknown(
-            "Loading items directly is not supported by ExperimentCheckpointRecorder".to_string(),
-        ))
+            .map_err(|e| CheckpointerError::Unknown(format!("Failed to load artifact: {e}")))?;
+        Ok(*artifact.record.downcast::<C>().expect(""))
     }
 }
