@@ -11,18 +11,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 
-#[derive(thiserror::Error, Debug)]
-pub enum ExperimentCheckpointError {
-    #[error("File name should be a valid string")]
-    InvalidFileName,
-
-    #[error("File name should be present")]
-    MissingFileName,
-
-    #[error("{0} items directly is not supported by ExperimentCheckpointRecorder")]
-    NotSupported(String),
-}
-
 struct CheckpointRecordSources<C: Checkpoint> {
     pub record: C,
 }

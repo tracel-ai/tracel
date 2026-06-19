@@ -25,14 +25,12 @@ mod interrupter;
 mod metric;
 mod progress;
 
-use std::path::PathBuf;
-
 pub use checkpoint::ExperimentCheckpointer;
 pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
 pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
-use crate::{ExperimentRun, integration::training::checkpoint::ExperimentCheckpointError};
+use crate::ExperimentRun;
 
 /// Extension trait adding Burn `train` adapter constructors to [`ExperimentRun`].
 pub trait ExperimentTrainingExt {
