@@ -2,7 +2,6 @@ use burn::train::checkpoint::Checkpoint;
 use burn::train::checkpoint::Checkpointer;
 use burn::train::checkpoint::CheckpointerError;
 use std::fmt;
-use thiserror;
 
 use crate::ArtifactKind;
 use crate::ExperimentRunHandle;
