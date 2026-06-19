@@ -16,7 +16,7 @@
 //! let experiment = ExperimentRun::local("./runs").unwrap();
 //!
 //! let _metrics = experiment.metric_logger();
-//! let _checkpoints = experiment.checkpoint_recorder();
+//! let _checkpoints = experiment.checkpointers();
 //! let _interrupter = experiment.interrupter();
 //! ```
 
@@ -37,8 +37,17 @@ pub trait ExperimentTrainingExt {
     /// Create a new [`ExperimentMetricLogger`] for this run.
     fn metric_logger(&self) -> ExperimentMetricLogger;
 
-    /// Create a new [`ExperimentCheckpointRecorder`] for this run.
+    /// Create a new [`ExperimentCheckpointer`] for this run.
     fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer;
+
+    /// Create the three checkpointers (model, optimizer, lr scheduler) for supervised training.
+    fn checkpointers(
+        &self,
+    ) -> (
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+    );
 
     /// Create a new [`burn::train::Interrupter`] linked to this run's cancellation token.
     fn interrupter(&self) -> burn::train::Interrupter;
@@ -57,6 +66,20 @@ impl ExperimentTrainingExt for ExperimentRun {
 
     fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer {
         ExperimentCheckpointer::new(self, file_name)
+    }
+
+    fn checkpointers(
+        &self,
+    ) -> (
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+    ) {
+        (
+            self.checkpoint_recorder("model".to_string()),
+            self.checkpoint_recorder("optim".to_string()),
+            self.checkpoint_recorder("scheduler".to_string()),
+        )
     }
 
     fn interrupter(&self) -> burn::train::Interrupter {
@@ -79,6 +102,20 @@ impl ExperimentTrainingExt for crate::ExperimentRunHandle {
 
     fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer {
         ExperimentCheckpointer::new(self.clone(), file_name)
+    }
+
+    fn checkpointers(
+        &self,
+    ) -> (
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+    ) {
+        (
+            self.checkpoint_recorder("model".to_string()),
+            self.checkpoint_recorder("optim".to_string()),
+            self.checkpoint_recorder("scheduler".to_string()),
+        )
     }
 
     fn interrupter(&self) -> burn::train::Interrupter {
