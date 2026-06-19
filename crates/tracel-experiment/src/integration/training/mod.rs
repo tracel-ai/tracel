@@ -40,10 +40,7 @@ pub trait ExperimentTrainingExt {
     fn metric_logger(&self) -> ExperimentMetricLogger;
 
     /// Create a new [`ExperimentCheckpointRecorder`] for this run.
-    fn checkpoint_recorder(
-        &self,
-        path: PathBuf,
-    ) -> Result<ExperimentCheckpointer, ExperimentCheckpointError>;
+    fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer;
 
     /// Create a new [`burn::train::Interrupter`] linked to this run's cancellation token.
     fn interrupter(&self) -> burn::train::Interrupter;
@@ -60,11 +57,8 @@ impl ExperimentTrainingExt for ExperimentRun {
         ExperimentMetricLogger::new(self)
     }
 
-    fn checkpoint_recorder(
-        &self,
-        path: PathBuf,
-    ) -> Result<ExperimentCheckpointer, ExperimentCheckpointError> {
-        ExperimentCheckpointer::try_new(self, path)
+    fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer {
+        ExperimentCheckpointer::new(self, file_name)
     }
 
     fn interrupter(&self) -> burn::train::Interrupter {
@@ -85,11 +79,8 @@ impl ExperimentTrainingExt for crate::ExperimentRunHandle {
         ExperimentMetricLogger::new(self.clone())
     }
 
-    fn checkpoint_recorder(
-        &self,
-        path: PathBuf,
-    ) -> Result<ExperimentCheckpointer, ExperimentCheckpointError> {
-        ExperimentCheckpointer::try_new(self.clone(), path)
+    fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer {
+        ExperimentCheckpointer::new(self.clone(), file_name)
     }
 
     fn interrupter(&self) -> burn::train::Interrupter {

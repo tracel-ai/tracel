@@ -1,14 +1,11 @@
 use burn::train::checkpoint::Checkpoint;
 use burn::train::checkpoint::Checkpointer;
 use burn::train::checkpoint::CheckpointerError;
-use std::any::Any;
 use std::fmt;
-use std::path::PathBuf;
 use thiserror;
 
 use crate::ArtifactKind;
 use crate::ExperimentRunHandle;
-use burn::store::ModuleRecord;
 use burn::tensor::Bytes;
 use serde::Deserialize;
 use serde::Serialize;
@@ -26,12 +23,12 @@ pub enum ExperimentCheckpointError {
     NotSupported(String),
 }
 
-struct CheckpointRecordSources {
-    pub record: Box<dyn Any>,
+struct CheckpointRecordSources<C: Checkpoint> {
+    pub record: C,
 }
 
-impl CheckpointRecordSources {
-    pub fn new(record: Box<dyn Any>) -> Self {
+impl<C: Checkpoint> CheckpointRecordSources<C> {
+    pub fn new(record: C) -> Self {
         Self { record }
     }
 }
@@ -49,7 +46,7 @@ impl Default for CheckpointRecordArtifactSettings {
     }
 }
 
-impl BundleEncode for CheckpointRecordSources {
+impl<C: Checkpoint> BundleEncode for CheckpointRecordSources<C> {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
     fn encode<E: BundleSink>(
@@ -59,9 +56,7 @@ impl BundleEncode for CheckpointRecordSources {
     ) -> Result<(), Self::Error> {
         let bytes = self
             .record
-            .downcast::<ModuleRecord>()
-            .expect("Should be a ModuleRecord")
-            .into_bytes()
+            .checkpoint_into_bytes()
             .map_err(|e| format!("Failed to record to bytes: {}", e))?;
 
         sink.put_bytes(&settings.name, &bytes)
@@ -70,7 +65,7 @@ impl BundleEncode for CheckpointRecordSources {
     }
 }
 
-impl BundleDecode for CheckpointRecordSources {
+impl<C: Checkpoint> BundleDecode for CheckpointRecordSources<C> {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
 
@@ -88,9 +83,9 @@ impl BundleDecode for CheckpointRecordSources {
                 settings.name, e
             )
         })?;
-        let record = ModuleRecord::from_bytes(Bytes::from_bytes_vec(bytes))
+        let record = C::checkpoint_from_bytes(Bytes::from_bytes_vec(bytes))
             .map_err(|e| format!("Failed to load record from bytes: {}", e))?;
-        Ok(Self::new(Box::new(record)))
+        Ok(Self::new(record))
     }
 }
 
@@ -113,28 +108,17 @@ impl fmt::Debug for ExperimentCheckpointer {
 
 impl ExperimentCheckpointer {
     /// Create a recorder backed by the provided experiment run.
-    pub fn try_new(
-        experiment: impl Into<ExperimentRunHandle>,
-        path: PathBuf,
-    ) -> Result<Self, ExperimentCheckpointError> {
-        let file_name = path
-            .file_name()
-            .ok_or(ExperimentCheckpointError::MissingFileName)?
-            .to_str()
-            .ok_or(ExperimentCheckpointError::InvalidFileName)?
-            .to_string();
-        Ok(Self {
+    pub fn new(experiment: impl Into<ExperimentRunHandle>, file_name: String) -> Self {
+        Self {
             experiment_handle: experiment.into(),
             file_name,
-        })
+        }
+    }
+
+    fn path_for_epoch(&self, epoch: usize) -> String {
+        format!("{}-{}.bpk", self.file_name, epoch)
     }
 }
-
-// impl FileRecorder for ExperimentCheckpointRecorder {
-//     fn file_extension() -> &'static str {
-//         "mpk"
-//     }
-// }
 
 impl Default for ExperimentCheckpointer {
     fn default() -> Self {
@@ -147,17 +131,17 @@ impl Default for ExperimentCheckpointer {
 impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
     fn save(
         &self,
-        _epoch: usize,
+        epoch: usize,
         record: C,
     ) -> Result<(), burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: self.file_name.clone(),
+            name: self.path_for_epoch(epoch),
         };
         self.experiment_handle
             .save_artifact(
                 self.file_name.clone(),
                 ArtifactKind::Other,
-                CheckpointRecordSources::new(Box::new(record)),
+                CheckpointRecordSources::new(record),
                 &settings,
             )
             .map_err(|e| {
@@ -171,18 +155,18 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
         Ok(())
     }
 
-    fn restore(&self, _epoch: usize) -> Result<C, burn::train::checkpoint::CheckpointerError> {
+    fn restore(&self, epoch: usize) -> Result<C, burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: self.file_name.clone(),
+            name: self.path_for_epoch(epoch),
         };
         let artifact = self
             .experiment_handle
-            .use_artifact::<CheckpointRecordSources>(
+            .use_artifact::<CheckpointRecordSources<C>>(
                 self.experiment_handle.id().clone(),
                 self.file_name.clone(),
                 &settings,
             )
             .map_err(|e| CheckpointerError::Unknown(format!("Failed to load artifact: {e}")))?;
-        Ok(*artifact.record.downcast::<C>().expect(""))
+        Ok(artifact.record)
     }
 }
