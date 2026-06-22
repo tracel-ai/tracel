@@ -31,6 +31,11 @@ impl<I, O> InferenceWrapper<I, O> {
             inner: Arc::new(inference),
         }
     }
+
+    pub fn infer<T: InferenceWriterChannel<O> + 'static>(&self, input: I, writer: T) {
+        self.inner
+            .infer(input, InferenceWriter::from_channel(writer));
+    }
 }
 
 impl<T, I, O> From<T> for InferenceWrapper<I, O>
@@ -39,12 +44,5 @@ where
 {
     fn from(inference: T) -> Self {
         Self::new(inference)
-    }
-}
-
-impl<I, O> InferenceWrapper<I, O> {
-    pub fn infer<T: InferenceWriterChannel<O> + 'static>(&self, input: I, writer: T) {
-        self.inner
-            .infer(input, InferenceWriter::from_channel(writer));
     }
 }
