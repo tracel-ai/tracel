@@ -37,9 +37,6 @@ pub trait ExperimentTrainingExt {
     /// Create a new [`ExperimentMetricLogger`] for this run.
     fn metric_logger(&self) -> ExperimentMetricLogger;
 
-    /// Create a new [`ExperimentCheckpointer`] for this run.
-    fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer;
-
     /// Create the three checkpointers (model, optimizer, lr scheduler) for supervised training.
     fn checkpointers(
         &self,
@@ -64,10 +61,6 @@ impl ExperimentTrainingExt for ExperimentRun {
         ExperimentMetricLogger::new(self)
     }
 
-    fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer {
-        ExperimentCheckpointer::new(self, file_name)
-    }
-
     fn checkpointers(
         &self,
     ) -> (
@@ -76,9 +69,9 @@ impl ExperimentTrainingExt for ExperimentRun {
         ExperimentCheckpointer,
     ) {
         (
-            self.checkpoint_recorder("model".to_string()),
-            self.checkpoint_recorder("optim".to_string()),
-            self.checkpoint_recorder("scheduler".to_string()),
+            ExperimentCheckpointer::new(self, "model".to_string()),
+            ExperimentCheckpointer::new(self, "optim".to_string()),
+            ExperimentCheckpointer::new(self, "scheduler".to_string()),
         )
     }
 
@@ -100,10 +93,6 @@ impl ExperimentTrainingExt for crate::ExperimentRunHandle {
         ExperimentMetricLogger::new(self.clone())
     }
 
-    fn checkpoint_recorder(&self, file_name: String) -> ExperimentCheckpointer {
-        ExperimentCheckpointer::new(self.clone(), file_name)
-    }
-
     fn checkpointers(
         &self,
     ) -> (
@@ -112,9 +101,9 @@ impl ExperimentTrainingExt for crate::ExperimentRunHandle {
         ExperimentCheckpointer,
     ) {
         (
-            self.checkpoint_recorder("model".to_string()),
-            self.checkpoint_recorder("optim".to_string()),
-            self.checkpoint_recorder("scheduler".to_string()),
+            ExperimentCheckpointer::new(self.clone(), "model".to_string()),
+            ExperimentCheckpointer::new(self.clone(), "optim".to_string()),
+            ExperimentCheckpointer::new(self.clone(), "scheduler".to_string()),
         )
     }
 
