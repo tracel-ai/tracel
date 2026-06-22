@@ -11,12 +11,12 @@ use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 
 struct CheckpointRecordSources<C: Checkpoint> {
-    pub record: C,
+    pub checkpoint: C,
 }
 
 impl<C: Checkpoint> CheckpointRecordSources<C> {
-    pub fn new(record: C) -> Self {
-        Self { record }
+    pub fn new(checkpoint: C) -> Self {
+        Self { checkpoint }
     }
 }
 
@@ -42,7 +42,7 @@ impl<C: Checkpoint> BundleEncode for CheckpointRecordSources<C> {
         settings: &Self::Settings,
     ) -> Result<(), Self::Error> {
         let bytes = self
-            .record
+            .checkpoint
             .checkpoint_into_bytes()
             .map_err(|e| format!("Failed to record to bytes: {}", e))?;
 
@@ -126,7 +126,7 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
         };
         self.experiment_handle
             .save_artifact(
-                self.file_name.clone(),
+                self.path_for_epoch(epoch),
                 ArtifactKind::Other,
                 CheckpointRecordSources::new(record),
                 &settings,
@@ -150,10 +150,10 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
             .experiment_handle
             .use_artifact::<CheckpointRecordSources<C>>(
                 self.experiment_handle.id().clone(),
-                self.file_name.clone(),
+                self.path_for_epoch(epoch),
                 &settings,
             )
             .map_err(|e| CheckpointerError::Unknown(format!("Failed to load artifact: {e}")))?;
-        Ok(artifact.record)
+        Ok(artifact.checkpoint)
     }
 }
