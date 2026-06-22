@@ -102,7 +102,7 @@ impl ExperimentCheckpointer {
         }
     }
 
-    fn path_for_epoch(&self, epoch: usize) -> String {
+    fn full_path_name(&self, epoch: usize) -> String {
         format!("{}-{}.bpk", self.file_name, epoch)
     }
 }
@@ -122,11 +122,11 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
         record: C,
     ) -> Result<(), burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: self.path_for_epoch(epoch),
+            name: self.full_path_name(epoch),
         };
         self.experiment_handle
             .save_artifact(
-                self.path_for_epoch(epoch),
+                self.full_path_name(epoch),
                 ArtifactKind::Other,
                 CheckpointRecordSources::new(record),
                 &settings,
@@ -144,13 +144,13 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
 
     fn restore(&self, epoch: usize) -> Result<C, burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: self.path_for_epoch(epoch),
+            name: self.full_path_name(epoch),
         };
         let artifact = self
             .experiment_handle
             .use_artifact::<CheckpointRecordSources<C>>(
                 self.experiment_handle.id().clone(),
-                self.path_for_epoch(epoch),
+                self.full_path_name(epoch),
                 &settings,
             )
             .map_err(|e| CheckpointerError::Unknown(format!("Failed to load artifact: {e}")))?;
