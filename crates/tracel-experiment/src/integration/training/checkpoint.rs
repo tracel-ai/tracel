@@ -1,23 +1,23 @@
+use burn::train::checkpoint::Checkpoint;
+use burn::train::checkpoint::Checkpointer;
+use burn::train::checkpoint::CheckpointerError;
 use std::fmt;
-use std::path::PathBuf;
 
 use crate::ArtifactKind;
+use crate::ExperimentId;
 use crate::ExperimentRunHandle;
-use burn::record::{
-    FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
-};
-use burn::tensor::Device;
+use burn::tensor::Bytes;
 use serde::Deserialize;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 
-struct CheckpointRecordSources<R> {
-    pub record: R,
+struct CheckpointRecordSources<C: Checkpoint> {
+    pub checkpoint: C,
 }
 
-impl<R> CheckpointRecordSources<R> {
-    pub fn new(record: R) -> Self {
-        Self { record }
+impl<C: Checkpoint> CheckpointRecordSources<C> {
+    pub fn new(checkpoint: C) -> Self {
+        Self { checkpoint }
     }
 }
 
@@ -34,10 +34,7 @@ impl Default for CheckpointRecordArtifactSettings {
     }
 }
 
-impl<R> BundleEncode for CheckpointRecordSources<R>
-where
-    R: Record,
-{
+impl<C: Checkpoint> BundleEncode for CheckpointRecordSources<C> {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
     fn encode<E: BundleSink>(
@@ -45,20 +42,18 @@ where
         sink: &mut E,
         settings: &Self::Settings,
     ) -> Result<(), Self::Error> {
-        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
-        let bytes = recorder
-            .record(self.record, ())
+        let bytes = self
+            .checkpoint
+            .checkpoint_into_bytes()
             .map_err(|e| format!("Failed to record to bytes: {}", e))?;
+
         sink.put_bytes(&settings.name, &bytes)
             .map_err(|e| format!("Failed to write bytes to sink: {}", e))?;
         Ok(())
     }
 }
 
-impl<R> BundleDecode for CheckpointRecordSources<R>
-where
-    R: Record,
-{
+impl<C: Checkpoint> BundleDecode for CheckpointRecordSources<C> {
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
 
@@ -76,133 +71,106 @@ where
                 settings.name, e
             )
         })?;
-        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::default();
-        let record = recorder
-            .load::<R>(bytes, &Device::default())
+        let record = C::checkpoint_from_bytes(Bytes::from_bytes_vec(bytes))
             .map_err(|e| format!("Failed to load record from bytes: {}", e))?;
         Ok(Self::new(record))
     }
 }
 
-/// Experiment-backed implementation of Burn's [`Recorder`] and [`FileRecorder`] traits.
+/// Experiment-backed implementation of Burn's [`Checkpointer`] trait.
 ///
-/// Prefer [`crate::integration::training::ExperimentTrainingExt::checkpoint_recorder`] when you
+/// Prefer [`crate::integration::training::ExperimentTrainingExt::checkpointers`] when you
 /// already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 #[derive(Clone)]
-pub struct ExperimentCheckpointRecorder {
+pub struct ExperimentCheckpointer {
     experiment_handle: ExperimentRunHandle,
+    file_name: String,
+    restore_from: Option<ExperimentId>,
 }
 
-impl fmt::Debug for ExperimentCheckpointRecorder {
+impl fmt::Debug for ExperimentCheckpointer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExperimentCheckpointRecorder")
+        f.debug_struct("ExperimentCheckpointer")
             .finish_non_exhaustive()
     }
 }
 
-impl ExperimentCheckpointRecorder {
-    /// Create a recorder backed by the provided experiment run.
-    pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
+impl ExperimentCheckpointer {
+    /// Create a checkpointer backed by the provided experiment run.
+    pub fn new(experiment: impl Into<ExperimentRunHandle>, file_name: String) -> Self {
         Self {
             experiment_handle: experiment.into(),
+            file_name,
+            restore_from: None,
         }
     }
-}
 
-impl FileRecorder for ExperimentCheckpointRecorder {
-    fn file_extension() -> &'static str {
-        "mpk"
+    /// Set a source experiment to restore checkpoints from.
+    ///
+    /// When set, `restore` loads artifacts from the given experiment instead of
+    /// the current one. This is needed when resuming training across runs, since
+    /// each run creates a new experiment that starts with no artifacts.
+    pub fn with_restore_from(mut self, experiment_id: impl Into<ExperimentId>) -> Self {
+        self.restore_from = Some(experiment_id.into());
+        self
+    }
+
+    fn full_path_name(&self, epoch: usize) -> String {
+        format!("{}-{}.bpk", self.file_name, epoch)
     }
 }
 
-impl Default for ExperimentCheckpointRecorder {
+impl Default for ExperimentCheckpointer {
     fn default() -> Self {
         unimplemented!(
-            "Default is not implemented for ExperimentCheckpointRecorder, as it requires an experiment run."
+            "Default is not implemented for ExperimentCheckpointer, as it requires an experiment run."
         )
     }
 }
 
-impl Recorder for ExperimentCheckpointRecorder {
-    type Settings = FullPrecisionSettings;
-    type RecordArgs = PathBuf;
-    type RecordOutput = ();
-    type LoadArgs = PathBuf;
-
-    fn record<R>(
+impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
+    fn save(
         &self,
-        record: R,
-        args: Self::RecordArgs,
-    ) -> Result<Self::RecordOutput, RecorderError>
-    where
-        R: Record,
-    {
-        let file_name = args
-            .file_name()
-            .ok_or(RecorderError::Unknown(
-                "File name should be present".to_string(),
-            ))?
-            .to_str()
-            .ok_or(RecorderError::Unknown(
-                "File name should be a valid string".to_string(),
-            ))?;
+        epoch: usize,
+        record: C,
+    ) -> Result<(), burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: file_name.to_string(),
+            name: self.full_path_name(epoch),
         };
         self.experiment_handle
             .save_artifact(
-                file_name,
+                self.full_path_name(epoch),
                 ArtifactKind::Other,
                 CheckpointRecordSources::new(record),
                 &settings,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))
+            .map_err(|e| {
+                burn::train::checkpoint::CheckpointerError::Unknown(format!(
+                    "Failed to save artifact: {e}"
+                ))
+            })
     }
 
-    fn load<R>(&self, args: Self::LoadArgs, _device: &Device) -> Result<R, RecorderError>
-    where
-        R: Record,
-    {
-        let name = args
-            .file_name()
-            .ok_or(RecorderError::Unknown(
-                "File name should be present".to_string(),
-            ))?
-            .to_str()
-            .ok_or(RecorderError::Unknown(
-                "File name should be a valid string".to_string(),
-            ))?;
+    fn delete(&self, _epoch: usize) -> Result<(), burn::train::checkpoint::CheckpointerError> {
+        Ok(())
+    }
 
+    fn restore(&self, epoch: usize) -> Result<C, burn::train::checkpoint::CheckpointerError> {
         let settings = CheckpointRecordArtifactSettings {
-            name: name.to_string(),
+            name: self.full_path_name(epoch),
         };
+        let source_id = self
+            .restore_from
+            .clone()
+            .unwrap_or_else(|| self.experiment_handle.id().clone());
         let artifact = self
             .experiment_handle
-            .use_artifact::<CheckpointRecordSources<R>>(
-                self.experiment_handle.id().clone(),
-                name,
+            .use_artifact::<CheckpointRecordSources<C>>(
+                source_id,
+                self.full_path_name(epoch),
                 &settings,
             )
-            .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))?;
-        Ok(artifact.record)
-    }
-
-    fn save_item<I: Serialize>(
-        &self,
-        _item: I,
-        _args: Self::RecordArgs,
-    ) -> Result<Self::RecordOutput, RecorderError> {
-        Err(RecorderError::Unknown(
-            "Saving items directly is not supported by ExperimentCheckpointRecorder".to_string(),
-        ))
-    }
-
-    fn load_item<I>(&self, _args: &mut Self::LoadArgs) -> Result<I, RecorderError>
-    where
-        I: DeserializeOwned,
-    {
-        Err(RecorderError::Unknown(
-            "Loading items directly is not supported by ExperimentCheckpointRecorder".to_string(),
-        ))
+            .map_err(|e| CheckpointerError::Unknown(format!("Failed to load artifact: {e}")))?;
+        Ok(artifact.checkpoint)
     }
 }

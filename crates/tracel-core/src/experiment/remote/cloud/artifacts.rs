@@ -10,18 +10,18 @@ use crate::experiment::remote::session::{ArtifactUploadError, ArtifactUploader};
 
 use super::{ExperimentArtifactClient, ExperimentPath};
 
-pub struct ConsoleArtifactReader {
+pub struct CloudArtifactReader {
     client: Client,
     exp_path: ExperimentPath,
 }
 
-impl ConsoleArtifactReader {
+impl CloudArtifactReader {
     pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
 }
 
-impl ExperimentArtifactReader for ConsoleArtifactReader {
+impl ExperimentArtifactReader for CloudArtifactReader {
     fn load_artifact_raw(
         &self,
         experiment_id: ExperimentId,
@@ -58,11 +58,11 @@ impl ExperimentArtifactReader for ConsoleArtifactReader {
     }
 }
 
-pub struct ConsoleArtifactUploader {
+pub struct CloudArtifactUploader {
     client: ExperimentArtifactClient,
 }
 
-impl ConsoleArtifactUploader {
+impl CloudArtifactUploader {
     pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
         Self {
             client: ExperimentArtifactClient::new(client, exp_path),
@@ -70,7 +70,7 @@ impl ConsoleArtifactUploader {
     }
 }
 
-impl ArtifactUploader for ConsoleArtifactUploader {
+impl ArtifactUploader for CloudArtifactUploader {
     fn upload(
         &self,
         name: &str,
