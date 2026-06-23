@@ -98,12 +98,9 @@ impl ExperimentTrainingExt for ExperimentRun {
     ) {
         let id = source_id.into();
         (
-            ExperimentCheckpointer::new(self, "model".to_string())
-                .with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self, "optim".to_string())
-                .with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self, "scheduler".to_string())
-                .with_restore_from(id),
+            ExperimentCheckpointer::new(self, "model".to_string()).with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(self, "optim".to_string()).with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(self, "scheduler".to_string()).with_restore_from(id),
         )
     }
 
