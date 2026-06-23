@@ -14,13 +14,13 @@ use crate::experiment::remote::log_store::{LogStoreError, LogUploader};
 
 use super::ExperimentPath;
 
-pub struct ConsoleLogUploader {
+pub struct CloudLogUploader {
     artifact_id: Option<String>,
     client: Client,
     experiment_path: ExperimentPath,
 }
 
-impl ConsoleLogUploader {
+impl CloudLogUploader {
     pub fn new(client: Client, experiment_path: ExperimentPath) -> Self {
         Self {
             artifact_id: None,
@@ -30,7 +30,7 @@ impl ConsoleLogUploader {
     }
 }
 
-impl LogUploader for ConsoleLogUploader {
+impl LogUploader for CloudLogUploader {
     fn upload(&mut self, bundle: InMemoryBundleSources) -> Result<(), LogStoreError> {
         let mut specs = Vec::with_capacity(bundle.files().len());
         for file in bundle.files() {
