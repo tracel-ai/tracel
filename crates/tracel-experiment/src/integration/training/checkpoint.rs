@@ -4,6 +4,7 @@ use burn::train::checkpoint::CheckpointerError;
 use std::fmt;
 
 use crate::ArtifactKind;
+use crate::ExperimentId;
 use crate::ExperimentRunHandle;
 use burn::tensor::Bytes;
 use serde::Deserialize;
@@ -76,30 +77,42 @@ impl<C: Checkpoint> BundleDecode for CheckpointRecordSources<C> {
     }
 }
 
-/// Experiment-backed implementation of Burn's [`Recorder`] and [`FileRecorder`] traits.
+/// Experiment-backed implementation of Burn's [`Checkpointer`] trait.
 ///
-/// Prefer [`crate::integration::training::ExperimentTrainingExt::checkpoint_recorder`] when you
+/// Prefer [`crate::integration::training::ExperimentTrainingExt::checkpointers`] when you
 /// already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 #[derive(Clone)]
 pub struct ExperimentCheckpointer {
     experiment_handle: ExperimentRunHandle,
     file_name: String,
+    restore_from: Option<ExperimentId>,
 }
 
 impl fmt::Debug for ExperimentCheckpointer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExperimentCheckpointRecorder")
+        f.debug_struct("ExperimentCheckpointer")
             .finish_non_exhaustive()
     }
 }
 
 impl ExperimentCheckpointer {
-    /// Create a recorder backed by the provided experiment run.
+    /// Create a checkpointer backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>, file_name: String) -> Self {
         Self {
             experiment_handle: experiment.into(),
             file_name,
+            restore_from: None,
         }
+    }
+
+    /// Set a source experiment to restore checkpoints from.
+    ///
+    /// When set, `restore` loads artifacts from the given experiment instead of
+    /// the current one. This is needed when resuming training across runs, since
+    /// each run creates a new experiment that starts with no artifacts.
+    pub fn with_restore_from(mut self, experiment_id: impl Into<ExperimentId>) -> Self {
+        self.restore_from = Some(experiment_id.into());
+        self
     }
 
     fn full_path_name(&self, epoch: usize) -> String {
@@ -110,7 +123,7 @@ impl ExperimentCheckpointer {
 impl Default for ExperimentCheckpointer {
     fn default() -> Self {
         unimplemented!(
-            "Default is not implemented for ExperimentCheckpointRecorder, as it requires an experiment run."
+            "Default is not implemented for ExperimentCheckpointer, as it requires an experiment run."
         )
     }
 }
@@ -146,10 +159,14 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
         let settings = CheckpointRecordArtifactSettings {
             name: self.full_path_name(epoch),
         };
+        let source_id = self
+            .restore_from
+            .clone()
+            .unwrap_or_else(|| self.experiment_handle.id().clone());
         let artifact = self
             .experiment_handle
             .use_artifact::<CheckpointRecordSources<C>>(
-                self.experiment_handle.id().clone(),
+                source_id,
                 self.full_path_name(epoch),
                 &settings,
             )

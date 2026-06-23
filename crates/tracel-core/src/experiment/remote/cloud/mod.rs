@@ -14,8 +14,8 @@ use tracel_artifact::upload::{
 mod artifacts;
 mod logs;
 
-pub use artifacts::{ConsoleArtifactReader, ConsoleArtifactUploader};
-pub use logs::ConsoleLogUploader;
+pub use artifacts::{CloudArtifactReader, CloudArtifactUploader};
+pub use logs::CloudLogUploader;
 
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
@@ -274,8 +274,8 @@ fn create_run(
     let path = ExperimentPath::new(namespace, project_name, experiment_num);
     let cancel_token = CancelToken::new();
 
-    let log_uploader = ConsoleLogUploader::new(client.clone(), path.clone());
-    let artifact_uploader = ConsoleArtifactUploader::new(client.clone(), path.clone());
+    let log_uploader = CloudLogUploader::new(client.clone(), path.clone());
+    let artifact_uploader = CloudArtifactUploader::new(client.clone(), path.clone());
 
     let ws = client.create_experiment_run_websocket(namespace, project_name, experiment_num)?;
 
@@ -286,7 +286,7 @@ fn create_run(
         cancel_token.clone(),
     );
 
-    let reader = ConsoleArtifactReader::new(client, path);
+    let reader = CloudArtifactReader::new(client, path);
     let id = ExperimentId::from(format!("{}", experiment_num));
 
     Ok(ExperimentRun::new(id, session, reader, cancel_token))

@@ -500,13 +500,15 @@ impl ExperimentRunHandle {
     ) -> Result<D, ExperimentError> {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
+        let name_str = name.as_ref();
+        let experiment_id = experiment_id.into();
         let artifact = inner
             .reader
-            .load_artifact_raw(experiment_id.into(), name.as_ref())
+            .load_artifact_raw(experiment_id, name_str)
             .map_err(|e| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Artifact,
-                    format!("Failed to load artifact bundle for {}", name.as_ref()),
+                    format!("Failed to load artifact bundle for {name_str}"),
                     e,
                 )
             })?;
@@ -514,7 +516,7 @@ impl ExperimentRunHandle {
         D::decode(&artifact.bundle, settings).map_err(|e| {
             ExperimentError::with_source(
                 ExperimentErrorKind::Artifact,
-                format!("Failed to decode artifact: {}", name.as_ref()),
+                format!("Failed to decode artifact: {name_str}"),
                 e,
             )
         })
