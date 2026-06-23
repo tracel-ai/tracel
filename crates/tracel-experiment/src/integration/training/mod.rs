@@ -30,6 +30,7 @@ pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
 pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
+use crate::ExperimentId;
 use crate::ExperimentRun;
 
 /// Extension trait adding Burn `train` adapter constructors to [`ExperimentRun`].
@@ -40,6 +41,18 @@ pub trait ExperimentTrainingExt {
     /// Create the three checkpointers (model, optimizer, lr scheduler) for supervised training.
     fn checkpointers(
         &self,
+    ) -> (
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+    );
+
+    /// Create the three checkpointers configured to restore from a previous experiment.
+    ///
+    /// Saves still go to the current experiment, but `restore` loads from `source_id`.
+    fn checkpointers_from(
+        &self,
+        source_id: impl Into<ExperimentId>,
     ) -> (
         ExperimentCheckpointer,
         ExperimentCheckpointer,
@@ -75,6 +88,25 @@ impl ExperimentTrainingExt for ExperimentRun {
         )
     }
 
+    fn checkpointers_from(
+        &self,
+        source_id: impl Into<ExperimentId>,
+    ) -> (
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+    ) {
+        let id = source_id.into();
+        (
+            ExperimentCheckpointer::new(self, "model".to_string())
+                .with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(self, "optim".to_string())
+                .with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(self, "scheduler".to_string())
+                .with_restore_from(id),
+        )
+    }
+
     fn interrupter(&self) -> burn::train::Interrupter {
         experiment_interrupter(self)
     }
@@ -104,6 +136,25 @@ impl ExperimentTrainingExt for crate::ExperimentRunHandle {
             ExperimentCheckpointer::new(self.clone(), "model".to_string()),
             ExperimentCheckpointer::new(self.clone(), "optim".to_string()),
             ExperimentCheckpointer::new(self.clone(), "scheduler".to_string()),
+        )
+    }
+
+    fn checkpointers_from(
+        &self,
+        source_id: impl Into<ExperimentId>,
+    ) -> (
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+        ExperimentCheckpointer,
+    ) {
+        let id = source_id.into();
+        (
+            ExperimentCheckpointer::new(self.clone(), "model".to_string())
+                .with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(self.clone(), "optim".to_string())
+                .with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(self.clone(), "scheduler".to_string())
+                .with_restore_from(id),
         )
     }
 

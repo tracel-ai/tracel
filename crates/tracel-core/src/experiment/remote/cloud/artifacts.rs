@@ -37,6 +37,7 @@ impl ExperimentArtifactReader for ConsoleArtifactReader {
             num,
         );
         let scope = ExperimentArtifactClient::new(self.client.clone(), experiment_path);
+
         let artifact = scope.fetch(name).map_err(|err| {
             ExperimentReaderError::with_source("Failed to resolve experiment artifact", err)
         })?;
