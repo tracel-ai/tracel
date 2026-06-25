@@ -1,5 +1,8 @@
+#[allow(clippy::module_inception)]
+mod cli;
 mod error;
 
+pub use cli::Cli;
 pub use error::CliError;
 
 use crate::{job::Job, job_register::JobRegister, mapper::Mapper};
