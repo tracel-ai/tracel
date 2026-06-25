@@ -1,7 +1,9 @@
 use std::error::Error;
 use tracel_experiment::ExperimentJob;
 
-pub type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>>>;
+use crate::error::CliError;
+
+pub type JobFunction = Box<dyn Fn(&str) -> Result<(), CliError>>;
 
 pub struct DefaultJob {
     pub runner: Box<dyn FnOnce() -> Result<(), Box<dyn Error + Send + Sync>>>,

@@ -1,10 +1,10 @@
-use clap::Parser;
-use std::collections::HashMap;
 use crate::{
     Mapper,
     error::CliError,
     job::{CliJob, DefaultJob, JobFunction},
 };
+use clap::Parser;
+use std::collections::HashMap;
 
 #[derive(Parser)]
 #[command(about = "Run a registered job")]
@@ -34,8 +34,8 @@ impl Cli {
         O: 'static,
     {
         Box::new(move |config_str: &str| {
-            let input = mapper.map(config_str)?;
-            job.execute(input).map(|_| ())
+            let input = mapper.map(config_str).map_err(CliError::ConfigError)?;
+            job.execute(input).map(|_| ()).map_err(CliError::JobError)
         })
     }
 
@@ -81,7 +81,7 @@ impl Cli {
                     })?;
 
                 let config_str = config.unwrap_or_default();
-                runner(&config_str).map_err(CliError::JobError)
+                runner(&config_str)
             }
             None => {
                 let d = self.default.ok_or(CliError::MissingDefault)?;
