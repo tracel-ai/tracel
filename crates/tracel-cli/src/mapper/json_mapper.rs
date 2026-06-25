@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::mapper::Mapper;
 
+#[derive(Default)]
 pub struct JsonMapper<I> {
     default: Option<Value>,
     _marker: std::marker::PhantomData<I>,
