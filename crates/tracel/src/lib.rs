@@ -65,7 +65,7 @@ pub use tracel_fleet as fleet;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
-/// Runtime support for executing training and inference routines registered in Tracel
+/// Runtime to dispatch job and config mappers
 pub mod runtime {
     pub use tracel_runtime::{ClapMapper, Cli, CliError, JsonMapper, Mapper, PresetMapper};
 }
