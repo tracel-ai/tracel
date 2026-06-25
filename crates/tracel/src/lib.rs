@@ -69,7 +69,11 @@ pub use tracel_fleet as fleet;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
-pub use tracel_cli::{Cli, ClapMapper, JsonMapper, Mapper, PresetMapper};
+/// CLI job dispatch and config mappers.
+pub mod cli {
+    pub use tracel_cli::{ClapMapper, Cli, CliError, JsonMapper, Mapper, PresetMapper};
+}
+
 pub use tracel_core::Connection;
 pub use tracel_core::Context;
 pub use tracel_core::ContextError;

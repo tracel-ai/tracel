@@ -35,6 +35,9 @@ impl<I: DeserializeOwned> Mapper<I> for JsonMapper<I> {
     fn map(&self, raw: &str) -> Result<I, Box<dyn Error + Send + Sync>> {
         match &self.default {
             Some(default) => {
+                if raw.trim().is_empty() {
+                    return serde_json::from_value(default.clone()).map_err(Into::into);
+                }
                 let overrides: Value = serde_json::from_str(raw)?;
                 let mut merged = default.clone();
                 json_patch::merge(&mut merged, &overrides);

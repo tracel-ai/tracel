@@ -1,33 +1,16 @@
-use std::{error::Error, fmt};
+use std::error::Error;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CliError {
+    #[error("unknown job '{name}'. Available: {}", available.join(", "))]
     UnknownJob { name: String, available: Vec<String> },
+
+    #[error("no job name given and no default registered")]
     MissingDefault,
-    ConfigError(Box<dyn Error + Send + Sync>),
-    JobError(Box<dyn Error + Send + Sync>),
-}
 
-impl fmt::Display for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CliError::UnknownJob { name, available } => {
-                write!(f, "unknown job '{name}'. Available: {}", available.join(", "))
-            }
-            CliError::MissingDefault => {
-                write!(f, "no job name given and no default registered")
-            }
-            CliError::ConfigError(e) => write!(f, "invalid config: {e}"),
-            CliError::JobError(e) => write!(f, "job failed: {e}"),
-        }
-    }
-}
+    #[error("invalid config: {0}")]
+    ConfigError(#[source] Box<dyn Error + Send + Sync>),
 
-impl Error for CliError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            CliError::ConfigError(e) | CliError::JobError(e) => Some(e.as_ref()),
-            CliError::UnknownJob { .. } | CliError::MissingDefault => None,
-        }
-    }
+    #[error("job failed: {0}")]
+    JobError(#[source] Box<dyn Error + Send + Sync>),
 }
