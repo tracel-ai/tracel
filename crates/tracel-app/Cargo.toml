@@ -1,5 +1,5 @@
 [package]
-name = "tracel-runtime"
+name = "tracel-app"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

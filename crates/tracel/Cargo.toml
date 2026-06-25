@@ -18,7 +18,7 @@ station = ["tracel-core/station"]
 [dependencies]
 tracel-core = { workspace = true }
 tracel-macros.workspace = true
-tracel-runtime.workspace = true
+tracel-app.workspace = true
 tracel-experiment.workspace = true
 tracel-inference.workspace = true
 tracel-fleet.workspace = true

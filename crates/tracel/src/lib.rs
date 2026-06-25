@@ -65,10 +65,8 @@ pub use tracel_fleet as fleet;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
-/// Runtime to dispatch job and config mappers
-pub mod runtime {
-    pub use tracel_runtime::{ClapMapper, Cli, CliError, JsonMapper, Mapper, PresetMapper};
-}
+/// App module for job registration, CLI, and config mappers
+pub use tracel_app as app;
 
 pub use tracel_core::Connection;
 pub use tracel_core::Context;

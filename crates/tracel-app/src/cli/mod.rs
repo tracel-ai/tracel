@@ -1,10 +1,10 @@
-use crate::{
-    Mapper,
-    error::CliError,
-    job::{CliJob, DefaultJob, JobFunction},
-};
+mod error;
+
+pub use error::CliError;
+
+use crate::{job::Job, job_register::JobRegister, mapper::Mapper};
 use clap::Parser;
-use std::collections::HashMap;
+use std::error::Error;
 
 #[derive(Parser)]
 #[command(about = "Run a registered job")]
@@ -13,49 +13,38 @@ struct Args {
     config: Option<String>,
 }
 
+struct DefaultJob {
+    runner: Box<dyn FnOnce() -> Result<(), Box<dyn Error + Send + Sync>>>,
+}
+
 #[derive(Default)]
 pub struct Cli {
-    jobs: HashMap<String, JobFunction>,
+    register: JobRegister,
     default: Option<DefaultJob>,
 }
 
 impl Cli {
     pub fn new() -> Self {
         Self {
-            jobs: HashMap::new(),
+            register: JobRegister::new(),
             default: None,
         }
     }
 
-    fn erase_job<J, I, O, F>(job: J, mapper: F) -> JobFunction
-    where
-        J: CliJob<I, O> + 'static,
-        F: Mapper<I> + 'static,
-        I: 'static,
-        O: 'static,
-    {
-        Box::new(move |config_str: &str| {
-            let input = mapper.map(config_str).map_err(CliError::ConfigError)?;
-            job.execute(input).map(|_| ()).map_err(CliError::JobError)
-        })
-    }
-
     pub fn register<J, I, O, F>(mut self, job: J, mapper: F) -> Self
     where
-        J: CliJob<I, O> + 'static,
+        J: Job<I, O> + 'static,
         F: Mapper<I> + 'static,
         I: 'static,
         O: 'static,
     {
-        let name = job.name().to_string();
-        let erased = Self::erase_job(job, mapper);
-        self.jobs.insert(name, erased);
+        self.register = self.register.register(job, mapper);
         self
     }
 
     pub fn default_job<J, I, O>(mut self, job: J, config: I) -> Self
     where
-        J: CliJob<I, O> + 'static,
+        J: Job<I, O> + 'static,
         I: 'static,
         O: 'static,
     {
@@ -73,16 +62,10 @@ impl Cli {
     fn dispatch(self, job: Option<String>, config: Option<String>) -> Result<(), CliError> {
         match job {
             Some(job_name) => {
-                let runner = self
-                    .jobs
-                    .get(&job_name)
-                    .ok_or_else(|| CliError::UnknownJob {
-                        name: job_name.clone(),
-                        available: self.jobs.keys().cloned().collect(),
-                    })?;
-
                 let config_str = config.unwrap_or_default();
-                runner(&config_str)
+                self.register
+                    .dispatch(&job_name, &config_str)
+                    .map_err(CliError::JobError)
             }
             None => {
                 let d = self.default.ok_or(CliError::MissingDefault)?;
