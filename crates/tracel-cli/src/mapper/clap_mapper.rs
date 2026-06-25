@@ -4,6 +4,7 @@ use clap::Parser;
 
 use crate::mapper::Mapper;
 
+#[derive(Default)]
 pub struct ClapMapper<I> {
     _marker: PhantomData<I>,
 }

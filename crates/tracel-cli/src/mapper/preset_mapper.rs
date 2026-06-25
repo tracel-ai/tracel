@@ -2,6 +2,7 @@ use std::{collections::HashMap, error::Error};
 
 use crate::mapper::Mapper;
 
+#[derive(Default)]
 pub struct PresetMapper<I> {
     presets: HashMap<String, I>,
 }

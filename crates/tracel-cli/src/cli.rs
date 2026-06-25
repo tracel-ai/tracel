@@ -13,6 +13,7 @@ struct Args {
     config: Option<String>,
 }
 
+#[derive(Default)]
 pub struct Cli {
     jobs: HashMap<String, JobFunction>,
     default: Option<DefaultJob>,
@@ -52,7 +53,7 @@ impl Cli {
         self
     }
 
-    pub fn default<J, I, O>(mut self, job: J, config: I) -> Self
+    pub fn default_job<J, I, O>(mut self, job: J, config: I) -> Self
     where
         J: CliJob<I, O> + 'static,
         I: 'static,

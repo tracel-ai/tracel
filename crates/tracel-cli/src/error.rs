@@ -3,7 +3,10 @@ use std::error::Error;
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error("unknown job '{name}'. Available: {}", available.join(", "))]
-    UnknownJob { name: String, available: Vec<String> },
+    UnknownJob {
+        name: String,
+        available: Vec<String>,
+    },
 
     #[error("no job name given and no default registered")]
     MissingDefault,
