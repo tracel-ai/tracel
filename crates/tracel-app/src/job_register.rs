@@ -38,9 +38,20 @@ impl JobRegister {
         O: 'static,
     {
         let name = job.name().to_string();
+        if self.jobs.contains_key(&name) {
+            panic!("job '{}' is already registered", name);
+        }
         let erased = Self::erase_job(job, mapper);
         self.jobs.insert(name, erased);
         self
+    }
+
+    pub fn job_names(&self) -> Vec<String> {
+        self.jobs.keys().cloned().collect()
+    }
+
+    pub fn has_job(&self, name: &str) -> bool {
+        self.jobs.contains_key(name)
     }
 
     pub fn dispatch(

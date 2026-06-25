@@ -66,6 +66,7 @@ pub use tracel_fleet as fleet;
 pub use tracel_artifact as artifact;
 
 /// App module for job registration, CLI, and config mappers
+#[doc(inline)]
 pub use tracel_app as app;
 
 pub use tracel_core::Connection;
