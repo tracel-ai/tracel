@@ -1,0 +1,31 @@
+[package]
+name = "mnist"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[features]
+default = ["wgpu", "flex"]
+flex = ["burn/flex"]
+wgpu = ["burn/wgpu"]
+cuda = ["burn/cuda"]
+
+[dependencies]
+burn = { workspace = true, features = [
+    "vision",
+    "metrics",
+    "std",
+    "fusion",
+    "autotune",
+    "optim",
+] }
+tracel = { workspace = true }
+anyhow.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+dotenvy.workspace = true
+log.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+tracing.workspace = true
