@@ -4,7 +4,7 @@
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
-members = ["crates/*", "xtask"]
+members = ["crates/*", "examples/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -21,6 +21,10 @@ categories = ["development-tools"]
 burn = { git = "https://github.com/tracel-ai/burn", rev = "35ff68bd3b2faa6b6f651e5d7ab5939b4504f799", default-features = false, features = [
     "train",
 ] }
+
+rand = "0.9.2"
+ctrlc = "3.5.2"
+dotenvy = "0.15"
 
 url = "2.5.8"
 anyhow = "1.0.103"
@@ -79,6 +83,8 @@ tracel-fleet = { path = "crates/tracel-fleet", version = "0.7.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.7.0" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.7.0" }
 tracel-core = { path = "crates/tracel-core", version = "0.7.0" }
+tracel = { path = "crates/tracel", version = "0.7.0" }
+
 
 ### For xtask crate ###
 tracel-xtask = "4.19.0"
