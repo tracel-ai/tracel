@@ -60,7 +60,9 @@ impl Server {
         I: DeserializeOwned + Serialize + Send + Sync + 'static,
         O: 'static,
     {
-        self.register = self.register.register(job, JsonMapper::with_default(default));
+        self.register = self
+            .register
+            .register(job, JsonMapper::with_default(default));
         self
     }
 
@@ -107,5 +109,8 @@ async fn run_job(
         }
     });
 
-    (StatusCode::OK, format!("Job '{response_name}' has started running"))
+    (
+        StatusCode::OK,
+        format!("Job '{response_name}' has started running"),
+    )
 }
