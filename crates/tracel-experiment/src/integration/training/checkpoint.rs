@@ -73,7 +73,7 @@ impl<C: Checkpoint> BundleDecode for CheckpointRecordSources<C> {
         })?;
         let record = C::checkpoint_from_bytes(Bytes::from_bytes_vec(bytes))
             .map_err(|e| format!("Failed to load record from bytes: {}", e))?;
-        Ok(Self::new(Box::new(record)))
+        Ok(Self::new(record))
     }
 }
 
@@ -141,7 +141,7 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
             .save_artifact(
                 self.full_path_name(epoch),
                 ArtifactKind::Other,
-                CheckpointRecordSources::new(Box::new(record)),
+                CheckpointRecordSources::new(record),
                 &settings,
             )
             .map_err(|e| {
