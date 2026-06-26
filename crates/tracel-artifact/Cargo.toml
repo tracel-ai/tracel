@@ -12,7 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-reqwest = { version = "0.13.2", features = ["blocking"] }
+reqwest = { version = "0.13.4", features = ["blocking"] }
 serde = { workspace = true, features = ["derive"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
