@@ -2,7 +2,7 @@
 
 use burn::backend::{FlexDevice, wgpu::WgpuDevice};
 use burn::tensor::Device;
-use mnist_cli::training::{self, MnistTrainingConfig};
+use mnist::training::{self, MnistTrainingConfig};
 
 use tracel::app::cli::Cli;
 use tracel::app::mapper::JsonMapper;
@@ -11,14 +11,14 @@ use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
     let module = Context::new(Connection::Cloud)?.experiment();
-    let job = module.create("mnist_flex", |session: &ExperimentRun, config| {
+    let job = module.create("mnist_wgpu", |session: &ExperimentRun, config| {
         training::run(
             session,
             config,
             vec![Device::autodiff(WgpuDevice::default().into())],
         )
     });
-    let default_job = module.create("mnist_wgpu", |session: &ExperimentRun, config| {
+    let default_job = module.create("mnist_flex", |session: &ExperimentRun, config| {
         training::run(
             session,
             config,
