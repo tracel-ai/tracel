@@ -11,9 +11,9 @@ use burn::{
     data::{
         dataloader::DataLoaderBuilder,
         dataset::{
+            Dataset,
             transform::{ComposedDataset, MapperDataset, PartialDataset, SamplerDataset},
             vision::{MnistDataset, MnistItem},
-            Dataset,
         },
     },
     lr_scheduler::{
@@ -22,17 +22,17 @@ use burn::{
     },
     prelude::*,
     train::{
-        metric::{
-            store::{Aggregate, Direction, Split},
-            AccuracyMetric, LearningRateMetric, LossMetric,
-        },
-        renderer::MetricsRenderer,
         EvaluatorBuilder, LearningResult, MetricEarlyStoppingStrategy, StoppingCondition,
         SupervisedTraining,
+        metric::{
+            AccuracyMetric, LearningRateMetric, LossMetric,
+            store::{Aggregate, Direction, Split},
+        },
+        renderer::MetricsRenderer,
     },
 };
 use tracel::experiment::{
-    integration::training::ExperimentTrainingExt, ArtifactKind, ExperimentId, ExperimentRun,
+    ArtifactKind, ExperimentId, ExperimentRun, integration::training::ExperimentTrainingExt,
 };
 static ARTIFACT_DIR: &str = "/tmp/burn-example-mnist";
 
@@ -62,7 +62,7 @@ pub struct MnistTrainingConfig {
     pub resume_from: Option<ResumeConfig>,
 }
 
-/// Implement default training configuration. The cli will be able to override those
+/// Implement default training configuration. The tracel-cli will be able to override those
 /// value and those not specified will use their default value.
 impl Default for MnistTrainingConfig {
     fn default() -> Self {
