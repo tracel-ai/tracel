@@ -34,13 +34,11 @@ use burn::{
 use tracel::experiment::{
     ArtifactKind, ExperimentId, ExperimentRun, integration::training::ExperimentTrainingExt,
 };
-
 static ARTIFACT_DIR: &str = "/tmp/burn-example-mnist";
 
 #[derive(Config, Debug)]
 pub struct ResumeConfig {
     pub experiment: u32,
-    #[config(default = 1)]
     pub epoch: usize,
 }
 
@@ -183,7 +181,6 @@ fn train(
             StoppingCondition::NoImprovementSince { n_epochs: 5 },
         ))
         .num_epochs(config.num_epochs)
-        .checkpoint(1)
         .summary();
 
     let (model_ckpt, optim_ckpt, scheduler_ckpt) = match &config.resume_from {
