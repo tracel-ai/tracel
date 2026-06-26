@@ -10,3 +10,5 @@
 .ipynb_checkpoints/
 
 target/
+
+examples/**/.env
