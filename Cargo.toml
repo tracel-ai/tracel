@@ -8,7 +8,7 @@ members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.6.0"
+version = "0.7.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -23,27 +23,27 @@ burn = { git = "https://github.com/tracel-ai/burn", rev = "35ff68bd3b2faa6b6f651
 ] }
 
 url = "2.5.8"
-anyhow = "1.0.101"
-clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0.103"
+clap = { version = "4.6", features = ["derive"] }
 derive-new = { version = "0.7.0", default-features = false }
-log = { version = "0.4.27", features = ["std"] }
+log = { version = "0.4.33", features = ["std"] }
 proc-macro2 = "1.0.106"
-quote = "1.0.44"
+quote = "1.0.46"
 serde = { version = "1.0.228", default-features = false, features = [
     "derive",
     "alloc",
 ] } # alloc is for no_std, derive is needed
-serde_json = "1.0.149"
-syn-serde = { version = "0.3.1", features = ["json"] }
+serde_json = "1.0.150"
+syn-serde = { version = "0.3.2", features = ["json"] }
 sha2 = "0.10.9"
 strum = { version = "0.27.2", features = ["derive"] }
-syn = { version = "2.0.114", features = ["extra-traits", "full"] }
+syn = { version = "2.0.118", features = ["extra-traits", "full"] }
 thiserror = "2.0.18"
 crossbeam = { version = "0.8.4", default-features = false, features = [
     "crossbeam-channel",
     "std",
 ] }
-json-patch = { version = "4.1.0", default-features = false }
+json-patch = { version = "4.2.0", default-features = false }
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
 derive_more = { version = "2.1.1", default-features = false, features = [
@@ -52,29 +52,36 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "display",
     "unwrap",
 ] }
-chrono = "0.4.43"
+chrono = "0.4.45"
 tracing = "0.1.44"
 tracing-core = "0.1.36"
-tracing-subscriber = "0.3.22"
+tracing-subscriber = "0.3.23"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
-tracel-client = { git = "https://github.com/tracel-ai/burn-central-client", rev = "cea0a58fde9fdcf85de2c147dd361f92613d8d84", default-features = false, features = [
-    "tracel",
-    "station",
-] }
+# tracel-client = { git = "https://github.com/tracel-ai/burn-central-client", rev = "cea0a58fde9fdcf85de2c147dd361f92613d8d84", default-features = false, features = [
+#     "tracel",
+#     "station",
+# ] }
+# tracel-client = { git = "https://github.com/tracel-ai/burn-central-client", branch = "fix/use-rustls", default-features = false, features = [
+#     "tracel",
+#     "station",
+# ] }
+tracel-client = { version = "0.8.1", default-features = false, features = ["tracel", "station" ] }
+
+
 
 ## Crate
-tracel-app = { path = "crates/tracel-app", version = "0.6.0" }
-tracel-macros = { path = "crates/tracel-macros", version = "0.6.0" }
-tracel-inference = { path = "crates/tracel-inference", version = "0.6.0" }
-tracel-fleet = { path = "crates/tracel-fleet", version = "0.6.0" }
-tracel-artifact = { path = "crates/tracel-artifact", version = "0.6.0" }
-tracel-experiment = { path = "crates/tracel-experiment", version = "0.6.0" }
-tracel-core = { path = "crates/tracel-core", version = "0.6.0" }
+tracel-app = { path = "crates/tracel-app", version = "0.7.0" }
+tracel-macros = { path = "crates/tracel-macros", version = "0.7.0" }
+tracel-inference = { path = "crates/tracel-inference", version = "0.7.0" }
+tracel-fleet = { path = "crates/tracel-fleet", version = "0.7.0" }
+tracel-artifact = { path = "crates/tracel-artifact", version = "0.7.0" }
+tracel-experiment = { path = "crates/tracel-experiment", version = "0.7.0" }
+tracel-core = { path = "crates/tracel-core", version = "0.7.0" }
 
 ### For xtask crate ###
-tracel-xtask = "4.13.7"
+tracel-xtask = "4.19.0"
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
