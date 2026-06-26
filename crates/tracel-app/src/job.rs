@@ -1,7 +1,7 @@
 use std::error::Error;
 use tracel_experiment::ExperimentJob;
 
-pub type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>>>;
+pub type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>> + Send + Sync>;
 
 pub trait Job<I, O> {
     fn name(&self) -> &str;

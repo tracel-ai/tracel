@@ -18,8 +18,8 @@ impl JobRegister {
 
     fn erase_job<J, I, O, F>(job: J, mapper: F) -> JobFunction
     where
-        J: Job<I, O> + 'static,
-        F: Mapper<I> + 'static,
+        J: Job<I, O> + Send + Sync + 'static,
+        F: Mapper<I> + Send + Sync + 'static,
         I: 'static,
         O: 'static,
     {
@@ -32,8 +32,8 @@ impl JobRegister {
 
     pub fn register<J, I, O, F>(mut self, job: J, mapper: F) -> Self
     where
-        J: Job<I, O> + 'static,
-        F: Mapper<I> + 'static,
+        J: Job<I, O> + Send + Sync + 'static,
+        F: Mapper<I> + Send + Sync + 'static,
         I: 'static,
         O: 'static,
     {

@@ -33,8 +33,8 @@ impl Cli {
 
     pub fn register<J, I, O, F>(mut self, job: J, mapper: F) -> Self
     where
-        J: Job<I, O> + 'static,
-        F: Mapper<I> + 'static,
+        J: Job<I, O> + Send + Sync + 'static,
+        F: Mapper<I> + Send + Sync + 'static,
         I: 'static,
         O: 'static,
     {
@@ -44,8 +44,8 @@ impl Cli {
 
     pub fn default_job<J, I, O>(mut self, job: J, config: I) -> Self
     where
-        J: Job<I, O> + 'static,
-        I: 'static,
+        J: Job<I, O> + Send + Sync + 'static,
+        I: Send + 'static,
         O: 'static,
     {
         self.default = Some(DefaultJob {

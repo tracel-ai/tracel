@@ -6671,11 +6671,13 @@ dependencies = [
 name = "tracel-app"
 version = "0.6.0"
 dependencies = [
+ "axum",
  "clap",
  "json-patch",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "tracel-experiment",
 ]
 
