@@ -311,7 +311,6 @@ source = "git+https://github.com/tracel-ai/burn?rev=35ff68bd3b2faa6b6f651e5d7ab5
 dependencies = [
  "burn-autodiff",
  "burn-core",
- "burn-ndarray",
  "burn-nn",
  "burn-optim",
  "burn-std",
@@ -1334,7 +1333,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
- "variadics_please 2.0.0",
+ "variadics_please",
 ]
 
 [[package]]
@@ -1444,7 +1443,7 @@ dependencies = [
  "num-traits",
  "portable-atomic",
  "serde",
- "variadics_please 2.0.0",
+ "variadics_please",
 ]
 
 [[package]]
@@ -1537,7 +1536,7 @@ dependencies = [
  "paste",
  "serde",
  "spin",
- "variadics_please 2.0.0",
+ "variadics_please",
 ]
 
 [[package]]
@@ -5783,6 +5782,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.6.0"
 dependencies = [
+ "tracel-app",
  "tracel-artifact",
  "tracel-client",
  "tracel-core",
@@ -5790,7 +5790,18 @@ dependencies = [
  "tracel-fleet",
  "tracel-inference",
  "tracel-macros",
- "tracel-runtime",
+]
+
+[[package]]
+name = "tracel-app"
+version = "0.6.0"
+dependencies = [
+ "clap",
+ "json-patch",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracel-experiment",
 ]
 
 [[package]]
@@ -5957,31 +5968,6 @@ version = "22.1.4-4"
 source = "git+https://github.com/tracel-ai/tracel-llvm?rev=82401e3c00a35a3fb7d5e2b415e79692e09e1079#82401e3c00a35a3fb7d5e2b415e79692e09e1079"
 dependencies = [
  "tracel-llvm-bundler",
-]
-
-[[package]]
-name = "tracel-runtime"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "burn",
- "clap",
- "derive_more",
- "json-patch",
- "log",
- "serde",
- "serde_json",
- "strum 0.27.2",
- "syn",
- "thiserror 2.0.18",
- "tracel-artifact",
- "tracel-client",
- "tracel-core",
- "tracel-experiment",
- "tracel-fleet",
- "tracel-inference",
- "tynm",
- "variadics_please 1.1.0",
 ]
 
 [[package]]
@@ -6353,17 +6339,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "variadics_please"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41b6d82be61465f97d42bd1d15bf20f3b0a3a0905018f38f9d6f6962055b0b5c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "variadics_please"

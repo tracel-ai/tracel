@@ -2,7 +2,7 @@
 //!
 //! Bundles are a way to group multiple related files together as a single artifact, with support for encoding/decoding complex data structures into bundles of files, and abstracting over different storage backends for reading/writing those bundles.
 //!
-//! As a user of Burn Central, you will typically interact with bundles indirectly through higher-level APIs for logging experiment artifacts, registering models, etc.
+//! As a user of Tracel console, you will typically interact with bundles indirectly through higher-level APIs for logging experiment artifacts, registering models, etc.
 //! However, if you need to implement custom artifact handling logic (e.g. for a new model format), you may need to implement the BundleEncode/BundleDecode traits for your data structures, and use the BundleSink/BundleSource traits to read/write files from/to bundles in a storage-agnostic way.
 //!
 //! # Examples

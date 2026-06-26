@@ -51,10 +51,6 @@ pub mod experiment {
 #[doc(inline)]
 pub use tracel_macros as macros;
 
-/// Runtime support for executing training and inference routines registered with Burn Central.
-#[doc(inline)]
-pub use tracel_runtime as runtime;
-
 /// Inference contracts and adapters.
 #[doc(hidden)]
 #[doc(inline)]
@@ -68,6 +64,10 @@ pub use tracel_fleet as fleet;
 /// Artifact bundle utilities and adapters.
 #[doc(inline)]
 pub use tracel_artifact as artifact;
+
+/// App module for job registration, CLI, and config mappers
+#[doc(inline)]
+pub use tracel_app as app;
 
 pub use tracel_core::Connection;
 pub use tracel_core::Context;
