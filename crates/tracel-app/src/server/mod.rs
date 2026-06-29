@@ -101,10 +101,20 @@ async fn run_job(
         );
     }
 
+    let input = match register.validate(&job_name, &body) {
+        Ok(input) => input,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid configuration for job '{}': {}", job_name, e),
+            );
+        }
+    };
+
     let response_name = job_name.clone();
 
     tokio::task::spawn_blocking(move || {
-        if let Err(e) = register.dispatch(&job_name, &body) {
+        if let Err(e) = register.run(&job_name, input) {
             eprintln!("Job '{job_name}' failed: {e}");
         }
     });

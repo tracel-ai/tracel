@@ -35,7 +35,7 @@ impl Cli {
     where
         J: Job<I, O> + Send + Sync + 'static,
         F: Mapper<I> + Send + Sync + 'static,
-        I: 'static,
+        I: Send + 'static,
         O: 'static,
     {
         self.register = self.register.register(job, mapper);

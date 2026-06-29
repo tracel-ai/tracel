@@ -1,7 +1,10 @@
-use std::error::Error;
+use std::{any::Any, error::Error};
 use tracel_experiment::ExperimentJob;
 
-pub type JobFunction = Box<dyn Fn(&str) -> Result<(), Box<dyn Error + Send + Sync>> + Send + Sync>;
+pub type ValidateFn =
+    Box<dyn Fn(&str) -> Result<Box<dyn Any + Send>, Box<dyn Error + Send + Sync>> + Send + Sync>;
+pub type RunFn =
+    Box<dyn Fn(Box<dyn Any + Send>) -> Result<(), Box<dyn Error + Send + Sync>> + Send + Sync>;
 
 pub trait Job<I, O> {
     fn name(&self) -> &str;
