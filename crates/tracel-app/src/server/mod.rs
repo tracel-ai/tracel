@@ -2,7 +2,7 @@ mod error;
 
 pub use error::ServerError;
 
-use crate::{job::Job, job_register::JobRegister, mapper::JsonMapper};
+use crate::{job::Job, job_register::{JobRegister, JobRegisterError}, mapper::JsonMapper};
 use axum::{
     Router,
     extract::{Path, State},
@@ -90,24 +90,16 @@ async fn run_job(
     Path(job_name): Path<String>,
     body: String,
 ) -> impl IntoResponse {
-    if !register.has_job(&job_name) {
-        return (
-            StatusCode::NOT_FOUND,
-            format!(
-                "unknown job '{}'. Available: {}",
-                job_name,
-                register.job_names().join(", ")
-            ),
-        );
-    }
-
     let input = match register.validate(&job_name, &body) {
         Ok(input) => input,
+        Err(e @ JobRegisterError::UnknownJob { .. }) => {
+            return (StatusCode::NOT_FOUND, e.to_string());
+        }
+        Err(e @ JobRegisterError::ValidationFailed(_)) => {
+            return (StatusCode::BAD_REQUEST, e.to_string());
+        }
         Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid configuration for job '{}': {}", job_name, e),
-            );
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
         }
     };
 

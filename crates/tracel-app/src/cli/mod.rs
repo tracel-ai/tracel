@@ -2,7 +2,9 @@ mod error;
 
 pub use error::CliError;
 
-use crate::{job::Job, job_register::JobRegister, mapper::Mapper};
+use crate::{
+    job::Job, job_register::{JobRegister, JobRegisterError}, mapper::Mapper
+};
 use clap::Parser;
 use std::error::Error;
 
@@ -62,20 +64,15 @@ impl Cli {
     fn dispatch(self, job: Option<String>, config: Option<String>) -> Result<(), CliError> {
         match job {
             Some(job_name) => {
-                if !self.register.has_job(&job_name) {
-                    return Err(CliError::UnknownJob {
-                        name: job_name,
-                        available: self.register.job_names(),
-                    });
-                }
                 let config_str = config.unwrap_or_default();
-                self.register
-                    .dispatch(&job_name, &config_str)
-                    .map_err(CliError::JobError)
+                self.register.dispatch(&job_name, &config_str)?;
+                Ok(())
             }
             None => {
                 let d = self.default.ok_or(CliError::MissingDefault)?;
-                (d.runner)().map_err(CliError::JobError)
+                (d.runner)().map_err(|e| {
+                    CliError::JobRegister(JobRegisterError::ExecutionFailed(e))
+                })
             }
         }
     }
@@ -85,6 +82,7 @@ impl Cli {
 mod tests {
     use super::*;
     use crate::job::Job;
+    use crate::job_register::JobRegisterError;
     use crate::mapper::Mapper;
     use std::error::Error;
 
@@ -162,7 +160,10 @@ mod tests {
 
         let result = cli.dispatch(Some("infer".into()), Some("{}".into()));
 
-        assert!(matches!(result, Err(CliError::UnknownJob { .. })));
+        assert!(matches!(
+            result,
+            Err(CliError::JobRegister(JobRegisterError::UnknownJob { .. }))
+        ));
     }
 
     #[test]
@@ -175,21 +176,27 @@ mod tests {
     }
 
     #[test]
-    fn mapper_error_is_wrapped_in_job_error() {
+    fn mapper_error_is_validation_failed() {
         let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::failing());
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
 
-        assert!(matches!(result, Err(CliError::JobError(_))));
+        assert!(matches!(
+            result,
+            Err(CliError::JobRegister(JobRegisterError::ValidationFailed(_)))
+        ));
     }
 
     #[test]
-    fn job_error_is_wrapped_in_job_error() {
+    fn job_error_is_execution_failed() {
         let cli = Cli::new().register(FakeJob::failing("train"), FakeMapper::new());
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
 
-        assert!(matches!(result, Err(CliError::JobError(_))));
+        assert!(matches!(
+            result,
+            Err(CliError::JobRegister(JobRegisterError::ExecutionFailed(_)))
+        ));
     }
 
     #[test]
@@ -216,7 +223,10 @@ mod tests {
 
         let result = cli.dispatch(None, None);
 
-        assert!(matches!(result, Err(CliError::JobError(_))));
+        assert!(matches!(
+            result,
+            Err(CliError::JobRegister(JobRegisterError::ExecutionFailed(_)))
+        ));
     }
 
     #[test]

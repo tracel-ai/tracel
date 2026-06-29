@@ -2,7 +2,22 @@ use crate::{
     job::{Job, RunFn, ValidateFn},
     mapper::Mapper,
 };
-use std::{any::Any, collections::HashMap};
+use std::{any::Any, collections::HashMap, error::Error};
+
+#[derive(Debug, thiserror::Error)]
+pub enum JobRegisterError {
+    #[error("unknown job '{name}'. Available: {}", available.join(", "))]
+    UnknownJob {
+        name: String,
+        available: Vec<String>,
+    },
+
+    #[error("validation failed: {0}")]
+    ValidationFailed(#[source] Box<dyn Error + Send + Sync>),
+
+    #[error("execution failed: {0}")]
+    ExecutionFailed(#[source] Box<dyn Error + Send + Sync>),
+}
 
 struct JobEntry {
     validate: ValidateFn,
@@ -29,15 +44,19 @@ impl JobRegister {
         O: 'static,
     {
         let validate: ValidateFn = Box::new(move |config_str: &str| {
-            let input = mapper.map(config_str)?;
+            let input = mapper
+                .map(config_str)
+                .map_err(JobRegisterError::ValidationFailed)?;
             Ok(Box::new(input) as Box<dyn Any + Send>)
         });
 
         let run: RunFn = Box::new(move |input: Box<dyn Any + Send>| {
-            let input = *input
-                .downcast::<I>()
-                .expect("type mismatch in job dispatch");
-            job.execute(input).map(|_| ())
+            let input = *input.downcast::<I>().map_err(|_| {
+                JobRegisterError::ExecutionFailed("internal type mismatch in job dispatch".into())
+            })?;
+            job.execute(input)
+                .map(|_| ())
+                .map_err(JobRegisterError::ExecutionFailed)
         });
 
         JobEntry { validate, run }
@@ -63,46 +82,212 @@ impl JobRegister {
         self.jobs.keys().cloned().collect()
     }
 
-    pub fn has_job(&self, name: &str) -> bool {
-        self.jobs.contains_key(name)
-    }
-
     pub fn validate(
         &self,
         job_name: &str,
         config: &str,
-    ) -> Result<Box<dyn Any + Send>, Box<dyn std::error::Error + Send + Sync>> {
-        let entry = self.jobs.get(job_name).ok_or_else(|| {
-            format!(
-                "unknown job '{}'. Available: {}",
-                job_name,
-                self.jobs.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })?;
+    ) -> Result<Box<dyn Any + Send>, JobRegisterError> {
+        let entry = self
+            .jobs
+            .get(job_name)
+            .ok_or_else(|| JobRegisterError::UnknownJob {
+                name: job_name.to_string(),
+                available: self.job_names(),
+            })?;
         (entry.validate)(config)
     }
 
-    pub fn run(
-        &self,
-        job_name: &str,
-        input: Box<dyn Any + Send>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let entry = self.jobs.get(job_name).ok_or_else(|| {
-            format!(
-                "unknown job '{}'. Available: {}",
-                job_name,
-                self.jobs.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })?;
+    pub fn run(&self, job_name: &str, input: Box<dyn Any + Send>) -> Result<(), JobRegisterError> {
+        let entry = self
+            .jobs
+            .get(job_name)
+            .ok_or_else(|| JobRegisterError::UnknownJob {
+                name: job_name.to_string(),
+                available: self.job_names(),
+            })?;
         (entry.run)(input)
     }
 
-    pub fn dispatch(
-        &self,
-        job_name: &str,
-        config: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dispatch(&self, job_name: &str, config: &str) -> Result<(), JobRegisterError> {
         let input = self.validate(job_name, config)?;
         self.run(job_name, input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job::Job;
+    use crate::mapper::Mapper;
+    use std::error::Error;
+
+    struct FakeJob {
+        name: &'static str,
+        should_fail: bool,
+    }
+
+    impl Job<String, ()> for FakeJob {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn execute(&self, _input: String) -> Result<(), Box<dyn Error + Send + Sync>> {
+            if self.should_fail {
+                Err("job execution failed".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    struct FakeMapper {
+        should_fail: bool,
+    }
+
+    impl Mapper<String> for FakeMapper {
+        fn map(&self, raw: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+            if self.should_fail {
+                Err("mapper failed".into())
+            } else {
+                Ok(raw.to_string())
+            }
+        }
+    }
+
+    #[test]
+    fn validate_unknown_job_returns_unknown_job_error() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let result = register.validate("infer", "{}");
+
+        assert!(matches!(result, Err(JobRegisterError::UnknownJob { .. })));
+    }
+
+    #[test]
+    fn validate_bad_config_returns_validation_failed() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: true },
+        );
+
+        let result = register.validate("train", "{}");
+
+        assert!(matches!(result, Err(JobRegisterError::ValidationFailed(_))));
+    }
+
+    #[test]
+    fn validate_ok_returns_input() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let result = register.validate("train", "hello");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_unknown_job_returns_unknown_job_error() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let input: Box<dyn Any + Send> = Box::new("test".to_string());
+        let result = register.run("infer", input);
+
+        assert!(matches!(result, Err(JobRegisterError::UnknownJob { .. })));
+    }
+
+    #[test]
+    fn run_execution_failure_returns_execution_failed() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: true,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let input = register.validate("train", "{}").unwrap();
+        let result = register.run("train", input);
+
+        assert!(matches!(result, Err(JobRegisterError::ExecutionFailed(_))));
+    }
+
+    #[test]
+    fn dispatch_ok() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let result = register.dispatch("train", "hello");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatch_unknown_job() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let result = register.dispatch("infer", "{}");
+
+        assert!(matches!(result, Err(JobRegisterError::UnknownJob { .. })));
+    }
+
+    #[test]
+    fn dispatch_validation_failed() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: true },
+        );
+
+        let result = register.dispatch("train", "{}");
+
+        assert!(matches!(result, Err(JobRegisterError::ValidationFailed(_))));
+    }
+
+    #[test]
+    fn dispatch_execution_failed() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: true,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let result = register.dispatch("train", "{}");
+
+        assert!(matches!(result, Err(JobRegisterError::ExecutionFailed(_))));
     }
 }
