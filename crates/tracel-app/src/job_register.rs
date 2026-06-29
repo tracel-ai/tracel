@@ -5,7 +5,7 @@ use crate::{
 use std::{any::Any, collections::HashMap, error::Error};
 
 #[derive(Debug, thiserror::Error)]
-pub enum JobRegisterError {
+pub(crate) enum JobRegisterError {
     #[error("unknown job '{name}'. Available: {}", available.join(", "))]
     UnknownJob {
         name: String,

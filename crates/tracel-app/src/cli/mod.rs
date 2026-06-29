@@ -2,9 +2,7 @@ mod error;
 
 pub use error::CliError;
 
-use crate::{
-    job::Job, job_register::{JobRegister, JobRegisterError}, mapper::Mapper
-};
+use crate::{job::Job, job_register::JobRegister, mapper::Mapper};
 use clap::Parser;
 use std::error::Error;
 
@@ -70,9 +68,7 @@ impl Cli {
             }
             None => {
                 let d = self.default.ok_or(CliError::MissingDefault)?;
-                (d.runner)().map_err(|e| {
-                    CliError::JobRegister(JobRegisterError::ExecutionFailed(e))
-                })
+                (d.runner)().map_err(CliError::ExecutionFailed)
             }
         }
     }
@@ -82,7 +78,6 @@ impl Cli {
 mod tests {
     use super::*;
     use crate::job::Job;
-    use crate::job_register::JobRegisterError;
     use crate::mapper::Mapper;
     use std::error::Error;
 
@@ -160,10 +155,7 @@ mod tests {
 
         let result = cli.dispatch(Some("infer".into()), Some("{}".into()));
 
-        assert!(matches!(
-            result,
-            Err(CliError::JobRegister(JobRegisterError::UnknownJob { .. }))
-        ));
+        assert!(matches!(result, Err(CliError::UnknownJob { .. })));
     }
 
     #[test]
@@ -181,10 +173,7 @@ mod tests {
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
 
-        assert!(matches!(
-            result,
-            Err(CliError::JobRegister(JobRegisterError::ValidationFailed(_)))
-        ));
+        assert!(matches!(result, Err(CliError::ValidationFailed(_))));
     }
 
     #[test]
@@ -193,10 +182,7 @@ mod tests {
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
 
-        assert!(matches!(
-            result,
-            Err(CliError::JobRegister(JobRegisterError::ExecutionFailed(_)))
-        ));
+        assert!(matches!(result, Err(CliError::ExecutionFailed(_))));
     }
 
     #[test]
@@ -223,10 +209,7 @@ mod tests {
 
         let result = cli.dispatch(None, None);
 
-        assert!(matches!(
-            result,
-            Err(CliError::JobRegister(JobRegisterError::ExecutionFailed(_)))
-        ));
+        assert!(matches!(result, Err(CliError::ExecutionFailed(_))));
     }
 
     #[test]

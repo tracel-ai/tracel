@@ -8,5 +8,3 @@ pub mod server;
 
 mod job;
 mod job_register;
-
-pub use job_register::JobRegisterError;
