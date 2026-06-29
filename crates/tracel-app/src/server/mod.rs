@@ -66,7 +66,7 @@ impl Server {
         self
     }
 
-    pub fn run(self) -> Result<(), ServerError> {
+    pub async fn run_async(self) -> Result<(), ServerError> {
         let addr = format!("{}:{}", self.host, self.port);
         let state = Arc::new(self.register);
 
@@ -74,14 +74,16 @@ impl Server {
             .route("/{job_name}", post(run_job))
             .with_state(state);
 
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        axum::serve(listener, app).await?;
+        Ok(())
+    }
+
+    pub fn run(self) -> Result<(), ServerError> {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?
-            .block_on(async {
-                let listener = tokio::net::TcpListener::bind(&addr).await?;
-                axum::serve(listener, app).await?;
-                Ok(())
-            })
+            .block_on(self.run_async())
     }
 }
 
@@ -97,22 +99,25 @@ async fn run_job(
             let status = match &e {
                 ServerError::UnknownJob { .. } => StatusCode::NOT_FOUND,
                 ServerError::ValidationFailed(_) => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+                ServerError::ExecutionFailed(_) | ServerError::IoError(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             };
             return (status, e.to_string());
         }
     };
 
-    let response_name = job_name.clone();
+    let response = format!("Job '{job_name}' has started running");
 
-    tokio::task::spawn_blocking(move || {
-        if let Err(e) = register.run(&job_name, input) {
-            eprintln!("Job '{job_name}' failed: {e}");
+    let handle = tokio::task::spawn_blocking(move || register.run(&job_name, input));
+
+    tokio::spawn(async move {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => eprintln!("Job failed: {e}"),
+            Err(e) => eprintln!("Job panicked: {e}"),
         }
     });
 
-    (
-        StatusCode::OK,
-        format!("Job '{response_name}' has started running"),
-    )
+    (StatusCode::OK, response)
 }
