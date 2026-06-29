@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_unknown_job_returns_unknown_job_error() {
+    fn validate_with_unknown_job_returns_unknown_job_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_bad_config_returns_validation_failed() {
+    fn validate_with_bad_config_returns_validation_failed() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_ok_returns_input() {
+    fn validate_with_good_input_returns_input() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn run_unknown_job_returns_unknown_job_error() {
+    fn run_with_unknown_job_returns_unknown_job_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn run_execution_failure_returns_execution_failed() {
+    fn run_with_execution_failure_returns_execution_failed() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_ok() {
+    fn dispatch_with_correct_inputs_returns_ok() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_unknown_job() {
+    fn dispatch_with_unknown_job_returns_unknown_job() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_validation_failed() {
+    fn dispatch_with_failed_mapper_returns_validation_failed() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_execution_failed() {
+    fn dispatch_with_failed_job_returns_execution_failed() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
