@@ -79,7 +79,10 @@ impl Server {
             .try_init();
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         println!();
-        tracing::info!("Server listening on http://localhost:{}", listener.local_addr()?.port());
+        tracing::info!(
+            "Server listening on http://localhost:{}",
+            listener.local_addr()?.port()
+        );
         axum::serve(listener, app).await?;
         Ok(())
     }
