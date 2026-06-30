@@ -74,7 +74,12 @@ impl Server {
             .route("/{job_name}", post(run_job))
             .with_state(state);
 
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .try_init();
         let listener = tokio::net::TcpListener::bind(&addr).await?;
+        println!();
+        tracing::info!("Server listening on http://localhost:{}", listener.local_addr()?.port());
         axum::serve(listener, app).await?;
         Ok(())
     }

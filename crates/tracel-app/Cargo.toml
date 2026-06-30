@@ -23,3 +23,5 @@ json-patch.workspace = true
 thiserror.workspace = true
 axum = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true

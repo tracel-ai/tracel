@@ -6665,6 +6665,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracel-experiment",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
