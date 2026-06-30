@@ -78,7 +78,7 @@ impl JobRegister {
         self
     }
 
-    pub fn job_names(&self) -> Vec<String> {
+    fn job_names(&self) -> Vec<String> {
         self.jobs.keys().cloned().collect()
     }
 
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_with_unknown_job_returns_unknown_job_error() {
+    fn given_unknown_job_when_validating_then_return_unknown_job_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_with_bad_config_returns_validation_failed() {
+    fn given_bad_config_when_validating_then_return_validation_failed_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_with_good_input_returns_input() {
+    fn given_good_input_when_validating_then_return_input() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn run_with_unknown_job_returns_unknown_job_error() {
+    fn given_unknown_job_when_running_then_return_unknown_job_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn run_with_execution_failure_returns_execution_failed() {
+    fn given_job_error_when_running_then_return_execution_failed_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_with_correct_inputs_returns_ok() {
+    fn given_correct_inputs_when_dispatching_then_return_ok() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_with_unknown_job_returns_unknown_job() {
+    fn given_unknown_job_when_dispatching_then_return_unknown_job_error() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_with_failed_mapper_returns_validation_failed() {
+    fn given_failing_mapper_when_dispatching_then_return_validation_failed() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
@@ -277,7 +277,43 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_with_failed_job_returns_execution_failed() {
+    #[should_panic(expected = "already registered")]
+    fn given_duplicate_job_name_when_registering_then_panic() {
+        JobRegister::new()
+            .register(
+                FakeJob {
+                    name: "train",
+                    should_fail: false,
+                },
+                FakeMapper { should_fail: false },
+            )
+            .register(
+                FakeJob {
+                    name: "train",
+                    should_fail: false,
+                },
+                FakeMapper { should_fail: false },
+            );
+    }
+
+    #[test]
+    fn given_mismatched_input_type_when_running_then_return_execution_failed_error() {
+        let register = JobRegister::new().register(
+            FakeJob {
+                name: "train",
+                should_fail: false,
+            },
+            FakeMapper { should_fail: false },
+        );
+
+        let input: Box<dyn Any + Send> = Box::new(42i32);
+        let result = register.run("train", input);
+
+        assert!(matches!(result, Err(JobRegisterError::ExecutionFailed(_))));
+    }
+
+    #[test]
+    fn given_failing_job_when_dispatching_then_return_execution_failed() {
         let register = JobRegister::new().register(
             FakeJob {
                 name: "train",
