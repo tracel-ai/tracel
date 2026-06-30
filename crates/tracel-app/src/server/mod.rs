@@ -119,8 +119,8 @@ async fn run_job(
     tokio::spawn(async move {
         match handle.await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("Job failed: {e}"),
-            Err(e) => eprintln!("Job panicked: {e}"),
+            Ok(Err(e)) => tracing::error!("Job failed: {e}"),
+            Err(e) => tracing::error!("Job panicked: {e}"),
         }
     });
 
