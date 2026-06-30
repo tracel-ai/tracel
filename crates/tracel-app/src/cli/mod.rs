@@ -20,14 +20,14 @@ struct DefaultJob {
 #[derive(Default)]
 pub struct Cli {
     register: JobRegister,
-    default: Option<DefaultJob>,
+    default_job: Option<DefaultJob>,
 }
 
 impl Cli {
     pub fn new() -> Self {
         Self {
             register: JobRegister::new(),
-            default: None,
+            default_job: None,
         }
     }
 
@@ -48,7 +48,7 @@ impl Cli {
         I: Send + 'static,
         O: 'static,
     {
-        self.default = Some(DefaultJob {
+        self.default_job = Some(DefaultJob {
             runner: Box::new(move || job.execute(config).map(|_| ())),
         });
         self
@@ -67,7 +67,7 @@ impl Cli {
                 Ok(())
             }
             None => {
-                let d = self.default.ok_or(CliError::MissingDefault)?;
+                let d = self.default_job.ok_or(CliError::MissingDefault)?;
                 (d.runner)().map_err(CliError::ExecutionFailed)
             }
         }
