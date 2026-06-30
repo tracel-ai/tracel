@@ -25,10 +25,19 @@ fn main() -> anyhow::Result<()> {
         )
     });
 
+    let no_default_job = module.create("mnist_no_default", |session: &ExperimentRun, config| {
+        training::run(
+            session,
+            config,
+            vec![Device::autodiff(WgpuDevice::default().into())],
+        )
+    });
+
     Server::new()
         .port(3000)
         .register_with_default(job, MnistTrainingConfig::default())
         .register_with_default(default_job, MnistTrainingConfig::small())
+        .register(no_default_job)
         .run()?;
 
     Ok(())
