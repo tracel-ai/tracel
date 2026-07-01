@@ -8,10 +8,12 @@ use crate::backend::cloud::{CloudBackend, CloudError};
 use crate::backend::local::LocalBackend;
 #[cfg(feature = "station")]
 use crate::backend::station::StationBackend;
+use crate::model_registry::ModelRegistryProvider;
 use tracel_experiment::ExperimentProvider;
 
 pub struct Providers {
     pub experiment: Arc<dyn ExperimentProvider>,
+    pub model_registry: Option<Arc<dyn ModelRegistryProvider>>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,20 +30,23 @@ impl Connection {
             Connection::Cloud => {
                 let backend = Arc::new(CloudBackend::create_context()?);
                 Ok(Providers {
-                    experiment: backend,
+                    experiment: backend.clone(),
+                    model_registry: Some(backend),
                 })
             }
             Connection::Offline(path) => {
                 let backend = Arc::new(LocalBackend::create_context(path));
                 Ok(Providers {
                     experiment: backend,
+                    model_registry: None,
                 })
             }
             #[cfg(feature = "station")]
             Connection::Station(url) => {
                 let backend = Arc::new(StationBackend::create_context(url));
                 Ok(Providers {
-                    experiment: backend,
+                    experiment: backend.clone(),
+                    model_registry: Some(backend),
                 })
             }
         }
