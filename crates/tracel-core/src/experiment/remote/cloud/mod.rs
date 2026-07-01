@@ -244,22 +244,6 @@ impl ExperimentProvider for CloudBackend {
     }
 }
 
-pub fn create_cloud_experiment_run(
-    client: Client,
-    namespace: &str,
-    project_name: &str,
-    name: String,
-    attributes: HashMap<String, Value>,
-) -> Result<ExperimentRun, Box<dyn std::error::Error + Send + Sync>> {
-    Ok(create_run(
-        client,
-        namespace,
-        project_name,
-        name,
-        attributes,
-    )?)
-}
-
 fn create_run(
     client: Client,
     namespace: &str,
