@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>Burn Central</h1>
+<h1>Tracel</h1>
 
 [![Current Crates.io Version](https://img.shields.io/crates/v/burn-central)](https://crates.io/crates/burn-central)
 [![Minimum Supported Rust Version](https://img.shields.io/crates/msrv/burn-central)](https://crates.io/crates/burn-central)
