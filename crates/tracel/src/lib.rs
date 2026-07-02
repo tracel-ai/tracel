@@ -18,24 +18,39 @@
 //!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
-//! - [`macros`]: attribute macros used to register training and inference routines.
-//! - [`runtime`]: runtime support for executing registered routines.
+//! - [`app`]: job registration, plus CLI and HTTP server front-ends to run those jobs.
 //! - [`artifact`]: bundle and artifact utilities.
 //!
 //! ## Registering Routines
 //!
-//! Use the `register` macro to mark routines so the Tracel CLI can discover them:
+//! Wrap a routine into a job with [`experiment::ExperimentModule::create`], then register it
+//! with a [`app::cli::Cli`] (to dispatch from the command line) or a `app::server::Server`
+//! (to dispatch over HTTP, requires the `server` feature):
 //!
 //! ```ignore
-//! use ::macros::register;
+//! use tracel::app::cli::Cli;
+//! use tracel::app::mapper::JsonMapper;
+//! use tracel::experiment::ExperimentRun;
+//! use tracel::{Connection, Context};
 //!
-//! #[register(training, name = "my_training_procedure")]
-//! async fn my_training_function() {
-//!     // Your training code here
+//! fn main() -> anyhow::Result<()> {
+//!     let module = Context::new(Connection::Cloud)?.experiment();
+//!
+//!     let job = module.create("my_training_procedure", |session: &ExperimentRun, config| {
+//!         // Your training code here
+//!         my_training_function(session, config)
+//!     });
+//!
+//!     Cli::new()
+//!         .register(job, JsonMapper::with_default(MyConfig::default()))
+//!         .run()?;
+//!
+//!     Ok(())
 //! }
 //! ```
 //!
-//! The `name` attribute is optional. If omitted, the function name is used.
+//! The job's name (`"my_training_procedure"` above) is what callers use to select it, whether
+//! from the CLI or from an HTTP request path.
 
 pub use tracel_client::Env;
 pub use tracel_client::TracelCredentials;
@@ -46,10 +61,6 @@ pub mod experiment {
     #[doc(inline)]
     pub use tracel_experiment::*;
 }
-
-/// Attribute macros for registering routines discoverable by the Tracel CLI.
-#[doc(inline)]
-pub use tracel_macros as macros;
 
 /// Inference contracts and adapters.
 #[doc(hidden)]

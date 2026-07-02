@@ -1,10 +1,10 @@
 <div align="center">
 
-<h1>Burn Central</h1>
+<h1>Tracel</h1>
 
 [![Current Crates.io Version](https://img.shields.io/crates/v/burn-central)](https://crates.io/crates/burn-central)
 [![Minimum Supported Rust Version](https://img.shields.io/crates/msrv/burn-central)](https://crates.io/crates/burn-central)
-[![Test Status](https://github.com/tracel-ai/burn-central/actions/workflows/ci.yml/badge.svg)](https://github.com/tracel-ai/burn-central/actions/workflows/ci.yml)
+[![Test Status](https://github.com/tracel-ai/tracel/actions/workflows/ci.yml/badge.svg)](https://github.com/tracel-ai/tracel/actions/workflows/ci.yml)
 ![license](https://shields.io/badge/license-MIT%2FApache--2.0-blue)
 
 ---
@@ -15,9 +15,9 @@
 
 Tracel is a new way of using Burn. It aims at providing a central platform for experiment tracking, model sharing, and deployment for all Burn users!
 
-This repository contains the SDK associated with the project. It offers macros that help attach to your code and send training data to our application. To use this project you must first create an account on the [application](https://s1-central.burn.dev/).
+This repository contains the SDK associated with the project. It provides a Rust API to register your training and inference routines as jobs and dispatch them from a CLI or an HTTP server, sending training data to our application as they run. To use this project you must first create an account on the [application](https://s1-central.burn.dev/).
 
-Also needed to use this is the new [burn-cli](https://github.com/tracel-ai/burn-central-cli).
+You'll also want the [tracel-cli](https://github.com/tracel-ai/tracel-cli) to log in and store your credentials locally.
 
 ## Installation
 
@@ -34,36 +34,44 @@ Currently, we only support training. Here's how to integrate Tracel into your tr
 
 ### 1. Register your training function
 
-Use the `#[register]` macro to register your training function:
+Wrap your training function into a job with `ExperimentModule::create`, then register it with a
+`Cli` (to run it from the command line) or a `Server` (to dispatch it over HTTP):
 
 ```rust
-use tracel::{
-    experiment::ExperimentRun,
-    macros::register,
-    runtime::{Args, ArtifactLoader, Model, MultiDevice},
-};
-use burn::prelude::*;
+use tracel::app::cli::Cli;
+use tracel::app::mapper::JsonMapper;
+use tracel::experiment::ExperimentRun;
+use tracel::{Connection, Context};
 
-#[register(training, name = "mnist")]
-pub fn training<B: AutodiffBackend>(
+fn training(
     experiment: &ExperimentRun,
-    config: Args<YourExperimentConfig>,
-    MultiDevice(devices): MultiDevice<B>,
-    loader: ArtifactLoader<ModelArtifact<B>>,
-) -> Result<Model<ModelArtifact<B::InnerBackend>>, String> {
+    config: YourExperimentConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Log your configuration
-    experiment.log_config("Training Config", &training_config)
+    experiment.log_config("Training Config", &config)
         .expect("Logging config failed");
 
     // Your training logic here...
-    let model = train::<B>(experiment, artifact_dir, &training_config, devices[0].clone())?;
+    train(experiment, &config)?;
 
-    Ok(Model(ModelArtifact {
-        model_record: model.into_record(),
-        config: training_config,
-    }))
+    Ok(())
+}
+
+fn main() -> anyhow::Result<()> {
+    let module = Context::new(Connection::Cloud)?.experiment();
+    let job = module.create("mnist", training);
+
+    Cli::new()
+        .register(job, JsonMapper::with_default(YourExperimentConfig::default()))
+        .run()?;
+
+    Ok(())
 }
 ```
+
+Swap `Cli` for `tracel::app::server::Server` (with the optional `server` feature) to dispatch the
+same job over HTTP instead of the command line. See [`examples/mnist`](examples/mnist/examples)
+for complete, runnable versions of both.
 
 ### 2. Integrate with your Learner
 
@@ -104,13 +112,13 @@ let learner = LearnerBuilder::new(artifact_dir)
 
 ### 3. Run your training
 
-Once integrated, run your training using the [burn-cli](https://github.com/tracel-ai/burn-central-cli) to automatically track metrics, checkpoints, and logs on Burn Central.
+Once integrated, run your training by running your binary (`cargo run`) to automatically track metrics, checkpoints, and logs on Burn Central.
 
 ## Requirements
 
 - Rust 1.87.0 or higher
 - A Burn Central account (create one at [central.burn.dev](https://central.burn.dev/))
-- The [burn-cli](https://github.com/tracel-ai/burn-central-cli)
+- The [tracel-cli](https://github.com/tracel-ai/tracel-cli), to log in and store your credentials locally
 
 ## Contribution
 
