@@ -78,7 +78,6 @@ impl Server {
             .with_max_level(tracing::Level::INFO)
             .try_init();
         let listener = tokio::net::TcpListener::bind(&addr).await?;
-        println!();
         tracing::info!(
             "Server listening on http://localhost:{}",
             listener.local_addr()?.port()
