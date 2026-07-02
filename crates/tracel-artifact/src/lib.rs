@@ -8,4 +8,4 @@ pub mod download;
 pub mod upload;
 
 pub use tools::validation::normalize_checksum;
-pub use transfer::{FileTransferClient, ReqwestTransferClient};
+pub use transfer::{FileTransferClient, ReqwestTransferClient, TransferError};
