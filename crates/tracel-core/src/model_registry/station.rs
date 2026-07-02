@@ -1,6 +1,7 @@
 use tracel_artifact::download::ArtifactDownloadFile;
 
 use crate::backend::station::StationBackend;
+use crate::download_file::artifact_download_file_with_verification;
 use crate::model_registry::{
     ModelInfo, ModelRegistryError, ModelRegistryProvider, ModelVersionInfo,
 };
@@ -34,11 +35,13 @@ impl ModelRegistryProvider for StationBackend {
         Ok(resp
             .files
             .into_iter()
-            .map(|f| ArtifactDownloadFile {
-                rel_path: f.rel_path,
-                url: f.url,
-                size_bytes: Some(f.size_bytes),
-                checksum: Some(f.checksum),
+            .map(|f| {
+                artifact_download_file_with_verification(
+                    f.rel_path,
+                    f.url,
+                    f.size_bytes,
+                    f.checksum,
+                )
             })
             .collect())
     }

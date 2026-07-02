@@ -1,6 +1,7 @@
 use tracel_artifact::download::ArtifactDownloadFile;
 
 use crate::backend::cloud::CloudBackend;
+use crate::download_file::artifact_download_file;
 use crate::model_registry::{
     ModelInfo, ModelRegistryError, ModelRegistryProvider, ModelVersionInfo,
 };
@@ -40,12 +41,7 @@ impl ModelRegistryProvider for CloudBackend {
         Ok(resp
             .files
             .into_iter()
-            .map(|f| ArtifactDownloadFile {
-                rel_path: f.rel_path,
-                url: f.url,
-                size_bytes: None,
-                checksum: None,
-            })
+            .map(|f| artifact_download_file(f.rel_path, f.url))
             .collect())
     }
 }

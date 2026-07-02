@@ -47,28 +47,16 @@ pub trait ModelRegistryProvider: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct ModelRegistryModule<FTC: FileTransferClient = ReqwestTransferClient> {
+pub struct ModelRegistryModule {
     provider: Arc<dyn ModelRegistryProvider>,
-    transfer_client: FTC,
+    transfer_client: ReqwestTransferClient,
 }
 
-impl ModelRegistryModule<ReqwestTransferClient> {
+impl ModelRegistryModule {
     pub fn new(provider: Arc<dyn ModelRegistryProvider>) -> Self {
         Self {
             provider,
             transfer_client: ReqwestTransferClient::new(),
-        }
-    }
-}
-
-impl<FTC: FileTransferClient> ModelRegistryModule<FTC> {
-    pub fn with_transfer_client(
-        provider: Arc<dyn ModelRegistryProvider>,
-        transfer_client: FTC,
-    ) -> Self {
-        Self {
-            provider,
-            transfer_client,
         }
     }
 
@@ -90,8 +78,19 @@ impl<FTC: FileTransferClient> ModelRegistryModule<FTC> {
         version: u32,
         sink: &mut impl BundleSink,
     ) -> Result<(), ModelRegistryError> {
+        self.download_to_with_client(name, version, sink, &self.transfer_client)
+    }
+
+    // Method to test the download_to method with a mock client
+    fn download_to_with_client<FTC: FileTransferClient>(
+        &self,
+        name: &str,
+        version: u32,
+        sink: &mut impl BundleSink,
+        client: &FTC,
+    ) -> Result<(), ModelRegistryError> {
         let files = self.provider.download_plan(name, version)?;
-        download_artifacts_to_sink_with_client(&self.transfer_client, sink, &files)?;
+        download_artifacts_to_sink_with_client(client, sink, &files)?;
         Ok(())
     }
 }
@@ -294,11 +293,11 @@ mod tests {
         let transfer_client = MockTransferClient {
             files: HashMap::from([("mock://weights".to_string(), data.clone())]),
         };
-        let module = ModelRegistryModule::with_transfer_client(Arc::new(provider), transfer_client);
+        let module = ModelRegistryModule::new(Arc::new(provider));
         let mut sink = InMemoryBundleSources::new();
 
         module
-            .download_to("resnet50", 2, &mut sink)
+            .download_to_with_client("resnet50", 2, &mut sink, &transfer_client)
             .expect("download_to should succeed");
 
         assert_eq!(sink.len(), 1);
@@ -319,11 +318,11 @@ mod tests {
             ..Default::default()
         };
         let transfer_client = MockTransferClient::default();
-        let module = ModelRegistryModule::with_transfer_client(Arc::new(provider), transfer_client);
+        let module = ModelRegistryModule::new(Arc::new(provider));
         let mut sink = InMemoryBundleSources::new();
 
         let err = module
-            .download_to("resnet50", 2, &mut sink)
+            .download_to_with_client("resnet50", 2, &mut sink, &transfer_client)
             .expect_err("download_to should fail when the file can't be fetched");
 
         assert!(matches!(err, ModelRegistryError::Download(_)));

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
+use tracel_artifact::download::{DownloadError, download_artifacts_to_sink};
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
 };
@@ -28,6 +28,7 @@ use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
 use tracel_experiment::ExperimentProvider;
 
 use crate::backend::station::StationBackend;
+use crate::download_file::artifact_download_file;
 use crate::experiment::remote::session::RemoteExperimentSession;
 
 #[derive(Debug, thiserror::Error)]
@@ -151,12 +152,7 @@ impl ExperimentArtifactClient {
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {
-            files.push(ArtifactDownloadFile {
-                rel_path: file.rel_path,
-                url: file.url,
-                size_bytes: None,
-                checksum: None,
-            });
+            files.push(artifact_download_file(file.rel_path, file.url));
         }
 
         let mut bundle = FsBundle::temp()

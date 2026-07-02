@@ -1,6 +1,7 @@
 mod backend;
 mod connection;
 mod context;
+mod download_file;
 mod model_registry;
 
 pub mod experiment;
