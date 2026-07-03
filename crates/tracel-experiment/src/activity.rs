@@ -220,7 +220,7 @@ impl ActivityBuilder<Unmetered> {
         ActivityBuilder {
             reporter,
             id_allocator,
-            control: control,
+            control,
             cancellation_parent,
             parent,
             name,

@@ -5,12 +5,7 @@ use tracel_client::{
     WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
-
-use crate::{
-    CancelToken,
-    activity::{ActivityCancellationRegistry, ActivityId, ExperimentRunControl},
-    remote::logs::LogStoreError,
-};
+use tracel_experiment::{ActivityId, ExperimentRunControl};
 
 use super::log_store::{LogStoreError, TempLogStore};
 
