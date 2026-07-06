@@ -66,9 +66,11 @@ impl ModelRegistryModule {
 
     pub fn get(&self, name: &str) -> Result<ModelInfo, ModelRegistryError> {
         self.provider.get(name).map_err(|err| match err {
-            ModelRegistryError::Client(ClientError::NotFound) => ModelRegistryError::ModelNotFound {
-                name: name.to_string(),
-            },
+            ModelRegistryError::Client(ClientError::NotFound) => {
+                ModelRegistryError::ModelNotFound {
+                    name: name.to_string(),
+                }
+            }
             other => other,
         })
     }
@@ -78,13 +80,17 @@ impl ModelRegistryModule {
         name: &str,
         version: u32,
     ) -> Result<ModelVersionInfo, ModelRegistryError> {
-        self.provider.version(name, version).map_err(|err| match err {
-            ModelRegistryError::Client(ClientError::NotFound) => ModelRegistryError::VersionNotFound {
-                name: name.to_string(),
-                version,
-            },
-            other => other,
-        })
+        self.provider
+            .version(name, version)
+            .map_err(|err| match err {
+                ModelRegistryError::Client(ClientError::NotFound) => {
+                    ModelRegistryError::VersionNotFound {
+                        name: name.to_string(),
+                        version,
+                    }
+                }
+                other => other,
+            })
     }
 
     pub fn download_to(
