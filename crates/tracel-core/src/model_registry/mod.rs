@@ -27,6 +27,10 @@ pub struct ModelVersionInfo {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelRegistryError {
+    #[error("model '{name}' not found")]
+    ModelNotFound { name: String },
+    #[error("version {version} of model '{name}' not found")]
+    VersionNotFound { name: String, version: u32 },
     #[error(transparent)]
     Client(#[from] ClientError),
     #[error(transparent)]
@@ -61,7 +65,12 @@ impl ModelRegistryModule {
     }
 
     pub fn get(&self, name: &str) -> Result<ModelInfo, ModelRegistryError> {
-        self.provider.get(name)
+        self.provider.get(name).map_err(|err| match err {
+            ModelRegistryError::Client(ClientError::NotFound) => ModelRegistryError::ModelNotFound {
+                name: name.to_string(),
+            },
+            other => other,
+        })
     }
 
     pub fn version(
@@ -69,7 +78,13 @@ impl ModelRegistryModule {
         name: &str,
         version: u32,
     ) -> Result<ModelVersionInfo, ModelRegistryError> {
-        self.provider.version(name, version)
+        self.provider.version(name, version).map_err(|err| match err {
+            ModelRegistryError::Client(ClientError::NotFound) => ModelRegistryError::VersionNotFound {
+                name: name.to_string(),
+                version,
+            },
+            other => other,
+        })
     }
 
     pub fn download_to(
@@ -89,7 +104,18 @@ impl ModelRegistryModule {
         sink: &mut impl BundleSink,
         client: &FTC,
     ) -> Result<(), ModelRegistryError> {
-        let files = self.provider.download_plan(name, version)?;
+        let files = self
+            .provider
+            .download_plan(name, version)
+            .map_err(|err| match err {
+                ModelRegistryError::Client(ClientError::NotFound) => {
+                    ModelRegistryError::VersionNotFound {
+                        name: name.to_string(),
+                        version,
+                    }
+                }
+                other => other,
+            })?;
         download_artifacts_to_sink_with_client(client, sink, &files)?;
         Ok(())
     }
@@ -200,7 +226,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            ModelRegistryError::Client(ClientError::NotFound)
+            ModelRegistryError::ModelNotFound { name } if name == "missing-model"
         ));
     }
 
@@ -238,7 +264,8 @@ mod tests {
 
         assert!(matches!(
             err,
-            ModelRegistryError::Client(ClientError::NotFound)
+            ModelRegistryError::VersionNotFound { name, version }
+                if name == "resnet50" && version == 99
         ));
     }
 
@@ -257,7 +284,8 @@ mod tests {
 
         assert!(matches!(
             err,
-            ModelRegistryError::Client(ClientError::NotFound)
+            ModelRegistryError::VersionNotFound { name, version }
+                if name == "resnet50" && version == 2
         ));
         assert_eq!(sink.len(), 0);
     }
