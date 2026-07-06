@@ -102,7 +102,7 @@ impl ModelRegistryModule {
         self.download_to_with_client(name, version, sink, &self.transfer_client)
     }
 
-    // Method to test the download_to method with a mock client
+    // Internal helper used by download_to; allows injecting a custom transfer client in tests.
     fn download_to_with_client<FTC: FileTransferClient>(
         &self,
         name: &str,
