@@ -9,6 +9,7 @@ pub(crate) fn artifact_download_file(rel_path: String, url: String) -> ArtifactD
     }
 }
 
+#[cfg(feature = "station")]
 pub(crate) fn artifact_download_file_with_verification(
     rel_path: String,
     url: String,
