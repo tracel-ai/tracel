@@ -143,10 +143,10 @@ mod tests {
     }
 
     impl FileTransferClient for MockTransferClient {
-        fn put_reader<R: Read + Send + 'static>(
+        fn put_reader(
             &self,
             _url: &str,
-            _reader: R,
+            _reader: Box<dyn Read + Send>,
             _size_bytes: u64,
         ) -> Result<(), TransferError> {
             unimplemented!("uploads are not exercised by ModelRegistryModule")

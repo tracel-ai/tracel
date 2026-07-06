@@ -7,12 +7,12 @@ pub enum TransferError {
 }
 
 /// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
-pub trait FileTransferClient: Clone + Send + Sync + 'static {
+pub trait FileTransferClient: Send + Sync + 'static {
     /// Upload data from a reader to the given URL with known size.
-    fn put_reader<R: Read + Send + 'static>(
+    fn put_reader(
         &self,
         url: &str,
-        reader: R,
+        reader: Box<dyn Read + Send>,
         size_bytes: u64,
     ) -> Result<(), TransferError>;
 
@@ -45,10 +45,10 @@ impl Default for ReqwestTransferClient {
 }
 
 impl FileTransferClient for ReqwestTransferClient {
-    fn put_reader<R: Read + Send + 'static>(
+    fn put_reader(
         &self,
         url: &str,
-        reader: R,
+        reader: Box<dyn Read + Send>,
         size_bytes: u64,
     ) -> Result<(), TransferError> {
         let body = reqwest::blocking::Body::sized(reader, size_bytes);

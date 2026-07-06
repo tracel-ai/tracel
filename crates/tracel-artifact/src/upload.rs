@@ -165,10 +165,10 @@ mod tests {
     }
 
     impl FileTransferClient for MockClient {
-        fn put_reader<R: Read + Send + 'static>(
+        fn put_reader(
             &self,
             url: &str,
-            mut reader: R,
+            mut reader: Box<dyn Read + Send>,
             size_bytes: u64,
         ) -> Result<(), TransferError> {
             let mut bytes = Vec::new();
