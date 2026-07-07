@@ -3,10 +3,10 @@ use tracel_client::ClientError;
 
 use crate::backend::station::StationBackend;
 use crate::download_file::artifact_download_file_with_verification;
-use crate::model_registry::{ModelInfo, ModelRegistryError, ModelRegistryProvider};
+use crate::model_registry::{ModelMetadata, ModelRegistryError, ModelRegistryProvider};
 
 impl ModelRegistryProvider for StationBackend {
-    fn get(&self, name: &str, version: u32) -> Result<ModelInfo, ModelRegistryError> {
+    fn get(&self, name: &str, version: u32) -> Result<ModelMetadata, ModelRegistryError> {
         let resp_model = self.client.models().get(name).map_err(|err| {
             map_not_found(err, || ModelRegistryError::ModelNotFound {
                 name: name.to_string(),
@@ -19,7 +19,7 @@ impl ModelRegistryProvider for StationBackend {
             })
         })?;
 
-        Ok(ModelInfo {
+        Ok(ModelMetadata {
             name: resp_model.name,
             description: resp_model.description,
             version_count: resp_model.version_count,

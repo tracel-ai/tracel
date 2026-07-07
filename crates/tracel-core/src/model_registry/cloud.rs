@@ -3,10 +3,10 @@ use tracel_client::ClientError;
 
 use crate::backend::cloud::CloudBackend;
 use crate::download_file::artifact_download_file;
-use crate::model_registry::{ModelInfo, ModelRegistryError, ModelRegistryProvider};
+use crate::model_registry::{ModelMetadata, ModelRegistryError, ModelRegistryProvider};
 
 impl ModelRegistryProvider for CloudBackend {
-    fn get(&self, name: &str, version: u32) -> Result<ModelInfo, ModelRegistryError> {
+    fn get(&self, name: &str, version: u32) -> Result<ModelMetadata, ModelRegistryError> {
         let resp_model = self
             .client
             .get_model(&self.namespace, &self.project, name)
@@ -25,7 +25,7 @@ impl ModelRegistryProvider for CloudBackend {
                 })
             })?;
 
-        Ok(ModelInfo {
+        Ok(ModelMetadata {
             name: resp_model.name,
             description: resp_model.description,
             version_count: resp_model.version_count,

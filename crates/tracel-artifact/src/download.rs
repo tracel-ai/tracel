@@ -68,7 +68,7 @@ pub fn download_artifacts_to_sink<S: BundleSink>(
 }
 
 /// Download artifact files into any bundle sink implementation using a custom transfer client.
-pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: BundleSink>(
+pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient + ?Sized, S: BundleSink>(
     client: &FTC,
     sink: &mut S,
     files: &[ArtifactDownloadFile],
