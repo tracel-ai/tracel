@@ -8,17 +8,9 @@ use crate::model_registry::{ModelInfo, ModelRegistryError, ModelRegistryProvider
 
 impl ModelRegistryProvider for StationBackend {
     fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError> {
-        let resp_model = self.client.models().get(name).map_err(|err| {
-            map_not_found(err, || ModelRegistryError::ModelNotFound {
-                name: name.to_string(),
-            })
-        })?;
-        let resp_version = self.client.models().version(name, version).map_err(|err| {
-            map_not_found(err, || ModelRegistryError::VersionNotFound {
-                name: name.to_string(),
-                version,
-            })
-        })?;
+        self.ensure_model_exists(name)?;
+        self.ensure_version_exists(name, version)?;
+
         let resp_download = self
             .client
             .models()
@@ -31,12 +23,6 @@ impl ModelRegistryProvider for StationBackend {
             })?;
 
         let info = ModelInfo {
-            name: resp_model.name,
-            description: resp_model.description,
-            version_count: resp_model.version_count,
-            version: resp_version.version,
-            size: resp_version.size,
-            checksum: resp_version.checksum,
             files: resp_download
                 .files
                 .into_iter()
@@ -51,7 +37,11 @@ impl ModelRegistryProvider for StationBackend {
                 .collect(),
         };
 
-        let mut bundle = FsBundle::temp().map_err(|e| {
+        if let Some(cached) = self.model_cache.get(name, version, &info.files) {
+            return Ok(cached);
+        }
+
+        let mut bundle = self.model_cache.reserve(name, version).map_err(|e| {
             ModelRegistryError::Download(tracel_artifact::download::DownloadError::TargetError(
                 e.to_string(),
             ))
@@ -63,6 +53,33 @@ impl ModelRegistryProvider for StationBackend {
         )?;
 
         Ok(bundle)
+    }
+}
+
+impl StationBackend {
+    fn ensure_model_exists(&self, name: &str) -> Result<(), ModelRegistryError> {
+        self.client
+            .models()
+            .get(name)
+            .map(|_| ())
+            .map_err(|err| {
+                map_not_found(err, || ModelRegistryError::ModelNotFound {
+                    name: name.to_string(),
+                })
+            })
+    }
+
+    fn ensure_version_exists(&self, name: &str, version: u32) -> Result<(), ModelRegistryError> {
+        self.client
+            .models()
+            .version(name, version)
+            .map(|_| ())
+            .map_err(|err| {
+                map_not_found(err, || ModelRegistryError::VersionNotFound {
+                    name: name.to_string(),
+                    version,
+                })
+            })
     }
 }
 

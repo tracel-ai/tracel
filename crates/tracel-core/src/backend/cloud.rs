@@ -31,6 +31,7 @@ pub struct CloudBackend {
     pub(crate) namespace: String,
     pub(crate) project: String,
     pub(crate) file_transfer_client: ReqwestTransferClient,
+    pub(crate) model_cache: crate::model_registry::ModelCache,
 }
 
 #[derive(Deserialize)]
@@ -48,11 +49,19 @@ struct TracelTomlConfig {
 
 impl CloudBackend {
     fn new(client: Client, namespace: String, project: String) -> Self {
+        let cache_root = directories::ProjectDirs::from("com", "tracel", "burncentral")
+            .expect("could not determine cache directory")
+            .cache_dir()
+            .join("models")
+            .join(&namespace)
+            .join(&project);
+
         Self {
             client,
             namespace,
             project,
             file_transfer_client: ReqwestTransferClient::new(),
+            model_cache: crate::model_registry::ModelCache::new(cache_root),
         }
     }
 

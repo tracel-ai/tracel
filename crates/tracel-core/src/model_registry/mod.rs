@@ -1,6 +1,9 @@
+mod cache;
 mod cloud;
 #[cfg(feature = "station")]
 mod station;
+
+pub(crate) use cache::ModelCache;
 
 use std::sync::Arc;
 
@@ -12,12 +15,6 @@ use tracel_client::ClientError;
 /// its files are downloaded.
 #[derive(Debug, Clone)]
 pub(crate) struct ModelInfo {
-    pub name: String,
-    pub description: Option<String>,
-    pub version_count: u64,
-    pub version: u32,
-    pub size: u64,
-    pub checksum: String,
     pub files: Vec<ArtifactDownloadFile>,
 }
 
