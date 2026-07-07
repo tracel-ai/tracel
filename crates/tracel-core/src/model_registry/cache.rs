@@ -101,15 +101,16 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct FakeTransferClient {
         files: HashMap<String, Vec<u8>>,
     }
 
     impl FileTransferClient for FakeTransferClient {
-        fn put_reader(
+        fn put_reader<R: Read + Send + 'static>(
             &self,
             _url: &str,
-            _reader: Box<dyn Read + Send>,
+            _reader: R,
             _size_bytes: u64,
         ) -> Result<(), TransferError> {
             unimplemented!("model downloads never upload")

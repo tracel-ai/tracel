@@ -68,7 +68,7 @@ pub fn download_artifacts_to_sink<S: BundleSink>(
 }
 
 /// Download artifact files into any bundle sink implementation using a custom transfer client.
-pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient + ?Sized, S: BundleSink>(
+pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: BundleSink>(
     client: &FTC,
     sink: &mut S,
     files: &[ArtifactDownloadFile],
@@ -207,10 +207,10 @@ mod tests {
     }
 
     impl FileTransferClient for MockClient {
-        fn put_reader(
+        fn put_reader<R: Read + Send + 'static>(
             &self,
             _url: &str,
-            mut reader: Box<dyn Read + Send>,
+            mut reader: R,
             _size_bytes: u64,
         ) -> Result<(), TransferError> {
             let mut buf = Vec::new();
