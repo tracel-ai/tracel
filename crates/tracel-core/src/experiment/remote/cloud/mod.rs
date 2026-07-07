@@ -6,12 +6,10 @@ use tracel_client::websocket::WebSocketError;
 use tracel_client::{Client, ClientError};
 
 use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::{DownloadError, download_artifacts_to_sink};
+use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
 };
-
-use crate::download_file::artifact_download_file;
 
 mod artifacts;
 mod logs;
@@ -105,7 +103,8 @@ impl ExperimentArtifactClient {
                 kind: artifact_kind_name(kind).to_string(),
                 files: specs,
             },
-        )?;
+        )
+        .map_err(client_err)?;
 
         let mut multipart_map = BTreeMap::new();
         for f in &res.files {
@@ -145,7 +144,8 @@ impl ExperimentArtifactClient {
             self.exp_path.experiment_num(),
             &res.id,
             None,
-        )?;
+        )
+        .map_err(client_err)?;
 
         Ok(res.id)
     }
@@ -159,11 +159,17 @@ impl ExperimentArtifactClient {
             self.exp_path.project_name(),
             self.exp_path.experiment_num(),
             &artifact.id.to_string(),
-        )?;
+        )
+        .map_err(client_err)?;
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {
-            files.push(artifact_download_file(file.rel_path, file.url));
+            files.push(ArtifactDownloadFile {
+                rel_path: file.rel_path,
+                url: file.url,
+                size_bytes: None,
+                checksum: None,
+            });
         }
 
         let mut bundle = FsBundle::temp()
@@ -183,7 +189,8 @@ impl ExperimentArtifactClient {
                 self.exp_path.project_name(),
                 self.exp_path.experiment_num(),
                 name,
-            )?
+            )
+            .map_err(client_err)?
             .items
             .into_iter()
             .next()
@@ -204,13 +211,17 @@ pub enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
-    Client(#[from] ClientError),
+    Client(Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     Download(#[from] DownloadError),
     #[error(transparent)]
     Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+fn client_err(err: ClientError) -> ArtifactError {
+    ArtifactError::Client(Box::new(err))
 }
 
 #[derive(Debug, thiserror::Error)]

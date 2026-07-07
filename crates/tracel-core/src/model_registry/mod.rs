@@ -18,7 +18,7 @@ pub enum ModelRegistryError {
     #[error("version {version} of model '{name}' not found")]
     VersionNotFound { name: String, version: u32 },
     #[error("communication with the model registry failed: {0}")]
-    Client(#[from] ClientError),
+    Client(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("failed to download model files: {0}")]
     Download(#[from] DownloadError),
     #[error("failed to decode downloaded model: {0}")]
@@ -39,7 +39,7 @@ pub(crate) fn map_not_found(
 ) -> ModelRegistryError {
     match err {
         ClientError::NotFound => not_found(),
-        other => other.into(),
+        other => ModelRegistryError::Client(Box::new(other)),
     }
 }
 
@@ -184,17 +184,14 @@ mod tests {
     fn given_provider_returns_client_error_when_load_then_error_is_propagated() {
         let provider = FakeProvider {
             load: |_name: &str, _version: u32| {
-                Err(ModelRegistryError::Client(ClientError::NotFound))
+                Err(ModelRegistryError::Client(Box::new(ClientError::NotFound)))
             },
         };
         let module = ModelRegistryModule::new(Arc::new(provider));
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 
-        assert!(matches!(
-            result,
-            Err(ModelRegistryError::Client(ClientError::NotFound))
-        ));
+        assert!(matches!(result, Err(ModelRegistryError::Client(_))));
     }
 
     #[test]

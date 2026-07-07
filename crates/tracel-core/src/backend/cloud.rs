@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::{Client, ClientError, Env, TracelCredentials};
+use tracel_client::{Client, Env, TracelCredentials};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
@@ -24,7 +24,7 @@ pub enum CloudError {
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
     #[error(transparent)]
-    Client(#[from] ClientError),
+    Client(Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +75,7 @@ impl CloudBackend {
             if err.is_login_error() {
                 CloudError::InvalidCredentials
             } else {
-                CloudError::Client(err)
+                CloudError::Client(Box::new(err))
             }
         })?;
         CloudBackend::new(client, namespace, project)

@@ -1,8 +1,8 @@
 use tracel_artifact::bundle::FsBundle;
+use tracel_artifact::download::ArtifactDownloadFile;
 use tracel_client::ClientError;
 
 use crate::backend::cloud::CloudBackend;
-use crate::download_file::artifact_download_file;
 use crate::model_registry::{ModelRegistryError, ModelRegistryProvider, ensure_exists};
 
 impl ModelRegistryProvider for CloudBackend {
@@ -15,7 +15,12 @@ impl ModelRegistryProvider for CloudBackend {
         let files: Vec<_> = resp_download
             .files
             .into_iter()
-            .map(|f| artifact_download_file(f.rel_path, f.url))
+            .map(|f| ArtifactDownloadFile {
+                rel_path: f.rel_path,
+                url: f.url,
+                size_bytes: None,
+                checksum: None,
+            })
             .collect();
 
         self.model_cache
@@ -35,7 +40,7 @@ impl CloudBackend {
         version: u32,
     ) -> ModelRegistryError {
         if !matches!(err, ClientError::NotFound) {
-            return err.into();
+            return ModelRegistryError::Client(Box::new(err));
         }
         if let Err(e) = self.ensure_model_exists(name) {
             return e;
