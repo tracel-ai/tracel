@@ -1,10 +1,8 @@
 use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::download_artifacts_to_sink_with_client;
-use tracel_client::ClientError;
 
 use crate::backend::cloud::CloudBackend;
 use crate::download_file::artifact_download_file;
-use crate::model_registry::{ModelInfo, ModelRegistryError, ModelRegistryProvider};
+use crate::model_registry::{ModelRegistryError, ModelRegistryProvider, map_not_found};
 
 impl ModelRegistryProvider for CloudBackend {
     fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError> {
@@ -21,30 +19,14 @@ impl ModelRegistryProvider for CloudBackend {
                 })
             })?;
 
-        let info = ModelInfo {
-            files: resp_download
-                .files
-                .into_iter()
-                .map(|f| artifact_download_file(f.rel_path, f.url))
-                .collect(),
-        };
+        let files: Vec<_> = resp_download
+            .files
+            .into_iter()
+            .map(|f| artifact_download_file(f.rel_path, f.url))
+            .collect();
 
-        if let Some(cached) = self.model_cache.get(name, version, &info.files) {
-            return Ok(cached);
-        }
-
-        let mut bundle = self.model_cache.reserve(name, version).map_err(|e| {
-            ModelRegistryError::Download(tracel_artifact::download::DownloadError::TargetError(
-                e.to_string(),
-            ))
-        })?;
-        download_artifacts_to_sink_with_client(
-            &self.file_transfer_client,
-            &mut bundle,
-            &info.files,
-        )?;
-
-        Ok(bundle)
+        self.model_cache
+            .get_or_download(&self.file_transfer_client, name, version, &files)
     }
 }
 
@@ -70,15 +52,5 @@ impl CloudBackend {
                     version,
                 })
             })
-    }
-}
-
-fn map_not_found(
-    err: ClientError,
-    not_found: impl FnOnce() -> ModelRegistryError,
-) -> ModelRegistryError {
-    match err {
-        ClientError::NotFound => not_found(),
-        other => other.into(),
     }
 }

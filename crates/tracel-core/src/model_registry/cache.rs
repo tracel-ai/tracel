@@ -1,12 +1,17 @@
 //! Local, on-disk cache of downloaded model bundles.
 //!
-//! Scope is intentionally limited to existence checks: does a cached copy already
-//! exist for a given model name/version? Cache eviction is handled elsewhere.
+//! Scope is intentionally limited to existence checks and populating the cache on a
+//! miss
 
 use std::path::PathBuf;
 
+use tracel_artifact::FileTransferClient;
 use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::ArtifactDownloadFile;
+use tracel_artifact::download::{
+    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink_with_client,
+};
+
+use crate::model_registry::ModelRegistryError;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ModelCache {
@@ -45,12 +50,36 @@ impl ModelCache {
     pub(crate) fn reserve(&self, name: &str, version: u32) -> Result<FsBundle, std::io::Error> {
         FsBundle::create(self.version_dir(name, version))
     }
+
+    /// Returns the cached bundle for `name`/`version` if all `files` are already present,
+    /// otherwise downloads them with `transfer_client` into a freshly reserved directory
+    /// and returns the resulting bundle.
+    pub(crate) fn get_or_download<FTC: FileTransferClient + ?Sized>(
+        &self,
+        transfer_client: &FTC,
+        name: &str,
+        version: u32,
+        files: &[ArtifactDownloadFile],
+    ) -> Result<FsBundle, ModelRegistryError> {
+        if let Some(cached) = self.get(name, version, files) {
+            return Ok(cached);
+        }
+
+        let mut bundle = self
+            .reserve(name, version)
+            .map_err(|e| ModelRegistryError::Download(DownloadError::TargetError(e.to_string())))?;
+        download_artifacts_to_sink_with_client(transfer_client, &mut bundle, files)?;
+
+        Ok(bundle)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::io::{Cursor, Read};
+    use tracel_artifact::TransferError;
     use tracel_artifact::bundle::{BundleSink, BundleSource};
 
     fn mock_file(rel_path: &str) -> ArtifactDownloadFile {
@@ -59,6 +88,29 @@ mod tests {
             url: format!("mock://{rel_path}"),
             size_bytes: None,
             checksum: None,
+        }
+    }
+
+    struct FakeTransferClient {
+        files: HashMap<String, Vec<u8>>,
+    }
+
+    impl FileTransferClient for FakeTransferClient {
+        fn put_reader(
+            &self,
+            _url: &str,
+            _reader: Box<dyn Read + Send>,
+            _size_bytes: u64,
+        ) -> Result<(), TransferError> {
+            unimplemented!("model downloads never upload")
+        }
+
+        fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+            let bytes = self
+                .files
+                .get(url)
+                .ok_or_else(|| TransferError::Transport(format!("missing url in mock: {url}")))?;
+            Ok(Box::new(Cursor::new(bytes.clone())))
         }
     }
 
@@ -134,5 +186,71 @@ mod tests {
 
         assert!(bundle.root().is_dir());
         assert_eq!(bundle.root(), root.path().join("mnist").join("1"));
+    }
+
+    #[test]
+    fn given_cache_hit_when_get_or_download_then_returns_cached_bundle_without_transfer() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let mut bundle = cache.reserve("mnist", 1).unwrap();
+        bundle
+            .put_file("weights.bin", &mut Cursor::new(b"weights"))
+            .unwrap();
+        drop(bundle);
+        let files = vec![mock_file("weights.bin")];
+        let transfer_client = FakeTransferClient {
+            files: HashMap::new(),
+        };
+
+        let bundle = cache
+            .get_or_download(&transfer_client, "mnist", 1, &files)
+            .expect("expected cache hit");
+
+        let mut contents = String::new();
+        bundle
+            .open("weights.bin")
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        assert_eq!(contents, "weights");
+    }
+
+    #[test]
+    fn given_cache_miss_when_get_or_download_then_downloads_and_returns_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let files = vec![mock_file("weights.bin")];
+        let transfer_client = FakeTransferClient {
+            files: HashMap::from([("mock://weights.bin".to_string(), b"weights".to_vec())]),
+        };
+
+        let bundle = cache
+            .get_or_download(&transfer_client, "mnist", 1, &files)
+            .expect("expected download to succeed");
+
+        let mut contents = String::new();
+        bundle
+            .open("weights.bin")
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        assert_eq!(contents, "weights");
+    }
+
+    #[test]
+    fn given_transfer_error_when_get_or_download_then_returns_download_error() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let files = vec![mock_file("weights.bin")];
+        let transfer_client = FakeTransferClient {
+            files: HashMap::new(),
+        };
+
+        let result = cache.get_or_download(&transfer_client, "mnist", 1, &files);
+
+        assert!(matches!(
+            result,
+            Err(ModelRegistryError::Download(DownloadError::Transfer { .. }))
+        ));
     }
 }

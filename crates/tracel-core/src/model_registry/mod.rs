@@ -8,15 +8,8 @@ pub(crate) use cache::ModelCache;
 use std::sync::Arc;
 
 use tracel_artifact::bundle::{BundleDecode, FsBundle};
-use tracel_artifact::download::{ArtifactDownloadFile, DownloadError};
+use tracel_artifact::download::DownloadError;
 use tracel_client::ClientError;
-
-/// Plain data describing a model version, as fetched from a [`ModelRegistryProvider`] before
-/// its files are downloaded.
-#[derive(Debug, Clone)]
-pub(crate) struct ModelInfo {
-    pub files: Vec<ArtifactDownloadFile>,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelRegistryError {
@@ -33,8 +26,21 @@ pub enum ModelRegistryError {
 }
 
 pub trait ModelRegistryProvider: Send + Sync {
-    /// TODO: docs
+    /// Fetches (downloading if needed) the bundle for `name`/`version` and returns it as a
+    /// [`FsBundle`] ready to be decoded.
     fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError>;
+}
+
+/// Maps a [`ClientError::NotFound`] to a model-registry-specific not-found error, leaving other
+/// client errors untouched. Shared by every [`ModelRegistryProvider`] implementation.
+pub(crate) fn map_not_found(
+    err: ClientError,
+    not_found: impl FnOnce() -> ModelRegistryError,
+) -> ModelRegistryError {
+    match err {
+        ClientError::NotFound => not_found(),
+        other => other.into(),
+    }
 }
 
 #[derive(Clone)]
@@ -47,7 +53,7 @@ impl ModelRegistryModule {
         Self { provider }
     }
 
-    // TODO: docs
+    /// Loads model `name` at `version`, decoding its downloaded bundle into `D` using `settings`.
     pub fn load<D: BundleDecode>(
         &self,
         name: &str,
