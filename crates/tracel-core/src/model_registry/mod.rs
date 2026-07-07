@@ -58,3 +58,155 @@ impl ModelRegistryModule {
         D::decode(&source, settings).map_err(|e| ModelRegistryError::DecodeError(e.into()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use tracel_artifact::bundle::{BundleSink, BundleSource};
+
+    struct FakeProvider<F> {
+        load: F,
+    }
+
+    impl<F> ModelRegistryProvider for FakeProvider<F>
+    where
+        F: Fn(&str, u32) -> Result<FsBundle, ModelRegistryError> + Send + Sync,
+    {
+        fn load_model_bundle(
+            &self,
+            name: &str,
+            version: u32,
+        ) -> Result<FsBundle, ModelRegistryError> {
+            (self.load)(name, version)
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct TestArtifact {
+        value: String,
+    }
+
+    impl BundleDecode for TestArtifact {
+        type Settings = ();
+        type Error = String;
+
+        fn decode<I: BundleSource>(
+            source: &I,
+            _settings: &Self::Settings,
+        ) -> Result<Self, Self::Error> {
+            let mut reader = source.open("value.txt")?;
+            let mut value = String::new();
+            reader
+                .read_to_string(&mut value)
+                .map_err(|e| e.to_string())?;
+            Ok(TestArtifact { value })
+        }
+    }
+
+    fn bundle_with_value(value: &str) -> FsBundle {
+        let mut bundle = FsBundle::temp().unwrap();
+        bundle.put_bytes("value.txt", value.as_bytes()).unwrap();
+        bundle
+    }
+
+    #[test]
+    fn given_provider_returns_bundle_when_load_then_decodes_artifact() {
+        let provider = FakeProvider {
+            load: |_name: &str, _version: u32| Ok(bundle_with_value("hello")),
+        };
+        let module = ModelRegistryModule::new(Arc::new(provider));
+
+        let artifact: TestArtifact = module.load("mnist", 1, &()).unwrap();
+
+        assert_eq!(artifact.value, "hello");
+    }
+
+    #[test]
+    fn given_provider_returns_model_not_found_when_load_then_error_is_propagated() {
+        let provider = FakeProvider {
+            load: |name: &str, _version: u32| {
+                Err(ModelRegistryError::ModelNotFound {
+                    name: name.to_string(),
+                })
+            },
+        };
+        let module = ModelRegistryModule::new(Arc::new(provider));
+
+        let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
+
+        assert!(matches!(
+            result,
+            Err(ModelRegistryError::ModelNotFound { name }) if name == "mnist"
+        ));
+    }
+
+    #[test]
+    fn given_provider_returns_version_not_found_when_load_then_error_is_propagated() {
+        let provider = FakeProvider {
+            load: |name: &str, version: u32| {
+                Err(ModelRegistryError::VersionNotFound {
+                    name: name.to_string(),
+                    version,
+                })
+            },
+        };
+        let module = ModelRegistryModule::new(Arc::new(provider));
+
+        let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
+
+        assert!(matches!(
+            result,
+            Err(ModelRegistryError::VersionNotFound { name, version })
+                if name == "mnist" && version == 1
+        ));
+    }
+
+    #[test]
+    fn given_provider_returns_client_error_when_load_then_error_is_propagated() {
+        let provider = FakeProvider {
+            load: |_name: &str, _version: u32| {
+                Err(ModelRegistryError::Client(ClientError::NotFound))
+            },
+        };
+        let module = ModelRegistryModule::new(Arc::new(provider));
+
+        let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
+
+        assert!(matches!(
+            result,
+            Err(ModelRegistryError::Client(ClientError::NotFound))
+        ));
+    }
+
+    #[test]
+    fn given_provider_returns_download_error_when_load_then_error_is_propagated() {
+        let provider = FakeProvider {
+            load: |_name: &str, _version: u32| {
+                Err(ModelRegistryError::Download(DownloadError::TargetError(
+                    "boom".to_string(),
+                )))
+            },
+        };
+        let module = ModelRegistryModule::new(Arc::new(provider));
+
+        let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
+
+        assert!(matches!(
+            result,
+            Err(ModelRegistryError::Download(DownloadError::TargetError(msg))) if msg == "boom"
+        ));
+    }
+
+    #[test]
+    fn given_bundle_missing_expected_file_when_load_then_returns_decode_error() {
+        let provider = FakeProvider {
+            load: |_name: &str, _version: u32| Ok(FsBundle::temp().unwrap()),
+        };
+        let module = ModelRegistryModule::new(Arc::new(provider));
+
+        let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
+
+        assert!(matches!(result, Err(ModelRegistryError::DecodeError(_))));
+    }
+}

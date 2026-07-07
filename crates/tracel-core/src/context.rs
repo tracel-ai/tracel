@@ -24,7 +24,7 @@ impl Context {
         ExperimentModule::new(self.experiment_provider.clone())
     }
 
-    pub fn model_registry(&self) -> Option<ModelRegistryModule> {
+    pub fn models(&self) -> Option<ModelRegistryModule> {
         self.model_registry_provider
             .clone()
             .map(ModelRegistryModule::new)
