@@ -3,7 +3,7 @@ mod cloud;
 #[cfg(feature = "station")]
 mod station;
 
-pub(crate) use cache::ModelCache;
+pub(crate) use cache::{ModelCache, resolve_cache_dir};
 
 use std::sync::Arc;
 
@@ -41,6 +41,18 @@ pub(crate) fn map_not_found(
         ClientError::NotFound => not_found(),
         other => other.into(),
     }
+}
+
+/// Runs a client call purely to check existence, discarding its response and mapping a
+/// not-found result through `not_found`. Shared by every [`ModelRegistryProvider`]
+/// implementation's `ensure_model_exists`/`ensure_version_exists` checks.
+pub(crate) fn ensure_exists<T>(
+    result: Result<T, ClientError>,
+    not_found: impl FnOnce() -> ModelRegistryError,
+) -> Result<(), ModelRegistryError> {
+    result
+        .map(|_| ())
+        .map_err(|err| map_not_found(err, not_found))
 }
 
 #[derive(Clone)]

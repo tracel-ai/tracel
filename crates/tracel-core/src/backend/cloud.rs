@@ -21,6 +21,8 @@ pub enum CloudError {
     NoProject,
     #[error("Invalid environment variable {env_var}: {message}")]
     InvalidEnv { env_var: String, message: String },
+    #[error("could not determine a cache directory for downloaded models")]
+    NoCacheDir,
     #[error(transparent)]
     Client(#[from] ClientError),
 }
@@ -48,21 +50,20 @@ struct TracelTomlConfig {
 }
 
 impl CloudBackend {
-    fn new(client: Client, namespace: String, project: String) -> Self {
-        let cache_root = directories::ProjectDirs::from("com", "tracel", "burncentral")
-            .expect("could not determine cache directory")
-            .cache_dir()
+    fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
+        let cache_root = crate::model_registry::resolve_cache_dir()
+            .ok_or(CloudError::NoCacheDir)?
             .join("models")
             .join(&namespace)
             .join(&project);
 
-        Self {
+        Ok(Self {
             client,
             namespace,
             project,
             file_transfer_client: ReqwestTransferClient::new(),
             model_cache: crate::model_registry::ModelCache::new(cache_root),
-        }
+        })
     }
 
     pub fn create_context() -> Result<CloudBackend, CloudError> {
@@ -77,7 +78,7 @@ impl CloudBackend {
                 CloudError::Client(err)
             }
         })?;
-        Ok(CloudBackend::new(client, namespace, project))
+        CloudBackend::new(client, namespace, project)
     }
 }
 

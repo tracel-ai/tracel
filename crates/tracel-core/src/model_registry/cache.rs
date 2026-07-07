@@ -13,6 +13,16 @@ use tracel_artifact::download::{
 
 use crate::model_registry::ModelRegistryError;
 
+/// Resolves the base cache directory for downloaded models, falling back to the
+/// platform's generic cache dir if a `com.tracel.burncentral`-scoped one isn't
+/// available (e.g. missing `$HOME` in a stripped-down container). Returns `None` if
+/// neither can be determined.
+pub(crate) fn resolve_cache_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("com", "tracel", "burncentral")
+        .map(|dirs| dirs.cache_dir().to_path_buf())
+        .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.cache_dir().join("tracel")))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ModelCache {
     root: PathBuf,
