@@ -138,7 +138,7 @@ impl ExperimentArtifactClient {
                 parts,
             });
         }
-        upload_bundle_multipart(bundle, &uploads)?;
+        upload_bundle_multipart(bundle, &uploads).map_err(upload_err)?;
 
         self.client
             .complete_artifact_upload(
@@ -180,7 +180,7 @@ impl ExperimentArtifactClient {
         let mut bundle = FsBundle::temp()
             .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
 
-        download_artifacts_to_sink(&mut bundle, &files)?;
+        download_artifacts_to_sink(&mut bundle, &files).map_err(download_err)?;
 
         Ok(bundle)
     }
@@ -218,15 +218,23 @@ pub enum ArtifactError {
     #[error(transparent)]
     Client(Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
-    Download(#[from] DownloadError),
+    Download(Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
-    Upload(#[from] UploadError),
+    Upload(Box<dyn std::error::Error + Send + Sync>),
     #[error("Internal error: {0}")]
     Internal(String),
 }
 
 fn client_err(err: ClientError) -> ArtifactError {
     ArtifactError::Client(Box::new(err))
+}
+
+fn download_err(err: DownloadError) -> ArtifactError {
+    ArtifactError::Download(Box::new(err))
+}
+
+fn upload_err(err: UploadError) -> ArtifactError {
+    ArtifactError::Upload(Box::new(err))
 }
 
 #[derive(Debug, thiserror::Error)]

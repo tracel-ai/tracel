@@ -8,6 +8,7 @@ pub(crate) use cache::{ModelCache, resolve_cache_dir};
 use std::sync::Arc;
 
 use tracel_artifact::bundle::{BundleDecode, FsBundle};
+#[cfg(test)]
 use tracel_artifact::download::DownloadError;
 #[cfg(test)]
 use tracel_client::ClientError;
@@ -21,7 +22,7 @@ pub enum ModelRegistryError {
     #[error("communication with the model registry failed: {0}")]
     Client(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("failed to download model files: {0}")]
-    Download(#[from] DownloadError),
+    Download(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("failed to decode downloaded model: {0}")]
     DecodeError(Box<dyn std::error::Error>),
 }
@@ -175,8 +176,8 @@ mod tests {
     fn given_provider_returns_download_error_when_load_then_error_is_propagated() {
         let provider = FakeProvider {
             load: |_name: &str, _version: u32| {
-                Err(ModelRegistryError::Download(DownloadError::TargetError(
-                    "boom".to_string(),
+                Err(ModelRegistryError::Download(Box::new(
+                    DownloadError::TargetError("boom".to_string()),
                 )))
             },
         };
@@ -184,10 +185,15 @@ mod tests {
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 
-        assert!(matches!(
-            result,
-            Err(ModelRegistryError::Download(DownloadError::TargetError(msg))) if msg == "boom"
-        ));
+        match result {
+            Err(ModelRegistryError::Download(e)) => {
+                let e = e
+                    .downcast_ref::<DownloadError>()
+                    .expect("expected DownloadError");
+                assert!(matches!(e, DownloadError::TargetError(msg) if msg == "boom"));
+            }
+            other => panic!("expected Download error, got {other:?}"),
+        }
     }
 
     #[test]

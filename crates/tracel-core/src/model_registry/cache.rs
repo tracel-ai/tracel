@@ -75,10 +75,11 @@ impl ModelCache {
             return Ok(cached);
         }
 
-        let mut bundle = self
-            .reserve(name, version)
-            .map_err(|e| ModelRegistryError::Download(DownloadError::TargetError(e.to_string())))?;
-        download_artifacts_to_sink_with_client(transfer_client, &mut bundle, files)?;
+        let mut bundle = self.reserve(name, version).map_err(|e| {
+            ModelRegistryError::Download(Box::new(DownloadError::TargetError(e.to_string())))
+        })?;
+        download_artifacts_to_sink_with_client(transfer_client, &mut bundle, files)
+            .map_err(|e| ModelRegistryError::Download(Box::new(e)))?;
 
         Ok(bundle)
     }
@@ -259,9 +260,14 @@ mod tests {
 
         let result = cache.get_or_download(&transfer_client, "mnist", 1, &files);
 
-        assert!(matches!(
-            result,
-            Err(ModelRegistryError::Download(DownloadError::Transfer { .. }))
-        ));
+        match result {
+            Err(ModelRegistryError::Download(e)) => {
+                let e = e
+                    .downcast_ref::<DownloadError>()
+                    .expect("expected DownloadError");
+                assert!(matches!(e, DownloadError::Transfer { .. }));
+            }
+            other => panic!("expected Download error, got {other:?}"),
+        }
     }
 }
