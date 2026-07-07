@@ -64,7 +64,7 @@ impl ModelCache {
     /// Returns the cached bundle for `name`/`version` if all `files` are already present,
     /// otherwise downloads them with `transfer_client` into a freshly reserved directory
     /// and returns the resulting bundle.
-    pub(crate) fn get_or_download<FTC: FileTransferClient + ?Sized>(
+    pub(crate) fn get_or_download<FTC: FileTransferClient>(
         &self,
         transfer_client: &FTC,
         name: &str,

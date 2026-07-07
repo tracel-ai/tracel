@@ -40,12 +40,12 @@ impl CloudBackend {
         if let Err(e) = self.ensure_model_exists(name) {
             return e;
         }
-        self.ensure_version_exists(name, version)
-            .err()
-            .unwrap_or(ModelRegistryError::VersionNotFound {
+        self.ensure_version_exists(name, version).err().unwrap_or(
+            ModelRegistryError::VersionNotFound {
                 name: name.to_string(),
                 version,
-            })
+            },
+        )
     }
 
     fn ensure_model_exists(&self, name: &str) -> Result<(), ModelRegistryError> {
