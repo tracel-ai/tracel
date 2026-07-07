@@ -58,15 +58,11 @@ impl ModelRegistryProvider for StationBackend {
 
 impl StationBackend {
     fn ensure_model_exists(&self, name: &str) -> Result<(), ModelRegistryError> {
-        self.client
-            .models()
-            .get(name)
-            .map(|_| ())
-            .map_err(|err| {
-                map_not_found(err, || ModelRegistryError::ModelNotFound {
-                    name: name.to_string(),
-                })
+        self.client.models().get(name).map(|_| ()).map_err(|err| {
+            map_not_found(err, || ModelRegistryError::ModelNotFound {
+                name: name.to_string(),
             })
+        })
     }
 
     fn ensure_version_exists(&self, name: &str, version: u32) -> Result<(), ModelRegistryError> {
