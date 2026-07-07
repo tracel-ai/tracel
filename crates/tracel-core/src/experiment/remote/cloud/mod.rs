@@ -94,17 +94,19 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let res = self.client.create_artifact(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            CreateArtifactRequest {
-                name: name.clone(),
-                kind: artifact_kind_name(kind).to_string(),
-                files: specs,
-            },
-        )
-        .map_err(client_err)?;
+        let res = self
+            .client
+            .create_artifact(
+                self.exp_path.owner_name(),
+                self.exp_path.project_name(),
+                self.exp_path.experiment_num(),
+                CreateArtifactRequest {
+                    name: name.clone(),
+                    kind: artifact_kind_name(kind).to_string(),
+                    files: specs,
+                },
+            )
+            .map_err(client_err)?;
 
         let mut multipart_map = BTreeMap::new();
         for f in &res.files {
@@ -138,14 +140,15 @@ impl ExperimentArtifactClient {
         }
         upload_bundle_multipart(bundle, &uploads)?;
 
-        self.client.complete_artifact_upload(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            &res.id,
-            None,
-        )
-        .map_err(client_err)?;
+        self.client
+            .complete_artifact_upload(
+                self.exp_path.owner_name(),
+                self.exp_path.project_name(),
+                self.exp_path.experiment_num(),
+                &res.id,
+                None,
+            )
+            .map_err(client_err)?;
 
         Ok(res.id)
     }
@@ -154,13 +157,15 @@ impl ExperimentArtifactClient {
     pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
-        let resp = self.client.presign_artifact_download(
-            self.exp_path.owner_name(),
-            self.exp_path.project_name(),
-            self.exp_path.experiment_num(),
-            &artifact.id.to_string(),
-        )
-        .map_err(client_err)?;
+        let resp = self
+            .client
+            .presign_artifact_download(
+                self.exp_path.owner_name(),
+                self.exp_path.project_name(),
+                self.exp_path.experiment_num(),
+                &artifact.id.to_string(),
+            )
+            .map_err(client_err)?;
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {

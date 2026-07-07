@@ -90,15 +90,16 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let res = client.create_artifact(
-            self.exp_path.experiment_num(),
-            CreateArtifactRequest {
-                name: name.clone(),
-                kind: artifact_kind_name(kind).to_string(),
-                files: specs,
-            },
-        )
-        .map_err(client_err)?;
+        let res = client
+            .create_artifact(
+                self.exp_path.experiment_num(),
+                CreateArtifactRequest {
+                    name: name.clone(),
+                    kind: artifact_kind_name(kind).to_string(),
+                    files: specs,
+                },
+            )
+            .map_err(client_err)?;
 
         let mut multipart_map = BTreeMap::new();
         for f in &res.files {
@@ -132,12 +133,13 @@ impl ExperimentArtifactClient {
         }
         upload_bundle_multipart(bundle, &uploads)?;
 
-        client.complete_artifact_upload(
-            self.exp_path.experiment_num(),
-            &res.id,
-            CompleteUploadRequest { file_names: None },
-        )
-        .map_err(client_err)?;
+        client
+            .complete_artifact_upload(
+                self.exp_path.experiment_num(),
+                &res.id,
+                CompleteUploadRequest { file_names: None },
+            )
+            .map_err(client_err)?;
 
         Ok(res.id)
     }
