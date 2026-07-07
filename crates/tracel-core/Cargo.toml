@@ -27,3 +27,6 @@ crossbeam.workspace = true
 tracel-artifact.workspace = true
 tracing.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

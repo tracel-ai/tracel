@@ -46,3 +46,93 @@ impl ModelCache {
         FsBundle::create(self.version_dir(name, version))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Read};
+    use tracel_artifact::bundle::{BundleSink, BundleSource};
+
+    fn mock_file(rel_path: &str) -> ArtifactDownloadFile {
+        ArtifactDownloadFile {
+            rel_path: rel_path.to_string(),
+            url: format!("mock://{rel_path}"),
+            size_bytes: None,
+            checksum: None,
+        }
+    }
+
+    #[test]
+    fn given_empty_cache_when_get_then_returns_none() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let files = vec![mock_file("weights.bin")];
+
+        assert!(cache.get("mnist", 1, &files).is_none());
+    }
+
+    #[test]
+    fn given_some_absent_files_when_get_then_returns_none() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let mut bundle = cache.reserve("mnist", 1).unwrap();
+        bundle
+            .put_file("weights.bin", &mut Cursor::new(b"weights"))
+            .unwrap();
+        drop(bundle);
+        let files = vec![mock_file("weights.bin"), mock_file("config.json")];
+
+        assert!(cache.get("mnist", 1, &files).is_none());
+    }
+
+    #[test]
+    fn given_all_present_files_when_get_then_returns_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let mut bundle = cache.reserve("mnist", 1).unwrap();
+        bundle
+            .put_file("weights.bin", &mut Cursor::new(b"weights"))
+            .unwrap();
+        bundle
+            .put_file("config.json", &mut Cursor::new(b"{}"))
+            .unwrap();
+        drop(bundle);
+        let files = vec![mock_file("weights.bin"), mock_file("config.json")];
+
+        let cached = cache.get("mnist", 1, &files).expect("expected a cache hit");
+
+        let mut contents = String::new();
+        cached
+            .open("weights.bin")
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        assert_eq!(contents, "weights");
+    }
+
+    #[test]
+    fn given_wrong_parameter_when_get_then_returns_none() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+        let mut bundle = cache.reserve("mnist", 1).unwrap();
+        bundle
+            .put_file("weights.bin", &mut Cursor::new(b"weights"))
+            .unwrap();
+        drop(bundle);
+        let files = vec![mock_file("weights.bin")];
+
+        assert!(cache.get("mnist", 2, &files).is_none());
+        assert!(cache.get("resnet", 1, &files).is_none());
+    }
+
+    #[test]
+    fn when_reserve_then_new_directory_is_created() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(root.path().to_path_buf());
+
+        let bundle = cache.reserve("mnist", 1).unwrap();
+
+        assert!(bundle.root().is_dir());
+        assert_eq!(bundle.root(), root.path().join("mnist").join("1"));
+    }
+}

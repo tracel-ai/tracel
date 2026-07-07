@@ -152,6 +152,7 @@ impl InferenceStep for MnistModel {
 }
 
 // Define the model artifact (put in that everything you will need for inference)
+#[derive(Debug)]
 pub struct MnistModelArtifact {
     pub model_record: ModuleRecord,
     pub config: MnistTrainingConfig,
