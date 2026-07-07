@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde::Deserialize;
+use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{Client, ClientError, Env, TracelCredentials};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
@@ -29,6 +30,7 @@ pub struct CloudBackend {
     pub(crate) client: Client,
     pub(crate) namespace: String,
     pub(crate) project: String,
+    pub(crate) file_transfer_client: ReqwestTransferClient,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +52,7 @@ impl CloudBackend {
             client,
             namespace,
             project,
+            file_transfer_client: ReqwestTransferClient::new(),
         }
     }
 

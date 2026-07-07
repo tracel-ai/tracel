@@ -21,7 +21,7 @@ pub trait FileTransferClient: Send + Sync + 'static {
 }
 
 /// Reqwest-based transfer client.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReqwestTransferClient {
     http: reqwest::blocking::Client,
 }
