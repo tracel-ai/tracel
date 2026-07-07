@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tracel_artifact::bundle::{BundleDecode, FsBundle};
 use tracel_artifact::download::DownloadError;
+#[cfg(test)]
 use tracel_client::ClientError;
 
 #[derive(Debug, thiserror::Error)]
@@ -29,30 +30,6 @@ pub trait ModelRegistryProvider: Send + Sync {
     /// Fetches (downloading if needed) the bundle for `name`/`version` and returns it as a
     /// [`FsBundle`] ready to be decoded.
     fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError>;
-}
-
-/// Maps a [`ClientError::NotFound`] to a model-registry-specific not-found error, leaving other
-/// client errors untouched. Shared by every [`ModelRegistryProvider`] implementation.
-pub(crate) fn map_not_found(
-    err: ClientError,
-    not_found: impl FnOnce() -> ModelRegistryError,
-) -> ModelRegistryError {
-    match err {
-        ClientError::NotFound => not_found(),
-        other => ModelRegistryError::Client(Box::new(other)),
-    }
-}
-
-/// Runs a client call purely to check existence, discarding its response and mapping a
-/// not-found result through `not_found`. Shared by every [`ModelRegistryProvider`]
-/// implementation's `ensure_model_exists`/`ensure_version_exists` checks.
-pub(crate) fn ensure_exists<T>(
-    result: Result<T, ClientError>,
-    not_found: impl FnOnce() -> ModelRegistryError,
-) -> Result<(), ModelRegistryError> {
-    result
-        .map(|_| ())
-        .map_err(|err| map_not_found(err, not_found))
 }
 
 #[derive(Clone)]
