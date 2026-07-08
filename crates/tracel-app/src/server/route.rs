@@ -17,9 +17,9 @@ use tracel_inference::InferenceJob;
 
 /// A capability served over HTTP.
 ///
-/// This is the server's local trait: capabilities plug into the server by providing an adapter that
-/// implements it (see [`ExperimentRoute`] and [`InferenceRoute`]). Each adapter reads the request
-/// body and decides its own response shape.
+/// This is the server's local trait: capabilities plug in via [`IntoServerRoute`], and each decides
+/// its own response shape (experiments respond fire-and-forget; inference streams SSE). Implement it
+/// directly only for a bespoke route.
 pub trait ServerRoute: Send + Sync {
     /// The name used to select this route (`POST /{name}`).
     fn name(&self) -> &str;
@@ -27,19 +27,48 @@ pub trait ServerRoute: Send + Sync {
     fn handle(&self, body: Bytes) -> Response;
 }
 
+/// Turns a capability job into a [`ServerRoute`].
+///
+/// Implemented for `ExperimentJob` (fire-and-forget) and `InferenceJob` (SSE), so
+/// `Server::register(job)` works uniformly for either. A new capability becomes servable by
+/// implementing this for its job.
+pub trait IntoServerRoute {
+    fn into_server_route(self) -> Box<dyn ServerRoute>;
+}
+
+impl<I, O> IntoServerRoute for ExperimentJob<I, O>
+where
+    I: DeserializeOwned + Send + 'static,
+    O: 'static,
+{
+    fn into_server_route(self) -> Box<dyn ServerRoute> {
+        Box::new(ExperimentRoute::new(self))
+    }
+}
+
+impl<I, O> IntoServerRoute for InferenceJob<I, O>
+where
+    I: DeserializeOwned + Send + 'static,
+    O: Serialize + Send + Sync + 'static,
+{
+    fn into_server_route(self) -> Box<dyn ServerRoute> {
+        Box::new(InferenceRoute::new(self))
+    }
+}
+
 /// Serves an [`ExperimentJob`] fire-and-forget: parse the JSON body, start the job in the
 /// background, and respond immediately.
-pub struct ExperimentRoute<I, O> {
+pub(crate) struct ExperimentRoute<I, O> {
     job: ExperimentJob<I, O>,
     default: Option<Value>,
 }
 
 impl<I, O> ExperimentRoute<I, O> {
-    pub fn new(job: ExperimentJob<I, O>) -> Self {
+    pub(crate) fn new(job: ExperimentJob<I, O>) -> Self {
         Self { job, default: None }
     }
 
-    pub fn with_default(job: ExperimentJob<I, O>, default: I) -> Self
+    pub(crate) fn with_default(job: ExperimentJob<I, O>, default: I) -> Self
     where
         I: Serialize,
     {
@@ -106,12 +135,12 @@ where
 
 /// Serves an [`InferenceJob`] over Server-Sent Events: frame the request body into inputs, run the
 /// inference, and stream each output as an SSE `data:` frame, terminated by a `done` event.
-pub struct InferenceRoute<I, O> {
+pub(crate) struct InferenceRoute<I, O> {
     job: InferenceJob<I, O>,
 }
 
 impl<I, O> InferenceRoute<I, O> {
-    pub fn new(job: InferenceJob<I, O>) -> Self {
+    pub(crate) fn new(job: InferenceJob<I, O>) -> Self {
         Self { job }
     }
 }
