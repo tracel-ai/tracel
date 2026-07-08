@@ -3,10 +3,6 @@
 //!
 //! Run the server first: `cargo run -p inference-example --example server`
 //! Then, in another terminal: `cargo run -p inference-example --example streaming_client`
-//!
-//! The request body is a stream, so prompts are sent incrementally (unlike `curl -d`, which buffers
-//! the whole body first). Timestamps show that the tokens for each prompt come back before the next
-//! prompt is sent.
 
 use std::time::{Duration, Instant};
 
@@ -19,7 +15,7 @@ use tokio_stream::wrappers::ReceiverStream;
 async fn main() -> anyhow::Result<()> {
     let start = Instant::now();
 
-    // Streaming request body: send one prompt every 700ms; reqwest streams them to the server.
+    // Send one NDJSON prompt every 700ms on a streamed request body.
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         for text in ["the quick brown fox", "jumps over", "the lazy dog"] {
@@ -38,7 +34,6 @@ async fn main() -> anyhow::Result<()> {
         .send()
         .await?;
 
-    // Read the Server-Sent Events response, decoding each token as it arrives.
     let mut events = response.bytes_stream().eventsource();
     while let Some(event) = events.next().await {
         let event = event?;

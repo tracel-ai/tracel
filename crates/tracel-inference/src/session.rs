@@ -39,13 +39,10 @@ impl From<&str> for InferenceId {
     }
 }
 
-/// A per-request inference session.
+/// A per-request inference session that scopes the request's telemetry.
 ///
-/// A session is created by an [`InferenceProvider`](crate::InferenceProvider) for each inference
-/// request and scopes that request's telemetry. It is intentionally minimal for now: it carries an
-/// id and an [`InferenceWriterObserver`] that the job attaches to the request's output writer, so
-/// the backend observes the request lifecycle (outputs, errors, duration) as it happens. More
-/// session-scoped capabilities (structured events, artifacts) can be layered on later.
+/// It carries an id and an [`InferenceWriterObserver`] that the job attaches to the request's output
+/// writer, so the backend observes the request lifecycle (outputs, errors, duration) as it happens.
 #[derive(Clone)]
 pub struct InferenceSession {
     id: InferenceId,
