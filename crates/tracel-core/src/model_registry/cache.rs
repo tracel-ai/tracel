@@ -29,7 +29,7 @@ pub(crate) struct ModelCache {
 }
 
 impl ModelCache {
-    pub(crate) fn new(root: PathBuf) -> Self {
+    pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
 
@@ -39,12 +39,7 @@ impl ModelCache {
 
     /// Returns a bundle backed by the cached files if every expected file is already
     /// present on disk, `None` otherwise.
-    pub(crate) fn get(
-        &self,
-        name: &str,
-        version: u32,
-        files: &[ArtifactDownloadFile],
-    ) -> Option<FsBundle> {
+    fn get(&self, name: &str, version: u32, files: &[ArtifactDownloadFile]) -> Option<FsBundle> {
         let dir = self.version_dir(name, version);
         let all_present = files.iter().all(|f| dir.join(&f.rel_path).is_file());
         if !all_present {
@@ -57,14 +52,14 @@ impl ModelCache {
 
     /// Reserves the destination directory for `name`/`version` as a writable bundle to
     /// download into, so the files land where future lookups will find them.
-    pub(crate) fn reserve(&self, name: &str, version: u32) -> Result<FsBundle, std::io::Error> {
+    fn reserve(&self, name: &str, version: u32) -> Result<FsBundle, std::io::Error> {
         FsBundle::create(self.version_dir(name, version))
     }
 
     /// Returns the cached bundle for `name`/`version` if all `files` are already present,
     /// otherwise downloads them with `transfer_client` into a freshly reserved directory
     /// and returns the resulting bundle.
-    pub(crate) fn get_or_download<FTC: FileTransferClient>(
+    pub fn get_or_download<FTC: FileTransferClient>(
         &self,
         transfer_client: &FTC,
         name: &str,

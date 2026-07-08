@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::{Client, Env, TracelCredentials};
+use tracel_client::{Client, ClientError, Env, TracelCredentials};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
@@ -24,10 +24,10 @@ pub enum CloudError {
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
     #[error(transparent)]
-    Client(Box<dyn std::error::Error + Send + Sync>),
+    Client(#[from] ClientError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CloudBackend {
     pub(crate) client: Client,
     pub(crate) namespace: String,
@@ -53,9 +53,10 @@ impl CloudBackend {
     fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
         let cache_root = crate::model_registry::resolve_cache_dir()
             .ok_or(CloudError::NoCacheDir)?
-            .join("models")
+            .join("cloud")
             .join(&namespace)
-            .join(&project);
+            .join(&project)
+            .join("models");
 
         Ok(Self {
             client,
@@ -75,7 +76,7 @@ impl CloudBackend {
             if err.is_login_error() {
                 CloudError::InvalidCredentials
             } else {
-                CloudError::Client(Box::new(err))
+                CloudError::Client(err)
             }
         })?;
         CloudBackend::new(client, namespace, project)

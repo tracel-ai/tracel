@@ -8,11 +8,11 @@ pub enum StationError {
     NoCacheDir,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StationBackend {
     pub client: StationClient,
-    pub(crate) file_transfer_client: ReqwestTransferClient,
-    pub(crate) model_cache: crate::model_registry::ModelCache,
+    pub file_transfer_client: ReqwestTransferClient,
+    pub model_cache: crate::model_registry::ModelCache,
 }
 
 impl StationBackend {
@@ -25,9 +25,9 @@ impl StationBackend {
 
         let cache_root = crate::model_registry::resolve_cache_dir()
             .ok_or(StationError::NoCacheDir)?
-            .join("models")
             .join("station")
-            .join(station_id);
+            .join(station_id)
+            .join("models");
 
         Ok(StationBackend {
             client: StationClient::from_url(url),

@@ -90,16 +90,14 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let res = client
-            .create_artifact(
-                self.exp_path.experiment_num(),
-                CreateArtifactRequest {
-                    name: name.clone(),
-                    kind: artifact_kind_name(kind).to_string(),
-                    files: specs,
-                },
-            )
-            .map_err(client_err)?;
+        let res = client.create_artifact(
+            self.exp_path.experiment_num(),
+            CreateArtifactRequest {
+                name: name.clone(),
+                kind: artifact_kind_name(kind).to_string(),
+                files: specs,
+            },
+        )?;
 
         let mut multipart_map = BTreeMap::new();
         for f in &res.files {
@@ -131,15 +129,13 @@ impl ExperimentArtifactClient {
                 parts,
             });
         }
-        upload_bundle_multipart(bundle, &uploads).map_err(upload_err)?;
+        upload_bundle_multipart(bundle, &uploads)?;
 
-        client
-            .complete_artifact_upload(
-                self.exp_path.experiment_num(),
-                &res.id,
-                CompleteUploadRequest { file_names: None },
-            )
-            .map_err(client_err)?;
+        client.complete_artifact_upload(
+            self.exp_path.experiment_num(),
+            &res.id,
+            CompleteUploadRequest { file_names: None },
+        )?;
 
         Ok(res.id)
     }
@@ -151,8 +147,7 @@ impl ExperimentArtifactClient {
         let resp = self
             .client
             .experiments()
-            .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string())
-            .map_err(client_err)?;
+            .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string())?;
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {
@@ -167,7 +162,7 @@ impl ExperimentArtifactClient {
         let mut bundle = FsBundle::temp()
             .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
 
-        download_artifacts_to_sink(&mut bundle, &files).map_err(download_err)?;
+        download_artifacts_to_sink(&mut bundle, &files)?;
 
         Ok(bundle)
     }
@@ -182,8 +177,7 @@ impl ExperimentArtifactClient {
                 ListArtifactsQuery {
                     name: Some(name.to_string()),
                 },
-            )
-            .map_err(client_err)?
+            )?
             .items
             .into_iter()
             .next()
@@ -204,25 +198,13 @@ pub enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
-    Client(Box<dyn std::error::Error + Send + Sync>),
+    Client(#[from] ClientError),
     #[error(transparent)]
-    Download(Box<dyn std::error::Error + Send + Sync>),
+    Download(#[from] DownloadError),
     #[error(transparent)]
-    Upload(Box<dyn std::error::Error + Send + Sync>),
+    Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
-}
-
-fn client_err(err: ClientError) -> ArtifactError {
-    ArtifactError::Client(Box::new(err))
-}
-
-fn download_err(err: DownloadError) -> ArtifactError {
-    ArtifactError::Download(Box::new(err))
-}
-
-fn upload_err(err: UploadError) -> ArtifactError {
-    ArtifactError::Upload(Box::new(err))
 }
 
 impl ExperimentProvider for StationBackend {
