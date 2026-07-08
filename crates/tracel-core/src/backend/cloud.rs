@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde::Deserialize;
+use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{Client, ClientError, Env, TracelCredentials};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
@@ -20,15 +21,19 @@ pub enum CloudError {
     NoProject,
     #[error("Invalid environment variable {env_var}: {message}")]
     InvalidEnv { env_var: String, message: String },
+    #[error("could not determine a cache directory for downloaded models")]
+    NoCacheDir,
     #[error(transparent)]
     Client(#[from] ClientError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CloudBackend {
     pub(crate) client: Client,
     pub(crate) namespace: String,
     pub(crate) project: String,
+    pub(crate) file_transfer_client: ReqwestTransferClient,
+    pub(crate) model_cache: crate::model_registry::ModelCache,
 }
 
 #[derive(Deserialize)]
@@ -45,12 +50,21 @@ struct TracelTomlConfig {
 }
 
 impl CloudBackend {
-    fn new(client: Client, namespace: String, project: String) -> Self {
-        Self {
+    fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
+        let cache_root = crate::model_registry::resolve_cache_dir()
+            .ok_or(CloudError::NoCacheDir)?
+            .join("cloud")
+            .join(&namespace)
+            .join(&project)
+            .join("models");
+
+        Ok(Self {
             client,
             namespace,
             project,
-        }
+            file_transfer_client: ReqwestTransferClient::new(),
+            model_cache: crate::model_registry::ModelCache::new(cache_root),
+        })
     }
 
     pub fn create_context() -> Result<CloudBackend, CloudError> {
@@ -65,7 +79,7 @@ impl CloudBackend {
                 CloudError::Client(err)
             }
         })?;
-        Ok(CloudBackend::new(client, namespace, project))
+        CloudBackend::new(client, namespace, project)
     }
 }
 
