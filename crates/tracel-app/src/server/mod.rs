@@ -1,7 +1,10 @@
 mod error;
+/// Request-body decoders for server routes.
+pub mod mapper;
 mod route;
 
 pub use error::ServerError;
+pub use mapper::{BodyMapper, JsonBody};
 pub use route::{IntoServerRoute, ServerRoute};
 
 use axum::{
@@ -11,11 +14,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use route::{ExperimentRoute, MAX_BODY_BYTES};
-use serde::{Serialize, de::DeserializeOwned};
+use route::MAX_BODY_BYTES;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracel_experiment::ExperimentJob;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type Routes = HashMap<String, Box<dyn ServerRoute>>;
 
@@ -68,24 +70,16 @@ impl Server {
         self
     }
 
-    /// Register a capability job (experiment, inference, ...) at `POST /{name}`.
+    /// Register a capability job (experiment, inference, ...) at `POST /{name}`, decoding its input
+    /// with `mapper`.
     ///
     /// The same call works for any job type that implements [`IntoServerRoute`]: experiments respond
     /// fire-and-forget, inference streams its outputs over SSE.
-    pub fn register<T>(self, job: T) -> Self
+    pub fn register<T, I>(self, job: T, mapper: impl BodyMapper<I> + 'static) -> Self
     where
-        T: IntoServerRoute,
+        T: IntoServerRoute<I>,
     {
-        self.route_boxed(job.into_server_route())
-    }
-
-    /// Register an experiment job with a default config merged into request bodies.
-    pub fn register_with_default<I, O>(self, job: ExperimentJob<I, O>, default: I) -> Self
-    where
-        I: DeserializeOwned + Serialize + Send + 'static,
-        O: 'static,
-    {
-        self.route_boxed(Box::new(ExperimentRoute::with_default(job, default)))
+        self.route_boxed(job.into_server_route(Arc::new(mapper)))
     }
 
     pub async fn run_async(self) -> Result<(), ServerError> {
@@ -96,6 +90,15 @@ impl Server {
             .route("/{name}", post(dispatch))
             .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
             .with_state(state);
+
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(tracel_experiment::integration::tracing::tracing_log_layer())
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .try_init();
 
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)

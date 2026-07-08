@@ -4,7 +4,7 @@ use burn::backend::{FlexDevice, wgpu::WgpuDevice};
 use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
-use tracel::app::server::Server;
+use tracel::app::server::{JsonBody, Server};
 use tracel::experiment::ExperimentRun;
 use tracel::{Connection, Context};
 
@@ -35,9 +35,9 @@ fn main() -> anyhow::Result<()> {
 
     Server::new()
         .port(3000)
-        .register_with_default(job, MnistTrainingConfig::default())
-        .register_with_default(default_job, MnistTrainingConfig::small())
-        .register(no_default_job)
+        .register(job, JsonBody::with_default(MnistTrainingConfig::default()))
+        .register(default_job, JsonBody::with_default(MnistTrainingConfig::small()))
+        .register(no_default_job, JsonBody::new())
         .run()?;
 
     Ok(())
