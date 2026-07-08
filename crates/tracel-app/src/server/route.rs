@@ -1,6 +1,7 @@
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -10,13 +11,15 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
 };
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use tracel_experiment::ExperimentJob;
 use tracel_inference::InferenceJob;
+
+use super::mapper::BodyMapper;
 
 /// Maximum request body size buffered by non-streaming routes (10 MiB).
 pub(crate) const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
@@ -37,57 +40,44 @@ pub trait ServerRoute: Send + Sync {
     fn handle(&self, body: Body) -> RouteFuture;
 }
 
-/// Turns a capability job into a [`ServerRoute`].
+/// Turns a capability job into a [`ServerRoute`], given a [`BodyMapper`] to decode its input.
 ///
 /// Implemented for `ExperimentJob` (fire-and-forget) and `InferenceJob` (streaming SSE), so
-/// `Server::register(job)` works uniformly for either. A new capability becomes servable by
-/// implementing this for its job.
-pub trait IntoServerRoute {
-    fn into_server_route(self) -> Box<dyn ServerRoute>;
+/// `Server::register(job, mapper)` works uniformly for either.
+pub trait IntoServerRoute<I> {
+    fn into_server_route(self, mapper: Arc<dyn BodyMapper<I>>) -> Box<dyn ServerRoute>;
 }
 
-impl<I, O> IntoServerRoute for ExperimentJob<I, O>
+impl<I, O> IntoServerRoute<I> for ExperimentJob<I, O>
 where
     I: DeserializeOwned + Send + 'static,
     O: 'static,
 {
-    fn into_server_route(self) -> Box<dyn ServerRoute> {
-        Box::new(ExperimentRoute::new(self))
+    fn into_server_route(self, mapper: Arc<dyn BodyMapper<I>>) -> Box<dyn ServerRoute> {
+        Box::new(ExperimentRoute::new(self, mapper))
     }
 }
 
-impl<I, O> IntoServerRoute for InferenceJob<I, O>
+impl<I, O> IntoServerRoute<I> for InferenceJob<I, O>
 where
     I: DeserializeOwned + Send + 'static,
     O: Serialize + Send + Sync + 'static,
 {
-    fn into_server_route(self) -> Box<dyn ServerRoute> {
-        Box::new(InferenceRoute::new(self))
+    fn into_server_route(self, mapper: Arc<dyn BodyMapper<I>>) -> Box<dyn ServerRoute> {
+        Box::new(InferenceRoute::new(self, mapper))
     }
 }
 
-/// Serves an [`ExperimentJob`] fire-and-forget: buffer and parse the JSON body, start the job in the
-/// background, and respond immediately.
+/// Serves an [`ExperimentJob`] fire-and-forget: decode the whole body with the mapper, start the job
+/// in the background, and respond immediately.
 pub(crate) struct ExperimentRoute<I, O> {
     job: ExperimentJob<I, O>,
-    default: Option<Value>,
+    mapper: Arc<dyn BodyMapper<I>>,
 }
 
 impl<I, O> ExperimentRoute<I, O> {
-    pub(crate) fn new(job: ExperimentJob<I, O>) -> Self {
-        Self { job, default: None }
-    }
-
-    pub(crate) fn with_default(job: ExperimentJob<I, O>, default: I) -> Self
-    where
-        I: Serialize,
-    {
-        let default =
-            serde_json::to_value(default).expect("default config must be serializable to JSON");
-        Self {
-            job,
-            default: Some(default),
-        }
+    fn new(job: ExperimentJob<I, O>, mapper: Arc<dyn BodyMapper<I>>) -> Self {
+        Self { job, mapper }
     }
 }
 
@@ -103,7 +93,7 @@ where
     fn handle(&self, body: Body) -> RouteFuture {
         let job = self.job.clone();
         let name = self.job.name().to_string();
-        let default = self.default.clone();
+        let mapper = self.mapper.clone();
         Box::pin(async move {
             let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
                 Ok(bytes) => bytes,
@@ -112,7 +102,7 @@ where
                         .into_response();
                 }
             };
-            let input = match parse_with_default::<I>(&default, &bytes) {
+            let input = match mapper.map(&bytes) {
                 Ok(input) => input,
                 Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
             };
@@ -131,36 +121,20 @@ where
     }
 }
 
-fn parse_with_default<I>(default: &Option<Value>, body: &[u8]) -> Result<I, serde_json::Error>
-where
-    I: DeserializeOwned,
-{
-    match default {
-        Some(default) => {
-            if body.trim_ascii().is_empty() {
-                return serde_json::from_value(default.clone());
-            }
-            let overrides: Value = serde_json::from_slice(body)?;
-            let mut merged = default.clone();
-            json_patch::merge(&mut merged, &overrides);
-            serde_json::from_value(merged)
-        }
-        None => serde_json::from_slice(body),
-    }
-}
-
 /// Serves an [`InferenceJob`] with a streaming request and a Server-Sent Events response.
 ///
-/// Input messages (NDJSON, one JSON object per line — a single JSON body is one message) are framed
-/// off the request body *as it arrives* and fed into the running inference, whose outputs stream
-/// back as SSE `data:` frames, terminated by a `done` event. Input and output stream concurrently.
+/// Input messages (NDJSON, one JSON object per line — a single body is one message) are framed off
+/// the request body *as it arrives* and decoded with the mapper, then fed into the running
+/// inference, whose outputs stream back as SSE `data:` frames, terminated by a `done` event. Input
+/// and output stream concurrently.
 pub(crate) struct InferenceRoute<I, O> {
     job: InferenceJob<I, O>,
+    mapper: Arc<dyn BodyMapper<I>>,
 }
 
 impl<I, O> InferenceRoute<I, O> {
-    pub(crate) fn new(job: InferenceJob<I, O>) -> Self {
-        Self { job }
+    fn new(job: InferenceJob<I, O>, mapper: Arc<dyn BodyMapper<I>>) -> Self {
+        Self { job, mapper }
     }
 }
 
@@ -175,6 +149,7 @@ where
 
     fn handle(&self, body: Body) -> RouteFuture {
         let job = self.job.clone();
+        let mapper = self.mapper.clone();
         Box::pin(async move {
             // Inputs are pushed here by the body-reading task and pulled by the inference worker.
             let (in_tx, in_rx) = std::sync::mpsc::channel::<I>();
@@ -205,7 +180,7 @@ where
                 let _ = out_tx.blocking_send(Ok(Event::default().event("done").data("")));
             });
 
-            // Input task: frame the request body into NDJSON messages and feed them in as they land.
+            // Input task: frame the request body into messages, decode each, and feed them in.
             tokio::spawn(async move {
                 let mut data = body.into_data_stream();
                 let mut buf: Vec<u8> = Vec::new();
@@ -218,13 +193,13 @@ where
                     while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
                         let mut line: Vec<u8> = buf.drain(..=pos).collect();
                         line.pop(); // drop the '\n'
-                        if !feed_line::<I>(&line, &in_tx, &sse_tx).await {
+                        if !feed_line(mapper.as_ref(), &line, &in_tx, &sse_tx).await {
                             return;
                         }
                     }
                 }
                 // Flush any trailing message not terminated by a newline.
-                let _ = feed_line::<I>(&buf, &in_tx, &sse_tx).await;
+                let _ = feed_line(mapper.as_ref(), &buf, &in_tx, &sse_tx).await;
             });
 
             Sse::new(ReceiverStream::new(sse_rx))
@@ -234,21 +209,19 @@ where
     }
 }
 
-/// Deserialize one framed line and send it to the inference. Returns `false` (stop feeding) on a
-/// decode error or once the inference has stopped consuming input. Empty lines are skipped.
+/// Decode one framed line and send it to the inference. Returns `false` (stop feeding) on a decode
+/// error or once the inference has stopped consuming input. Empty lines are skipped.
 async fn feed_line<I>(
+    mapper: &dyn BodyMapper<I>,
     line: &[u8],
     in_tx: &std::sync::mpsc::Sender<I>,
     sse_tx: &tokio::sync::mpsc::Sender<Result<Event, Infallible>>,
-) -> bool
-where
-    I: DeserializeOwned,
-{
+) -> bool {
     let trimmed = line.trim_ascii();
     if trimmed.is_empty() {
         return true;
     }
-    match serde_json::from_slice::<I>(trimmed) {
+    match mapper.map(trimmed) {
         Ok(input) => in_tx.send(input).is_ok(),
         Err(e) => {
             let _ = sse_tx
