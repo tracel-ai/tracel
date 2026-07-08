@@ -17,6 +17,7 @@ station = ["tracel-client/station"]
 [dependencies]
 tracel-client.workspace = true
 tracel-experiment.workspace = true
+tracel-inference.workspace = true
 url.workspace = true
 thiserror.workspace = true
 serde.workspace = true

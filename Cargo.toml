@@ -51,6 +51,7 @@ crossbeam = { version = "0.8.4", default-features = false, features = [
 json-patch = { version = "4.1.0", default-features = false }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio-stream = "0.1"
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
 derive_more = { version = "2.1.1", default-features = false, features = [

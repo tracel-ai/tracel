@@ -1,20 +1,30 @@
 mod error;
+mod route;
 
 pub use error::ServerError;
+pub use route::{ExperimentRoute, InferenceRoute, ServerRoute};
 
-use crate::{job::Job, job_register::JobRegister, mapper::JsonMapper};
 use axum::{
     Router,
-    extract::{Path, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::post,
 };
 use serde::{Serialize, de::DeserializeOwned};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tracel_experiment::ExperimentJob;
+use tracel_inference::InferenceJob;
+
+/// Maximum request body size accepted (10 MiB).
+const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+
+type Routes = HashMap<String, Box<dyn ServerRoute>>;
 
 pub struct Server {
-    register: JobRegister,
+    routes: Routes,
     host: String,
     port: u16,
 }
@@ -28,7 +38,7 @@ impl Default for Server {
 impl Server {
     pub fn new() -> Self {
         Self {
-            register: JobRegister::new(),
+            routes: HashMap::new(),
             host: "0.0.0.0".to_string(),
             port: 3000,
         }
@@ -44,34 +54,53 @@ impl Server {
         self
     }
 
-    pub fn register<J, I, O>(mut self, job: J) -> Self
+    /// Register any [`ServerRoute`]. Capability-specific helpers build on this.
+    pub fn route<R>(mut self, route: R) -> Self
     where
-        J: Job<I, O> + Send + Sync + 'static,
-        I: DeserializeOwned + Send + Sync + 'static,
-        O: 'static,
+        R: ServerRoute + 'static,
     {
-        self.register = self.register.register(job, JsonMapper::new());
+        let name = route.name().to_string();
+        if self.routes.contains_key(&name) {
+            panic!("route '{name}' is already registered");
+        }
+        self.routes.insert(name, Box::new(route));
         self
     }
 
-    pub fn register_with_default<J, I, O>(mut self, job: J, default: I) -> Self
+    /// Register an experiment job at `POST /{name}` (fire-and-forget).
+    pub fn register<I, O>(self, job: ExperimentJob<I, O>) -> Self
     where
-        J: Job<I, O> + Send + Sync + 'static,
-        I: DeserializeOwned + Serialize + Send + Sync + 'static,
+        I: DeserializeOwned + Send + 'static,
         O: 'static,
     {
-        self.register = self
-            .register
-            .register(job, JsonMapper::with_default(default));
-        self
+        self.route(ExperimentRoute::new(job))
+    }
+
+    /// Register an experiment job with a default config merged into request bodies.
+    pub fn register_with_default<I, O>(self, job: ExperimentJob<I, O>, default: I) -> Self
+    where
+        I: DeserializeOwned + Serialize + Send + 'static,
+        O: 'static,
+    {
+        self.route(ExperimentRoute::with_default(job, default))
+    }
+
+    /// Register a streaming inference job at `POST /{name}`, served over SSE.
+    pub fn register_inference<I, O>(self, job: InferenceJob<I, O>) -> Self
+    where
+        I: DeserializeOwned + Send + 'static,
+        O: Serialize + Send + Sync + 'static,
+    {
+        self.route(InferenceRoute::new(job))
     }
 
     pub async fn run_async(self) -> Result<(), ServerError> {
         let addr = format!("{}:{}", self.host, self.port);
-        let state = Arc::new(self.register);
+        let state = Arc::new(self.routes);
 
         let app = Router::new()
-            .route("/{job_name}", post(run_job))
+            .route("/{name}", post(dispatch))
+            .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
             .with_state(state);
 
         let _ = tracing_subscriber::fmt()
@@ -94,37 +123,13 @@ impl Server {
     }
 }
 
-async fn run_job(
-    State(register): State<Arc<JobRegister>>,
-    Path(job_name): Path<String>,
-    body: String,
-) -> impl IntoResponse {
-    let input = match register.validate(&job_name, &body) {
-        Ok(input) => input,
-        Err(e) => {
-            let e = ServerError::from(e);
-            let status = match &e {
-                ServerError::UnknownJob { .. } => StatusCode::NOT_FOUND,
-                ServerError::ValidationFailed(_) => StatusCode::BAD_REQUEST,
-                ServerError::ExecutionFailed(_) | ServerError::IoError(_) => {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
-            };
-            return (status, e.to_string());
-        }
-    };
-
-    let response = format!("Job '{job_name}' has started running");
-
-    let handle = tokio::task::spawn_blocking(move || register.run(&job_name, input));
-
-    tokio::spawn(async move {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!("Job failed: {e}"),
-            Err(e) => tracing::error!("Job panicked: {e}"),
-        }
-    });
-
-    (StatusCode::OK, response)
+async fn dispatch(
+    State(routes): State<Arc<Routes>>,
+    Path(name): Path<String>,
+    body: Bytes,
+) -> Response {
+    match routes.get(&name) {
+        Some(route) => route.handle(body),
+        None => (StatusCode::NOT_FOUND, format!("unknown route '{name}'")).into_response(),
+    }
 }

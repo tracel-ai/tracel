@@ -1,0 +1,14 @@
+[package]
+name = "inference-example"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[features]
+default = ["server"]
+server = ["tracel/server"]
+
+[dependencies]
+tracel = { workspace = true }
+anyhow.workspace = true
+serde = { workspace = true, features = ["std", "derive"] }

@@ -4,6 +4,7 @@ mod context;
 mod model_registry;
 
 pub mod experiment;
+pub mod inference;
 
 pub use connection::{Connection, ContextError};
 pub use context::Context;

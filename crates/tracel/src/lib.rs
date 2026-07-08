@@ -29,7 +29,7 @@
 //!
 //! ```ignore
 //! use tracel::app::cli::Cli;
-//! use tracel::app::mapper::JsonMapper;
+//! use tracel::app::cli::mapper::JsonMapper;
 //! use tracel::experiment::ExperimentRun;
 //! use tracel::{Connection, Context};
 //!

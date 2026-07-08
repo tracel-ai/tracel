@@ -3,7 +3,7 @@ use std::error::Error;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::mapper::Mapper;
+use crate::cli::mapper::Mapper;
 
 #[derive(Default)]
 pub struct JsonMapper<I> {
