@@ -9,8 +9,7 @@ use crate::{Inference, InferenceInput, InferenceWrapper};
 
 /// Backend port that creates per-request [`InferenceSession`]s.
 ///
-/// Implementations decide how a request's telemetry is observed and shipped (locally, over the
-/// client API key, ...). This is the inference analog of the experiment provider.
+/// Implementations decide how a request's telemetry is observed and shipped.
 pub trait InferenceProvider: Send + Sync + 'static {
     /// Create a session for one request of the inference named `name`.
     fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError>;
@@ -60,9 +59,7 @@ impl InferenceModule {
 /// A named inference bound to a backend provider.
 ///
 /// Run it with [`stream`](Self::stream) / [`stream_once`](Self::stream_once); each call opens a
-/// fresh per-request session (scoping that request's telemetry) and returns a typed
-/// [`InferenceStream`] of outputs. Front-ends (CLI, HTTP server, ...) build on this typed API and
-/// handle their own serialization.
+/// fresh per-request session and returns a typed [`InferenceStream`] of outputs.
 pub struct InferenceJob<I, O> {
     provider: Arc<dyn InferenceProvider>,
     name: String,

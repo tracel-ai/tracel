@@ -6,7 +6,6 @@ use inference_example::{Prompt, WordTokenizer};
 use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    // Offline connection: no credentials needed. Telemetry is recorded locally (stubbed).
     let module = Context::new(Connection::Offline("./runs".into()))?.inference();
     let job = module.create("wordtok", WordTokenizer::default());
 

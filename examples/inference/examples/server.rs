@@ -7,9 +7,6 @@
 //!
 //! Streaming request (many prompts fed over time): run the `streaming_client` example, which sends
 //! NDJSON prompts on a chunked body and prints tokens as they arrive.
-//!
-//! Each output token arrives as its own `data:` frame, terminated by a `done` event. The per-token
-//! delay makes the streaming visible.
 
 use std::time::Duration;
 

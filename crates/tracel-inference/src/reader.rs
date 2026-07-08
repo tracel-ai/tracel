@@ -19,10 +19,8 @@ pub enum InferenceReaderError {
 
 /// Source of typed input items for an inference task.
 ///
-/// This is the input-side dual of [`InferenceWriterChannel`](crate::InferenceWriterChannel): each
-/// transport (manual iterator, HTTP request body, websocket, ...) implements this to frame and
-/// decode its byte stream into discrete typed items. The inference implementation only ever sees
-/// typed values through [`InferenceInput`].
+/// Each transport (manual iterator, HTTP request body, websocket, ...) implements this to frame and
+/// decode its byte stream into discrete typed items.
 pub trait InferenceReaderChannel<I>: Send {
     /// Return the next input item, or `None` when the input stream is complete.
     fn read(&self) -> Result<Option<I>, InferenceReaderError>;
@@ -30,9 +28,8 @@ pub trait InferenceReaderChannel<I>: Send {
 
 /// The input handed to [`Inference::infer`](crate::Inference::infer).
 ///
-/// It is a pull-based reader, the mirror of [`InferenceWriter`](crate::InferenceWriter). Call
-/// [`recv`](Self::recv) to pull the next item, or iterate to consume the stream. For the common
-/// single-request case use [`once`](Self::once).
+/// A pull-based reader: call [`recv`](Self::recv) to pull the next item, or iterate to consume the
+/// stream. For the single-request case use [`once`](Self::once).
 pub struct InferenceInput<I> {
     channel: Box<dyn InferenceReaderChannel<I>>,
 }
@@ -55,8 +52,6 @@ impl<I> InferenceInput<I> {
     }
 
     /// Build an input stream that yields a single item and then ends.
-    ///
-    /// This is the convenience for the single-payload-in / streamed-out case.
     pub fn once(input: I) -> Self
     where
         I: Send + 'static,

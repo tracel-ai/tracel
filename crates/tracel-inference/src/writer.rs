@@ -123,8 +123,9 @@ impl<O> Drop for InferenceWriter<O> {
     }
 }
 
-/// Trait representing an inference task that can be executed with a given input and a writer for outputs.
-/// The inference implementation is responsible for writing outputs and errors to the provided writer, which will be sent back to the session.
+/// Sink for an inference's typed outputs and errors.
+///
+/// Each transport implements this to encode and deliver items as the inference produces them.
 pub trait InferenceWriterChannel<O> {
     /// Write an output item to the channel. This can be called multiple times to emit multiple items.
     fn write(&self, output: O) -> Result<(), InferenceWriterError>;
