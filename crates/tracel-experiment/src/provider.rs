@@ -49,12 +49,22 @@ impl ExperimentModule {
     }
 }
 
-#[derive(Clone)]
 pub struct ExperimentJob<I, O> {
     provider: Arc<dyn ExperimentProvider>,
     name: String,
     attributes: HashMap<String, Value>,
     f: Arc<dyn ExperimentFn<I, O>>,
+}
+
+impl<I, O> Clone for ExperimentJob<I, O> {
+    fn clone(&self) -> Self {
+        Self {
+            provider: self.provider.clone(),
+            name: self.name.clone(),
+            attributes: self.attributes.clone(),
+            f: self.f.clone(),
+        }
+    }
 }
 
 impl<I, O> ExperimentJob<I, O> {

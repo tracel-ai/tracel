@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use tracel_artifact::bundle::FsBundle;
-use tracel_inference::{Inference, InferenceWriter};
+use tracel_inference::{Inference, InferenceInput, InferenceWriter};
 
 use crate::FleetDeviceSession;
 use crate::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
@@ -196,7 +196,7 @@ where
     type Input = <I as Inference>::Input;
     type Output = <I as Inference>::Output;
 
-    fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
+    fn infer(&self, input: InferenceInput<Self::Input>, writer: InferenceWriter<Self::Output>) {
         let fleet_key = self.current_fleet_key();
         let request_span = tracing::info_span!(
             "fleet.inference",

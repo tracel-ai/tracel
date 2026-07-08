@@ -1,73 +1,108 @@
+mod command;
 mod error;
+/// Config mappers that turn a CLI string argument into a typed input (CLI-only).
+pub mod mapper;
 
+pub use command::{CliCommand, ExperimentCliCommand, InferenceCliCommand};
 pub use error::CliError;
 
-use crate::{job::Job, job_register::JobRegister, mapper::Mapper};
+use crate::cli::mapper::Mapper;
 use clap::Parser;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::error::Error;
+use tracel_experiment::ExperimentJob;
+use tracel_inference::InferenceJob;
 
 #[derive(Parser)]
-#[command(about = "Run a registered job")]
+#[command(about = "Run a registered command")]
 struct Args {
-    job: Option<String>,
+    command: Option<String>,
     config: Option<String>,
 }
 
-struct DefaultJob {
+struct DefaultCommand {
     runner: Box<dyn FnOnce() -> Result<(), Box<dyn Error + Send + Sync>>>,
 }
 
 #[derive(Default)]
 pub struct Cli {
-    register: JobRegister,
-    default_job: Option<DefaultJob>,
+    commands: HashMap<String, Box<dyn CliCommand>>,
+    default: Option<DefaultCommand>,
 }
 
 impl Cli {
     pub fn new() -> Self {
-        Self {
-            register: JobRegister::new(),
-            default_job: None,
-        }
+        Self::default()
     }
 
-    pub fn register<J, I, O, F>(mut self, job: J, mapper: F) -> Self
+    /// Register any [`CliCommand`]. Capability-specific helpers ([`register`](Self::register),
+    /// [`register_inference`](Self::register_inference)) build on this.
+    pub fn command<C>(mut self, command: C) -> Self
     where
-        J: Job<I, O> + Send + Sync + 'static,
-        F: Mapper<I> + Send + Sync + 'static,
-        I: Send + 'static,
-        O: 'static,
+        C: CliCommand + 'static,
     {
-        self.register = self.register.register(job, mapper);
+        let name = command.name().to_string();
+        if self.commands.contains_key(&name) {
+            panic!("command '{name}' is already registered");
+        }
+        self.commands.insert(name, Box::new(command));
         self
     }
 
-    pub fn default_job<J, I, O>(mut self, job: J, config: I) -> Self
+    /// Register an experiment job, decoding its input with `mapper`.
+    pub fn register<I, O, M>(self, job: ExperimentJob<I, O>, mapper: M) -> Self
     where
-        J: Job<I, O> + Send + Sync + 'static,
+        I: Send + 'static,
+        O: 'static,
+        M: Mapper<I> + Send + Sync + 'static,
+    {
+        self.command(ExperimentCliCommand::new(job, mapper))
+    }
+
+    /// Register a streaming inference job, decoding its input with `mapper`. Running it prints each
+    /// output as an NDJSON line.
+    pub fn register_inference<I, O, M>(self, job: InferenceJob<I, O>, mapper: M) -> Self
+    where
+        I: Send + 'static,
+        O: Serialize + Send + Sync + 'static,
+        M: Mapper<I> + Send + Sync + 'static,
+    {
+        self.command(InferenceCliCommand::new(job, mapper))
+    }
+
+    /// Set the experiment job to run when no command name is given, with a preset config.
+    pub fn default_job<I, O>(mut self, job: ExperimentJob<I, O>, config: I) -> Self
+    where
         I: Send + 'static,
         O: 'static,
     {
-        self.default_job = Some(DefaultJob {
-            runner: Box::new(move || job.execute(config).map(|_| ())),
+        self.default = Some(DefaultCommand {
+            runner: Box::new(move || job.run(config).map(|_| ())),
         });
         self
     }
 
     pub fn run(self) -> Result<(), CliError> {
         let args = Args::parse();
-        self.dispatch(args.job, args.config)
+        self.dispatch(args.command, args.config)
     }
 
-    fn dispatch(self, job: Option<String>, config: Option<String>) -> Result<(), CliError> {
-        match job {
-            Some(job_name) => {
+    fn dispatch(self, command: Option<String>, config: Option<String>) -> Result<(), CliError> {
+        match command {
+            Some(name) => {
                 let config_str = config.unwrap_or_default();
-                self.register.dispatch(&job_name, &config_str)?;
-                Ok(())
+                let command =
+                    self.commands
+                        .get(&name)
+                        .ok_or_else(|| CliError::UnknownCommand {
+                            name: name.clone(),
+                            available: self.commands.keys().cloned().collect(),
+                        })?;
+                command.run(&config_str)
             }
             None => {
-                let d = self.default_job.ok_or(CliError::MissingDefault)?;
+                let d = self.default.ok_or(CliError::MissingDefault)?;
                 (d.runner)().map_err(CliError::ExecutionFailed)
             }
         }
@@ -77,169 +112,79 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::job::Job;
-    use crate::mapper::Mapper;
-    use std::error::Error;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
-    struct FakeJob {
+    struct FakeCommand {
         name: &'static str,
-        should_fail: bool,
+        fail: bool,
+        ran: Arc<AtomicBool>,
     }
 
-    impl FakeJob {
+    impl FakeCommand {
         fn new(name: &'static str) -> Self {
             Self {
                 name,
-                should_fail: false,
+                fail: false,
+                ran: Arc::new(AtomicBool::new(false)),
             }
         }
 
         fn failing(name: &'static str) -> Self {
             Self {
                 name,
-                should_fail: true,
+                fail: true,
+                ran: Arc::new(AtomicBool::new(false)),
             }
         }
     }
 
-    impl Job<String, ()> for FakeJob {
+    impl CliCommand for FakeCommand {
         fn name(&self) -> &str {
             self.name
         }
 
-        fn execute(&self, _input: String) -> Result<(), Box<dyn Error + Send + Sync>> {
-            if self.should_fail {
-                Err("job execution failed".into())
+        fn run(&self, _config: &str) -> Result<(), CliError> {
+            self.ran.store(true, Ordering::SeqCst);
+            if self.fail {
+                Err(CliError::ExecutionFailed("boom".into()))
             } else {
                 Ok(())
             }
         }
     }
 
-    struct FakeMapper {
-        should_fail: bool,
-    }
-
-    impl FakeMapper {
-        fn new() -> Self {
-            Self { should_fail: false }
-        }
-
-        fn failing() -> Self {
-            Self { should_fail: true }
-        }
-    }
-
-    impl Mapper<String> for FakeMapper {
-        fn map(&self, raw: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
-            if self.should_fail {
-                Err("mapper failed".into())
-            } else {
-                Ok(raw.to_string())
-            }
-        }
+    #[test]
+    fn given_registered_command_when_dispatching_by_name_then_runs_it() {
+        let cli = Cli::new().command(FakeCommand::new("train"));
+        assert!(cli.dispatch(Some("train".into()), Some("{}".into())).is_ok());
     }
 
     #[test]
-    fn given_registered_job_when_dispatching_named_job_then_return_ok() {
-        let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::new());
-
-        let result = cli.dispatch(Some("train".into()), Some("{}".into()));
-
-        assert!(result.is_ok());
+    fn given_unknown_command_when_dispatching_then_returns_unknown_command_error() {
+        let cli = Cli::new().command(FakeCommand::new("train"));
+        let result = cli.dispatch(Some("infer".into()), None);
+        assert!(matches!(result, Err(CliError::UnknownCommand { .. })));
     }
 
     #[test]
-    fn given_unknown_job_name_when_dispatching_then_return_unknown_job_error() {
-        let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::new());
-
-        let result = cli.dispatch(Some("infer".into()), Some("{}".into()));
-
-        assert!(matches!(result, Err(CliError::UnknownJob { .. })));
-    }
-
-    #[test]
-    fn given_no_config_when_dispatching_named_job_then_default_config_to_empty_string() {
-        let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::new());
-
+    fn given_failing_command_when_dispatching_then_returns_execution_failed() {
+        let cli = Cli::new().command(FakeCommand::failing("train"));
         let result = cli.dispatch(Some("train".into()), None);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn given_mapper_error_when_dispatching_then_return_validation_failed_error() {
-        let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::failing());
-
-        let result = cli.dispatch(Some("train".into()), Some("{}".into()));
-
-        assert!(matches!(result, Err(CliError::ValidationFailed(_))));
-    }
-
-    #[test]
-    fn given_job_error_when_dispatching_then_return_execution_failed_error() {
-        let cli = Cli::new().register(FakeJob::failing("train"), FakeMapper::new());
-
-        let result = cli.dispatch(Some("train".into()), Some("{}".into()));
-
         assert!(matches!(result, Err(CliError::ExecutionFailed(_))));
     }
 
     #[test]
-    fn given_default_job_when_dispatching_with_no_job_name_then_return_ok() {
-        let cli = Cli::new().default_job(FakeJob::new("default"), "config".to_string());
-
-        let result = cli.dispatch(None, None);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn given_no_job_and_no_default_when_dispatching_then_return_missing_default_error() {
+    fn given_no_command_and_no_default_when_dispatching_then_returns_missing_default() {
         let cli = Cli::new();
-
-        let result = cli.dispatch(None, None);
-
-        assert!(matches!(result, Err(CliError::MissingDefault)));
-    }
-
-    #[test]
-    fn given_failing_default_job_when_dispatching_then_return_execution_failed() {
-        let cli = Cli::new().default_job(FakeJob::failing("default"), "config".to_string());
-
-        let result = cli.dispatch(None, None);
-
-        assert!(matches!(result, Err(CliError::ExecutionFailed(_))));
-    }
-
-    #[test]
-    fn given_default_job_and_named_job_when_dispatching_named_job_then_run_registered_job_not_default()
-     {
-        let cli = Cli::new()
-            .register(FakeJob::new("train"), FakeMapper::new())
-            .default_job(FakeJob::failing("default"), "config".to_string());
-
-        let result = cli.dispatch(Some("train".into()), Some("{}".into()));
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn given_multiple_registered_jobs_when_dispatching_by_name_then_run_correct_job() {
-        let cli = Cli::new()
-            .register(FakeJob::new("train"), FakeMapper::new())
-            .register(FakeJob::new("infer"), FakeMapper::new());
-
-        let result = cli.dispatch(Some("infer".into()), Some("{}".into()));
-
-        assert!(result.is_ok());
+        assert!(matches!(cli.dispatch(None, None), Err(CliError::MissingDefault)));
     }
 
     #[test]
     #[should_panic(expected = "already registered")]
-    fn given_duplicate_job_name_when_registering_then_panic() {
+    fn given_duplicate_command_name_when_registering_then_panics() {
         Cli::new()
-            .register(FakeJob::new("train"), FakeMapper::new())
-            .register(FakeJob::new("train"), FakeMapper::new());
+            .command(FakeCommand::new("train"))
+            .command(FakeCommand::new("train"));
     }
 }

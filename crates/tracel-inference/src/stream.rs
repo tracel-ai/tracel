@@ -1,4 +1,9 @@
-use crate::{InferenceWrapper, InferenceWriterChannel, writer::InferenceWriterError};
+use crate::observer::InferenceWriterObserver;
+use crate::reader::IterReaderChannel;
+use crate::{
+    InferenceInput, InferenceWrapper, InferenceWriter, InferenceWriterChannel,
+    writer::InferenceWriterError,
+};
 
 use crossbeam::channel as cb;
 
@@ -103,19 +108,50 @@ where
         Self { inner: inference }
     }
 
-    pub fn stream(&self, input: I) -> InferenceStream<O> {
+    /// Stream a sequence of inputs into the inference, yielding outputs as they are produced.
+    pub fn stream<It>(&self, input: It) -> InferenceStream<O>
+    where
+        It: IntoIterator<Item = I>,
+        It::IntoIter: Send + 'static,
+    {
+        self.stream_with_observer(input, None)
+    }
+
+    /// Stream a single input into the inference. Convenience for the single-request case.
+    pub fn stream_once(&self, input: I) -> InferenceStream<O> {
+        self.stream(std::iter::once(input))
+    }
+
+    /// Stream a sequence of inputs, optionally attaching an observer to the output writer.
+    ///
+    /// Used by the job layer to attach a session's telemetry observer to the request.
+    pub(crate) fn stream_with_observer<It>(
+        &self,
+        input: It,
+        observer: Option<Arc<dyn InferenceWriterObserver>>,
+    ) -> InferenceStream<O>
+    where
+        It: IntoIterator<Item = I>,
+        It::IntoIter: Send + 'static,
+    {
         let (tx, rx) = cb::unbounded();
         let cancel = Arc::new(AtomicBool::new(false));
 
-        let channel = StreamingChannel {
-            tx: tx.clone(),
+        let out_channel = StreamingChannel {
+            tx,
             cancel: cancel.clone(),
         };
+        let in_channel = IterReaderChannel::new(input.into_iter());
 
         let inference = self.inner.clone();
 
         let worker = thread::spawn(move || {
-            inference.infer(input, channel);
+            let input = InferenceInput::from_channel(in_channel);
+            let mut writer = InferenceWriter::from_channel(out_channel);
+            if let Some(observer) = observer {
+                writer = writer.with_observer(observer);
+            }
+            inference.infer_prepared(input, writer);
         });
 
         InferenceStream {

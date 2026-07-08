@@ -12,16 +12,18 @@ categories.workspace = true
 
 [features]
 default = []
-server = ["dep:axum", "dep:tokio"]
+server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
 
 [dependencies]
 clap.workspace = true
 tracel-experiment.workspace = true
+tracel-inference.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 json-patch.workspace = true
 thiserror.workspace = true
 axum = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["sync"] }
+tokio-stream = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true

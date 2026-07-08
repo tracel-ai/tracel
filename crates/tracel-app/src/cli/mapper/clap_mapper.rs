@@ -2,7 +2,7 @@ use std::{error::Error, marker::PhantomData};
 
 use clap::Parser;
 
-use crate::mapper::Mapper;
+use crate::cli::mapper::Mapper;
 
 #[derive(Default)]
 pub struct ClapMapper<I> {
