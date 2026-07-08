@@ -45,7 +45,10 @@ where
     }
 
     fn run(&self, config: &str) -> Result<(), CliError> {
-        let input = self.mapper.map(config).map_err(CliError::ValidationFailed)?;
+        let input = self
+            .mapper
+            .map(config)
+            .map_err(CliError::ValidationFailed)?;
         self.job
             .run(input)
             .map(|_| ())
@@ -82,15 +85,18 @@ where
     }
 
     fn run(&self, config: &str) -> Result<(), CliError> {
-        let input = self.mapper.map(config).map_err(CliError::ValidationFailed)?;
+        let input = self
+            .mapper
+            .map(config)
+            .map_err(CliError::ValidationFailed)?;
         let stream = self
             .job
             .stream_once(input)
             .map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
         for item in stream {
             let output = item.map_err(CliError::ExecutionFailed)?;
-            let line =
-                serde_json::to_string(&output).map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
+            let line = serde_json::to_string(&output)
+                .map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
             println!("{line}");
         }
         Ok(())

@@ -24,7 +24,10 @@ fn main() -> anyhow::Result<()> {
     thread::spawn(move || {
         for text in ["the quick brown fox", "jumps over", "the lazy dog"] {
             thread::sleep(Duration::from_millis(600));
-            println!("[{:>5}ms] >>> feeding: {text:?}", start.elapsed().as_millis());
+            println!(
+                "[{:>5}ms] >>> feeding: {text:?}",
+                start.elapsed().as_millis()
+            );
             if tx.send(Prompt { text: text.into() }).is_err() {
                 return;
             }
@@ -34,7 +37,11 @@ fn main() -> anyhow::Result<()> {
     let stream = job.stream(rx)?;
     for output in stream {
         let token = output.map_err(|e| anyhow::anyhow!("{e}"))?;
-        println!("[{:>5}ms] <<< token:   {}", start.elapsed().as_millis(), token.token);
+        println!(
+            "[{:>5}ms] <<< token:   {}",
+            start.elapsed().as_millis(),
+            token.token
+        );
     }
 
     Ok(())
