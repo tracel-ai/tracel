@@ -6,20 +6,16 @@ pub use route::{IntoServerRoute, ServerRoute};
 
 use axum::{
     Router,
-    body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
 };
-use route::ExperimentRoute;
+use route::{ExperimentRoute, MAX_BODY_BYTES};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracel_experiment::ExperimentJob;
-
-/// Maximum request body size accepted (10 MiB).
-const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 type Routes = HashMap<String, Box<dyn ServerRoute>>;
 
@@ -124,10 +120,10 @@ impl Server {
 async fn dispatch(
     State(routes): State<Arc<Routes>>,
     Path(name): Path<String>,
-    body: Bytes,
+    request: Request,
 ) -> Response {
     match routes.get(&name) {
-        Some(route) => route.handle(body),
+        Some(route) => route.handle(request.into_body()).await,
         None => (StatusCode::NOT_FOUND, format!("unknown route '{name}'")).into_response(),
     }
 }
