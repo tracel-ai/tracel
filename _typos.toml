@@ -1,4 +1,0 @@
-[default.extend-words]
-# Don't correct "arange" which is intentional
-rela = "rela"
-Nd = "Nd"

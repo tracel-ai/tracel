@@ -36,7 +36,10 @@ fn main() -> anyhow::Result<()> {
     Server::new()
         .port(3000)
         .register(job, JsonBody::with_default(MnistTrainingConfig::default()))
-        .register(default_job, JsonBody::with_default(MnistTrainingConfig::small()))
+        .register(
+            default_job,
+            JsonBody::with_default(MnistTrainingConfig::small()),
+        )
         .register(no_default_job, JsonBody::new())
         .run()?;
 

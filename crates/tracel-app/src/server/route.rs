@@ -159,7 +159,9 @@ where
             // Start the inference now; it blocks pulling inputs from `in_rx` as they arrive.
             let stream = match job.stream(in_rx) {
                 Ok(stream) => stream,
-                Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+                Err(e) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                }
             };
 
             // Output task: serialize each output to an SSE frame.

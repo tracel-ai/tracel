@@ -82,13 +82,13 @@ impl Cli {
         match command {
             Some(name) => {
                 let config_str = config.unwrap_or_default();
-                let command =
-                    self.commands
-                        .get(&name)
-                        .ok_or_else(|| CliError::UnknownCommand {
-                            name: name.clone(),
-                            available: self.commands.keys().cloned().collect(),
-                        })?;
+                let command = self
+                    .commands
+                    .get(&name)
+                    .ok_or_else(|| CliError::UnknownCommand {
+                        name: name.clone(),
+                        available: self.commands.keys().cloned().collect(),
+                    })?;
                 command.run(&config_str)
             }
             None => {
@@ -102,8 +102,8 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct FakeCommand {
         name: &'static str,
@@ -147,7 +147,10 @@ mod tests {
     #[test]
     fn given_registered_command_when_dispatching_by_name_then_runs_it() {
         let cli = Cli::new().command(FakeCommand::new("train"));
-        assert!(cli.dispatch(Some("train".into()), Some("{}".into())).is_ok());
+        assert!(
+            cli.dispatch(Some("train".into()), Some("{}".into()))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -167,7 +170,10 @@ mod tests {
     #[test]
     fn given_no_command_and_no_default_when_dispatching_then_returns_missing_default() {
         let cli = Cli::new();
-        assert!(matches!(cli.dispatch(None, None), Err(CliError::MissingDefault)));
+        assert!(matches!(
+            cli.dispatch(None, None),
+            Err(CliError::MissingDefault)
+        ));
     }
 
     #[test]
