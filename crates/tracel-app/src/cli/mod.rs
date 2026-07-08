@@ -3,16 +3,13 @@ mod error;
 /// Config mappers that turn a CLI string argument into a typed input (CLI-only).
 pub mod mapper;
 
-pub use command::{CliCommand, ExperimentCliCommand, InferenceCliCommand};
+pub use command::{CliCommand, IntoCliCommand};
 pub use error::CliError;
 
-use crate::cli::mapper::Mapper;
 use clap::Parser;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
 use tracel_experiment::ExperimentJob;
-use tracel_inference::InferenceJob;
 
 #[derive(Parser)]
 #[command(about = "Run a registered command")]
@@ -36,39 +33,32 @@ impl Cli {
         Self::default()
     }
 
-    /// Register any [`CliCommand`]. Capability-specific helpers ([`register`](Self::register),
-    /// [`register_inference`](Self::register_inference)) build on this.
-    pub fn command<C>(mut self, command: C) -> Self
+    /// Register a bespoke [`CliCommand`]. [`register`](Self::register) builds on this for capability
+    /// jobs; use this directly only for a custom command.
+    pub fn command<C>(self, command: C) -> Self
     where
         C: CliCommand + 'static,
     {
+        self.command_boxed(Box::new(command))
+    }
+
+    fn command_boxed(mut self, command: Box<dyn CliCommand>) -> Self {
         let name = command.name().to_string();
         if self.commands.contains_key(&name) {
             panic!("command '{name}' is already registered");
         }
-        self.commands.insert(name, Box::new(command));
+        self.commands.insert(name, command);
         self
     }
 
-    /// Register an experiment job, decoding its input with `mapper`.
-    pub fn register<I, O, M>(self, job: ExperimentJob<I, O>, mapper: M) -> Self
+    /// Register a capability job (experiment, inference, ...), decoding its input with `mapper`.
+    ///
+    /// The same call works for any job type that implements [`IntoCliCommand`].
+    pub fn register<T, M>(self, job: T, mapper: M) -> Self
     where
-        I: Send + 'static,
-        O: 'static,
-        M: Mapper<I> + Send + Sync + 'static,
+        T: IntoCliCommand<M>,
     {
-        self.command(ExperimentCliCommand::new(job, mapper))
-    }
-
-    /// Register a streaming inference job, decoding its input with `mapper`. Running it prints each
-    /// output as an NDJSON line.
-    pub fn register_inference<I, O, M>(self, job: InferenceJob<I, O>, mapper: M) -> Self
-    where
-        I: Send + 'static,
-        O: Serialize + Send + Sync + 'static,
-        M: Mapper<I> + Send + Sync + 'static,
-    {
-        self.command(InferenceCliCommand::new(job, mapper))
+        self.command_boxed(job.into_cli_command(mapper))
     }
 
     /// Set the experiment job to run when no command name is given, with a preset config.

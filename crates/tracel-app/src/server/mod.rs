@@ -2,7 +2,7 @@ mod error;
 mod route;
 
 pub use error::ServerError;
-pub use route::{ExperimentRoute, InferenceRoute, ServerRoute};
+pub use route::{IntoServerRoute, ServerRoute};
 
 use axum::{
     Router,
@@ -12,11 +12,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use route::ExperimentRoute;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracel_experiment::ExperimentJob;
-use tracel_inference::InferenceJob;
 
 /// Maximum request body size accepted (10 MiB).
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
@@ -54,26 +54,33 @@ impl Server {
         self
     }
 
-    /// Register any [`ServerRoute`]. Capability-specific helpers build on this.
-    pub fn route<R>(mut self, route: R) -> Self
+    /// Register a bespoke [`ServerRoute`]. [`register`](Self::register) builds on this for capability
+    /// jobs; use this directly only for a custom route.
+    pub fn route<R>(self, route: R) -> Self
     where
         R: ServerRoute + 'static,
     {
+        self.route_boxed(Box::new(route))
+    }
+
+    fn route_boxed(mut self, route: Box<dyn ServerRoute>) -> Self {
         let name = route.name().to_string();
         if self.routes.contains_key(&name) {
             panic!("route '{name}' is already registered");
         }
-        self.routes.insert(name, Box::new(route));
+        self.routes.insert(name, route);
         self
     }
 
-    /// Register an experiment job at `POST /{name}` (fire-and-forget).
-    pub fn register<I, O>(self, job: ExperimentJob<I, O>) -> Self
+    /// Register a capability job (experiment, inference, ...) at `POST /{name}`.
+    ///
+    /// The same call works for any job type that implements [`IntoServerRoute`]: experiments respond
+    /// fire-and-forget, inference streams its outputs over SSE.
+    pub fn register<T>(self, job: T) -> Self
     where
-        I: DeserializeOwned + Send + 'static,
-        O: 'static,
+        T: IntoServerRoute,
     {
-        self.route(ExperimentRoute::new(job))
+        self.route_boxed(job.into_server_route())
     }
 
     /// Register an experiment job with a default config merged into request bodies.
@@ -82,16 +89,7 @@ impl Server {
         I: DeserializeOwned + Serialize + Send + 'static,
         O: 'static,
     {
-        self.route(ExperimentRoute::with_default(job, default))
-    }
-
-    /// Register a streaming inference job at `POST /{name}`, served over SSE.
-    pub fn register_inference<I, O>(self, job: InferenceJob<I, O>) -> Self
-    where
-        I: DeserializeOwned + Send + 'static,
-        O: Serialize + Send + Sync + 'static,
-    {
-        self.route(InferenceRoute::new(job))
+        self.route_boxed(Box::new(ExperimentRoute::with_default(job, default)))
     }
 
     pub async fn run_async(self) -> Result<(), ServerError> {

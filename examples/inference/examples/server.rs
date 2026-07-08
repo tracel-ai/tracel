@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
     let module = Context::new(Connection::Offline("./runs".into()))?.inference();
     let job = module.create("wordtok", WordTokenizer);
 
-    Server::new().port(3000).register_inference(job).run()?;
+    Server::new().port(3000).register(job).run()?;
 
     Ok(())
 }
