@@ -13,7 +13,7 @@
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{ExperimentRun, ExperimentRunHandle};
+use crate::{ActivityGuard, ActivityId, ExperimentRun, ExperimentRunHandle};
 
 mod layer;
 pub(crate) mod registry;
@@ -87,6 +87,26 @@ impl ExperimentTracingExt for ExperimentRun {
 impl ExperimentTracingExt for ExperimentRunHandle {
     fn tracing_span(&self) -> tracing::Span {
         experiment_span(self.clone())
+    }
+}
+
+/// Build a tracing span scoped to a specific activity.
+fn activity_span(id: ActivityId) -> tracing::Span {
+    tracing::info_span!("activity", activity_id = id.as_u64())
+}
+
+/// Extension trait for creating activity-scoped tracing spans.
+///
+/// Entering the returned span scopes `tracing` events emitted within it to this activity.
+pub trait ActivityTracingExt {
+    /// Create a tracing span scoped to this activity.
+    #[must_use = "span must be entered to scope events"]
+    fn tracing_span(&self) -> tracing::Span;
+}
+
+impl<State> ActivityTracingExt for ActivityGuard<State> {
+    fn tracing_span(&self) -> tracing::Span {
+        activity_span(self.id())
     }
 }
 
@@ -166,9 +186,13 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => {
-                assert!(message.contains("epoch completed"));
-                assert!(message.contains("step=3"));
+            Event::Log(record) => {
+                assert!(record.message.contains("epoch completed"));
+                assert_eq!(
+                    record.attributes.get("step").and_then(|v| v.as_u64()),
+                    Some(3)
+                );
+                assert_eq!(record.activity_id, None);
             }
             event => panic!("unexpected event: {event:?}"),
         }
@@ -189,9 +213,12 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => {
-                assert!(message.contains("span-routed event"));
-                assert!(message.contains("step=7"));
+            Event::Log(record) => {
+                assert!(record.message.contains("span-routed event"));
+                assert_eq!(
+                    record.attributes.get("step").and_then(|v| v.as_u64()),
+                    Some(7)
+                );
             }
             event => panic!("unexpected event: {event:?}"),
         }
@@ -212,8 +239,8 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => {
-                assert!(message.contains("helper-span-routed event"));
+            Event::Log(record) => {
+                assert!(record.message.contains("helper-span-routed event"));
             }
             event => panic!("unexpected event: {event:?}"),
         }
@@ -231,5 +258,34 @@ mod tests {
 
         let events = session.events.lock().unwrap();
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn tracing_layer_scopes_events_to_the_current_activity() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run("trace-test-activity", session.clone());
+        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+
+        let activity_id = tracing::subscriber::with_default(subscriber, || {
+            run.in_scope(|| {
+                let guard = run.activity("train").start();
+                let id = guard.id();
+                guard.tracing_span().in_scope(|| {
+                    tracing::info!("scoped to activity");
+                });
+                id
+            })
+        });
+
+        let events = session.events.lock().unwrap();
+        let log = events
+            .iter()
+            .find_map(|event| match event {
+                Event::Log(record) => Some(record),
+                _ => None,
+            })
+            .expect("a log event should have been recorded");
+        assert_eq!(log.message, "scoped to activity");
+        assert_eq!(log.activity_id, Some(activity_id));
     }
 }

@@ -88,7 +88,7 @@ impl ExperimentSession for RemoteExperimentSession {
         let message = match event {
             Event::Args(value) => ExperimentMessage::Arguments(value),
             Event::Config { name, value } => ExperimentMessage::Config { name, value },
-            Event::Log { message } => ExperimentMessage::Log(message),
+            Event::Log(record) => ExperimentMessage::Log(record.render()),
             Event::Metrics {
                 epoch,
                 split,

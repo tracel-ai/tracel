@@ -1,22 +1,21 @@
-use std::fmt::Write as _;
-
-use tracing_subscriber::{
-    fmt::format::{DefaultFields, FormatFields, Writer},
-    registry::LookupSpan,
-};
+use serde_json::{Map, Value};
+use tracing::field::{Field, Visit};
+use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    ExperimentRun,
+    ExperimentRun, LogLevel, LogRecord,
     context::ExperimentGlobalExt,
     integration::tracing::{registry::TracingRegistry, visitor::SpanFields},
 };
 
-/// `tracing_subscriber` layer that forwards events into experiment logs.
+/// `tracing_subscriber` layer that forwards events into experiment logs as structured records.
 ///
-/// The layer resolves the destination experiment in two steps:
-/// 1. a span-bound experiment id created by
-///    [`super::ExperimentTracingExt::tracing_span`]
-/// 2. the current ambient experiment from [`crate::ExperimentGlobalExt`]
+/// The layer resolves the destination and scope from the event's span context in one walk:
+/// - the run is chosen from a span-bound `experiment_id` (see
+///   [`super::ExperimentTracingExt::tracing_span`]), falling back to the ambient
+///   [`crate::ExperimentGlobalExt`] experiment;
+/// - the record is scoped to the nearest span-bound `activity_id` (see
+///   [`super::ActivityTracingExt::tracing_span`]), if any.
 ///
 /// Construct it directly or use [`super::tracing_log_layer`] for a named helper function.
 #[derive(Debug, Default)]
@@ -65,18 +64,22 @@ where
             return;
         }
 
-        let experiment_id = if let Some(scope) = ctx.event_scope(event) {
+        let (experiment_id, activity_id) = if let Some(scope) = ctx.event_scope(event) {
             let mut experiment_id = None;
+            let mut activity_id = None;
             for span in scope.from_root() {
-                if let Some(span_fields) = span.extensions().get::<SpanFields>() {
-                    if let Some(span_experiment_id) = span_fields.experiment_id.as_ref() {
-                        experiment_id = Some(span_experiment_id.clone());
+                if let Some(fields) = span.extensions().get::<SpanFields>() {
+                    if fields.experiment_id.is_some() {
+                        experiment_id = fields.experiment_id.clone();
+                    }
+                    if fields.activity_id.is_some() {
+                        activity_id = fields.activity_id;
                     }
                 }
             }
-            experiment_id
+            (experiment_id, activity_id)
         } else {
-            None
+            (None, None)
         };
 
         let handle = match experiment_id {
@@ -90,22 +93,70 @@ where
             },
         };
 
-        let rendered = match format_event(event) {
-            Some(rendered) => rendered,
-            None => return,
-        };
+        let mut visitor = LogFieldVisitor::default();
+        event.record(&mut visitor);
 
-        let _ = handle.log_info(rendered);
+        let _ = handle.log(LogRecord {
+            level: log_level(metadata.level()),
+            message: visitor.message.unwrap_or_default(),
+            attributes: visitor.attributes,
+            activity_id,
+        });
     }
 }
 
-fn format_event(event: &tracing::Event<'_>) -> Option<String> {
-    let metadata = event.metadata();
-    let mut rendered = String::new();
-    write!(&mut rendered, "[{}] ", metadata.level()).ok()?;
-    DefaultFields::new()
-        .format_fields(Writer::new(&mut rendered), event)
-        .ok()?;
-    rendered.push('\n');
-    Some(rendered)
+fn log_level(level: &tracing::Level) -> LogLevel {
+    match *level {
+        tracing::Level::TRACE => LogLevel::Trace,
+        tracing::Level::DEBUG => LogLevel::Debug,
+        tracing::Level::INFO => LogLevel::Info,
+        tracing::Level::WARN => LogLevel::Warn,
+        tracing::Level::ERROR => LogLevel::Error,
+    }
+}
+
+/// Splits a tracing event's `message` field from its other fields, which become attributes.
+#[derive(Default)]
+struct LogFieldVisitor {
+    message: Option<String>,
+    attributes: Map<String, Value>,
+}
+
+impl LogFieldVisitor {
+    fn set(&mut self, field: &Field, value: Value) {
+        if field.name() == "message" {
+            self.message = Some(match value {
+                Value::String(text) => text,
+                other => other.to_string(),
+            });
+        } else {
+            self.attributes.insert(field.name().to_string(), value);
+        }
+    }
+}
+
+impl Visit for LogFieldVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.set(field, Value::String(value.to_string()));
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.set(field, Value::from(value));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.set(field, Value::from(value));
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.set(field, Value::from(value));
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.set(field, Value::from(value));
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.set(field, Value::String(format!("{value:?}")));
+    }
 }

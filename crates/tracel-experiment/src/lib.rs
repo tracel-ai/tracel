@@ -26,6 +26,7 @@ mod activity;
 mod cancellation;
 mod context;
 mod control;
+mod log;
 mod provider;
 pub mod reader;
 pub mod session;
@@ -42,6 +43,7 @@ pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
 pub use control::ExperimentRunControl;
+pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 
 use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
@@ -449,9 +451,12 @@ impl ExperimentRunHandle {
 
     /// See [`ExperimentRun::log_info`].
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.record_event(Event::Log {
-            message: message.into(),
-        })
+        self.log(LogRecord::info(message))
+    }
+
+    /// Record a structured log entry.
+    pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
+        self.record_event(Event::Log(record))
     }
 
     /// See [`ExperimentRun::log_metric`].
@@ -709,7 +714,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => assert_eq!(message, "hello"),
+            Event::Log(record) => assert_eq!(record.message, "hello"),
             event => panic!("unexpected event: {event:?}"),
         }
     }
@@ -762,7 +767,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => assert_eq!(message, "still-logging"),
+            Event::Log(record) => assert_eq!(record.message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
     }
