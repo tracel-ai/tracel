@@ -88,7 +88,7 @@ fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
         return Ok(creds);
     }
 
-    let proj_dirs = directories::ProjectDirs::from("com", "tracel", "burncentral")
+    let proj_dirs = directories::ProjectDirs::from("ai", "tracel", "console")
         .ok_or(CloudError::NoCredentials)?;
 
     let filename = match env {
