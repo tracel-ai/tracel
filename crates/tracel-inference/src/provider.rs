@@ -108,7 +108,7 @@ where
     {
         let session = self.provider.create_session(&self.name)?;
         let direct = DirectInference::new(self.inference.clone());
-        Ok(direct.stream_with_observer(input, Some(session.observer())))
+        Ok(direct.stream_with_session(input, Some(session)))
     }
 
     /// Run the inference against a single input, opening a fresh session for the request.

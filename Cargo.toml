@@ -67,7 +67,7 @@ tracing-subscriber = "0.3.23"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
-tracel-client = { version = "0.8.1", default-features = false, features = [
+tracel-client = { version = "0.10.0", default-features = false, features = [
     "tracel",
     "station",
 ] }

@@ -1,5 +1,5 @@
-use crate::observer::InferenceWriterObserver;
 use crate::reader::IterReaderChannel;
+use crate::session::InferenceSession;
 use crate::{
     InferenceInput, InferenceWrapper, InferenceWriter, InferenceWriterChannel,
     writer::InferenceWriterError,
@@ -114,7 +114,7 @@ where
         It: IntoIterator<Item = I>,
         It::IntoIter: Send + 'static,
     {
-        self.stream_with_observer(input, None)
+        self.stream_with_session(input, None)
     }
 
     /// Stream a single input into the inference. Convenience for the single-request case.
@@ -122,13 +122,12 @@ where
         self.stream(std::iter::once(input))
     }
 
-    /// Stream a sequence of inputs, optionally attaching an observer to the output writer.
-    ///
-    /// Used by the job layer to attach a session's telemetry observer to the request.
-    pub(crate) fn stream_with_observer<It>(
+    /// Stream a sequence of inputs, binding a session to the request. The session is installed as
+    /// ambient on the worker thread and its observer is attached to the output writer.
+    pub(crate) fn stream_with_session<It>(
         &self,
         input: It,
-        observer: Option<Arc<dyn InferenceWriterObserver>>,
+        session: Option<InferenceSession>,
     ) -> InferenceStream<O>
     where
         It: IntoIterator<Item = I>,
@@ -146,10 +145,11 @@ where
         let inference = self.inner.clone();
 
         let worker = thread::spawn(move || {
+            let _scope = session.as_ref().map(|session| session.enter());
             let input = InferenceInput::from_channel(in_channel);
             let mut writer = InferenceWriter::from_channel(out_channel);
-            if let Some(observer) = observer {
-                writer = writer.with_observer(observer);
+            if let Some(session) = &session {
+                writer = writer.with_observer(session.observer());
             }
             inference.infer_prepared(input, writer);
         });

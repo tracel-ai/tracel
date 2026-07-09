@@ -3650,6 +3650,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracel",
+ "tracing",
 ]
 
 [[package]]
@@ -6632,9 +6633,9 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.8.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e679801392b7f9162a5b68134f4e65540a2d9d55fef60683b0db462d73cf432"
+checksum = "98de6eb2922fbb0a3b66e062182aee20c7f0ae9f1750cdab117fadafe8b8eeec"
 dependencies = [
  "reqwest 0.13.4",
  "serde",
@@ -6651,6 +6652,7 @@ dependencies = [
 name = "tracel-core"
 version = "0.7.0"
 dependencies = [
+ "chrono",
  "crossbeam",
  "directories",
  "serde",
@@ -6713,6 +6715,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use crate::backend::cloud::{CloudBackend, CloudError};
 use crate::backend::local::LocalBackend;
 #[cfg(feature = "station")]
 use crate::backend::station::{StationBackend, StationError};
-use crate::inference::DefaultInferenceProvider;
+use crate::inference::{CloudInferenceProvider, DefaultInferenceProvider};
 use crate::model_registry::ModelRegistryProvider;
 use tracel_experiment::ExperimentProvider;
 use tracel_inference::InferenceProvider;
@@ -32,9 +32,14 @@ impl Connection {
         match self {
             Connection::Cloud => {
                 let backend = Arc::new(CloudBackend::create_context()?);
+                let inference = Arc::new(CloudInferenceProvider::new(
+                    backend.client.clone(),
+                    backend.namespace.clone(),
+                    backend.project.clone(),
+                ));
                 Ok(Providers {
                     experiment: backend.clone(),
-                    inference: Arc::new(DefaultInferenceProvider::new()),
+                    inference,
                     model_registry: Some(backend),
                 })
             }

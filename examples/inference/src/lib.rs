@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tracel::inference::{Inference, InferenceInput, InferenceWriter};
+use tracel::inference::{Inference, InferenceInput, InferenceSession, InferenceWriter};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Prompt {
@@ -46,8 +46,24 @@ impl Inference for WordTokenizer {
     type Output = Token;
 
     fn infer(&self, input: InferenceInput<Prompt>, writer: InferenceWriter<Token>) {
+        // Present when bound to a telemetry provider (e.g. Cloud), `None` offline.
+        let session = InferenceSession::current();
+
         for prompt in input {
-            for word in prompt.text.split_whitespace() {
+            let words: Vec<&str> = prompt.text.split_whitespace().collect();
+
+            // Explicit metric through the session, with a scoped attribute.
+            if let Some(session) = &session {
+                session
+                    .with_attributes([("prompt_len", prompt.text.len() as u64)])
+                    .log_gauge("prompt_tokens", words.len() as f64);
+            }
+
+            // Routed to the session by the tracing layer (see the `cloud` example).
+            tracing::info!(tokens = words.len(), "tokenizing prompt");
+
+            let mut emitted: u64 = 0;
+            for word in words {
                 if !self.per_token_delay.is_zero() {
                     std::thread::sleep(self.per_token_delay);
                 }
@@ -60,6 +76,11 @@ impl Inference for WordTokenizer {
                     // The consumer disconnected; stop early.
                     return;
                 }
+                emitted += 1;
+            }
+
+            if let Some(session) = &session {
+                session.log_counter("tokens_emitted", emitted);
             }
         }
     }

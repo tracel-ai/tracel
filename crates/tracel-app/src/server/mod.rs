@@ -94,6 +94,7 @@ impl Server {
         let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
             .with(tracel_experiment::integration::tracing::tracing_log_layer())
+            .with(tracel_inference::integration::tracing::inference_log_layer())
             .with(
                 tracing_subscriber::EnvFilter::try_from_default_env()
                     .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),

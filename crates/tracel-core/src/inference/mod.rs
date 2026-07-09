@@ -2,14 +2,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracel_inference::observer::{InferenceWriterObserver, InferenceWriterStats};
+use tracel_inference::sink::NoopSink;
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
 
-/// Default inference provider.
-///
-/// It opens one [`InferenceSession`] per request and scopes that request's telemetry. This first
-/// cut is intentionally a **stub**: the session observer records request-completion stats locally
-/// (via `tracing`). The seam to ship these as inference events over the client API key lives in
-/// [`RequestTelemetryObserver::on_finish`].
+mod cloud;
+
+pub use cloud::CloudInferenceProvider;
+
+/// Local inference provider for offline execution: it ships nothing (the sink discards telemetry
+/// and the observer logs request stats via `tracing`). See [`CloudInferenceProvider`] to ship.
 #[derive(Default)]
 pub struct DefaultInferenceProvider {
     request_counter: AtomicU64,
@@ -29,7 +30,11 @@ impl InferenceProvider for DefaultInferenceProvider {
             inference_name: name.to_string(),
             session_id: session_id.clone(),
         });
-        Ok(InferenceSession::new(session_id, observer))
+        Ok(InferenceSession::new(
+            session_id,
+            observer,
+            Arc::new(NoopSink),
+        ))
     }
 }
 
@@ -41,8 +46,6 @@ struct RequestTelemetryObserver {
 
 impl InferenceWriterObserver for RequestTelemetryObserver {
     fn on_finish(&self, stats: &InferenceWriterStats) {
-        // TODO: ship these stats as inference events over the client API key (fleet-shaped
-        // payload minus device auth). For now they are recorded locally.
         tracing::info!(
             inference_name = %self.inference_name,
             session_id = %self.session_id,
