@@ -36,7 +36,7 @@ mod tests {
 
     use super::*;
     use crate::InferenceSession;
-    use crate::observer::InferenceWriterObserver;
+    use crate::observer::InferenceOutputObserver;
     use crate::sink::{InferenceSink, LogSample, MetricSample};
 
     #[derive(Default)]
@@ -56,7 +56,7 @@ mod tests {
     }
 
     struct NoopObserver;
-    impl InferenceWriterObserver for NoopObserver {}
+    impl InferenceOutputObserver for NoopObserver {}
 
     fn session(sink: Arc<RecordingSink>) -> InferenceSession {
         InferenceSession::new("req-1", Arc::new(NoopObserver), sink)

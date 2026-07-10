@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tracel_inference::observer::{InferenceWriterObserver, InferenceWriterStats};
+use tracel_inference::observer::{InferenceOutputObserver, InferenceOutputStats};
 use tracel_inference::sink::NoopSink;
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
 
@@ -44,8 +44,8 @@ struct RequestTelemetryObserver {
     session_id: String,
 }
 
-impl InferenceWriterObserver for RequestTelemetryObserver {
-    fn on_finish(&self, stats: &InferenceWriterStats) {
+impl InferenceOutputObserver for RequestTelemetryObserver {
+    fn on_finish(&self, stats: &InferenceOutputStats) {
         tracing::info!(
             inference_name = %self.inference_name,
             session_id = %self.session_id,

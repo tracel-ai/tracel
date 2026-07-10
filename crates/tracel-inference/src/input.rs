@@ -3,9 +3,9 @@ use std::sync::Mutex;
 /// Errors that can occur when reading from an inference input stream.
 ///
 /// A normal end of stream is signalled by `Ok(None)` from
-/// [`InferenceReaderChannel::read`], not by an error.
+/// [`InputReader::read`], not by an error.
 #[derive(Debug, thiserror::Error)]
-pub enum InferenceReaderError {
+pub enum InputReaderError {
     /// The input stream was closed before it finished producing items.
     #[error("inference input stream closed unexpectedly")]
     Closed,
@@ -21,9 +21,9 @@ pub enum InferenceReaderError {
 ///
 /// Each transport (manual iterator, HTTP request body, websocket, ...) implements this to frame and
 /// decode its byte stream into discrete typed items.
-pub trait InferenceReaderChannel<I>: Send {
+pub trait InputReader<I>: Send {
     /// Return the next input item, or `None` when the input stream is complete.
-    fn read(&self) -> Result<Option<I>, InferenceReaderError>;
+    fn read(&self) -> Result<Option<I>, InputReaderError>;
 }
 
 /// The input handed to [`Inference::infer`](crate::Inference::infer).
@@ -31,24 +31,24 @@ pub trait InferenceReaderChannel<I>: Send {
 /// A pull-based reader: call [`recv`](Self::recv) to pull the next item, or iterate to consume the
 /// stream. For the single-request case use [`once`](Self::once).
 pub struct InferenceInput<I> {
-    channel: Box<dyn InferenceReaderChannel<I>>,
+    reader: Box<dyn InputReader<I>>,
 }
 
 impl<I> InferenceInput<I> {
-    pub(crate) fn new(channel: Box<dyn InferenceReaderChannel<I>>) -> Self {
-        Self { channel }
+    pub(crate) fn new(reader: Box<dyn InputReader<I>>) -> Self {
+        Self { reader }
     }
 
-    pub(crate) fn from_channel<C>(channel: C) -> Self
+    pub(crate) fn from_reader<C>(reader: C) -> Self
     where
-        C: InferenceReaderChannel<I> + 'static,
+        C: InputReader<I> + 'static,
     {
-        Self::new(Box::new(channel))
+        Self::new(Box::new(reader))
     }
 
     /// Pull the next input item, or `None` once the stream is complete.
-    pub fn recv(&self) -> Result<Option<I>, InferenceReaderError> {
-        self.channel.read()
+    pub fn recv(&self) -> Result<Option<I>, InputReaderError> {
+        self.reader.read()
     }
 
     /// Build an input stream that yields a single item and then ends.
@@ -56,7 +56,7 @@ impl<I> InferenceInput<I> {
     where
         I: Send + 'static,
     {
-        Self::from_channel(OnceReaderChannel::new(input))
+        Self::from_reader(OnceReader::new(input))
     }
 }
 
@@ -66,16 +66,16 @@ impl<I> Iterator for InferenceInput<I> {
     type Item = I;
 
     fn next(&mut self) -> Option<I> {
-        self.channel.read().ok().flatten()
+        self.reader.read().ok().flatten()
     }
 }
 
 /// A channel that yields a single item and then reports end of stream.
-struct OnceReaderChannel<I> {
+struct OnceReader<I> {
     item: Mutex<Option<I>>,
 }
 
-impl<I> OnceReaderChannel<I> {
+impl<I> OnceReader<I> {
     fn new(item: I) -> Self {
         Self {
             item: Mutex::new(Some(item)),
@@ -83,24 +83,21 @@ impl<I> OnceReaderChannel<I> {
     }
 }
 
-impl<I> InferenceReaderChannel<I> for OnceReaderChannel<I>
+impl<I> InputReader<I> for OnceReader<I>
 where
     I: Send,
 {
-    fn read(&self) -> Result<Option<I>, InferenceReaderError> {
+    fn read(&self) -> Result<Option<I>, InputReaderError> {
         Ok(self.item.lock().unwrap().take())
     }
 }
 
 /// A channel that drains an iterator, one item per [`read`](InferenceReaderChannel::read).
-///
-/// Used by [`DirectInference::stream`](crate::stream::DirectInference::stream) to feed a manually
-/// provided sequence of inputs into an inference task.
-pub(crate) struct IterReaderChannel<It> {
+pub(crate) struct IterReader<It> {
     iter: Mutex<It>,
 }
 
-impl<It> IterReaderChannel<It> {
+impl<It> IterReader<It> {
     pub(crate) fn new(iter: It) -> Self {
         Self {
             iter: Mutex::new(iter),
@@ -108,12 +105,12 @@ impl<It> IterReaderChannel<It> {
     }
 }
 
-impl<It, I> InferenceReaderChannel<I> for IterReaderChannel<It>
+impl<It, I> InputReader<I> for IterReader<It>
 where
     It: Iterator<Item = I> + Send,
     I: Send,
 {
-    fn read(&self) -> Result<Option<I>, InferenceReaderError> {
+    fn read(&self) -> Result<Option<I>, InputReaderError> {
         Ok(self.iter.lock().unwrap().next())
     }
 }
@@ -131,7 +128,7 @@ mod tests {
 
     #[test]
     fn iter_channel_drains_in_order() {
-        let input = InferenceInput::from_channel(IterReaderChannel::new(vec![1, 2, 3].into_iter()));
+        let input = InferenceInput::from_reader(IterReader::new(vec![1, 2, 3].into_iter()));
         let collected: Vec<i32> = input.collect();
         assert_eq!(collected, vec![1, 2, 3]);
     }

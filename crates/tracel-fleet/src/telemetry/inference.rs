@@ -1,4 +1,4 @@
-use tracel_inference::observer::{InferenceWriterObserver, InferenceWriterStats};
+use tracel_inference::observer::{InferenceOutputObserver, InferenceOutputStats};
 
 use std::time::Duration;
 
@@ -101,18 +101,18 @@ pub fn record_request(data: RequestTelemetry) {
 }
 
 /// Writer observer that reports per-request telemetry on inference completion.
-pub struct InferenceWriterTelemetryObserver {
+pub struct InferenceOutputTelemetryObserver {
     metadata: InferenceMetadata,
 }
 
-impl InferenceWriterTelemetryObserver {
+impl InferenceOutputTelemetryObserver {
     pub fn new(metadata: InferenceMetadata) -> Self {
         Self { metadata }
     }
 }
 
-impl InferenceWriterObserver for InferenceWriterTelemetryObserver {
-    fn on_finish(&self, stats: &InferenceWriterStats) {
+impl InferenceOutputObserver for InferenceOutputTelemetryObserver {
+    fn on_finish(&self, stats: &InferenceOutputStats) {
         record_request(RequestTelemetry {
             fleet_key: self.metadata.fleet_key.clone(),
             inference_name: self.metadata.inference_name.clone(),

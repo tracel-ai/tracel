@@ -17,7 +17,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use tracel_experiment::ExperimentJob;
-use tracel_inference::InferenceJob;
+use tracel_inference::{InferenceJob, OutputWriter, OutputWriterError};
 
 use super::mapper::BodyMapper;
 
@@ -151,35 +151,21 @@ where
         let job = self.job.clone();
         let mapper = self.mapper.clone();
         Box::pin(async move {
-            // Inputs are pushed here by the body-reading task and pulled by the inference worker.
+            // Inputs are pushed here by the body-reading task and pulled by the inference.
             let (in_tx, in_rx) = std::sync::mpsc::channel::<I>();
             // Outputs are pushed here by the inference and drained by the SSE response.
             let (sse_tx, sse_rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(64);
 
-            // Start the inference now; it blocks pulling inputs from `in_rx` as they arrive.
-            let stream = match job.stream(in_rx) {
-                Ok(stream) => stream,
-                Err(e) => {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-                }
-            };
-
-            // Output task: serialize each output to an SSE frame.
-            let out_tx = sse_tx.clone();
+            // Drive the inference on the server's blocking pool. It blocks pulling inputs from
+            // `in_rx` as they arrive and writes SSE frames to `sse_tx`; the server owns this thread
+            // instead of the library spawning one per request. A session-open failure is delivered
+            // as an SSE error event, consistent with how per-item errors are reported.
+            let run_tx = sse_tx.clone();
             tokio::task::spawn_blocking(move || {
-                for item in stream {
-                    let event = match item {
-                        Ok(output) => match serde_json::to_string(&output) {
-                            Ok(data) => Event::default().data(data),
-                            Err(e) => Event::default().event("error").data(e.to_string()),
-                        },
-                        Err(e) => Event::default().event("error").data(e.to_string()),
-                    };
-                    if out_tx.blocking_send(Ok(event)).is_err() {
-                        return; // client disconnected
-                    }
+                if let Err(e) = job.run(in_rx, SseChannel { tx: run_tx.clone() }) {
+                    let _ = run_tx
+                        .blocking_send(Ok(Event::default().event("error").data(e.to_string())));
                 }
-                let _ = out_tx.blocking_send(Ok(Event::default().event("done").data("")));
             });
 
             // Input task: frame the request body into messages, decode each, and feed them in.
@@ -208,6 +194,44 @@ where
                 .keep_alive(KeepAlive::default())
                 .into_response()
         })
+    }
+}
+
+/// Writes an inference's outputs to the SSE response as they are produced: each output is
+/// serialized to a `data:` frame, errors to an `error` event, and completion to the terminating
+/// `done` event. A failed send means the SSE receiver was dropped (client disconnected), reported
+/// as [`OutputWriterError::Cancelled`] so the inference stops.
+struct SseChannel {
+    tx: tokio::sync::mpsc::Sender<Result<Event, Infallible>>,
+}
+
+impl<O> OutputWriter<O> for SseChannel
+where
+    O: Serialize,
+{
+    fn write(&self, output: O) -> Result<(), OutputWriterError> {
+        let event = match serde_json::to_string(&output) {
+            Ok(data) => Event::default().data(data),
+            Err(e) => Event::default().event("error").data(e.to_string()),
+        };
+        self.tx
+            .blocking_send(Ok(event))
+            .map_err(|_| OutputWriterError::Cancelled)
+    }
+
+    fn error(
+        &self,
+        error: Box<dyn std::error::Error + Send + Sync>,
+    ) -> Result<(), OutputWriterError> {
+        self.tx
+            .blocking_send(Ok(Event::default().event("error").data(error.to_string())))
+            .map_err(|_| OutputWriterError::Cancelled)
+    }
+
+    fn finish(&self, _duration: std::time::Duration) {
+        let _ = self
+            .tx
+            .blocking_send(Ok(Event::default().event("done").data("")));
     }
 }
 

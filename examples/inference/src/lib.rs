@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tracel::inference::{Inference, InferenceInput, InferenceSession, InferenceWriter};
+use tracel::inference::{Inference, InferenceInput, InferenceOutput, InferenceSession};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Prompt {
@@ -45,7 +45,7 @@ impl Inference for WordTokenizer {
     type Input = Prompt;
     type Output = Token;
 
-    fn infer(&self, input: InferenceInput<Prompt>, writer: InferenceWriter<Token>) {
+    fn infer(&self, input: InferenceInput<Prompt>, output: InferenceOutput<Token>) {
         // Present when bound to a telemetry provider (e.g. Cloud), `None` offline.
         let session = InferenceSession::current();
 
@@ -67,7 +67,7 @@ impl Inference for WordTokenizer {
                 if !self.per_token_delay.is_zero() {
                     std::thread::sleep(self.per_token_delay);
                 }
-                if writer
+                if output
                     .write(Token {
                         token: word.to_string(),
                     })

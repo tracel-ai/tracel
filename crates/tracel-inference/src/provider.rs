@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::error::InferenceError;
-use crate::inference::{InferenceFn, inference_fn};
+use crate::inference::{Inference, IntoInference};
+use crate::input::IterReader;
 use crate::session::InferenceSession;
-use crate::stream::{DirectInference, InferenceStream};
-use crate::writer::InferenceWriter;
-use crate::{Inference, InferenceInput, InferenceWrapper};
+use crate::stream::InferenceStream;
+use crate::{InferenceInput, InferenceOutput, OutputWriter};
 
 /// Backend port that creates per-request [`InferenceSession`]s.
 ///
@@ -27,43 +27,27 @@ impl InferenceModule {
         Self { provider }
     }
 
-    /// Wrap an inference implementation into a named [`InferenceJob`].
-    ///
-    /// `inference` may be a type implementing [`Inference`] (owning its own state) or a closure
-    /// `Fn(InferenceInput<I>, InferenceWriter<O>)`.
-    pub fn create<T>(&self, name: &str, inference: T) -> InferenceJob<T::Input, T::Output>
+    /// Build a named [`InferenceJob`] from either a type implementing [`Inference`](crate::Inference)
+    /// or a closure `Fn(InferenceInput<I>, InferenceOutput<O>)`.
+    pub fn create<T, I, O, Marker>(&self, name: &str, inference: T) -> InferenceJob<I, O>
     where
-        T: Inference + Send + Sync + 'static,
+        T: IntoInference<I, O, Marker>,
     {
-        InferenceJob::new(
-            self.provider.clone(),
-            name.to_string(),
-            InferenceWrapper::new(inference),
-        )
-    }
-
-    /// Wrap an inference closure into a named [`InferenceJob`].
-    ///
-    /// Convenience over [`create`](Self::create) + [`inference_fn`].
-    pub fn create_fn<F, I, O>(&self, name: &str, f: F) -> InferenceJob<I, O>
-    where
-        F: Fn(InferenceInput<I>, InferenceWriter<O>) + Send + Sync + 'static,
-        I: 'static,
-        O: 'static,
-    {
-        let inference: InferenceFn<F, I, O> = inference_fn(f);
-        self.create(name, inference)
+        let inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync> =
+            Arc::new(inference.into_inference());
+        InferenceJob::new(self.provider.clone(), name.to_string(), inference)
     }
 }
 
 /// A named inference bound to a backend provider.
 ///
-/// Run it with [`stream`](Self::stream) / [`stream_once`](Self::stream_once); each call opens a
-/// fresh per-request session and returns a typed [`InferenceStream`] of outputs.
+/// Run it inline on the calling thread with [`run`](Self::run), or spawn a worker and pull outputs
+/// back as an iterator with [`stream`](Self::stream) / [`stream_once`](Self::stream_once). Each call
+/// opens a fresh per-request [`InferenceSession`] for telemetry.
 pub struct InferenceJob<I, O> {
     provider: Arc<dyn InferenceProvider>,
     name: String,
-    inference: InferenceWrapper<I, O>,
+    inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
 }
 
 impl<I, O> Clone for InferenceJob<I, O> {
@@ -80,7 +64,7 @@ impl<I, O> InferenceJob<I, O> {
     fn new(
         provider: Arc<dyn InferenceProvider>,
         name: String,
-        inference: InferenceWrapper<I, O>,
+        inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
     ) -> Self {
         Self {
             provider,
@@ -100,19 +84,91 @@ where
     I: Send + 'static,
     O: Send + Sync + 'static,
 {
-    /// Run the inference against a stream of inputs, opening a fresh session for the request.
+    /// Run the inference inline on the calling thread, blocking until it completes.
+    pub fn run<It, W>(&self, input: It, output: W) -> Result<(), InferenceError>
+    where
+        It: IntoIterator<Item = I>,
+        It::IntoIter: Send + 'static,
+        W: OutputWriter<O> + 'static,
+    {
+        let session = self.provider.create_session(&self.name)?;
+        self.run_with_session(input, output, session);
+        Ok(())
+    }
+
+    /// Run the inference inline with an already-opened session, installing it as the ambient session
+    /// for this thread and attaching its observer to the output writer.
+    fn run_with_session<It, W>(&self, input: It, output: W, session: InferenceSession)
+    where
+        It: IntoIterator<Item = I>,
+        It::IntoIter: Send + 'static,
+        W: OutputWriter<O> + 'static,
+    {
+        let _scope = session.enter();
+        let input = InferenceInput::from_reader(IterReader::new(input.into_iter()));
+        let writer = InferenceOutput::from_writer(output).with_observer(session.observer());
+        self.inference.infer(input, writer);
+    }
+
+    /// Run the inference on a spawned worker, returning its outputs as a pull-based iterator.
+    ///
+    /// Convenience over [`run`](Self::run) for callers that want to consume outputs directly rather
+    /// than supply their own writer. Dropping the returned [`InferenceStream`] cancels the request
+    /// and joins the worker.
     pub fn stream<It>(&self, input: It) -> Result<InferenceStream<O>, InferenceError>
     where
         It: IntoIterator<Item = I>,
         It::IntoIter: Send + 'static,
     {
         let session = self.provider.create_session(&self.name)?;
-        let direct = DirectInference::new(self.inference.clone());
-        Ok(direct.stream_with_session(input, Some(session)))
+        let job = self.clone();
+        let input = input.into_iter();
+        Ok(InferenceStream::spawn(move |channel| {
+            job.run_with_session(input, channel, session);
+        }))
     }
 
-    /// Run the inference against a single input, opening a fresh session for the request.
+    /// Run the inference against a single input on a spawned worker.
     pub fn stream_once(&self, input: I) -> Result<InferenceStream<O>, InferenceError> {
         self.stream(std::iter::once(input))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Inference, InferenceInput, InferenceOutput};
+
+    struct TestProvider;
+    impl InferenceProvider for TestProvider {
+        fn create_session(&self, _name: &str) -> Result<InferenceSession, InferenceError> {
+            unimplemented!()
+        }
+    }
+
+    struct Echo;
+    impl Inference for Echo {
+        type Input = i32;
+        type Output = i32;
+        fn infer(&self, input: InferenceInput<i32>, output: InferenceOutput<i32>) {
+            for item in input {
+                let _ = output.write(item);
+            }
+        }
+    }
+
+    #[test]
+    fn create_accepts_both_impls_and_closures() {
+        let module = InferenceModule::new(Arc::new(TestProvider));
+
+        let _from_impl = module.create("impl", Echo);
+        let _from_closure = module.create(
+            "closure",
+            |input: InferenceInput<i32>, output: InferenceOutput<i32>| {
+                for item in input {
+                    let _ = output.write(item);
+                }
+            },
+        );
     }
 }

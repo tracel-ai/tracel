@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
-use crate::{InferenceInput, InferenceReaderChannel, InferenceWriter, InferenceWriterChannel};
+use crate::{InferenceInput, InferenceOutput};
 
 /// A typed, streaming inference task.
 ///
 /// An implementation reads typed inputs from [`InferenceInput`] and writes typed outputs to
-/// [`InferenceWriter`]. Both sides stream: the input yields items until the stream ends, and the
-/// writer can emit any number of outputs. Any state the task needs (a loaded model, tokenizer, ...)
+/// [`InferenceOutput`]. Both sides stream: the input yields items until the stream ends, and the
+/// output can emit any number of outputs. Any state the task needs (a loaded model, tokenizer, ...)
 /// is owned by the implementor and accessed through `&self`, so a single inference can serve many
 /// concurrent requests.
 ///
@@ -20,10 +19,10 @@ pub trait Inference: Send + Sync {
     type Output;
 
     /// Run the inference, pulling inputs and writing outputs until complete.
-    fn infer(&self, input: InferenceInput<Self::Input>, writer: InferenceWriter<Self::Output>);
+    fn infer(&self, input: InferenceInput<Self::Input>, output: InferenceOutput<Self::Output>);
 }
 
-/// Adapts a closure `Fn(InferenceInput<I>, InferenceWriter<O>)` into an [`Inference`].
+/// Adapts a closure `Fn(InferenceInput<I>, InferenceOutput<O>)` into an [`Inference`].
 ///
 /// Build one with [`inference_fn`].
 pub struct InferenceFn<F, I, O> {
@@ -34,15 +33,15 @@ pub struct InferenceFn<F, I, O> {
 /// Wrap a closure into an [`Inference`] implementation.
 ///
 /// ```ignore
-/// let echo = inference_fn(|input: InferenceInput<String>, writer: InferenceWriter<String>| {
+/// let echo = inference_fn(|input: InferenceInput<String>, output: InferenceOutput<String>| {
 ///     for item in input {
-///         let _ = writer.write(item);
+///         let _ = output.write(item);
 ///     }
 /// });
 /// ```
 pub fn inference_fn<F, I, O>(f: F) -> InferenceFn<F, I, O>
 where
-    F: Fn(InferenceInput<I>, InferenceWriter<O>) + Send + Sync,
+    F: Fn(InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
 {
     InferenceFn {
         f,
@@ -52,67 +51,51 @@ where
 
 impl<F, I, O> Inference for InferenceFn<F, I, O>
 where
-    F: Fn(InferenceInput<I>, InferenceWriter<O>) + Send + Sync,
+    F: Fn(InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
 {
     type Input = I;
     type Output = O;
 
-    fn infer(&self, input: InferenceInput<I>, writer: InferenceWriter<O>) {
-        (self.f)(input, writer)
+    fn infer(&self, input: InferenceInput<I>, output: InferenceOutput<O>) {
+        (self.f)(input, output)
     }
 }
 
-/// A cloneable, `Arc`-backed handle to an [`Inference`] implementation.
-pub struct InferenceWrapper<I, O> {
-    inner: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
+/// Conversion into an [`Inference`], accepting both types that implement [`Inference`] and closures
+/// `Fn(InferenceInput<I>, InferenceOutput<O>)`. `Marker` disambiguates the two blanket impls and is
+/// inferred at the call site.
+pub trait IntoInference<I, O, Marker> {
+    type Inference: Inference<Input = I, Output = O> + Send + Sync + 'static;
+
+    fn into_inference(self) -> Self::Inference;
 }
 
-impl<I, O> Clone for InferenceWrapper<I, O> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
+/// Marker for the blanket impl over types that already implement [`Inference`].
+pub struct IsInference;
 
-impl<I, O> InferenceWrapper<I, O> {
-    /// Wrap an [`Inference`] implementation into a cloneable handle.
-    pub fn new<T>(inference: T) -> Self
-    where
-        T: Inference<Input = I, Output = O> + Send + Sync + 'static,
-    {
-        Self {
-            inner: Arc::new(inference),
-        }
-    }
+impl<T> IntoInference<T::Input, T::Output, IsInference> for T
+where
+    T: Inference + Send + Sync + 'static,
+{
+    type Inference = T;
 
-    /// Run the inference against raw input and output channels.
-    ///
-    /// The channels are wrapped into a fresh [`InferenceInput`] / [`InferenceWriter`] with no
-    /// observer attached. Use [`infer_prepared`](Self::infer_prepared) when the writer needs an
-    /// observer (e.g. session telemetry).
-    pub fn infer<RC, WC>(&self, reader: RC, writer: WC)
-    where
-        RC: InferenceReaderChannel<I> + 'static,
-        WC: InferenceWriterChannel<O> + 'static,
-    {
-        self.inner.infer(
-            InferenceInput::from_channel(reader),
-            InferenceWriter::from_channel(writer),
-        );
-    }
-
-    /// Run the inference against a pre-built input and writer.
-    pub(crate) fn infer_prepared(&self, input: InferenceInput<I>, writer: InferenceWriter<O>) {
-        self.inner.infer(input, writer);
+    fn into_inference(self) -> T {
+        self
     }
 }
 
-impl<I, O> Inference for InferenceWrapper<I, O> {
-    type Input = I;
-    type Output = O;
+/// Marker for the blanket impl over closures.
+pub struct IsFn;
 
-    fn infer(&self, input: InferenceInput<I>, writer: InferenceWriter<O>) {
-        self.inner.infer(input, writer);
+impl<F, I, O> IntoInference<I, O, IsFn> for F
+where
+    F: Fn(InferenceInput<I>, InferenceOutput<O>) + Send + Sync + 'static,
+    I: 'static,
+    O: 'static,
+{
+    type Inference = InferenceFn<F, I, O>;
+
+    fn into_inference(self) -> InferenceFn<F, I, O> {
+        inference_fn(self)
     }
 }

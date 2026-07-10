@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use tracel_artifact::bundle::FsBundle;
-use tracel_inference::{Inference, InferenceInput, InferenceWriter};
+use tracel_inference::{Inference, InferenceInput, InferenceOutput};
 
 use crate::FleetDeviceSession;
-use crate::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
+use crate::telemetry::{InferenceMetadata, InferenceOutputTelemetryObserver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetManagedInferenceError {
@@ -196,7 +196,7 @@ where
     type Input = <I as Inference>::Input;
     type Output = <I as Inference>::Output;
 
-    fn infer(&self, input: InferenceInput<Self::Input>, writer: InferenceWriter<Self::Output>) {
+    fn infer(&self, input: InferenceInput<Self::Input>, output: InferenceOutput<Self::Output>) {
         let fleet_key = self.current_fleet_key();
         let request_span = tracing::info_span!(
             "fleet.inference",
@@ -206,12 +206,12 @@ where
         let _request_guard = request_span.enter();
 
         if let Err(err) = self.maybe_sync_and_rollout() {
-            writer.error(Box::new(err)).ok();
+            output.error(Box::new(err)).ok();
             return;
         }
 
         let Some(active) = self.active() else {
-            writer
+            output
                 .error(Box::new(FleetManagedInferenceError::FactoryFailed {
                     name: self.inference_name.clone(),
                     message: "no active model".to_string(),
@@ -228,7 +228,7 @@ where
         );
 
         let writer =
-            writer.with_observer(Arc::new(InferenceWriterTelemetryObserver::new(metadata)));
+            output.with_observer(Arc::new(InferenceOutputTelemetryObserver::new(metadata)));
         active.inference.infer(input, writer)
     }
 }

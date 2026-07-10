@@ -16,7 +16,7 @@ use tracel_client::inference::request::{
     MetricKind as WireMetricKind,
 };
 use tracel_client::{Client, ClientError};
-use tracel_inference::observer::{InferenceWriterObserver, InferenceWriterStats};
+use tracel_inference::observer::{InferenceOutputObserver, InferenceOutputStats};
 use tracel_inference::sink::{
     InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
     now_ms,
@@ -136,8 +136,8 @@ struct CloudRequestObserver {
     sink: Arc<dyn InferenceSink>,
 }
 
-impl InferenceWriterObserver for CloudRequestObserver {
-    fn on_finish(&self, stats: &InferenceWriterStats) {
+impl InferenceOutputObserver for CloudRequestObserver {
+    fn on_finish(&self, stats: &InferenceOutputStats) {
         let timestamp_ms = now_ms();
         let metadata = serde_json::json!({
             "request_id": self.request_id,
@@ -291,9 +291,7 @@ impl Batch {
             logs: std::mem::take(&mut self.logs),
         };
 
-        if let Err(err) =
-            client.ingest_inference_telemetry(namespace, project, group, request)
-        {
+        if let Err(err) = client.ingest_inference_telemetry(namespace, project, group, request) {
             tracing::warn!(
                 error = %err,
                 group = %group,

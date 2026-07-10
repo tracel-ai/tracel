@@ -1,9 +1,4 @@
-use crate::reader::IterReaderChannel;
-use crate::session::InferenceSession;
-use crate::{
-    InferenceInput, InferenceWrapper, InferenceWriter, InferenceWriterChannel,
-    writer::InferenceWriterError,
-};
+use crate::{OutputWriter, output::OutputWriterError};
 
 use crossbeam::channel as cb;
 
@@ -28,6 +23,35 @@ pub struct InferenceStream<O> {
     rx: cb::Receiver<StreamEvent<O>>,
     cancel: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
+}
+
+impl<O> InferenceStream<O>
+where
+    O: Send + Sync + 'static,
+{
+    /// Spawn a worker thread that runs `run` against a fresh streaming channel, returning the
+    /// consumer side as an iterator of outputs.
+    ///
+    /// The worker writes each output into the channel as it is produced. Dropping the returned
+    /// stream cancels the request and joins the worker.
+    pub(crate) fn spawn<F>(run: F) -> Self
+    where
+        F: FnOnce(StreamingOutput<O>) + Send + 'static,
+    {
+        let (tx, rx) = cb::unbounded();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let channel = StreamingOutput {
+            tx,
+            cancel: cancel.clone(),
+        };
+        let worker = thread::spawn(move || run(channel));
+
+        Self {
+            rx,
+            cancel,
+            worker: Some(worker),
+        }
+    }
 }
 
 impl<O> InferenceStream<O> {
@@ -61,103 +85,35 @@ impl<O> Iterator for InferenceStream<O> {
     }
 }
 
-struct StreamingChannel<O> {
+/// The [`OutputWriter`] backing an [`InferenceStream`]: outputs, errors, and completion
+/// are forwarded over a channel to the consuming iterator, and a cancel flag lets the consumer stop
+/// the worker by reporting [`OutputWriterError::Cancelled`] on the next write.
+pub(crate) struct StreamingOutput<O> {
     tx: cb::Sender<StreamEvent<O>>,
     cancel: Arc<AtomicBool>,
 }
 
-impl<O> InferenceWriterChannel<O> for StreamingChannel<O>
+impl<O> OutputWriter<O> for StreamingOutput<O>
 where
     O: Send + Sync + 'static,
 {
-    fn write(&self, output: O) -> Result<(), InferenceWriterError> {
+    fn write(&self, output: O) -> Result<(), OutputWriterError> {
         if self.cancel.load(Ordering::Acquire) {
-            return Err(InferenceWriterError::Cancelled);
+            return Err(OutputWriterError::Cancelled);
         }
 
         self.tx
             .send(StreamEvent::Output(output))
-            .map_err(|e| InferenceWriterError::Unknown(Box::new(e)))
+            .map_err(|e| OutputWriterError::Unknown(Box::new(e)))
     }
 
-    fn error(&self, error: BoxError) -> Result<(), InferenceWriterError> {
+    fn error(&self, error: BoxError) -> Result<(), OutputWriterError> {
         self.tx
             .send(StreamEvent::Error(error))
-            .map_err(|e| InferenceWriterError::Unknown(Box::new(e)))
+            .map_err(|e| OutputWriterError::Unknown(Box::new(e)))
     }
 
     fn finish(&self, duration: Duration) {
         let _ = self.tx.send(StreamEvent::Done(duration));
-    }
-}
-
-impl<O> Drop for StreamingChannel<O> {
-    fn drop(&mut self) {}
-}
-
-pub struct DirectInference<I, O> {
-    inner: InferenceWrapper<I, O>,
-}
-
-impl<I, O> DirectInference<I, O>
-where
-    I: Send + 'static,
-    O: Send + Sync + 'static,
-{
-    pub fn new(inference: InferenceWrapper<I, O>) -> Self {
-        Self { inner: inference }
-    }
-
-    /// Stream a sequence of inputs into the inference, yielding outputs as they are produced.
-    pub fn stream<It>(&self, input: It) -> InferenceStream<O>
-    where
-        It: IntoIterator<Item = I>,
-        It::IntoIter: Send + 'static,
-    {
-        self.stream_with_session(input, None)
-    }
-
-    /// Stream a single input into the inference. Convenience for the single-request case.
-    pub fn stream_once(&self, input: I) -> InferenceStream<O> {
-        self.stream(std::iter::once(input))
-    }
-
-    /// Stream a sequence of inputs, binding a session to the request. The session is installed as
-    /// ambient on the worker thread and its observer is attached to the output writer.
-    pub(crate) fn stream_with_session<It>(
-        &self,
-        input: It,
-        session: Option<InferenceSession>,
-    ) -> InferenceStream<O>
-    where
-        It: IntoIterator<Item = I>,
-        It::IntoIter: Send + 'static,
-    {
-        let (tx, rx) = cb::unbounded();
-        let cancel = Arc::new(AtomicBool::new(false));
-
-        let out_channel = StreamingChannel {
-            tx,
-            cancel: cancel.clone(),
-        };
-        let in_channel = IterReaderChannel::new(input.into_iter());
-
-        let inference = self.inner.clone();
-
-        let worker = thread::spawn(move || {
-            let _scope = session.as_ref().map(|session| session.enter());
-            let input = InferenceInput::from_channel(in_channel);
-            let mut writer = InferenceWriter::from_channel(out_channel);
-            if let Some(session) = &session {
-                writer = writer.with_observer(session.observer());
-            }
-            inference.infer_prepared(input, writer);
-        });
-
-        InferenceStream {
-            rx,
-            cancel,
-            worker: Some(worker),
-        }
     }
 }

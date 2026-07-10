@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::observer::InferenceWriterObserver;
+use crate::observer::InferenceOutputObserver;
 use crate::sink::{
     InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricSample, now_ms,
 };
@@ -50,7 +50,7 @@ impl From<&str> for InferenceId {
 #[derive(Clone)]
 pub struct InferenceSession {
     id: InferenceId,
-    observer: Arc<dyn InferenceWriterObserver>,
+    observer: Arc<dyn InferenceOutputObserver>,
     sink: Arc<dyn InferenceSink>,
     attrs: Arc<Vec<(String, Value)>>,
 }
@@ -59,7 +59,7 @@ impl InferenceSession {
     /// Create a session. The id is seeded as a `request_id` scoped attribute on all telemetry.
     pub fn new(
         id: impl Into<InferenceId>,
-        observer: Arc<dyn InferenceWriterObserver>,
+        observer: Arc<dyn InferenceOutputObserver>,
         sink: Arc<dyn InferenceSink>,
     ) -> Self {
         let id = id.into();
@@ -78,7 +78,7 @@ impl InferenceSession {
     }
 
     /// The observer to attach to the request's output writer.
-    pub fn observer(&self) -> Arc<dyn InferenceWriterObserver> {
+    pub fn observer(&self) -> Arc<dyn InferenceOutputObserver> {
         self.observer.clone()
     }
 
