@@ -29,7 +29,7 @@ metrics, checkpoints, and live activity/progress to the dashboard, switch the co
 `examples/mnist.rs` to `Connection::Cloud` and authenticate:
 
 ```bash
-burn login          # or set TRACEL_API_KEY
+tracel login          # or set TRACEL_API_KEY
 ```
 
 The namespace and name come from [`tracel.toml`](tracel.toml). Enable a backend with Cargo features
