@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tracel_inference::observer::{InferenceOutputObserver, InferenceOutputStats};
 use tracel_inference::sink::NoopSink;
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
 
@@ -9,8 +8,9 @@ mod cloud;
 
 pub use cloud::CloudInferenceProvider;
 
-/// Local inference provider for offline execution: it ships nothing (the sink discards telemetry
-/// and the observer logs request stats via `tracing`). See [`CloudInferenceProvider`] to ship.
+/// Local inference provider for offline execution: it ships nothing (sessions record into a
+/// [`NoopSink`], so per-request stats and any metrics/logs are discarded). See
+/// [`CloudInferenceProvider`] to ship.
 #[derive(Default)]
 pub struct DefaultInferenceProvider {
     request_counter: AtomicU64,
@@ -26,34 +26,7 @@ impl InferenceProvider for DefaultInferenceProvider {
     fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
         let n = self.request_counter.fetch_add(1, Ordering::Relaxed);
         let session_id = format!("{name}/{n}");
-        let observer = Arc::new(RequestTelemetryObserver {
-            inference_name: name.to_string(),
-            session_id: session_id.clone(),
-        });
-        Ok(InferenceSession::new(
-            session_id,
-            observer,
-            Arc::new(NoopSink),
-        ))
-    }
-}
-
-/// Records per-request telemetry when a request's output writer is dropped.
-struct RequestTelemetryObserver {
-    inference_name: String,
-    session_id: String,
-}
-
-impl InferenceOutputObserver for RequestTelemetryObserver {
-    fn on_finish(&self, stats: &InferenceOutputStats) {
-        tracing::info!(
-            inference_name = %self.inference_name,
-            session_id = %self.session_id,
-            duration_ms = stats.duration.as_secs_f64() * 1_000.0,
-            outputs = stats.outputs,
-            errors = stats.errors,
-            cancelled = stats.cancelled,
-            "inference request finished"
-        );
+        Ok(InferenceSession::new(session_id, Arc::new(NoopSink))
+            .with_attributes([("inference_name", name.to_string())]))
     }
 }

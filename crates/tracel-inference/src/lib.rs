@@ -4,13 +4,13 @@ mod context;
 mod error;
 mod inference;
 mod input;
+mod observer;
 mod output;
 mod provider;
 mod session;
 mod stream;
 
 pub mod integration;
-pub mod observer;
 pub mod sink;
 
 pub use context::SessionGuard;

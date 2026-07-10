@@ -16,10 +16,8 @@ use tracel_client::inference::request::{
     MetricKind as WireMetricKind,
 };
 use tracel_client::{Client, ClientError};
-use tracel_inference::observer::{InferenceOutputObserver, InferenceOutputStats};
 use tracel_inference::sink::{
     InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
-    now_ms,
 };
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
 
@@ -97,13 +95,11 @@ impl InferenceProvider for CloudInferenceProvider {
         let sink: Arc<dyn InferenceSink> = Arc::new(ChannelSink {
             tx: worker.sender(),
         });
-        let observer = Arc::new(CloudRequestObserver {
-            inference_name: name.to_string(),
-            request_id: request_id.clone(),
-            sink: sink.clone(),
-        });
 
-        Ok(InferenceSession::new(request_id, observer, sink))
+        // Per-request stats and any metrics/logs the inference records flow through this sink,
+        // scoped with `inference_name` (and `request_id`, seeded by the session).
+        Ok(InferenceSession::new(request_id, sink)
+            .with_attributes([("inference_name", name.to_string())]))
     }
 }
 
@@ -126,53 +122,6 @@ impl InferenceSink for ChannelSink {
 
     fn record_descriptor(&self, descriptor: MetricDescriptor) {
         let _ = self.tx.send(TelemetryMsg::Descriptor(descriptor));
-    }
-}
-
-/// Records per-request stat metrics when a request completes.
-struct CloudRequestObserver {
-    inference_name: String,
-    request_id: String,
-    sink: Arc<dyn InferenceSink>,
-}
-
-impl InferenceOutputObserver for CloudRequestObserver {
-    fn on_finish(&self, stats: &InferenceOutputStats) {
-        let timestamp_ms = now_ms();
-        let metadata = serde_json::json!({
-            "request_id": self.request_id,
-            "inference_name": self.inference_name,
-            "cancelled": stats.cancelled,
-        });
-        let duration_ms = stats.duration.as_secs_f64() * 1_000.0;
-
-        let record = |name: &str, data: MetricData| {
-            self.sink.record_metric(MetricSample {
-                name: name.to_string(),
-                timestamp_ms,
-                metadata: metadata.clone(),
-                data,
-            });
-        };
-
-        record("inference_requests_total", MetricData::Counter { value: 1 });
-        record(
-            "inference_outputs_total",
-            MetricData::Counter {
-                value: stats.outputs as u64,
-            },
-        );
-        record(
-            "inference_errors_total",
-            MetricData::Counter {
-                value: stats.errors as u64,
-            },
-        );
-        // Raw sample; the backend computes quantiles over the accumulated durations.
-        record(
-            "inference_duration_ms",
-            MetricData::Distribution { value: duration_ms },
-        );
     }
 }
 

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{InferenceInput, InferenceOutput};
+use crate::{InferenceInput, InferenceOutput, InferenceSession};
 
 /// A typed, streaming inference task.
 ///
@@ -19,10 +19,20 @@ pub trait Inference: Send + Sync {
     type Output;
 
     /// Run the inference, pulling inputs and writing outputs until complete.
-    fn infer(&self, input: InferenceInput<Self::Input>, output: InferenceOutput<Self::Output>);
+    ///
+    /// `session` is the per-request telemetry context (metrics, logs, scoped attributes). It is also
+    /// installed as the ambient session for this thread, so `tracing` events and
+    /// [`InferenceSession::current`] inside the call resolve to it.
+    fn infer(
+        &self,
+        session: &InferenceSession,
+        input: InferenceInput<Self::Input>,
+        output: InferenceOutput<Self::Output>,
+    );
 }
 
-/// Adapts a closure `Fn(InferenceInput<I>, InferenceOutput<O>)` into an [`Inference`].
+/// Adapts a closure `Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>)` into an
+/// [`Inference`].
 ///
 /// Build one with [`inference_fn`].
 pub struct InferenceFn<F, I, O> {
@@ -33,15 +43,17 @@ pub struct InferenceFn<F, I, O> {
 /// Wrap a closure into an [`Inference`] implementation.
 ///
 /// ```ignore
-/// let echo = inference_fn(|input: InferenceInput<String>, output: InferenceOutput<String>| {
-///     for item in input {
-///         let _ = output.write(item);
-///     }
-/// });
+/// let echo = inference_fn(
+///     |_session: &InferenceSession, input: InferenceInput<String>, output: InferenceOutput<String>| {
+///         for item in input {
+///             let _ = output.write(item);
+///         }
+///     },
+/// );
 /// ```
 pub fn inference_fn<F, I, O>(f: F) -> InferenceFn<F, I, O>
 where
-    F: Fn(InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
+    F: Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
 {
     InferenceFn {
         f,
@@ -51,19 +63,24 @@ where
 
 impl<F, I, O> Inference for InferenceFn<F, I, O>
 where
-    F: Fn(InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
+    F: Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
 {
     type Input = I;
     type Output = O;
 
-    fn infer(&self, input: InferenceInput<I>, output: InferenceOutput<O>) {
-        (self.f)(input, output)
+    fn infer(
+        &self,
+        session: &InferenceSession,
+        input: InferenceInput<I>,
+        output: InferenceOutput<O>,
+    ) {
+        (self.f)(session, input, output)
     }
 }
 
 /// Conversion into an [`Inference`], accepting both types that implement [`Inference`] and closures
-/// `Fn(InferenceInput<I>, InferenceOutput<O>)`. `Marker` disambiguates the two blanket impls and is
-/// inferred at the call site.
+/// `Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>)`. `Marker` disambiguates the two
+/// blanket impls and is inferred at the call site.
 pub trait IntoInference<I, O, Marker> {
     type Inference: Inference<Input = I, Output = O> + Send + Sync + 'static;
 
@@ -89,7 +106,7 @@ pub struct IsFn;
 
 impl<F, I, O> IntoInference<I, O, IsFn> for F
 where
-    F: Fn(InferenceInput<I>, InferenceOutput<O>) + Send + Sync + 'static,
+    F: Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>) + Send + Sync + 'static,
     I: 'static,
     O: 'static,
 {

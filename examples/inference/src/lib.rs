@@ -45,19 +45,20 @@ impl Inference for WordTokenizer {
     type Input = Prompt;
     type Output = Token;
 
-    fn infer(&self, input: InferenceInput<Prompt>, output: InferenceOutput<Token>) {
-        // Present when bound to a telemetry provider (e.g. Cloud), `None` offline.
-        let session = InferenceSession::current();
-
+    fn infer(
+        &self,
+        session: &InferenceSession,
+        input: InferenceInput<Prompt>,
+        output: InferenceOutput<Token>,
+    ) {
         for prompt in input {
             let words: Vec<&str> = prompt.text.split_whitespace().collect();
 
-            // Explicit metric through the session, with a scoped attribute.
-            if let Some(session) = &session {
-                session
-                    .with_attributes([("prompt_len", prompt.text.len() as u64)])
-                    .log_gauge("prompt_tokens", words.len() as f64);
-            }
+            // Explicit metric through the session, with a scoped attribute. Discarded with an
+            // offline provider; shipped with Cloud.
+            session
+                .with_attributes([("prompt_len", prompt.text.len() as u64)])
+                .log_gauge("prompt_tokens", words.len() as f64);
 
             // Routed to the session by the tracing layer (see the `cloud` example).
             tracing::info!(tokens = words.len(), "tokenizing prompt");
@@ -79,9 +80,7 @@ impl Inference for WordTokenizer {
                 emitted += 1;
             }
 
-            if let Some(session) = &session {
-                session.log_counter("tokens_emitted", emitted);
-            }
+            session.log_counter("tokens_emitted", emitted);
         }
     }
 }

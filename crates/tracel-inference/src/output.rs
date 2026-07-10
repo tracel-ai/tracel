@@ -45,7 +45,7 @@ impl<O> InferenceOutput<O> {
         Self::new(Box::new(writer))
     }
 
-    pub fn with_observer(mut self, observer: Arc<dyn InferenceOutputObserver>) -> Self {
+    pub(crate) fn with_observer(mut self, observer: Arc<dyn InferenceOutputObserver>) -> Self {
         self.observer = Some(observer);
         self
     }

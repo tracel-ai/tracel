@@ -3,9 +3,13 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::observer::InferenceOutputObserver;
+use crate::inference::Inference;
+use crate::input::InferenceInput;
+use crate::observer::{InferenceOutputObserver, InferenceOutputStats};
+use crate::output::{InferenceOutput, OutputWriter};
 use crate::sink::{
-    InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricSample, now_ms,
+    InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricSample, NoopSink,
+    now_ms,
 };
 
 /// Opaque identifier for a single inference request/session.
@@ -50,23 +54,19 @@ impl From<&str> for InferenceId {
 #[derive(Clone)]
 pub struct InferenceSession {
     id: InferenceId,
-    observer: Arc<dyn InferenceOutputObserver>,
     sink: Arc<dyn InferenceSink>,
     attrs: Arc<Vec<(String, Value)>>,
 }
 
 impl InferenceSession {
-    /// Create a session. The id is seeded as a `request_id` scoped attribute on all telemetry.
-    pub fn new(
-        id: impl Into<InferenceId>,
-        observer: Arc<dyn InferenceOutputObserver>,
-        sink: Arc<dyn InferenceSink>,
-    ) -> Self {
+    /// Create a session recording into `sink`. The id is seeded as a `request_id` scoped attribute
+    /// on all telemetry. Per-request stats and any metrics/logs the inference records flow to the
+    /// sink, so a backend only needs to implement [`InferenceSink`](crate::sink::InferenceSink).
+    pub fn new(id: impl Into<InferenceId>, sink: Arc<dyn InferenceSink>) -> Self {
         let id = id.into();
         let attrs = vec![("request_id".to_string(), Value::String(id.to_string()))];
         Self {
             id,
-            observer,
             sink,
             attrs: Arc::new(attrs),
         }
@@ -75,11 +75,6 @@ impl InferenceSession {
     /// Borrow the session identifier.
     pub fn id(&self) -> &InferenceId {
         &self.id
-    }
-
-    /// The observer to attach to the request's output writer.
-    pub fn observer(&self) -> Arc<dyn InferenceOutputObserver> {
-        self.observer.clone()
     }
 
     /// The sink this session records into.
@@ -101,7 +96,6 @@ impl InferenceSession {
         }
         Self {
             id: self.id.clone(),
-            observer: self.observer.clone(),
             sink: self.sink.clone(),
             attrs: Arc::new(attrs),
         }
@@ -180,5 +174,147 @@ impl InferenceSession {
     /// Install this session as the ambient session for the current thread until the guard drops.
     pub fn enter(&self) -> crate::context::SessionGuard {
         crate::context::enter(self.clone())
+    }
+
+    /// A session backed by a [`NoopSink`](crate::sink::NoopSink): everything recorded is discarded.
+    ///
+    /// For driving an inference without a telemetry backend (tests, offline scratch). Build a real
+    /// session with [`new`](Self::new) to ship.
+    pub fn noop() -> Self {
+        Self::new("noop", Arc::new(NoopSink))
+    }
+
+    /// Drive `inference` to completion on the calling thread under this session.
+    ///
+    /// Installs this session as the ambient session for the thread, attaches its observer to the
+    /// output, feeds `input`, and passes `self` to [`Inference::infer`]. This is the provider-free
+    /// driver: pair it with [`new`](Self::new) or [`noop`](Self::noop) to run any [`Inference`]
+    /// without an [`InferenceProvider`](crate::InferenceProvider) or
+    /// [`InferenceJob`](crate::InferenceJob).
+    pub fn run<Inf, It, W>(&self, inference: &Inf, input: It, output: W)
+    where
+        Inf: Inference + ?Sized,
+        It: IntoIterator<Item = Inf::Input>,
+        It::IntoIter: Send + 'static,
+        W: OutputWriter<Inf::Output> + 'static,
+    {
+        let _scope = self.enter();
+        let input = InferenceInput::from_items(input.into_iter());
+        let output =
+            InferenceOutput::from_writer(output).with_observer(Arc::new(SessionStatsObserver {
+                session: self.clone(),
+            }));
+        inference.infer(self, input, output);
+    }
+}
+
+/// Records per-request output statistics to the session's sink when the request completes, tagged
+/// with the session's scoped attributes plus `cancelled`. Installed by [`InferenceSession::run`] so
+/// every backend gets uniform request stats through its [`InferenceSink`](crate::sink::InferenceSink),
+/// with no per-backend observer.
+struct SessionStatsObserver {
+    session: InferenceSession,
+}
+
+impl InferenceOutputObserver for SessionStatsObserver {
+    fn on_finish(&self, stats: &InferenceOutputStats) {
+        let session = self
+            .session
+            .with_attributes([("cancelled", stats.cancelled)]);
+        session.log_counter("inference_requests_total", 1);
+        session.log_counter("inference_outputs_total", stats.outputs as u64);
+        session.log_counter("inference_errors_total", stats.errors as u64);
+        session.log_distribution(
+            "inference_duration_ms",
+            stats.duration.as_secs_f64() * 1_000.0,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Echo;
+    impl Inference for Echo {
+        type Input = i32;
+        type Output = i32;
+        fn infer(
+            &self,
+            _session: &InferenceSession,
+            input: InferenceInput<i32>,
+            output: InferenceOutput<i32>,
+        ) {
+            // The session is installed as ambient for this thread while running.
+            assert!(InferenceSession::current().is_some());
+            for item in input {
+                let _ = output.write(item);
+            }
+        }
+    }
+
+    struct VecWriter(Arc<Mutex<Vec<i32>>>);
+    impl OutputWriter<i32> for VecWriter {
+        fn write(&self, output: i32) -> Result<(), crate::OutputWriterError> {
+            self.0.lock().unwrap().push(output);
+            Ok(())
+        }
+        fn error(
+            &self,
+            _error: Box<dyn std::error::Error + Send + Sync>,
+        ) -> Result<(), crate::OutputWriterError> {
+            Ok(())
+        }
+        fn finish(&self, _duration: std::time::Duration) {}
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        metrics: Mutex<Vec<MetricSample>>,
+    }
+    impl InferenceSink for RecordingSink {
+        fn record_metric(&self, sample: MetricSample) {
+            self.metrics.lock().unwrap().push(sample);
+        }
+        fn record_log(&self, _sample: LogSample) {}
+    }
+
+    #[test]
+    fn run_drives_an_inference_without_a_provider_or_job() {
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        InferenceSession::noop().run(&Echo, vec![1, 2, 3], VecWriter(collected.clone()));
+        assert_eq!(*collected.lock().unwrap(), vec![1, 2, 3]);
+        // Ambient session is cleared once `run` returns.
+        assert!(InferenceSession::current().is_none());
+    }
+
+    #[test]
+    fn run_records_request_stats_to_the_sink() {
+        let sink = Arc::new(RecordingSink::default());
+        let discard = Arc::new(Mutex::new(Vec::new()));
+        InferenceSession::new("req-42", sink.clone()).run(&Echo, vec![1, 2, 3], VecWriter(discard));
+
+        let metrics = sink.metrics.lock().unwrap();
+        let names: Vec<&str> = metrics.iter().map(|m| m.name.as_str()).collect();
+        for expected in [
+            "inference_requests_total",
+            "inference_outputs_total",
+            "inference_errors_total",
+            "inference_duration_ms",
+        ] {
+            assert!(names.contains(&expected), "missing stat metric {expected}");
+        }
+
+        let outputs = metrics
+            .iter()
+            .find(|m| m.name == "inference_outputs_total")
+            .unwrap();
+        assert!(matches!(&outputs.data, MetricData::Counter { value: 3 }));
+
+        // Stats carry the session's scoped attributes plus `cancelled`.
+        let meta = outputs.metadata.as_object().unwrap();
+        assert_eq!(meta.get("request_id").unwrap().as_str(), Some("req-42"));
+        assert_eq!(meta.get("cancelled").unwrap().as_bool(), Some(false));
     }
 }

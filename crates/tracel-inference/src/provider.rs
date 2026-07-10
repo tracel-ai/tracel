@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use crate::OutputWriter;
 use crate::error::InferenceError;
 use crate::inference::{Inference, IntoInference};
 use crate::session::InferenceSession;
 use crate::stream::InferenceStream;
-use crate::{InferenceInput, InferenceOutput, OutputWriter};
 
 /// Backend port that creates per-request [`InferenceSession`]s.
 ///
@@ -84,6 +84,9 @@ where
     O: Send + Sync + 'static,
 {
     /// Run the inference inline on the calling thread, blocking until it completes.
+    ///
+    /// Opens a fresh session from the provider and drives the inference under it via
+    /// [`InferenceSession::run`]. The returned error covers only a failure to open the session.
     pub fn run<It, W>(&self, input: It, output: W) -> Result<(), InferenceError>
     where
         It: IntoIterator<Item = I>,
@@ -91,22 +94,8 @@ where
         W: OutputWriter<O> + 'static,
     {
         let session = self.provider.create_session(&self.name)?;
-        self.run_with_session(input, output, session);
+        session.run(self.inference.as_ref(), input, output);
         Ok(())
-    }
-
-    /// Run the inference inline with an already-opened session, installing it as the ambient session
-    /// for this thread and attaching its observer to the output writer.
-    fn run_with_session<It, W>(&self, input: It, output: W, session: InferenceSession)
-    where
-        It: IntoIterator<Item = I>,
-        It::IntoIter: Send + 'static,
-        W: OutputWriter<O> + 'static,
-    {
-        let _scope = session.enter();
-        let input = InferenceInput::from_items(input.into_iter());
-        let writer = InferenceOutput::from_writer(output).with_observer(session.observer());
-        self.inference.infer(input, writer);
     }
 
     /// Run the inference on a spawned worker, returning its outputs as a pull-based iterator.
@@ -120,10 +109,10 @@ where
         It::IntoIter: Send + 'static,
     {
         let session = self.provider.create_session(&self.name)?;
-        let job = self.clone();
+        let inference = self.inference.clone();
         let input = input.into_iter();
         Ok(InferenceStream::spawn(move |channel| {
-            job.run_with_session(input, channel, session);
+            session.run(inference.as_ref(), input, channel);
         }))
     }
 
@@ -136,7 +125,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Inference, InferenceInput, InferenceOutput};
+    use crate::{Inference, InferenceInput, InferenceOutput, InferenceSession};
 
     struct TestProvider;
     impl InferenceProvider for TestProvider {
@@ -149,7 +138,12 @@ mod tests {
     impl Inference for Echo {
         type Input = i32;
         type Output = i32;
-        fn infer(&self, input: InferenceInput<i32>, output: InferenceOutput<i32>) {
+        fn infer(
+            &self,
+            _session: &InferenceSession,
+            input: InferenceInput<i32>,
+            output: InferenceOutput<i32>,
+        ) {
             for item in input {
                 let _ = output.write(item);
             }
@@ -163,7 +157,9 @@ mod tests {
         let _from_impl = module.create("impl", Echo);
         let _from_closure = module.create(
             "closure",
-            |input: InferenceInput<i32>, output: InferenceOutput<i32>| {
+            |_session: &InferenceSession,
+             input: InferenceInput<i32>,
+             output: InferenceOutput<i32>| {
                 for item in input {
                     let _ = output.write(item);
                 }
