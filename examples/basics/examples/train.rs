@@ -1,15 +1,12 @@
-//! Programmatic experiment run: a toy training loop that tracks nested activities (with progress
-//! and cancellation), declares its metrics, and logs per-batch/-epoch values.
+//! An experiment run: a toy training loop with activity tracking, metrics, and cancellation.
 //!
-//! Run: `cargo run -p basics --example train`
+//! cargo run -p basics --example train
 
 use basics::training::{self, TrainingConfig};
 use tracel::experiment::ExperimentRun;
 use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    // For Cloud (so activities and metrics ship to the dashboard):
-    //   let module = Context::new(Connection::Cloud)?.experiment();
     let module = Context::new(Connection::Offline("./runs".into()))?.experiment();
 
     module

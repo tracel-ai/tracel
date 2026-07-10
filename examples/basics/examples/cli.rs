@@ -1,9 +1,7 @@
-//! One CLI exposing both capabilities: an inference job and a training job, registered uniformly
-//! with `Cli::register`.
+//! A CLI serving both jobs. Select one by name and pass its JSON config.
 //!
-//! Run:
-//!   cargo run -p basics --example cli -- wordtok '{"text":"hello streaming world"}'
-//!   cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
+//! cargo run -p basics --example cli -- wordtok '{"text":"hello streaming world"}'
+//! cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
 
 use basics::WordTokenizer;
 use basics::training::{self, TrainingConfig};

@@ -1,11 +1,10 @@
-//! One HTTP server exposing both capabilities, registered uniformly with `Server::register`:
-//! inference streams back as Server-Sent Events, training responds fire-and-forget.
+//! An HTTP server serving both jobs: SSE for inference, fire-and-forget for training.
 //!
-//! Run: `cargo run -p basics --example serve`
-//!   curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'
-//!   curl    -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
+//! cargo run -p basics --example serve
+//! curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'
+//! curl -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
 //!
-//! For a true streaming inference request (prompts over time), run the `infer-client` example.
+//! For a streaming request, run the infer-client example.
 
 use std::time::Duration;
 

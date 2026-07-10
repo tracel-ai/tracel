@@ -1,30 +1,21 @@
-//! Toy capabilities used by the `basics` examples, shaped like real ones so they double as
-//! templates:
-//!
-//! - [`WordTokenizer`] — a streaming [`Inference`](tracel::inference::Inference) that splits each
-//!   prompt into whitespace tokens and streams them back one at a time.
-//! - [`training`] — a stand-in experiment that tracks nested activities, logs metrics, and honors
-//!   cancellation, exactly as a real training loop would (only the per-step math is fake).
+//! Toy inference and experiment capabilities used by the `basics` examples.
 
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tracel::inference::{Inference, InferenceInput, InferenceOutput, InferenceSession};
 
-/// One prompt fed to the [`WordTokenizer`].
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Prompt {
     pub text: String,
 }
 
-/// One streamed output token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Token {
     pub token: String,
 }
 
-/// A streaming inference shaped like a real one: model state lives in `&self`, and `infer` pulls
-/// inputs and writes outputs as it goes. Here the "model" is just whitespace splitting.
+/// Splits each prompt into whitespace tokens and streams them back one at a time.
 pub struct WordTokenizer {
     per_token_delay: Duration,
 }
@@ -36,7 +27,7 @@ impl WordTokenizer {
         }
     }
 
-    /// Pauses `delay` before each token, to make streaming observable.
+    /// Pause before each token so streaming is observable.
     pub fn with_delay(delay: Duration) -> Self {
         Self {
             per_token_delay: delay,
@@ -63,12 +54,9 @@ impl Inference for WordTokenizer {
         for prompt in input {
             let words: Vec<&str> = prompt.text.split_whitespace().collect();
 
-            // Explicit metric through the session. Discarded offline; shipped with Cloud.
             session
                 .with_attributes([("prompt_len", prompt.text.len() as u64)])
                 .log_gauge("prompt_tokens", words.len() as f64);
-
-            // Routed to the session by the tracing layer when one is installed.
             tracing::info!(tokens = words.len(), "tokenizing prompt");
 
             let mut emitted: u64 = 0;
@@ -82,8 +70,7 @@ impl Inference for WordTokenizer {
                     })
                     .is_err()
                 {
-                    // The consumer disconnected; stop early.
-                    return;
+                    return; // consumer disconnected
                 }
                 emitted += 1;
             }
@@ -93,14 +80,14 @@ impl Inference for WordTokenizer {
     }
 }
 
-/// A stand-in training experiment, shaped like a real one.
+/// A stand-in training loop with the plumbing a real one uses: metric definitions, nested activity
+/// tracking, per-batch metrics, and cancellation. Only the per-step math is fake.
 pub mod training {
     use serde::{Deserialize, Serialize};
     use tracel::experiment::{ExperimentRun, MetricSpec, MetricValue};
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-    /// Config for the toy run. A real one would carry model hyperparameters, dataset paths, etc.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct TrainingConfig {
         pub epochs: usize,
@@ -116,13 +103,6 @@ pub mod training {
         }
     }
 
-    /// Run the toy training loop.
-    ///
-    /// It declares its metrics up front, tracks nested activities (`training` -> per-epoch) with
-    /// progress and cancellation, and logs per-batch metrics plus per-epoch summaries. Replace the
-    /// `sleep` with a real forward/backward pass and the surrounding experiment plumbing is
-    /// unchanged. See the `mnist` example for the same tracking wired automatically through the
-    /// Burn `train` integration.
     pub fn train(experiment: &ExperimentRun, config: TrainingConfig) -> Result<(), BoxError> {
         experiment.log_args(&config)?;
         experiment.log_metric_definition(MetricSpec {
@@ -168,7 +148,6 @@ pub mod training {
                     return Ok(());
                 }
 
-                // Stand in for a real training step.
                 std::thread::sleep(std::time::Duration::from_millis(200));
 
                 let step = ((epoch - 1) * config.batches_per_epoch + batch) as f64;

@@ -1,10 +1,7 @@
-//! Train MNIST with the Burn `train` integration.
+//! Train MNIST with the Burn `train` integration: metrics, checkpoints, progress, and cancellation.
+//! See src/training.rs for the wiring.
 //!
-//! Everything a real learner needs flows to the experiment through `ExperimentTrainingExt`
-//! (see `src/training.rs`): metrics via `metric_logger()`, checkpoints via `checkpointers()`,
-//! epoch/split progress via `training_progress_logger()`, and cancellation via `interrupter()`.
-//!
-//! Run: `cargo run -p mnist --example mnist`
+//! cargo run -p mnist --example mnist
 #![recursion_limit = "256"]
 
 use burn::backend::wgpu::WgpuDevice;
@@ -15,8 +12,6 @@ use tracel::experiment::ExperimentRun;
 use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    // For Cloud (activities, metrics, and checkpoints stream to the dashboard):
-    //   let module = Context::new(Connection::Cloud)?.experiment();
     let module = Context::new(Connection::Offline("./runs".into()))?.experiment();
 
     module

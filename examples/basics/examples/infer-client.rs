@@ -1,8 +1,7 @@
-//! A streaming HTTP client for the `serve` example: streams prompts over time on the request body
-//! and prints tokens as they arrive.
+//! Streaming HTTP client for the `serve` example: sends prompts over time, prints tokens as they
+//! arrive. Start `serve` first, then run this in another terminal.
 //!
-//! Run the server first: `cargo run -p basics --example serve`
-//! Then, in another terminal: `cargo run -p basics --example infer-client`
+//! cargo run -p basics --example infer-client
 
 use std::time::{Duration, Instant};
 
@@ -15,7 +14,6 @@ use tokio_stream::wrappers::ReceiverStream;
 async fn main() -> anyhow::Result<()> {
     let start = Instant::now();
 
-    // Send one NDJSON prompt every 700ms on a streamed request body.
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         for text in ["the quick brown fox", "jumps over", "the lazy dog"] {
