@@ -11,12 +11,12 @@ use std::{
     time::Duration,
 };
 
-pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-pub enum StreamEvent<O> {
+enum StreamEvent<O> {
     Output(O),
-    Error(BoxError),
-    Done(Duration),
+    Error(Box<dyn std::error::Error + Send + Sync + 'static>),
+    Done,
 }
 
 pub struct InferenceStream<O> {
@@ -80,7 +80,7 @@ impl<O> Iterator for InferenceStream<O> {
         match self.rx.recv().ok()? {
             StreamEvent::Output(o) => Some(Ok(o)),
             StreamEvent::Error(e) => Some(Err(e)),
-            StreamEvent::Done(_) => None,
+            StreamEvent::Done => None,
         }
     }
 }
@@ -113,7 +113,7 @@ where
             .map_err(|e| OutputWriterError::Unknown(Box::new(e)))
     }
 
-    fn finish(&self, duration: Duration) {
-        let _ = self.tx.send(StreamEvent::Done(duration));
+    fn finish(&self, _duration: Duration) {
+        let _ = self.tx.send(StreamEvent::Done);
     }
 }

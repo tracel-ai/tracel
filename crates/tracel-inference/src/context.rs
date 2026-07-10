@@ -26,12 +26,12 @@ impl Drop for SessionGuard {
 }
 
 /// Push `session` as the ambient session for the current thread until the returned guard drops.
-pub fn enter(session: InferenceSession) -> SessionGuard {
+pub(crate) fn enter(session: InferenceSession) -> SessionGuard {
     CURRENT_SESSIONS.with(|sessions| sessions.borrow_mut().push(session));
     SessionGuard { _private: () }
 }
 
 /// The ambient session for the current thread, if any.
-pub fn current_session() -> Option<InferenceSession> {
+pub(crate) fn current_session() -> Option<InferenceSession> {
     CURRENT_SESSIONS.with(|sessions| sessions.borrow().last().cloned())
 }

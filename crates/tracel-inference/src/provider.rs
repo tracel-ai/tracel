@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::error::InferenceError;
 use crate::inference::{Inference, IntoInference};
-use crate::input::IterReader;
 use crate::session::InferenceSession;
 use crate::stream::InferenceStream;
 use crate::{InferenceInput, InferenceOutput, OutputWriter};
@@ -105,7 +104,7 @@ where
         W: OutputWriter<O> + 'static,
     {
         let _scope = session.enter();
-        let input = InferenceInput::from_reader(IterReader::new(input.into_iter()));
+        let input = InferenceInput::from_items(input.into_iter());
         let writer = InferenceOutput::from_writer(output).with_observer(session.observer());
         self.inference.infer(input, writer);
     }
