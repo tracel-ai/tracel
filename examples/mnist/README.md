@@ -1,65 +1,40 @@
 # Tracel SDK Example (MNIST)
 
-This example shows how to adapt the standard Burn MNIST example into a Tracel SDK project. It trains a model and reports the experiment (metrics, checkpoints, and artifacts) to Tracel.
+Adapts the standard Burn MNIST example into a Tracel project. It trains a real model and reports
+the experiment (metrics, checkpoints, progress, and artifacts) to Tracel — the one example that
+shows the **Burn `train` integration** end to end.
 
-## What This Example Covers
+For the framework's shape without Burn (streaming inference, a toy experiment, and the uniform
+`Cli` / `Server` drivers), see the [`basics`](../basics) examples.
 
-- Defining a custom model artifact with `BundleEncode` and `BundleDecode`
-- Exposing training configuration through `MnistTrainingConfig`
-- Creating and running an experiment with `Context::new(Connection::Cloud)` and `ExperimentRun`
-- Wiring metrics, checkpoints, and interruption handling through `ExperimentRun`
-- Registering jobs and dispatching them through the `Cli`
+## What it covers
 
-## Project Layout
-
-- [`examples/mnist-cli.rs`](examples/mnist-cli.rs): entry point that opens a cloud `Context`, registers experiment jobs, and dispatches them through the `Cli`
-- [`src/training.rs`](src/training.rs): training loop, evaluation, and artifact upload
-- [`src/model.rs`](src/model.rs): model definition and artifact bundle serialization
-- [`src/data.rs`](src/data.rs): MNIST batching and data augmentation
+- A custom model artifact via `BundleEncode` / `BundleDecode` (`src/model.rs`).
+- Training configuration through `MnistTrainingConfig`.
+- Running an experiment with `Context::new(...).experiment()` and `ExperimentRun`.
+- The Burn `train` adapters, wired in `src/training.rs` via `ExperimentTrainingExt`:
+  - `metric_logger()` — training/validation metrics,
+  - `checkpointers()` — model/optimizer/scheduler checkpoints,
+  - `training_progress_logger()` — epoch/split **progress as experiment activities**,
+  - `interrupter()` — cancellation.
 
 ## Run
 
-`Context::new(Connection::Cloud)` needs Tracel credentials. Either set `TRACEL_API_KEY` in your environment, or authenticate once with:
-
 ```bash
-burn login
+cargo run -p mnist --example mnist
 ```
 
-The project's namespace and name come from [`tracel.toml`](tracel.toml). You need to enable a backend with Cargo features. You can set default features in your `Cargo.toml` (this example defaults to `wgpu` and `flex`).
-
-Run the default job:
-
-```bash
-cargo run --example mnist-cli
-```
-
-Run a specific registered job by name, with an optional JSON config:
+This runs **offline** by default (telemetry stubbed locally), so it needs no credentials. To ship
+metrics, checkpoints, and live activity/progress to the dashboard, switch the connection in
+`examples/mnist.rs` to `Connection::Cloud` and authenticate:
 
 ```bash
-cargo run --example mnist-cli -- mnist_wgpu
-cargo run --example mnist-cli -- mnist_wgpu '{"num_epochs": 5}'
+burn login          # or set TRACEL_API_KEY
 ```
 
-You choose the experiment name when you create a job with `module.create("name", ...)`.
+The namespace and name come from [`tracel.toml`](tracel.toml). Enable a backend with Cargo features
+(defaults to `wgpu` + `flex`).
 
-## Configuration Mappers
-
-When you register a job with the `Cli`, you pair it with a **mapper** that converts the raw CLI input into your config type. The SDK provides three built-in mappers:
-
-| Mapper         | Input       | Use case                                                                       |
-| -------------- | ----------- | ------------------------------------------------------------------------------ |
-| `JsonMapper`   | JSON string | Pass config as JSON. Supports a default config that gets merged with overrides. |
-| `ClapMapper`   | CLI flags   | Parse config using `clap::Parser` (e.g. `--num-epochs 5 --batch-size 64`).     |
-| `PresetMapper` | Preset name | Choose from a set of named configurations (e.g. `small`, `large`).             |
-
-This example uses `JsonMapper::with_default(MnistTrainingConfig::default())`, so you can run with defaults or override specific fields:
-
-```bash
-cargo run --example mnist-cli -- mnist_wgpu '{"num_epochs": 5}'
-```
-
-You can also implement the `Mapper<I>` trait to define your own mapping logic.
-
-## More Details
+## More details
 
 - Tracel SDK docs: [docs.rs/tracel](https://docs.rs/tracel/latest/tracel/)

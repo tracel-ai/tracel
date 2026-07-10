@@ -1,13 +1,13 @@
-//! A streaming HTTP client for the `server` example: streams prompts over time on the request body
+//! A streaming HTTP client for the `serve` example: streams prompts over time on the request body
 //! and prints tokens as they arrive.
 //!
-//! Run the server first: `cargo run -p inference-example --example server`
-//! Then, in another terminal: `cargo run -p inference-example --example streaming_client`
+//! Run the server first: `cargo run -p basics --example serve`
+//! Then, in another terminal: `cargo run -p basics --example infer-client`
 
 use std::time::{Duration, Instant};
 
+use basics::{Prompt, Token};
 use eventsource_stream::Eventsource;
-use inference_example::{Prompt, Token};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
