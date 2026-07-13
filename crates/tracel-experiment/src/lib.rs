@@ -26,6 +26,7 @@ mod activity;
 mod cancellation;
 mod context;
 mod control;
+mod log;
 mod provider;
 pub mod reader;
 pub mod session;
@@ -42,6 +43,7 @@ pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
 pub use control::ExperimentRunControl;
+pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 
 use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
@@ -179,6 +181,9 @@ pub struct ExperimentRunHandle {
     metadata: ExperimentMetadata,
     inner: Weak<RunInner>,
     control: ExperimentRunControl,
+    /// Attributes inherited by every log emitted through this handle. Cloned handles share the
+    /// scope until [`ExperimentRunHandle::with_attr`]/[`ExperimentRunHandle::with_attrs`] extends it.
+    scope: Arc<serde_json::Map<String, serde_json::Value>>,
 }
 
 struct RunInner {
@@ -240,6 +245,7 @@ impl ExperimentRun {
             metadata,
             inner: Arc::downgrade(&inner),
             control,
+            scope: Arc::new(serde_json::Map::new()),
         };
         let tracing_registration = TracingRegistry::global().register_handle(handle.clone());
 
@@ -311,9 +317,60 @@ impl ExperimentRun {
         self.handle.log_config(name, config)
     }
 
-    /// Log an informational message for the run.
+    /// Log a `trace`-level message for the run.
+    pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.log_trace(message)
+    }
+
+    /// Log a `debug`-level message for the run.
+    pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.log_debug(message)
+    }
+
+    /// Log an `info`-level message for the run.
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
         self.handle.log_info(message)
+    }
+
+    /// Log a `warn`-level message for the run.
+    pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.log_warn(message)
+    }
+
+    /// Log an `error`-level message for the run.
+    pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.log_error(message)
+    }
+
+    /// Record a structured log entry for the run.
+    ///
+    /// Use the [`LogRecord`] builder to attach structured attributes:
+    /// `run.log(LogRecord::warn("slow step").with("elapsed_ms", 900))`.
+    pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
+        self.handle.log(record)
+    }
+
+    /// Return a handle whose logs inherit an additional scope attribute.
+    ///
+    /// See [`ExperimentRunHandle::with_attr`].
+    #[must_use]
+    pub fn with_attr(
+        &self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> ExperimentRunHandle {
+        self.handle.with_attr(key, value)
+    }
+
+    /// Return a handle whose logs inherit several additional scope attributes.
+    ///
+    /// See [`ExperimentRunHandle::with_attrs`].
+    #[must_use]
+    pub fn with_attrs(
+        &self,
+        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
+    ) -> ExperimentRunHandle {
+        self.handle.with_attrs(attrs)
     }
 
     /// Log metric values for an epoch, split, and iteration.
@@ -447,11 +504,62 @@ impl ExperimentRunHandle {
         })
     }
 
+    /// See [`ExperimentRun::log_trace`].
+    pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.log(LogRecord::trace(message))
+    }
+
+    /// See [`ExperimentRun::log_debug`].
+    pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.log(LogRecord::debug(message))
+    }
+
     /// See [`ExperimentRun::log_info`].
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.record_event(Event::Log {
-            message: message.into(),
-        })
+        self.log(LogRecord::info(message))
+    }
+
+    /// See [`ExperimentRun::log_warn`].
+    pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.log(LogRecord::warn(message))
+    }
+
+    /// See [`ExperimentRun::log_error`].
+    pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.log(LogRecord::error(message))
+    }
+
+    /// Record a structured log entry, folding in this handle's scope attributes.
+    pub fn log(&self, mut record: LogRecord) -> Result<(), ExperimentError> {
+        if !self.scope.is_empty() {
+            record.inherit_attrs(&self.scope);
+        }
+        self.record_event(Event::Log(record))
+    }
+
+    /// Return a handle whose logs inherit an additional scope attribute.
+    ///
+    /// The returned handle shares the run; only its inherited scope differs. Call-site attributes
+    /// still take precedence over inherited ones.
+    #[must_use]
+    pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        let mut scope = (*self.scope).clone();
+        scope.insert(key.into(), value.into());
+        Self {
+            scope: Arc::new(scope),
+            ..self.clone()
+        }
+    }
+
+    /// Return a handle whose logs inherit several additional scope attributes.
+    #[must_use]
+    pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
+        let mut scope = (*self.scope).clone();
+        scope.extend(attrs);
+        Self {
+            scope: Arc::new(scope),
+            ..self.clone()
+        }
     }
 
     /// See [`ExperimentRun::log_metric`].
@@ -709,7 +817,77 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => assert_eq!(message, "hello"),
+            Event::Log(record) => assert_eq!(record.message, "hello"),
+            event => panic!("unexpected event: {event:?}"),
+        }
+    }
+
+    #[test]
+    fn level_methods_record_the_matching_level() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+
+        run.log_trace("t").unwrap();
+        run.log_debug("d").unwrap();
+        run.log_info("i").unwrap();
+        run.log_warn("w").unwrap();
+        run.log_error("e").unwrap();
+
+        let events = session.events.lock().unwrap();
+        let levels: Vec<_> = events
+            .iter()
+            .map(|event| match event {
+                Event::Log(record) => record.level,
+                event => panic!("unexpected event: {event:?}"),
+            })
+            .collect();
+        assert_eq!(
+            levels,
+            vec![
+                LogLevel::Trace,
+                LogLevel::Debug,
+                LogLevel::Info,
+                LogLevel::Warn,
+                LogLevel::Error,
+            ]
+        );
+    }
+
+    #[test]
+    fn scoped_handle_inherits_attributes_and_call_site_wins() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+
+        let scoped = run.with_attr("phase", "train").with_attr("shard", 1i64);
+        scoped
+            .log(
+                LogRecord::warn("slow step")
+                    .with("shard", 2i64)
+                    .with("elapsed_ms", 900i64),
+            )
+            .unwrap();
+
+        let events = session.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Log(record) => {
+                assert_eq!(record.level, LogLevel::Warn);
+                assert_eq!(record.message, "slow step");
+                // Inherited from scope.
+                assert_eq!(
+                    record.attributes.get("phase").and_then(|v| v.as_str()),
+                    Some("train")
+                );
+                // Call-site value overrides the inherited scope value.
+                assert_eq!(
+                    record.attributes.get("shard").and_then(|v| v.as_i64()),
+                    Some(2)
+                );
+                assert_eq!(
+                    record.attributes.get("elapsed_ms").and_then(|v| v.as_i64()),
+                    Some(900)
+                );
+            }
             event => panic!("unexpected event: {event:?}"),
         }
     }
@@ -762,7 +940,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log { message } => assert_eq!(message, "still-logging"),
+            Event::Log(record) => assert_eq!(record.message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
     }

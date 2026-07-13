@@ -9,10 +9,9 @@ use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
 use tracel::experiment::ExperimentRun;
-use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    let module = Context::new(Connection::Offline("./runs".into()))?.experiment();
+    let module = common::context()?.experiment();
 
     module
         .create("mnist", |experiment: &ExperimentRun, config| {

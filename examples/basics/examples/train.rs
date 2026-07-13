@@ -4,10 +4,9 @@
 
 use basics::training::{self, TrainingConfig};
 use tracel::experiment::ExperimentRun;
-use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    let module = Context::new(Connection::Offline("./runs".into()))?.experiment();
+    let module = common::context()?.experiment();
 
     module
         .create("toy-training", |run: &ExperimentRun, config| {

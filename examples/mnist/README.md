@@ -19,12 +19,13 @@ see [`basics`](../basics) for the framework without it.
 cargo run -p mnist --example mnist
 ```
 
-Runs offline by default, so it needs no credentials. To ship metrics, checkpoints, and live progress
-to the [console](https://console.tracel.ai), switch the connection in `examples/mnist.rs` to
-`Connection::Cloud` and authenticate:
+Runs offline by default, so it needs no credentials. The `Context` comes from the shared
+[`common`](../common) crate: set `TRACEL_CONNECTION=cloud` to ship metrics, checkpoints, and live
+progress to the [console](https://console.tracel.ai), after authenticating:
 
 ```bash
 tracel login          # or set TRACEL_API_KEY
+TRACEL_CONNECTION=cloud cargo run -p mnist --example mnist
 ```
 
 The namespace and name come from [`tracel.toml`](tracel.toml). Enable a backend with Cargo features

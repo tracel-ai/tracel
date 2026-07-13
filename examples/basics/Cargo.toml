@@ -9,6 +9,7 @@ default = ["server"]
 server = ["tracel/server"]
 
 [dependencies]
+common = { path = "../common" }
 tracel = { workspace = true }
 anyhow.workspace = true
 serde = { workspace = true, features = ["std", "derive"] }

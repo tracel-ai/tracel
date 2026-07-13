@@ -4,7 +4,7 @@ use tracel_artifact::bundle::FsBundle;
 
 use crate::{
     ArtifactKind, ExperimentId, MetricSpec, MetricValue, activity::ActivityEvent,
-    error::ExperimentError, reader::ArtifactRef,
+    error::ExperimentError, log::LogRecord, reader::ArtifactRef,
 };
 
 #[derive(Debug, Clone)]
@@ -14,9 +14,7 @@ pub enum Event {
         name: String,
         value: serde_json::Value,
     },
-    Log {
-        message: String,
-    },
+    Log(LogRecord),
     Metrics {
         epoch: usize,
         split: String,

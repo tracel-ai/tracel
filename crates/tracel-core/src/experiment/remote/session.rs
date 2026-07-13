@@ -3,7 +3,8 @@ use std::sync::Mutex;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{
-    ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, MetricSpec, MetricValue,
+    ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, LogLevel, LogRecord,
+    MetricSpec, MetricValue,
 };
 
 use crossbeam::channel::Sender;
@@ -11,11 +12,10 @@ use tracel_artifact::bundle::FsBundle;
 use tracel_client::WebSocketClient;
 use tracel_client::websocket::{
     ActivityEventRequest, ActivityMeterRequest, ActivityRequest, ActivityStatusRequest,
-    ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
+    ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, LogEntry,
+    LogEntryLevel, MetricLog,
 };
 
-use super::log_store::LogUploader;
-use super::log_store::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
 
@@ -50,14 +50,12 @@ pub struct RemoteExperimentSession {
 
 impl RemoteExperimentSession {
     pub fn new(
-        log_uploader: Box<dyn LogUploader + Send>,
         artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
         websocket: WebSocketClient,
         control: ExperimentRunControl,
     ) -> Self {
-        let log_store = TempLogStore::new(log_uploader);
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(websocket, log_store, receiver, control);
+        let socket = ExperimentSocket::new(websocket, receiver, control);
 
         Self {
             artifact_uploader,
@@ -88,7 +86,7 @@ impl ExperimentSession for RemoteExperimentSession {
         let message = match event {
             Event::Args(value) => ExperimentMessage::Arguments(value),
             Event::Config { name, value } => ExperimentMessage::Config { name, value },
-            Event::Log { message } => ExperimentMessage::Log(message),
+            Event::Log(record) => ExperimentMessage::LogEntries(vec![to_log_entry(record)]),
             Event::Metrics {
                 epoch,
                 split,
@@ -192,15 +190,30 @@ impl ExperimentSession for RemoteExperimentSession {
                 tracing::warn!("WebSocket failure during experiment finish: {err}");
                 Ok(())
             }
-            Err(ThreadError::LogFlushError(err)) => {
-                tracing::warn!("Log artifact creation failed during experiment finish: {err}");
-                Ok(())
-            }
             Err(ThreadError::Panic) => Err(ExperimentError::new(
                 ExperimentErrorKind::Internal,
                 "Experiment background thread panicked",
             )),
         }
+    }
+}
+
+fn to_log_entry(record: LogRecord) -> LogEntry {
+    LogEntry {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        level: to_wire_log_level(record.level),
+        message: record.message,
+        metadata: record.attributes,
+    }
+}
+
+fn to_wire_log_level(level: LogLevel) -> LogEntryLevel {
+    match level {
+        LogLevel::Trace => LogEntryLevel::Trace,
+        LogLevel::Debug => LogEntryLevel::Debug,
+        LogLevel::Info => LogEntryLevel::Info,
+        LogLevel::Warn => LogEntryLevel::Warn,
+        LogLevel::Error => LogEntryLevel::Error,
     }
 }
 

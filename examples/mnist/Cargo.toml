@@ -20,6 +20,7 @@ burn = { workspace = true, features = [
     "autotune",
     "optim",
 ] }
+common = { path = "../common" }
 tracel = { workspace = true }
 anyhow.workspace = true
 clap.workspace = true

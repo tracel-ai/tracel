@@ -12,10 +12,8 @@ use tracel_client::websocket::WebSocketError;
 use tracel_client::{ClientError, StationClient};
 
 mod artifacts;
-mod logs;
 
 use artifacts::{StationArtifactReader, StationArtifactUploader};
-use logs::StationLogUploader;
 
 use std::collections::HashMap;
 
@@ -238,17 +236,11 @@ fn create_run(
     let cancel_token = CancelToken::new();
     let control = ExperimentRunControl::new(cancel_token.clone());
 
-    let log_uploader = StationLogUploader::new(client.clone(), path.clone());
     let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
 
     let ws = experiments_client.create_run_websocket(experiment_num)?;
 
-    let session = RemoteExperimentSession::new(
-        Box::new(log_uploader),
-        Box::new(artifact_uploader),
-        ws,
-        control.clone(),
-    );
+    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
 
     let reader = StationArtifactReader::new(client);
     let id = ExperimentId::from(format!("{}", experiment_num));

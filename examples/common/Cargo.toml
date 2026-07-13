@@ -1,0 +1,9 @@
+[package]
+name = "common"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+tracel = { workspace = true }
+anyhow.workspace = true
