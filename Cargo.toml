@@ -67,7 +67,7 @@ tracing-subscriber = "0.3.23"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
-tracel-client = { version = "0.10.0", default-features = false, features = [
+tracel-client = { version = "0.11.0", default-features = false, features = [
     "tracel",
     "station",
 ] }
@@ -83,9 +83,6 @@ tracel = { path = "crates/tracel", version = "0.7.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.19.0"
-
-[patch.crates-io]
-tracel-client = { path = "/home/jwric/Work/burn-central-client/tracel-client" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
