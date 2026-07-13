@@ -21,8 +21,7 @@ use tracel_inference::{InferenceJob, OutputWriter, OutputWriterError};
 
 use super::mapper::BodyMapper;
 
-/// Maximum request body size buffered by non-streaming routes (10 MiB).
-pub(crate) const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+pub(crate) const MAX_BODY_BYTES: usize = 10 * 1024 * 1024 * 1024;
 
 /// A response produced asynchronously by a [`ServerRoute`].
 pub type RouteFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
