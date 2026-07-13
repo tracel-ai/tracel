@@ -288,4 +288,39 @@ mod tests {
         assert_eq!(log.message, "scoped to activity");
         assert_eq!(log.activity_id, Some(activity_id));
     }
+
+    #[test]
+    fn tracing_layer_inherits_span_field_attributes() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run("trace-test-scope", session.clone());
+        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+
+        tracing::subscriber::with_default(subscriber, || {
+            run.in_scope(|| {
+                let span = tracing::info_span!("phase", stage = "train", shard = 2u64);
+                span.in_scope(|| {
+                    // The event's own field overrides the inherited `shard` from the span.
+                    tracing::info!(shard = 5u64, "step done");
+                });
+            })
+        });
+
+        let events = session.events.lock().unwrap();
+        let log = events
+            .iter()
+            .find_map(|event| match event {
+                Event::Log(record) => Some(record),
+                _ => None,
+            })
+            .expect("a log event should have been recorded");
+        assert_eq!(log.message, "step done");
+        assert_eq!(
+            log.attributes.get("stage").and_then(|v| v.as_str()),
+            Some("train")
+        );
+        assert_eq!(
+            log.attributes.get("shard").and_then(|v| v.as_u64()),
+            Some(5)
+        );
+    }
 }

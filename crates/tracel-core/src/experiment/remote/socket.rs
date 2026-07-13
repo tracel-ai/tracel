@@ -7,14 +7,10 @@ use tracel_client::{
 };
 use tracel_experiment::{ActivityId, ExperimentRunControl};
 
-use super::log_store::{LogStoreError, TempLogStore};
-
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
-    #[error("Log storage failed: {0}")]
-    LogFlushError(LogStoreError),
     #[error("Unexpected panic in thread")]
     Panic,
 }
@@ -27,7 +23,6 @@ pub struct ThreadResult {}
 struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<ExperimentMessage>,
-    log_store: TempLogStore,
     control: ExperimentRunControl,
 }
 
@@ -35,13 +30,11 @@ impl ExperimentThread {
     fn new(
         ws_client: WebSocketClient,
         message_receiver: Receiver<ExperimentMessage>,
-        log_store: TempLogStore,
         control: ExperimentRunControl,
     ) -> Self {
         Self {
             ws_client,
             message_receiver,
-            log_store,
             control,
         }
     }
@@ -56,7 +49,6 @@ impl ExperimentThread {
         self.ws_client
             .close()
             .map_err(|_| ThreadError::WebSocket(WEBSOCKET_CLOSE_ERROR.to_string()))?;
-        self.log_store.flush().map_err(ThreadError::LogFlushError)?;
         self.ws_client
             .wait_until_closed()
             .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
@@ -72,32 +64,8 @@ impl ExperimentThread {
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
     }
 
-    fn handle_log_message(&mut self, log: String) -> Result<(), ThreadError> {
-        self.log_store
-            .push(log.clone())
-            .map_err(ThreadError::LogFlushError)?;
-        self.handle_websocket_send(ExperimentMessage::Log(log))
-    }
-
     fn process_message(&mut self, message: ExperimentMessage) -> Result<(), ThreadError> {
-        match message {
-            ExperimentMessage::MetricsLog { .. } => {
-                self.handle_websocket_send(message)?;
-            }
-            ExperimentMessage::MetricDefinitionLog { .. } => {
-                self.handle_websocket_send(message)?;
-            }
-            ExperimentMessage::Log(log) => {
-                self.handle_log_message(log)?;
-            }
-            ExperimentMessage::EpochSummaryLog { .. } => {
-                self.handle_websocket_send(message)?;
-            }
-            value => {
-                self.handle_websocket_send(value)?;
-            }
-        }
-        Ok(())
+        self.handle_websocket_send(message)
     }
 
     fn thread_loop(&mut self) -> Result<(), ThreadError> {
@@ -149,11 +117,10 @@ pub struct ExperimentSocket {
 impl ExperimentSocket {
     pub fn new(
         ws_client: WebSocketClient,
-        log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
         control: ExperimentRunControl,
     ) -> Self {
-        let thread = ExperimentThread::new(ws_client, message_receiver, log_store, control);
+        let thread = ExperimentThread::new(ws_client, message_receiver, control);
         let handle = std::thread::spawn(move || thread.run());
         Self { handle }
     }

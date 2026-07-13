@@ -1,55 +1,75 @@
 use std::num::NonZeroU64;
 
+use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 
 use crate::{ActivityId, ExperimentId};
 
-/// Extracts `experiment_id` and `activity_id` from span fields.
+/// Field names that route a record rather than describe it; they are not surfaced as attributes.
+const EXPERIMENT_ID_FIELD: &str = "experiment_id";
+const ACTIVITY_ID_FIELD: &str = "activity_id";
+
+/// Extracts routing identifiers (`experiment_id`, `activity_id`) and every other field as an
+/// inheritable attribute from a span's fields.
 #[derive(Debug, Default)]
 struct SpanFieldVisitor {
     experiment_id: Option<ExperimentId>,
     activity_id: Option<ActivityId>,
+    attributes: Map<String, Value>,
 }
 
 impl SpanFieldVisitor {
-    fn record_experiment_id(&mut self, field: &Field, value: String) {
-        if field.name() == "experiment_id" {
-            self.experiment_id = Some(ExperimentId::new(value));
-        }
-    }
-
-    fn record_activity_id(&mut self, field: &Field, value: u64) {
-        if field.name() == "activity_id" {
-            self.activity_id = NonZeroU64::new(value).map(ActivityId::new);
+    fn record(&mut self, field: &Field, value: Value) {
+        match field.name() {
+            EXPERIMENT_ID_FIELD => {
+                if let Value::String(id) = value {
+                    self.experiment_id = Some(ExperimentId::new(id));
+                }
+            }
+            ACTIVITY_ID_FIELD => {
+                if let Some(id) = value.as_u64() {
+                    self.activity_id = NonZeroU64::new(id).map(ActivityId::new);
+                }
+            }
+            name => {
+                self.attributes.insert(name.to_string(), value);
+            }
         }
     }
 }
 
 impl Visit for SpanFieldVisitor {
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        self.record_activity_id(field, value);
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record(field, Value::String(value.to_string()));
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        if let Ok(value) = u64::try_from(value) {
-            self.record_activity_id(field, value);
-        }
+        self.record(field, Value::from(value));
     }
 
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.record_experiment_id(field, value.to_string());
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record(field, Value::from(value));
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.record(field, Value::from(value));
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record(field, Value::from(value));
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.record_experiment_id(field, format!("{value:?}"));
+        self.record(field, Value::String(format!("{value:?}")));
     }
 }
 
-/// Routing and scoping identifiers stored in a span's extensions.
+/// Routing identifiers and inherited attributes stored in a span's extensions.
 #[derive(Debug, Clone, Default)]
 pub struct SpanFields {
     pub experiment_id: Option<ExperimentId>,
     pub activity_id: Option<ActivityId>,
+    pub attributes: Map<String, Value>,
 }
 
 impl SpanFields {
@@ -60,23 +80,28 @@ impl SpanFields {
         if other.activity_id.is_some() {
             self.activity_id = other.activity_id;
         }
+        self.attributes.extend(other.attributes);
     }
 
     pub fn from_attributes(attrs: &tracing::span::Attributes<'_>) -> Self {
         let mut visitor = SpanFieldVisitor::default();
         attrs.record(&mut visitor);
-        Self {
-            experiment_id: visitor.experiment_id,
-            activity_id: visitor.activity_id,
-        }
+        Self::from(visitor)
     }
 
     pub fn from_record(record: &tracing::span::Record<'_>) -> Self {
         let mut visitor = SpanFieldVisitor::default();
         record.record(&mut visitor);
+        Self::from(visitor)
+    }
+}
+
+impl From<SpanFieldVisitor> for SpanFields {
+    fn from(visitor: SpanFieldVisitor) -> Self {
         Self {
             experiment_id: visitor.experiment_id,
             activity_id: visitor.activity_id,
+            attributes: visitor.attributes,
         }
     }
 }

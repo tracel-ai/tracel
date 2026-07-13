@@ -64,9 +64,12 @@ where
             return;
         }
 
-        let (experiment_id, activity_id) = if let Some(scope) = ctx.event_scope(event) {
-            let mut experiment_id = None;
-            let mut activity_id = None;
+        let mut experiment_id = None;
+        let mut activity_id = None;
+        // Attributes inherited from enclosing spans, accumulated outermost-first so inner spans
+        // override outer ones.
+        let mut attributes = Map::new();
+        if let Some(scope) = ctx.event_scope(event) {
             for span in scope.from_root() {
                 if let Some(fields) = span.extensions().get::<SpanFields>() {
                     if fields.experiment_id.is_some() {
@@ -75,12 +78,10 @@ where
                     if fields.activity_id.is_some() {
                         activity_id = fields.activity_id;
                     }
+                    attributes.extend(fields.attributes.clone());
                 }
             }
-            (experiment_id, activity_id)
-        } else {
-            (None, None)
-        };
+        }
 
         let handle = match experiment_id {
             Some(experiment_id) => match TracingRegistry::global().get_handle(&experiment_id) {
@@ -95,11 +96,13 @@ where
 
         let mut visitor = LogFieldVisitor::default();
         event.record(&mut visitor);
+        // The event's own fields take precedence over inherited span scope.
+        attributes.extend(visitor.attributes);
 
         let _ = handle.log(LogRecord {
             level: log_level(metadata.level()),
             message: visitor.message.unwrap_or_default(),
-            attributes: visitor.attributes,
+            attributes,
             activity_id,
         });
     }
