@@ -542,11 +542,7 @@ impl ExperimentRunHandle {
     /// The returned handle shares the run; only its inherited scope differs. Call-site attributes
     /// still take precedence over inherited ones.
     #[must_use]
-    pub fn with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self {
+    pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
         let mut scope = (*self.scope).clone();
         scope.insert(key.into(), value.into());
         Self {
@@ -557,10 +553,7 @@ impl ExperimentRunHandle {
 
     /// Return a handle whose logs inherit several additional scope attributes.
     #[must_use]
-    pub fn with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self {
+    pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
         let mut scope = (*self.scope).clone();
         scope.extend(attrs);
         Self {
@@ -865,11 +858,13 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 
-        let scoped = run
-            .with_attr("phase", "train")
-            .with_attr("shard", 1i64);
+        let scoped = run.with_attr("phase", "train").with_attr("shard", 1i64);
         scoped
-            .log(LogRecord::warn("slow step").with("shard", 2i64).with("elapsed_ms", 900i64))
+            .log(
+                LogRecord::warn("slow step")
+                    .with("shard", 2i64)
+                    .with("elapsed_ms", 900i64),
+            )
             .unwrap();
 
         let events = session.events.lock().unwrap();

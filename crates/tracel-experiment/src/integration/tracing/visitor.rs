@@ -1,20 +1,16 @@
-use std::num::NonZeroU64;
-
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 
-use crate::{ActivityId, ExperimentId};
+use crate::ExperimentId;
 
 /// Field names that route a record rather than describe it; they are not surfaced as attributes.
 const EXPERIMENT_ID_FIELD: &str = "experiment_id";
-const ACTIVITY_ID_FIELD: &str = "activity_id";
 
 /// Extracts routing identifiers (`experiment_id`, `activity_id`) and every other field as an
 /// inheritable attribute from a span's fields.
 #[derive(Debug, Default)]
 struct SpanFieldVisitor {
     experiment_id: Option<ExperimentId>,
-    activity_id: Option<ActivityId>,
     attributes: Map<String, Value>,
 }
 
@@ -24,11 +20,6 @@ impl SpanFieldVisitor {
             EXPERIMENT_ID_FIELD => {
                 if let Value::String(id) = value {
                     self.experiment_id = Some(ExperimentId::new(id));
-                }
-            }
-            ACTIVITY_ID_FIELD => {
-                if let Some(id) = value.as_u64() {
-                    self.activity_id = NonZeroU64::new(id).map(ActivityId::new);
                 }
             }
             name => {
@@ -68,7 +59,6 @@ impl Visit for SpanFieldVisitor {
 #[derive(Debug, Clone, Default)]
 pub struct SpanFields {
     pub experiment_id: Option<ExperimentId>,
-    pub activity_id: Option<ActivityId>,
     pub attributes: Map<String, Value>,
 }
 
@@ -76,9 +66,6 @@ impl SpanFields {
     pub fn merge(&mut self, other: Self) {
         if other.experiment_id.is_some() {
             self.experiment_id = other.experiment_id;
-        }
-        if other.activity_id.is_some() {
-            self.activity_id = other.activity_id;
         }
         self.attributes.extend(other.attributes);
     }
@@ -100,7 +87,6 @@ impl From<SpanFieldVisitor> for SpanFields {
     fn from(visitor: SpanFieldVisitor) -> Self {
         Self {
             experiment_id: visitor.experiment_id,
-            activity_id: visitor.activity_id,
             attributes: visitor.attributes,
         }
     }

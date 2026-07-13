@@ -199,17 +199,11 @@ impl ExperimentSession for RemoteExperimentSession {
 }
 
 fn to_log_entry(record: LogRecord) -> LogEntry {
-    let mut metadata = record.attributes;
-    // Fold the scoping activity id into the attributes so it stays filterable server-side.
-    if let Some(activity_id) = record.activity_id {
-        metadata.insert("activity_id".to_string(), activity_id.as_u64().into());
-    }
-
     LogEntry {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: to_wire_log_level(record.level),
         message: record.message,
-        metadata,
+        metadata: record.attributes,
     }
 }
 

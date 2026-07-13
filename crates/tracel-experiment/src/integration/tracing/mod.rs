@@ -192,7 +192,6 @@ mod tests {
                     record.attributes.get("step").and_then(|v| v.as_u64()),
                     Some(3)
                 );
-                assert_eq!(record.activity_id, None);
             }
             event => panic!("unexpected event: {event:?}"),
         }
@@ -258,35 +257,6 @@ mod tests {
 
         let events = session.events.lock().unwrap();
         assert!(events.is_empty());
-    }
-
-    #[test]
-    fn tracing_layer_scopes_events_to_the_current_activity() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-activity", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
-
-        let activity_id = tracing::subscriber::with_default(subscriber, || {
-            run.in_scope(|| {
-                let guard = run.activity("train").start();
-                let id = guard.id();
-                guard.tracing_span().in_scope(|| {
-                    tracing::info!("scoped to activity");
-                });
-                id
-            })
-        });
-
-        let events = session.events.lock().unwrap();
-        let log = events
-            .iter()
-            .find_map(|event| match event {
-                Event::Log(record) => Some(record),
-                _ => None,
-            })
-            .expect("a log event should have been recorded");
-        assert_eq!(log.message, "scoped to activity");
-        assert_eq!(log.activity_id, Some(activity_id));
     }
 
     #[test]

@@ -2,8 +2,6 @@
 
 use serde_json::{Map, Value};
 
-use crate::activity::ActivityId;
-
 /// Severity level of a [`LogRecord`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
@@ -44,7 +42,6 @@ pub struct LogRecord {
     pub level: LogLevel,
     pub message: String,
     pub attributes: Map<String, Value>,
-    pub activity_id: Option<ActivityId>,
 }
 
 impl LogRecord {
@@ -54,7 +51,6 @@ impl LogRecord {
             level,
             message: message.into(),
             attributes: Map::new(),
-            activity_id: None,
         }
     }
 

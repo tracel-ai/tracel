@@ -261,8 +261,7 @@ fn create_run(
 
     let ws = client.create_experiment_run_websocket(namespace, project_name, experiment_num)?;
 
-    let session =
-        RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
+    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
 
     let reader = CloudArtifactReader::new(client, path);
     let id = ExperimentId::from(format!("{}", experiment_num));

@@ -240,8 +240,7 @@ fn create_run(
 
     let ws = experiments_client.create_run_websocket(experiment_num)?;
 
-    let session =
-        RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
+    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
 
     let reader = StationArtifactReader::new(client);
     let id = ExperimentId::from(format!("{}", experiment_num));
