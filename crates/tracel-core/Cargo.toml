@@ -17,6 +17,7 @@ station = ["tracel-client/station"]
 [dependencies]
 tracel-client.workspace = true
 tracel-experiment.workspace = true
+tracel-inference.workspace = true
 url.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -27,6 +28,7 @@ crossbeam.workspace = true
 tracel-artifact.workspace = true
 tracing.workspace = true
 sha2.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

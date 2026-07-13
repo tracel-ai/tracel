@@ -370,6 +370,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "basics"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "eventsource-stream",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tracel",
+ "tracing",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2645,6 +2660,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "eventsource-stream"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
+dependencies = [
+ "futures-core",
+ "nom 7.1.3",
  "pin-project-lite",
 ]
 
@@ -5379,12 +5405,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
 ]
 
@@ -6390,6 +6418,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-stream"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-tungstenite"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6573,7 +6612,9 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "tracel-experiment",
+ "tracel-inference",
  "tracing",
  "tracing-subscriber",
 ]
@@ -6592,9 +6633,9 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.8.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e679801392b7f9162a5b68134f4e65540a2d9d55fef60683b0db462d73cf432"
+checksum = "98de6eb2922fbb0a3b66e062182aee20c7f0ae9f1750cdab117fadafe8b8eeec"
 dependencies = [
  "reqwest 0.13.4",
  "serde",
@@ -6611,6 +6652,7 @@ dependencies = [
 name = "tracel-core"
 version = "0.7.0"
 dependencies = [
+ "chrono",
  "crossbeam",
  "directories",
  "serde",
@@ -6622,6 +6664,7 @@ dependencies = [
  "tracel-artifact",
  "tracel-client",
  "tracel-experiment",
+ "tracel-inference",
  "tracing",
  "url",
 ]
@@ -6672,6 +6715,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -7250,6 +7295,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

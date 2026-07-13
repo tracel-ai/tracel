@@ -1,6 +1,6 @@
 use std::{collections::HashMap, error::Error};
 
-use crate::mapper::Mapper;
+use crate::cli::mapper::Mapper;
 
 #[derive(Default)]
 pub struct PresetMapper<I> {

@@ -3,10 +3,12 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use tracel_artifact::bundle::FsBundle;
-use tracel_inference::{Inference, InferenceWriter};
+use tracel_inference::{
+    Inference, InferenceId, InferenceInput, InferenceOutput, InferenceSession, OutputWriter,
+};
 
 use crate::FleetDeviceSession;
-use crate::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
+use crate::telemetry::{InferenceMetadata, MetricsSink};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetManagedInferenceError {
@@ -187,6 +189,47 @@ where
     fn current_fleet_key(&self) -> String {
         self.fleet_session.read().unwrap().fleet_key().to_string()
     }
+
+    fn metadata(&self, fleet_key: String, active: &ActiveInference<I>) -> InferenceMetadata {
+        InferenceMetadata::new(
+            fleet_key,
+            self.inference_name.clone(),
+            "unknown",
+            active.model_version.clone(),
+        )
+    }
+
+    /// Drive the managed model for one request, building a session that ships telemetry to the
+    /// process-global `metrics` recorder tagged with fleet metadata.
+    ///
+    /// This is fleet's provider-free entry point: it owns the session, so no `InferenceProvider` or
+    /// `InferenceJob` is involved. Per-request stats and any metrics the model records are scoped
+    /// with `fleet_key`/`inference_name`/`model_name`/`model_version`.
+    pub fn run<It, W>(
+        &self,
+        request_id: impl Into<InferenceId>,
+        input: It,
+        output: W,
+    ) -> Result<(), FleetManagedInferenceError>
+    where
+        It: IntoIterator<Item = I::Input>,
+        It::IntoIter: Send + 'static,
+        W: OutputWriter<I::Output> + 'static,
+    {
+        self.maybe_sync_and_rollout()?;
+        let active = self
+            .active()
+            .ok_or_else(|| FleetManagedInferenceError::FactoryFailed {
+                name: self.inference_name.clone(),
+                message: "no active model".to_string(),
+            })?;
+
+        let metadata = self.metadata(self.current_fleet_key(), &active);
+        let session = InferenceSession::new(request_id, Arc::new(MetricsSink))
+            .with_attributes(metadata.attributes());
+        session.run(&active.inference, input, output);
+        Ok(())
+    }
 }
 
 impl<I> Inference for FleetManagedInference<I>
@@ -196,7 +239,12 @@ where
     type Input = <I as Inference>::Input;
     type Output = <I as Inference>::Output;
 
-    fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
+    fn infer(
+        &self,
+        session: &InferenceSession,
+        input: InferenceInput<Self::Input>,
+        output: InferenceOutput<Self::Output>,
+    ) {
         let fleet_key = self.current_fleet_key();
         let request_span = tracing::info_span!(
             "fleet.inference",
@@ -206,12 +254,12 @@ where
         let _request_guard = request_span.enter();
 
         if let Err(err) = self.maybe_sync_and_rollout() {
-            writer.error(Box::new(err)).ok();
+            output.error(Box::new(err)).ok();
             return;
         }
 
         let Some(active) = self.active() else {
-            writer
+            output
                 .error(Box::new(FleetManagedInferenceError::FactoryFailed {
                     name: self.inference_name.clone(),
                     message: "no active model".to_string(),
@@ -220,16 +268,9 @@ where
             return;
         };
 
-        let metadata = InferenceMetadata::new(
-            fleet_key,
-            self.inference_name.clone(),
-            "unknown".to_string(),
-            active.model_version.clone(),
-        );
-
-        let writer =
-            writer.with_observer(Arc::new(InferenceWriterTelemetryObserver::new(metadata)));
-        active.inference.infer(input, writer)
+        // Scope the caller's session with fleet metadata so the inner model's telemetry is tagged.
+        let session = session.with_attributes(self.metadata(fleet_key, &active).attributes());
+        active.inference.infer(&session, input, output)
     }
 }
 

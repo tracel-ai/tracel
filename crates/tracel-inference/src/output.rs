@@ -3,11 +3,11 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-use crate::observer::{InferenceWriterObserver, InferenceWriterStats};
+use crate::observer::{InferenceOutputObserver, InferenceOutputStats};
 
 /// Errors that can occur when writing to an inference channel.
 #[derive(Debug, thiserror::Error)]
-pub enum InferenceWriterError {
+pub enum OutputWriterError {
     #[error("inference was cancelled")]
     Cancelled,
     #[error("unknown error: {0}")]
@@ -15,20 +15,20 @@ pub enum InferenceWriterError {
 }
 
 /// Communication channel for an inference task, allowing the app to send outputs and errors back to the session.
-pub struct InferenceWriter<O> {
-    channel: Box<dyn InferenceWriterChannel<O>>,
+pub struct InferenceOutput<O> {
+    writer: Box<dyn OutputWriter<O>>,
     instant: std::time::Instant,
-    observer: Option<Arc<dyn InferenceWriterObserver>>,
+    observer: Option<Arc<dyn InferenceOutputObserver>>,
     outputs: AtomicUsize,
     errors: AtomicUsize,
     cancelled: AtomicBool,
     finished: AtomicBool,
 }
 
-impl<O> InferenceWriter<O> {
-    pub(crate) fn new(channel: Box<dyn InferenceWriterChannel<O>>) -> Self {
+impl<O> InferenceOutput<O> {
+    pub(crate) fn new(writer: Box<dyn OutputWriter<O>>) -> Self {
         Self {
-            channel,
+            writer,
             instant: std::time::Instant::now(),
             observer: None,
             outputs: AtomicUsize::new(0),
@@ -38,21 +38,21 @@ impl<O> InferenceWriter<O> {
         }
     }
 
-    pub(crate) fn from_channel<C>(channel: C) -> Self
+    pub(crate) fn from_writer<C>(writer: C) -> Self
     where
-        C: InferenceWriterChannel<O> + 'static,
+        C: OutputWriter<O> + 'static,
     {
-        Self::new(Box::new(channel))
+        Self::new(Box::new(writer))
     }
 
-    pub fn with_observer(mut self, observer: Arc<dyn InferenceWriterObserver>) -> Self {
+    pub(crate) fn with_observer(mut self, observer: Arc<dyn InferenceOutputObserver>) -> Self {
         self.observer = Some(observer);
         self
     }
 
     /// Respond with an output item. This can be called multiple times to emit multiple items.
-    pub fn write(&self, output: O) -> Result<(), InferenceWriterError> {
-        match self.channel.write(output) {
+    pub fn write(&self, output: O) -> Result<(), OutputWriterError> {
+        match self.writer.write(output) {
             Ok(()) => {
                 self.outputs.fetch_add(1, Ordering::Relaxed);
                 if let Some(ref observer) = self.observer {
@@ -61,7 +61,7 @@ impl<O> InferenceWriter<O> {
                 Ok(())
             }
             Err(err) => {
-                if matches!(&err, InferenceWriterError::Cancelled) {
+                if matches!(&err, OutputWriterError::Cancelled) {
                     self.cancelled.store(true, Ordering::Release);
                     if let Some(ref observer) = self.observer {
                         observer.on_cancelled();
@@ -73,11 +73,11 @@ impl<O> InferenceWriter<O> {
     }
 
     /// Signal an error on the inference.
-    pub fn error<E>(&self, error: E) -> Result<(), InferenceWriterError>
+    pub fn error<E>(&self, error: E) -> Result<(), OutputWriterError>
     where
         E: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        match self.channel.error(error.into()) {
+        match self.writer.error(error.into()) {
             Ok(()) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 if let Some(ref observer) = self.observer {
@@ -86,7 +86,7 @@ impl<O> InferenceWriter<O> {
                 Ok(())
             }
             Err(err) => {
-                if matches!(&err, InferenceWriterError::Cancelled) {
+                if matches!(&err, OutputWriterError::Cancelled) {
                     self.cancelled.store(true, Ordering::Release);
                     if let Some(ref observer) = self.observer {
                         observer.on_cancelled();
@@ -99,14 +99,14 @@ impl<O> InferenceWriter<O> {
 
     fn finish(&self) {
         let duration = self.instant.elapsed();
-        self.channel.finish(duration);
+        self.writer.finish(duration);
 
         if self.finished.swap(true, Ordering::AcqRel) {
             return;
         }
 
         if let Some(ref observer) = self.observer {
-            observer.on_finish(&InferenceWriterStats {
+            observer.on_finish(&InferenceOutputStats {
                 duration,
                 outputs: self.outputs.load(Ordering::Acquire),
                 errors: self.errors.load(Ordering::Acquire),
@@ -116,23 +116,24 @@ impl<O> InferenceWriter<O> {
     }
 }
 
-/// When the `InferenceWriter` is dropped, it signals that the inference has finished, allowing the channel to perform any necessary cleanup or finalization.
-impl<O> Drop for InferenceWriter<O> {
+/// When the `InferenceOutput` is dropped, it signals that the inference has finished, allowing the writer to perform any necessary cleanup or finalization.
+impl<O> Drop for InferenceOutput<O> {
     fn drop(&mut self) {
         self.finish();
     }
 }
 
-/// Trait representing an inference task that can be executed with a given input and a writer for outputs.
-/// The inference implementation is responsible for writing outputs and errors to the provided writer, which will be sent back to the session.
-pub trait InferenceWriterChannel<O> {
-    /// Write an output item to the channel. This can be called multiple times to emit multiple items.
-    fn write(&self, output: O) -> Result<(), InferenceWriterError>;
+/// Sink for an inference's typed outputs and errors.
+///
+/// Each transport implements this to encode and deliver items as the inference produces them.
+pub trait OutputWriter<O> {
+    /// Write an output item to the writer. This can be called multiple times to emit multiple items.
+    fn write(&self, output: O) -> Result<(), OutputWriterError>;
     /// Signal an error on the inference, which will be sent back to the session.
     fn error(
         &self,
         error: Box<dyn std::error::Error + Send + Sync>,
-    ) -> Result<(), InferenceWriterError>;
-    /// Called when the `InferenceWriter` is dropped, allowing the channel to perform any necessary cleanup or finalization.
+    ) -> Result<(), OutputWriterError>;
+    /// Called when the `InferenceOutput` is dropped, allowing the writer to perform any necessary cleanup or finalization.
     fn finish(&self, duration: std::time::Duration);
 }

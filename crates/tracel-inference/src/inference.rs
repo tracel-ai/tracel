@@ -1,48 +1,118 @@
-use std::sync::Arc;
+use std::marker::PhantomData;
 
-use crate::{InferenceWriter, InferenceWriterChannel};
+use crate::{InferenceInput, InferenceOutput, InferenceSession};
 
-// TODO: maybe this should require send + sync
-pub trait Inference {
+/// A typed, streaming inference task.
+///
+/// An implementation reads typed inputs from [`InferenceInput`] and writes typed outputs to
+/// [`InferenceOutput`]. Both sides stream: the input yields items until the stream ends, and the
+/// output can emit any number of outputs. Any state the task needs (a loaded model, tokenizer, ...)
+/// is owned by the implementor and accessed through `&self`, so a single inference can serve many
+/// concurrent requests.
+///
+/// A closure can be adapted into an inference with [`inference_fn`], for cases that don't need a
+/// named type.
+pub trait Inference: Send + Sync {
+    /// The type of each input item pulled from the input stream.
     type Input;
+    /// The type of each output item written to the output stream.
     type Output;
 
-    fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>);
+    /// Run the inference, pulling inputs and writing outputs until complete.
+    ///
+    /// `session` is the per-request telemetry context (metrics, logs, scoped attributes). It is also
+    /// installed as the ambient session for this thread, so `tracing` events and
+    /// [`InferenceSession::current`] inside the call resolve to it.
+    fn infer(
+        &self,
+        session: &InferenceSession,
+        input: InferenceInput<Self::Input>,
+        output: InferenceOutput<Self::Output>,
+    );
 }
 
-pub struct InferenceWrapper<I, O> {
-    inner: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
+/// Adapts a closure `Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>)` into an
+/// [`Inference`].
+///
+/// Build one with [`inference_fn`].
+pub struct InferenceFn<F, I, O> {
+    f: F,
+    _types: PhantomData<fn(I, O)>,
 }
 
-impl<I, O> Clone for InferenceWrapper<I, O> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
-impl<I, O> InferenceWrapper<I, O> {
-    fn new<T>(inference: T) -> Self
-    where
-        T: Inference<Input = I, Output = O> + Send + Sync + 'static,
-    {
-        Self {
-            inner: Arc::new(inference),
-        }
-    }
-
-    pub fn infer<T: InferenceWriterChannel<O> + 'static>(&self, input: I, writer: T) {
-        self.inner
-            .infer(input, InferenceWriter::from_channel(writer));
-    }
-}
-
-impl<T, I, O> From<T> for InferenceWrapper<I, O>
+/// Wrap a closure into an [`Inference`] implementation.
+///
+/// ```ignore
+/// let echo = inference_fn(
+///     |_session: &InferenceSession, input: InferenceInput<String>, output: InferenceOutput<String>| {
+///         for item in input {
+///             let _ = output.write(item);
+///         }
+///     },
+/// );
+/// ```
+pub fn inference_fn<F, I, O>(f: F) -> InferenceFn<F, I, O>
 where
-    T: Inference<Input = I, Output = O> + Send + Sync + 'static,
+    F: Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
 {
-    fn from(inference: T) -> Self {
-        Self::new(inference)
+    InferenceFn {
+        f,
+        _types: PhantomData,
+    }
+}
+
+impl<F, I, O> Inference for InferenceFn<F, I, O>
+where
+    F: Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>) + Send + Sync,
+{
+    type Input = I;
+    type Output = O;
+
+    fn infer(
+        &self,
+        session: &InferenceSession,
+        input: InferenceInput<I>,
+        output: InferenceOutput<O>,
+    ) {
+        (self.f)(session, input, output)
+    }
+}
+
+/// Conversion into an [`Inference`], accepting both types that implement [`Inference`] and closures
+/// `Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>)`. `Marker` disambiguates the two
+/// blanket impls and is inferred at the call site.
+pub trait IntoInference<I, O, Marker> {
+    type Inference: Inference<Input = I, Output = O> + Send + Sync + 'static;
+
+    fn into_inference(self) -> Self::Inference;
+}
+
+/// Marker for the blanket impl over types that already implement [`Inference`].
+pub struct IsInference;
+
+impl<T> IntoInference<T::Input, T::Output, IsInference> for T
+where
+    T: Inference + Send + Sync + 'static,
+{
+    type Inference = T;
+
+    fn into_inference(self) -> T {
+        self
+    }
+}
+
+/// Marker for the blanket impl over closures.
+pub struct IsFn;
+
+impl<F, I, O> IntoInference<I, O, IsFn> for F
+where
+    F: Fn(&InferenceSession, InferenceInput<I>, InferenceOutput<O>) + Send + Sync + 'static,
+    I: 'static,
+    O: 'static,
+{
+    type Inference = InferenceFn<F, I, O>;
+
+    fn into_inference(self) -> InferenceFn<F, I, O> {
+        inference_fn(self)
     }
 }

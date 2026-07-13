@@ -1,21 +1,6 @@
-use tracel_inference::observer::{InferenceWriterObserver, InferenceWriterStats};
+use tracel_inference::sink::{InferenceSink, LogLevel, LogSample, MetricData, MetricSample};
 
-use std::time::Duration;
-
-/// Fleet-owned facts about a completed inference request.
-#[derive(Debug, Clone)]
-pub struct RequestTelemetry {
-    pub fleet_key: String,
-    pub inference_name: String,
-    pub model_name: String,
-    pub model_version: String,
-    pub duration: Duration,
-    pub outputs: usize,
-    pub errors: usize,
-    pub cancelled: bool,
-}
-
-/// Fleet metadata attached to each inference request.
+/// Fleet metadata attached to each inference request as scoped session attributes.
 #[derive(Debug, Clone)]
 pub struct InferenceMetadata {
     pub fleet_key: String,
@@ -38,6 +23,16 @@ impl InferenceMetadata {
             model_version: model_version.into(),
         }
     }
+
+    /// The metadata as scoped-attribute pairs for `InferenceSession::with_attributes`.
+    pub fn attributes(&self) -> [(&'static str, String); 4] {
+        [
+            ("fleet_key", self.fleet_key.clone()),
+            ("inference_name", self.inference_name.clone()),
+            ("model_name", self.model_name.clone()),
+            ("model_version", self.model_version.clone()),
+        ]
+    }
 }
 
 impl Default for InferenceMetadata {
@@ -46,82 +41,51 @@ impl Default for InferenceMetadata {
     }
 }
 
-pub fn record_request(data: RequestTelemetry) {
-    let cancelled = data.cancelled.to_string();
-    let duration_ms = data.duration.as_secs_f64() * 1_000.0;
+/// [`InferenceSink`] that routes inference telemetry to the process-global `metrics` recorder and to
+/// `tracing`.
+///
+/// Per-request stats and any metrics the inference records become `tracel_fleet_`-prefixed metrics,
+/// with the session's scoped attributes as labels (excluding the high-cardinality `request_id`).
+/// Logs are forwarded to `tracing` at their level.
+pub struct MetricsSink;
 
-    ::metrics::counter!(
-        "tracel_fleet_inference_requests_total",
-        "inference_name" => data.inference_name.clone(),
-        "model_name" => data.model_name.clone(),
-        "model_version" => data.model_version.clone(),
-        "fleet_key" => data.fleet_key.clone(),
-        "cancelled" => cancelled.clone(),
-    )
-    .increment(1);
+impl InferenceSink for MetricsSink {
+    fn record_metric(&self, sample: MetricSample) {
+        let name = format!("tracel_fleet_{}", sample.name);
+        let labels = metric_labels(&sample.metadata);
+        match sample.data {
+            MetricData::Counter { value } => ::metrics::counter!(name, labels).increment(value),
+            MetricData::Gauge { value } => ::metrics::gauge!(name, labels).set(value),
+            MetricData::Distribution { value } => ::metrics::histogram!(name, labels).record(value),
+        }
+    }
 
-    ::metrics::counter!(
-        "tracel_fleet_inference_outputs_total",
-        "inference_name" => data.inference_name.clone(),
-        "model_name" => data.model_name.clone(),
-        "model_version" => data.model_version.clone(),
-        "fleet_key" => data.fleet_key.clone(),
-    )
-    .increment(data.outputs as u64);
-
-    ::metrics::counter!(
-        "tracel_fleet_inference_errors_total",
-        "inference_name" => data.inference_name.clone(),
-        "model_name" => data.model_name.clone(),
-        "model_version" => data.model_version.clone(),
-        "fleet_key" => data.fleet_key.clone(),
-    )
-    .increment(data.errors as u64);
-
-    ::metrics::histogram!(
-        "tracel_fleet_inference_duration_ms",
-        "inference_name" => data.inference_name.clone(),
-        "model_name" => data.model_name.clone(),
-        "model_version" => data.model_version.clone(),
-        "fleet_key" => data.fleet_key.clone(),
-        "cancelled" => cancelled,
-    )
-    .record(duration_ms);
-
-    if data.errors > 0 {
-        tracing::warn!(
-            inference_name = data.inference_name.as_str(),
-            model_name = data.model_name.as_str(),
-            model_version = data.model_version.as_str(),
-            fleet_key = data.fleet_key.as_str(),
-            errors = data.errors,
-            "inference finished with writer errors"
-        );
+    fn record_log(&self, sample: LogSample) {
+        let metadata = sample.metadata;
+        match sample.level {
+            LogLevel::Error => tracing::error!(%metadata, "{}", sample.message),
+            LogLevel::Warn => tracing::warn!(%metadata, "{}", sample.message),
+            LogLevel::Info => tracing::info!(%metadata, "{}", sample.message),
+            LogLevel::Debug => tracing::debug!(%metadata, "{}", sample.message),
+            LogLevel::Trace => tracing::trace!(%metadata, "{}", sample.message),
+        }
     }
 }
 
-/// Writer observer that reports per-request telemetry on inference completion.
-pub struct InferenceWriterTelemetryObserver {
-    metadata: InferenceMetadata,
-}
-
-impl InferenceWriterTelemetryObserver {
-    pub fn new(metadata: InferenceMetadata) -> Self {
-        Self { metadata }
-    }
-}
-
-impl InferenceWriterObserver for InferenceWriterTelemetryObserver {
-    fn on_finish(&self, stats: &InferenceWriterStats) {
-        record_request(RequestTelemetry {
-            fleet_key: self.metadata.fleet_key.clone(),
-            inference_name: self.metadata.inference_name.clone(),
-            model_name: self.metadata.model_name.clone(),
-            model_version: self.metadata.model_version.clone(),
-            duration: stats.duration,
-            outputs: stats.outputs,
-            errors: stats.errors,
-            cancelled: stats.cancelled,
-        });
-    }
+/// Session attributes become metric labels, excluding the high-cardinality `request_id`.
+fn metric_labels(metadata: &serde_json::Value) -> Vec<::metrics::Label> {
+    let Some(object) = metadata.as_object() else {
+        return Vec::new();
+    };
+    object
+        .iter()
+        .filter(|(key, _)| key.as_str() != "request_id")
+        .map(|(key, value)| {
+            let value = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            ::metrics::Label::new(key.clone(), value)
+        })
+        .collect()
 }

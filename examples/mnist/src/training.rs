@@ -193,6 +193,7 @@ fn train(
     training = training
         .with_custom_checkpointers(model_ckpt, optim_ckpt, scheduler_ckpt)
         .with_metric_logger(experiment.metric_logger())
+        .with_progress_logger(experiment.training_progress_logger())
         .with_interrupter(experiment.interrupter());
 
     training.launch(Learner::new(

@@ -1,11 +1,23 @@
-//! Inference contracts and type-erased adapters.
+//! Typed, streaming inference contracts.
 
-pub mod erased;
+mod context;
+mod error;
 mod inference;
-pub mod observer;
-pub mod stream;
-mod writer;
+mod input;
+mod observer;
+mod output;
+mod provider;
+mod session;
+mod stream;
 
-pub use erased::{ErasedInference, ErasedInferenceWriter, JsonInference};
-pub use inference::{Inference, InferenceWrapper};
-pub use writer::{InferenceWriter, InferenceWriterChannel, InferenceWriterError};
+pub mod integration;
+pub mod sink;
+
+pub use context::SessionGuard;
+pub use error::InferenceError;
+pub use inference::{Inference, IntoInference, inference_fn};
+pub use input::InferenceInput;
+pub use output::{InferenceOutput, OutputWriter, OutputWriterError};
+pub use provider::{InferenceJob, InferenceModule, InferenceProvider};
+pub use session::{InferenceId, InferenceSession};
+pub use stream::InferenceStream;

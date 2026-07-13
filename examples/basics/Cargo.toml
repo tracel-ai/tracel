@@ -1,0 +1,27 @@
+[package]
+name = "basics"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[features]
+default = ["server"]
+server = ["tracel/server"]
+
+[dependencies]
+tracel = { workspace = true }
+anyhow.workspace = true
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+
+# For the streaming HTTP client example.
+reqwest = { version = "0.13", default-features = false, features = ["stream"] }
+eventsource-stream = "0.2"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio-stream.workspace = true
+
+# The HTTP server example needs the server feature; the rest build without it.
+[[example]]
+name = "serve"
+required-features = ["server"]

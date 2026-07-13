@@ -1,3 +1,7 @@
+//! Train MNIST with the Burn `train` integration: metrics, checkpoints, progress, and cancellation.
+//! See src/training.rs for the wiring.
+//!
+//! cargo run -p mnist --example mnist
 #![recursion_limit = "256"]
 
 use burn::backend::wgpu::WgpuDevice;
@@ -8,16 +12,17 @@ use tracel::experiment::ExperimentRun;
 use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    Context::new(Connection::Cloud)?
-        .experiment()
-        .create("mnist_wgpu", |session: &ExperimentRun, config| {
+    let module = Context::new(Connection::Offline("./runs".into()))?.experiment();
+
+    module
+        .create("mnist", |experiment: &ExperimentRun, config| {
             training::run(
-                session,
+                experiment,
                 config,
                 vec![Device::autodiff(WgpuDevice::default().into())],
             )
         })
-        .run(MnistTrainingConfig::default())
+        .run(MnistTrainingConfig::small())
         .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
 
     Ok(())

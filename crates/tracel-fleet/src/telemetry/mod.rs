@@ -4,7 +4,7 @@ mod logs;
 mod metrics;
 mod pipeline;
 
-pub use inference::{InferenceMetadata, InferenceWriterTelemetryObserver};
+pub use inference::{InferenceMetadata, MetricsSink};
 use metrics_util::layers::Layer;
 use once_cell::sync::{Lazy, OnceCell};
 use tracing_subscriber::layer::SubscriberExt;
