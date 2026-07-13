@@ -374,6 +374,7 @@ name = "basics"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "common",
  "eventsource-stream",
  "reqwest 0.13.4",
  "serde",
@@ -1275,6 +1276,14 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "common"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "tracel",
 ]
 
 [[package]]
@@ -4222,6 +4231,7 @@ dependencies = [
  "anyhow",
  "burn",
  "clap",
+ "common",
  "ctrlc",
  "dotenvy",
  "log",

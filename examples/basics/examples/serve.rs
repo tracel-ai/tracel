@@ -12,10 +12,9 @@ use basics::WordTokenizer;
 use basics::training::{self, TrainingConfig};
 use tracel::app::server::{JsonBody, Server};
 use tracel::experiment::ExperimentRun;
-use tracel::{Connection, Context};
 
 fn main() -> anyhow::Result<()> {
-    let context = Context::new(Connection::Offline("./runs".into()))?;
+    let context = common::context()?;
 
     let infer = context.inference().create(
         "wordtok",
