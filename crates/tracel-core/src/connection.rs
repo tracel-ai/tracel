@@ -8,6 +8,7 @@ use crate::backend::cloud::{CloudBackend, CloudError};
 use crate::backend::local::LocalBackend;
 #[cfg(feature = "station")]
 use crate::backend::station::{StationBackend, StationError};
+use crate::dataset::DatasetProvider;
 use crate::inference::{CloudInferenceProvider, DefaultInferenceProvider};
 use crate::model_registry::ModelRegistryProvider;
 use tracel_experiment::ExperimentProvider;
@@ -17,6 +18,7 @@ pub struct Providers {
     pub experiment: Arc<dyn ExperimentProvider>,
     pub inference: Arc<dyn InferenceProvider>,
     pub model_registry: Option<Arc<dyn ModelRegistryProvider>>,
+    pub dataset: Option<Arc<dyn DatasetProvider>>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,7 @@ impl Connection {
                     experiment: backend.clone(),
                     inference,
                     model_registry: Some(backend),
+                    dataset: None,
                 })
             }
             Connection::Offline(path) => {
@@ -49,6 +52,7 @@ impl Connection {
                     experiment: backend,
                     inference: Arc::new(DefaultInferenceProvider::new()),
                     model_registry: None,
+                    dataset: None,
                 })
             }
             #[cfg(feature = "station")]
@@ -57,7 +61,8 @@ impl Connection {
                 Ok(Providers {
                     experiment: backend.clone(),
                     inference: Arc::new(DefaultInferenceProvider::new()),
-                    model_registry: Some(backend),
+                    model_registry: Some(backend.clone()),
+                    dataset: Some(backend),
                 })
             }
         }
