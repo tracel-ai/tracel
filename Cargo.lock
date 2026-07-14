@@ -6674,6 +6674,7 @@ dependencies = [
 name = "tracel-core"
 version = "0.7.0"
 dependencies = [
+ "burn",
  "chrono",
  "crossbeam",
  "directories",

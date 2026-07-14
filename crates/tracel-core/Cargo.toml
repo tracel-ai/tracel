@@ -13,6 +13,7 @@ categories.workspace = true
 [features]
 default = []
 station = ["tracel-client/station"]
+burn = ["dep:burn"]
 
 [dependencies]
 tracel-client.workspace = true
@@ -30,6 +31,7 @@ tracel-artifact.workspace = true
 tracing.workspace = true
 sha2.workspace = true
 chrono.workspace = true
+burn = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
