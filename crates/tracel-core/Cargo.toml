@@ -22,6 +22,7 @@ url.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_with = { version = "3.20.0", features = ["base64", "macros"] }
 directories = "6.0"
 toml = "1.1.2"
 crossbeam.workspace = true

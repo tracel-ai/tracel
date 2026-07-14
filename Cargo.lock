@@ -6679,6 +6679,7 @@ dependencies = [
  "directories",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
