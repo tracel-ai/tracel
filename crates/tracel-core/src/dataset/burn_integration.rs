@@ -13,7 +13,7 @@ const DEFAULT_PAGE_SIZE: u32 = 256;
 /// A `burn::data::dataset::Dataset` view over a Station-hosted dataset version, backed by
 /// `DatasetModule`'s page-at-a-time item streaming. Fetched pages are cached for the lifetime
 /// of this value so repeated epochs over the same indices do not re-hit the network.
-pub struct StationDataset<T> {
+pub struct AnnotationDataset<T> {
     module: DatasetModule,
     dataset_ref: DatasetRef,
     page_size: u32,
@@ -21,7 +21,7 @@ pub struct StationDataset<T> {
     page_cache: Mutex<HashMap<u64, Arc<Vec<T>>>>,
 }
 
-impl<T> StationDataset<T> {
+impl<T> AnnotationDataset<T> {
     pub fn new(module: DatasetModule, dataset_ref: DatasetRef) -> Self {
         Self::with_page_size(module, dataset_ref, DEFAULT_PAGE_SIZE)
     }
@@ -36,6 +36,8 @@ impl<T> StationDataset<T> {
         }
     }
 
+    // allow directly fetching items with cursor (index) and length
+
     fn page_start(&self, index: usize) -> u64 {
         (index as u64 / self.page_size as u64) * self.page_size as u64
     }
@@ -45,7 +47,7 @@ impl<T> StationDataset<T> {
     }
 }
 
-impl<T> Dataset<T> for StationDataset<T>
+impl<T> Dataset<T> for AnnotationDataset<T>
 where
     T: DeserializeOwned + Clone + Send + Sync,
 {
@@ -65,17 +67,19 @@ where
         let decoded: Vec<T> = raw
             .items
             .into_iter()
-            .filter_map(|raw_item| match serde_json::from_slice::<T>(&raw_item.payload) {
-                Ok(value) => Some(value),
-                Err(e) => {
-                    tracing::warn!(
-                        entry_idx = raw_item.entry_idx,
-                        error = %e,
-                        "skipping malformed dataset item"
-                    );
-                    None
-                }
-            })
+            .filter_map(
+                |raw_item| match serde_json::from_slice::<T>(&raw_item.payload) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        tracing::warn!(
+                            entry_idx = raw_item.entry_idx,
+                            error = %e,
+                            "skipping malformed dataset item"
+                        );
+                        None
+                    }
+                },
+            )
             .collect();
 
         let item = decoded.get(offset).cloned();
@@ -91,7 +95,9 @@ where
             let mut count = 0usize;
             let mut cursor = None;
             loop {
-                let Ok(page) = self.module.stream_items(&self.dataset_ref, cursor, Some(1000))
+                let Ok(page) = self
+                    .module
+                    .stream_items(&self.dataset_ref, cursor, Some(1000))
                 else {
                     break;
                 };
@@ -109,26 +115,25 @@ where
 impl DatasetModule {
     /// Wraps this dataset streaming module as a `burn::data::dataset::Dataset<T>`, decoding
     /// each item's payload as JSON.
-    pub fn as_burn_dataset<T>(&self, dataset_ref: DatasetRef) -> StationDataset<T>
+    pub fn as_burn_dataset<T>(&self, dataset_ref: DatasetRef) -> AnnotationDataset<T>
     where
         T: DeserializeOwned + Clone + Send + Sync,
     {
-        StationDataset::new(self.clone(), dataset_ref)
+        AnnotationDataset::new(self.clone(), dataset_ref)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use burn::data::dataset::Dataset;
     use serde::{Deserialize, Serialize};
 
-    use super::StationDataset;
+    use super::AnnotationDataset;
     use crate::dataset::{
-        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetRef,
-        RawDatasetItem,
+        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetRef, RawDatasetItem,
     };
 
     #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -175,7 +180,7 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: StationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
 
         assert_eq!(dataset.get(0), Some(TestItem { value: 42 }));
     }
@@ -198,7 +203,7 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: StationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
 
         // The malformed item is dropped from the decoded page, so the one surviving item
         // shifts down to offset 0; there is no second item in the decoded page.
@@ -231,7 +236,7 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: StationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.len(), 2);
@@ -254,8 +259,8 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: StationDataset<TestItem> =
-            StationDataset::with_page_size(module, dataset_ref, 10);
+        let dataset: AnnotationDataset<TestItem> =
+            AnnotationDataset::with_page_size(module, dataset_ref, 10);
 
         assert_eq!(dataset.get(0), Some(TestItem { value: 1 }));
         assert_eq!(dataset.get(1), Some(TestItem { value: 2 }));
@@ -274,8 +279,8 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: StationDataset<TestItem> =
-            StationDataset::with_page_size(module, dataset_ref, 10);
+        let dataset: AnnotationDataset<TestItem> =
+            AnnotationDataset::with_page_size(module, dataset_ref, 10);
 
         assert_eq!(dataset.get(5), None);
     }
