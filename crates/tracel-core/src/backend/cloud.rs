@@ -68,6 +68,8 @@ impl CloudBackend {
     }
 
     pub fn create_context() -> Result<CloudBackend, CloudError> {
+        install_crypto_provider();
+
         let env = discover_env()?;
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
@@ -81,6 +83,19 @@ impl CloudBackend {
         })?;
         CloudBackend::new(client, namespace, project)
     }
+}
+
+/// Selects the rustls crypto provider used by every TLS connection this backend opens.
+///
+/// Both providers are linked in: burn pulls reqwest 0.12 (ring) and tracel-client pulls
+/// reqwest 0.13 (aws-lc-rs), which unify onto one rustls. rustls refuses to choose when both
+/// are enabled, and tungstenite builds its `ClientConfig` without naming one, so the websocket
+/// in `create_run` panics unless a process default is already set. Both reqwest versions honor
+/// this too, so the whole process ends up on one provider.
+///
+/// An `Err` means the embedding application installed its own first; that choice stands.
+fn install_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {

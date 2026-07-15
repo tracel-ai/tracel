@@ -6676,6 +6676,7 @@ dependencies = [
  "chrono",
  "crossbeam",
  "directories",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",

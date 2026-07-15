@@ -24,6 +24,10 @@ serde.workspace = true
 serde_json.workspace = true
 directories = "6.0"
 toml = "1.1.2"
+rustls = { version = "0.23", default-features = false, features = [
+    "aws-lc-rs",
+    "std",
+] }
 crossbeam.workspace = true
 tracel-artifact.workspace = true
 tracing.workspace = true
