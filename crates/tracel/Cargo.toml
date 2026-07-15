@@ -15,6 +15,7 @@ rust-version.workspace = true
 default = []
 server = ["tracel-app/server"]
 station = ["tracel-core/station"]
+burn = ["tracel-core/burn"]
 
 [dependencies]
 tracel-core.workspace = true

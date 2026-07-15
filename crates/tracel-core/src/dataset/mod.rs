@@ -1,10 +1,10 @@
-#[cfg(feature = "station")]
-mod station;
 #[cfg(feature = "burn")]
 mod burn_integration;
+#[cfg(feature = "station")]
+mod station;
 
 #[cfg(feature = "burn")]
-pub use burn_integration::StationDataset;
+pub use burn_integration::AnnotationDataset;
 
 use std::sync::Arc;
 
