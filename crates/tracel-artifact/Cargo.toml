@@ -12,7 +12,16 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-reqwest = { version = "0.13.4", features = ["blocking"] }
+# `rustls-no-provider` instead of the default `rustls`: the latter forces aws-lc-rs, which
+# collides with the `ring` that burn-std pulls in via reqwest 0.12. Both unify on one rustls,
+# and rustls refuses to auto-select when both providers are enabled.
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "blocking",
+    "rustls-no-provider",
+    "charset",
+    "http2",
+    "system-proxy",
+] }
 serde = { workspace = true, features = ["derive"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
