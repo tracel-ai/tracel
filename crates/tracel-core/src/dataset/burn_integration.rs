@@ -1,44 +1,124 @@
-//! `burn::data::dataset::Dataset` adapter over `IndexedAnnotationDataset`.
-//!
-//! This is a thin translation layer only: all paging, caching, and cursor bookkeeping live in
-//! `IndexedAnnotationDataset` (which has no dependency on Burn). This module exists purely to
-//! satisfy Burn's index-based `Dataset` trait by delegating to that position-based accessor.
+//! `burn::data::dataset::Dataset` adapter over Station's item streaming API.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use burn::data::dataset::Dataset;
+use serde::de::DeserializeOwned;
 
-use super::{AnnotationItem, DatasetModule, DatasetRef, IndexedAnnotationDataset};
+use super::{DatasetModule, DatasetRef};
 
-pub struct AnnotationDataset {
-    inner: IndexedAnnotationDataset,
+const DEFAULT_PAGE_SIZE: u32 = 256;
+
+/// A `burn::data::dataset::Dataset` view over a Station-hosted dataset version, backed by
+/// `DatasetModule`'s page-at-a-time item streaming. Fetched pages are cached for the lifetime
+/// of this value so repeated epochs over the same indices do not re-hit the network.
+pub struct AnnotationDataset<T> {
+    module: DatasetModule,
+    dataset_ref: DatasetRef,
+    page_size: u32,
+    len: OnceLock<usize>,
+    page_cache: Mutex<HashMap<u64, Arc<Vec<T>>>>,
 }
 
-impl AnnotationDataset {
+impl<T> AnnotationDataset<T> {
     pub fn new(module: DatasetModule, dataset_ref: DatasetRef) -> Self {
-        Self {
-            inner: IndexedAnnotationDataset::new(module, dataset_ref),
-        }
+        Self::with_page_size(module, dataset_ref, DEFAULT_PAGE_SIZE)
     }
 
     pub fn with_page_size(module: DatasetModule, dataset_ref: DatasetRef, page_size: u32) -> Self {
         Self {
-            inner: IndexedAnnotationDataset::with_page_size(module, dataset_ref, page_size),
+            module,
+            dataset_ref,
+            page_size,
+            len: OnceLock::new(),
+            page_cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    // allow directly fetching items with cursor (index) and length
+
+    fn page_start(&self, index: usize) -> u64 {
+        (index as u64 / self.page_size as u64) * self.page_size as u64
+    }
+
+    fn offset_in_page(&self, index: usize) -> usize {
+        index % self.page_size as usize
     }
 }
 
-impl Dataset<AnnotationItem> for AnnotationDataset {
-    fn get(&self, index: usize) -> Option<AnnotationItem> {
-        self.inner.get(index)
+impl<T> Dataset<T> for AnnotationDataset<T>
+where
+    T: DeserializeOwned + Clone + Send + Sync,
+{
+    fn get(&self, index: usize) -> Option<T> {
+        let page_start = self.page_start(index);
+        let offset = self.offset_in_page(index);
+
+        if let Some(page) = self.page_cache.lock().unwrap().get(&page_start) {
+            return page.get(offset).cloned();
+        }
+
+        let raw = self
+            .module
+            .stream_items(&self.dataset_ref, Some(page_start), Some(self.page_size))
+            .ok()?;
+
+        let decoded: Vec<T> = raw
+            .items
+            .into_iter()
+            .filter_map(
+                |raw_item| match serde_json::from_slice::<T>(&raw_item.payload) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        tracing::warn!(
+                            entry_idx = raw_item.entry_idx,
+                            error = %e,
+                            "skipping malformed dataset item"
+                        );
+                        None
+                    }
+                },
+            )
+            .collect();
+
+        let item = decoded.get(offset).cloned();
+        self.page_cache
+            .lock()
+            .unwrap()
+            .insert(page_start, Arc::new(decoded));
+        item
     }
 
     fn len(&self) -> usize {
-        self.inner.len()
+        *self.len.get_or_init(|| {
+            let mut count = 0usize;
+            let mut cursor = None;
+            loop {
+                let Ok(page) = self
+                    .module
+                    .stream_items(&self.dataset_ref, cursor, Some(1000))
+                else {
+                    break;
+                };
+                count += page.items.len();
+                match page.next_cursor {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
+            }
+            count
+        })
     }
 }
 
 impl DatasetModule {
-    /// Wraps this dataset streaming module as a `burn::data::dataset::Dataset<AnnotationItem>`.
-    pub fn as_burn_dataset(&self, dataset_ref: DatasetRef) -> AnnotationDataset {
+    /// Wraps this dataset streaming module as a `burn::data::dataset::Dataset<T>`, decoding
+    /// each item's payload as JSON.
+    pub fn as_burn_dataset<T>(&self, dataset_ref: DatasetRef) -> AnnotationDataset<T>
+    where
+        T: DeserializeOwned + Clone + Send + Sync,
+    {
         AnnotationDataset::new(self.clone(), dataset_ref)
     }
 }
@@ -46,14 +126,20 @@ impl DatasetModule {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use burn::data::dataset::Dataset;
+    use serde::{Deserialize, Serialize};
 
     use super::AnnotationDataset;
     use crate::dataset::{
-        AnnotationItem, DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetRef,
-        RawDatasetItem,
+        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetRef, RawDatasetItem,
     };
+
+    #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+    struct TestItem {
+        value: u32,
+    }
 
     struct FakeProvider<F> {
         stream: F,
@@ -75,64 +161,127 @@ mod tests {
         }
     }
 
-    fn item(entry_idx: u64, example_payload: &[u8]) -> RawDatasetItem {
+    fn item(entry_idx: u64, value: u32) -> RawDatasetItem {
         RawDatasetItem {
             entry_idx,
-            payload: serde_json::to_vec(&AnnotationItem {
-                source_item_id: None,
-                example_payload: example_payload.to_vec(),
-                example_size_bytes: example_payload.len() as u64,
-                annotation: None,
-            })
-            .unwrap(),
+            payload: serde_json::to_vec(&TestItem { value }).unwrap(),
         }
     }
 
-    // These only need to prove `Dataset::get`/`len` correctly delegate to
-    // `IndexedAnnotationDataset` — paging/caching behavior itself is exercised by
-    // `dataset::tests` against `IndexedAnnotationDataset` directly, with no Burn dependency.
-
     #[test]
-    fn given_burn_dataset_when_get_then_it_delegates_to_indexed_dataset() {
+    fn given_valid_json_item_when_get_then_item_is_decoded() {
         let provider = FakeProvider {
             stream: |_dataset_ref: &DatasetRef, _cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
-                    items: vec![item(0, b"hello")],
+                    items: vec![item(0, 42)],
                     next_cursor: None,
                 })
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: AnnotationDataset = module.as_burn_dataset(dataset_ref);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
 
-        assert_eq!(dataset.get(0).unwrap().example_payload, b"hello");
-        assert!(dataset.get(1).is_none());
+        assert_eq!(dataset.get(0), Some(TestItem { value: 42 }));
     }
 
     #[test]
-    fn given_burn_dataset_when_len_then_it_delegates_to_indexed_dataset() {
+    fn given_malformed_item_when_get_then_it_is_skipped_and_valid_items_still_decode() {
         let provider = FakeProvider {
-            stream: |_dataset_ref: &DatasetRef, cursor: Option<u64>, _limit: Option<u32>| match cursor
-            {
-                None => Ok(DatasetItemsPage {
-                    items: vec![item(0, b"a")],
-                    next_cursor: Some(1),
-                }),
-                Some(1) => Ok(DatasetItemsPage {
-                    items: vec![item(1, b"b")],
+            stream: |_dataset_ref: &DatasetRef, _cursor: Option<u64>, _limit: Option<u32>| {
+                Ok(DatasetItemsPage {
+                    items: vec![
+                        RawDatasetItem {
+                            entry_idx: 0,
+                            payload: b"not json".to_vec(),
+                        },
+                        item(1, 7),
+                    ],
                     next_cursor: None,
-                }),
-                _ => Ok(DatasetItemsPage {
-                    items: vec![],
-                    next_cursor: None,
-                }),
+                })
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset_ref = DatasetRef::new("ds".to_string(), 1);
-        let dataset: AnnotationDataset = AnnotationDataset::with_page_size(module, dataset_ref, 1);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
+
+        // The malformed item is dropped from the decoded page, so the one surviving item
+        // shifts down to offset 0; there is no second item in the decoded page.
+        assert_eq!(dataset.get(0), Some(TestItem { value: 7 }));
+        assert_eq!(dataset.get(1), None);
+    }
+
+    #[test]
+    fn given_dataset_when_len_called_twice_then_provider_is_walked_only_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        let provider = FakeProvider {
+            stream: move |_dataset_ref: &DatasetRef, cursor: Option<u64>, _limit: Option<u32>| {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                match cursor {
+                    None => Ok(DatasetItemsPage {
+                        items: vec![item(0, 1)],
+                        next_cursor: Some(1),
+                    }),
+                    Some(1) => Ok(DatasetItemsPage {
+                        items: vec![item(1, 2)],
+                        next_cursor: None,
+                    }),
+                    _ => Ok(DatasetItemsPage {
+                        items: vec![],
+                        next_cursor: None,
+                    }),
+                }
+            },
+        };
+        let module = DatasetModule::new(Arc::new(provider));
+        let dataset_ref = DatasetRef::new("ds".to_string(), 1);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset(dataset_ref);
 
         assert_eq!(dataset.len(), 2);
+        assert_eq!(dataset.len(), 2);
+        // Two pages walked on the first call, zero more on the second.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn given_two_indices_in_same_page_when_get_called_twice_then_provider_is_called_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        let provider = FakeProvider {
+            stream: move |_dataset_ref: &DatasetRef, _cursor: Option<u64>, _limit: Option<u32>| {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                Ok(DatasetItemsPage {
+                    items: vec![item(0, 1), item(1, 2)],
+                    next_cursor: None,
+                })
+            },
+        };
+        let module = DatasetModule::new(Arc::new(provider));
+        let dataset_ref = DatasetRef::new("ds".to_string(), 1);
+        let dataset: AnnotationDataset<TestItem> =
+            AnnotationDataset::with_page_size(module, dataset_ref, 10);
+
+        assert_eq!(dataset.get(0), Some(TestItem { value: 1 }));
+        assert_eq!(dataset.get(1), Some(TestItem { value: 2 }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn given_index_past_page_contents_when_get_then_none_is_returned() {
+        let provider = FakeProvider {
+            stream: |_dataset_ref: &DatasetRef, _cursor: Option<u64>, _limit: Option<u32>| {
+                Ok(DatasetItemsPage {
+                    items: vec![item(0, 1)],
+                    next_cursor: None,
+                })
+            },
+        };
+        let module = DatasetModule::new(Arc::new(provider));
+        let dataset_ref = DatasetRef::new("ds".to_string(), 1);
+        let dataset: AnnotationDataset<TestItem> =
+            AnnotationDataset::with_page_size(module, dataset_ref, 10);
+
+        assert_eq!(dataset.get(5), None);
     }
 }
