@@ -64,7 +64,7 @@ pub mod experiment {
 
 /// Dataset streaming (Station-only).
 pub mod dataset {
-    pub use tracel_core::dataset::*;
+    pub use tracel_core::{AnnotationDataset, DatasetModule};
 }
 
 /// Inference contracts and adapters.
