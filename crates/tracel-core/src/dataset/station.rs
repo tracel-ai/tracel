@@ -2,12 +2,13 @@ use tracel_client::ClientError;
 use tracel_client::station::dataset::StreamDatasetVersionItemsRequest;
 
 use crate::backend::station::StationBackend;
-use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider, DatasetRef, RawDatasetItem};
+use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider, RawDatasetItem};
 
 impl DatasetProvider for StationBackend {
     fn stream_items(
         &self,
-        dataset_ref: &DatasetRef,
+        name: &str,
+        version: u32,
         cursor: Option<u64>,
         limit: Option<u32>,
     ) -> Result<DatasetItemsPage, DatasetError> {
@@ -15,11 +16,11 @@ impl DatasetProvider for StationBackend {
             .client
             .datasets()
             .stream_items(
-                &dataset_ref.name,
-                dataset_ref.version,
+                name,
+                version,
                 StreamDatasetVersionItemsRequest { cursor, limit },
             )
-            .map_err(|err| self.describe_stream_error(err, dataset_ref))?;
+            .map_err(|err| self.describe_stream_error(err, name, version))?;
 
         Ok(DatasetItemsPage {
             items: response
@@ -39,18 +40,18 @@ impl StationBackend {
     /// Turns a failed stream request into a precise not-found error. Only queries the dataset
     /// and version individually when the request actually failed as not-found, so a successful
     /// stream pays for a single round trip instead of three.
-    fn describe_stream_error(&self, err: ClientError, dataset_ref: &DatasetRef) -> DatasetError {
+    fn describe_stream_error(&self, err: ClientError, name: &str, version: u32) -> DatasetError {
         if !matches!(err, ClientError::NotFound) {
             return DatasetError::Client(Box::new(err));
         }
-        if let Err(e) = self.ensure_dataset_exists(&dataset_ref.name) {
+        if let Err(e) = self.ensure_dataset_exists(name) {
             return e;
         }
-        self.ensure_dataset_version_exists(&dataset_ref.name, dataset_ref.version)
+        self.ensure_dataset_version_exists(name, version)
             .err()
             .unwrap_or(DatasetError::VersionNotFound {
-                name: dataset_ref.name.clone(),
-                version: dataset_ref.version,
+                name: name.to_string(),
+                version,
             })
     }
 
