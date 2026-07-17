@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use burn::data::dataset::Dataset;
 use serde::de::DeserializeOwned;
@@ -7,15 +7,27 @@ use super::DatasetModule;
 
 const DEFAULT_PAGE_SIZE: u32 = 256;
 
+/// Points at one valid item in the underlying Station-hosted page stream: which page it came
+/// from (`page_cursor`, the cursor used to fetch that page) and its `entry_idx` within that
+/// page, used to relocate it on a later `get()`.
+#[derive(Debug, Clone, Copy)]
+struct IndexEntry {
+    entry_idx: u64,
+    page_cursor: Option<u64>,
+}
+
 /// A `burn::data::dataset::Dataset` view over a Station-hosted dataset version, backed by
-/// `DatasetModule`'s page-at-a-time item streaming. Every `get` re-fetches its page over the
-/// network; no caching is done yet.
+/// `DatasetModule`'s page-at-a-time item streaming. The valid-item index is built lazily (on
+/// first `len()`/`get()`) by walking every page once and is cached for the dataset's lifetime;
+/// items that fail to decode are excluded from the index rather than shifting the indices of
+/// items after them. Page contents themselves are not cached: every `get()` still re-fetches
+/// its containing page over the network.
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
     version: u32,
     page_size: u32,
-    len: OnceLock<usize>,
+    index: Mutex<Option<Vec<IndexEntry>>>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -35,17 +47,56 @@ impl<T> AnnotationDataset<T> {
             name: name.into(),
             version,
             page_size,
-            len: OnceLock::new(),
+            index: Mutex::new(None),
             _marker: std::marker::PhantomData,
         }
     }
+}
 
-    fn page_start(&self, index: usize) -> u64 {
-        (index as u64 / self.page_size as u64) * self.page_size as u64
+impl<T> AnnotationDataset<T>
+where
+    T: DeserializeOwned,
+{
+    fn build_index(&self) -> Option<Vec<IndexEntry>> {
+        let mut entries = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page_cursor = cursor;
+            let page = self
+                .module
+                .stream_items(&self.name, self.version, page_cursor, Some(self.page_size))
+                .ok()?;
+
+            for raw_item in &page.items {
+                match serde_json::from_slice::<T>(&raw_item.payload) {
+                    Ok(_) => entries.push(IndexEntry {
+                        entry_idx: raw_item.entry_idx,
+                        page_cursor,
+                    }),
+                    Err(e) => {
+                        tracing::warn!(
+                            entry_idx = raw_item.entry_idx,
+                            error = %e,
+                            "skipping malformed dataset item"
+                        );
+                    }
+                }
+            }
+
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        Some(entries)
     }
 
-    fn offset_in_page(&self, index: usize) -> usize {
-        index % self.page_size as usize
+    fn index_guard(&self) -> std::sync::MutexGuard<'_, Option<Vec<IndexEntry>>> {
+        let mut guard = self.index.lock().unwrap();
+        if guard.is_none() {
+            *guard = self.build_index();
+        }
+        guard
     }
 }
 
@@ -54,56 +105,29 @@ where
     T: DeserializeOwned + Clone + Send + Sync,
 {
     fn get(&self, index: usize) -> Option<T> {
-        let page_start = self.page_start(index);
-        let offset = self.offset_in_page(index);
+        let entry = {
+            let guard = self.index_guard();
+            *guard.as_ref()?.get(index)?
+        };
 
         let raw = self
             .module
             .stream_items(
                 &self.name,
                 self.version,
-                Some(page_start),
+                entry.page_cursor,
                 Some(self.page_size),
             )
             .ok()?;
 
         raw.items
             .into_iter()
-            .filter_map(
-                |raw_item| match serde_json::from_slice::<T>(&raw_item.payload) {
-                    Ok(value) => Some(value),
-                    Err(e) => {
-                        tracing::warn!(
-                            entry_idx = raw_item.entry_idx,
-                            error = %e,
-                            "skipping malformed dataset item"
-                        );
-                        None
-                    }
-                },
-            )
-            .nth(offset)
+            .find(|raw_item| raw_item.entry_idx == entry.entry_idx)
+            .and_then(|raw_item| serde_json::from_slice::<T>(&raw_item.payload).ok())
     }
 
     fn len(&self) -> usize {
-        *self.len.get_or_init(|| {
-            let mut count = 0usize;
-            let mut cursor = None;
-            loop {
-                let Ok(page) =
-                    self.module
-                        .stream_items(&self.name, self.version, cursor, Some(1000))
-                else {
-                    break;
-                };
-                count += page.items.len();
-                match page.next_cursor {
-                    Some(next) => cursor = Some(next),
-                    None => break,
-                }
-            }
-            count
-        })
+        self.index_guard().as_ref().map(Vec::len).unwrap_or(0)
     }
 }
 
@@ -199,8 +223,10 @@ mod tests {
         let module = DatasetModule::new(Arc::new(provider));
         let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
 
-        // The malformed item is dropped from the decoded page, so the one surviving item
-        // shifts down to offset 0; there is no second item in the decoded page.
+        // The malformed item is excluded from the index entirely, so the dataset's length
+        // reflects only the one valid item — index 1 doesn't exist, it isn't a shifted view
+        // of the raw page.
+        assert_eq!(dataset.len(), 1);
         assert_eq!(dataset.get(0), Some(TestItem { value: 7 }));
         assert_eq!(dataset.get(1), None);
     }
@@ -233,7 +259,6 @@ mod tests {
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.len(), 2);
-        // Two pages walked on the first call, zero more on the second.
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
@@ -256,8 +281,7 @@ mod tests {
 
         assert_eq!(dataset.get(0), Some(TestItem { value: 1 }));
         assert_eq!(dataset.get(1), Some(TestItem { value: 2 }));
-        // No caching: each `get` re-fetches its page over the network.
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -275,5 +299,29 @@ mod tests {
             AnnotationDataset::with_page_size(module, "ds", 1, 10);
 
         assert_eq!(dataset.get(5), None);
+    }
+
+    #[test]
+    fn given_transient_error_when_len_then_next_call_retries_instead_of_caching_failure() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        let provider = FakeProvider {
+            stream: move |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+                let call = calls_clone.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    Err(DatasetError::Client("transient".into()))
+                } else {
+                    Ok(DatasetItemsPage {
+                        items: vec![item(0, 1)],
+                        next_cursor: None,
+                    })
+                }
+            },
+        };
+        let module = DatasetModule::new(Arc::new(provider));
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
+
+        assert_eq!(dataset.len(), 0);
+        assert_eq!(dataset.len(), 1);
     }
 }
