@@ -4,6 +4,8 @@ use tracel_client::station::dataset::StreamDatasetVersionItemsRequest;
 use crate::backend::station::StationBackend;
 use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider, RawDatasetItem};
 
+const QUERY_PAGE_SIZE: u32 = 100;
+
 impl DatasetProvider for StationBackend {
     fn stream_items(
         &self,
@@ -37,9 +39,6 @@ impl DatasetProvider for StationBackend {
 }
 
 impl StationBackend {
-    /// Turns a failed stream request into a precise not-found error. Only queries the dataset
-    /// and version individually when the request actually failed as not-found, so a successful
-    /// stream pays for a single round trip instead of three.
     fn describe_stream_error(&self, err: ClientError, name: &str, version: u32) -> DatasetError {
         if !matches!(err, ClientError::NotFound) {
             return DatasetError::Client(Box::new(err));
@@ -58,37 +57,57 @@ impl StationBackend {
     fn ensure_dataset_exists(&self, name: &str) -> Result<(), DatasetError> {
         use tracel_client::station::dataset::QueryDatasetsRequest;
 
-        let response = self
-            .client
-            .datasets()
-            .query(QueryDatasetsRequest::default())
-            .map_err(|err| DatasetError::Client(Box::new(err)))?;
+        let mut page = 0;
+        loop {
+            let response = self
+                .client
+                .datasets()
+                .query(QueryDatasetsRequest {
+                    page: Some(page),
+                    per_page: Some(QUERY_PAGE_SIZE),
+                    filter: None,
+                })
+                .map_err(|err| DatasetError::Client(Box::new(err)))?;
 
-        if response.items.iter().any(|d| d.name == name) {
-            Ok(())
-        } else {
-            Err(DatasetError::DatasetNotFound {
-                name: name.to_string(),
-            })
+            if response.items.iter().any(|d| d.name == name) {
+                return Ok(());
+            }
+            if response.items.len() < QUERY_PAGE_SIZE as usize {
+                return Err(DatasetError::DatasetNotFound {
+                    name: name.to_string(),
+                });
+            }
+            page += 1;
         }
     }
 
     fn ensure_dataset_version_exists(&self, name: &str, version: u32) -> Result<(), DatasetError> {
         use tracel_client::station::dataset::QueryDatasetVersionsRequest;
 
-        let response = self
-            .client
-            .datasets()
-            .versions(name, QueryDatasetVersionsRequest::default())
-            .map_err(|err| DatasetError::Client(Box::new(err)))?;
+        let mut page = 0;
+        loop {
+            let response = self
+                .client
+                .datasets()
+                .versions(
+                    name,
+                    QueryDatasetVersionsRequest {
+                        page: Some(page),
+                        per_page: Some(QUERY_PAGE_SIZE),
+                    },
+                )
+                .map_err(|err| DatasetError::Client(Box::new(err)))?;
 
-        if response.items.iter().any(|v| v.version == version as i32) {
-            Ok(())
-        } else {
-            Err(DatasetError::VersionNotFound {
-                name: name.to_string(),
-                version,
-            })
+            if response.items.iter().any(|v| v.version == version as i32) {
+                return Ok(());
+            }
+            if response.items.len() < QUERY_PAGE_SIZE as usize {
+                return Err(DatasetError::VersionNotFound {
+                    name: name.to_string(),
+                    version,
+                });
+            }
+            page += 1;
         }
     }
 }
