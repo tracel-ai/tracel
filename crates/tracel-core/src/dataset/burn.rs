@@ -7,21 +7,12 @@ use super::DatasetModule;
 
 const DEFAULT_PAGE_SIZE: u32 = 256;
 
-/// Points at one valid item in the underlying Station-hosted page stream: which page it came
-/// from (`page_cursor`, the cursor used to fetch that page) and its `entry_idx` within that
-/// page, used to relocate it on a later `get()`.
 #[derive(Debug, Clone, Copy)]
 struct IndexEntry {
     entry_idx: u64,
     page_cursor: Option<u64>,
 }
 
-/// A `burn::data::dataset::Dataset` view over a Station-hosted dataset version, backed by
-/// `DatasetModule`'s page-at-a-time item streaming. The valid-item index is built lazily (on
-/// first `len()`/`get()`) by walking every page once and is cached for the dataset's lifetime;
-/// items that fail to decode are excluded from the index rather than shifting the indices of
-/// items after them. Page contents themselves are not cached: every `get()` still re-fetches
-/// its containing page over the network.
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
