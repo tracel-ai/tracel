@@ -226,6 +226,14 @@ impl BundleSource for FsBundle {
     fn list(&self) -> Result<Vec<String>, String> {
         Ok(self.file_paths())
     }
+
+    fn local_path(&self, path: &str) -> Option<&Path> {
+        let rel = sanitize_rel_path(path).ok()?.to_string_lossy().to_string();
+        self.files
+            .iter()
+            .find(|f| f.rel_path == rel)
+            .map(|f| f.abs_path.as_path())
+    }
 }
 
 fn temp_path(dest: &Path) -> Result<PathBuf, std::io::Error> {

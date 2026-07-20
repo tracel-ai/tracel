@@ -95,4 +95,20 @@ pub trait BundleSource {
 
     /// Optionally list available files (used by generic decoders; can be best-effort).
     fn list(&self) -> Result<Vec<String>, String>;
+
+    /// A local filesystem path to a file's bytes, when the file is backed by a real on-disk file
+    /// (`None` for in-memory or remote sources). A path is seekable, so a consumer can load the
+    /// file lazily / zero-copy straight from it (e.g. `burn_pack::Reader::from_file`, which reads
+    /// each tensor on demand at its offset) instead of streaming the whole thing through
+    /// [`open`](Self::open). Defaults to `None` so existing sources are unaffected.
+    ///
+    /// Each file is located individually by its bundle-relative name. Where a source keeps a
+    /// file on disk is its own business: two files of one bundle need not share a directory (a
+    /// content-addressed store puts each blob at its own path), so a consumer must never derive
+    /// one file's location from another's; resolve every file it needs through this method.
+    /// How long a returned path stays valid past the borrow is source-defined; sources whose
+    /// paths outlive the bundle (e.g. a registry's store) document that themselves.
+    fn local_path(&self, _path: &str) -> Option<&std::path::Path> {
+        None
+    }
 }

@@ -10,7 +10,9 @@ use sha2::Digest;
 use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
-use crate::{FileTransferClient, ReqwestTransferClient};
+use crate::FileTransferClient;
+#[cfg(feature = "transfer")]
+use crate::ReqwestTransferClient;
 
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +61,7 @@ pub struct ArtifactDownloadFile {
 }
 
 /// Download artifact files into any bundle sink implementation.
+#[cfg(feature = "transfer")]
 pub fn download_artifacts_to_sink<S: BundleSink>(
     sink: &mut S,
     files: &[ArtifactDownloadFile],

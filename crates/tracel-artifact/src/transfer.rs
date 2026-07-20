@@ -21,11 +21,13 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
 }
 
 /// Reqwest-based transfer client.
+#[cfg(feature = "transfer")]
 #[derive(Clone)]
 pub struct ReqwestTransferClient {
     http: reqwest::blocking::Client,
 }
 
+#[cfg(feature = "transfer")]
 impl ReqwestTransferClient {
     pub fn new() -> Self {
         Self {
@@ -38,12 +40,14 @@ impl ReqwestTransferClient {
     }
 }
 
+#[cfg(feature = "transfer")]
 impl Default for ReqwestTransferClient {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "transfer")]
 impl FileTransferClient for ReqwestTransferClient {
     fn put_reader<R: Read + Send + 'static>(
         &self,

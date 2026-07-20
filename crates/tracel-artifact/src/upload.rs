@@ -3,7 +3,9 @@
 //! The upload process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
 use crate::transfer::TransferError;
-use crate::{FileTransferClient, ReqwestTransferClient};
+use crate::FileTransferClient;
+#[cfg(feature = "transfer")]
+use crate::ReqwestTransferClient;
 use std::collections::HashSet;
 use std::io::Read;
 
@@ -61,6 +63,7 @@ pub trait MultipartUploadSource {
 }
 
 /// Upload multiple files from a multipart source using presigned URLs.
+#[cfg(feature = "transfer")]
 pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     source: &S,
     files: &[MultipartUploadFile],

@@ -25,7 +25,7 @@ serde_json.workspace = true
 directories = "6.0"
 toml = "1.1.2"
 crossbeam.workspace = true
-tracel-artifact.workspace = true
+tracel-artifact = { workspace = true, features = ["transfer"] }
 tracing.workspace = true
 sha2.workspace = true
 chrono.workspace = true
