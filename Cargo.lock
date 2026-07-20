@@ -204,6 +204,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -464,7 +475,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.23.0",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -6643,9 +6654,9 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98de6eb2922fbb0a3b66e062182aee20c7f0ae9f1750cdab117fadafe8b8eeec"
+checksum = "e4aca117aa207305570a2890ae6bdd1ad829f713551e4df057bbf2fa2ceca0bc"
 dependencies = [
  "reqwest 0.13.4",
  "serde",
@@ -6788,6 +6799,16 @@ version = "22.1.4-4"
 source = "git+https://github.com/tracel-ai/tracel-llvm?rev=82401e3c00a35a3fb7d5e2b415e79692e09e1079#82401e3c00a35a3fb7d5e2b415e79692e09e1079"
 dependencies = [
  "tracel-llvm-bundler",
+]
+
+[[package]]
+name = "tracel-model-registry"
+version = "0.7.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracel-artifact",
 ]
 
 [[package]]
