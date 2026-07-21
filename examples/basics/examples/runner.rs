@@ -1,4 +1,4 @@
-//! A station runner serving the training job to a Burn Station job queue.
+//! A station runner serving the training job to a Tracel Station job queue.
 //!
 //! TRACEL_CONNECTION=station cargo run -p basics --example runner --features station
 //!

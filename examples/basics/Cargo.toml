@@ -28,7 +28,7 @@ tokio-stream.workspace = true
 name = "serve"
 required-features = ["server"]
 
-# The station runner example serves jobs to a Burn Station job queue.
+# The station runner example serves jobs to a Tracel Station job queue.
 [[example]]
 name = "runner"
 required-features = ["station"]

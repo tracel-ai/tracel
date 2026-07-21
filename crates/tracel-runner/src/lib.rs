@@ -1,4 +1,4 @@
-//! Station runner front-end: serve registered jobs to a Burn Station job queue.
+//! Station runner front-end: serve registered jobs to a Tracel Station job queue.
 //!
 //! [`StationRunner`] registers capability jobs with a station and executes the jobs the station
 //! dispatches — one at a time, with results reported back as job outcomes. Registration mirrors

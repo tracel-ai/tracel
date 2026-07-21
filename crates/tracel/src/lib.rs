@@ -80,7 +80,7 @@ pub use tracel_artifact as artifact;
 #[doc(inline)]
 pub use tracel_app as app;
 
-/// Station runner front-end: serve registered jobs to a Burn Station job queue (requires the
+/// Station runner front-end: serve registered jobs to a Tracel Station job queue (requires the
 /// `runner` feature).
 #[cfg(feature = "runner")]
 #[doc(inline)]

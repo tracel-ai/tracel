@@ -6,11 +6,11 @@ use url::Url;
 /// Builds the SDK [`Context`] the examples run against.
 ///
 /// The backend is chosen at runtime from `TRACEL_CONNECTION`, so an example ships telemetry
-/// locally, to the cloud, or to a Burn Station without editing code:
+/// locally, to the cloud, or to a Tracel Station without editing code:
 ///
 /// - unset or `offline`: record locally under `./runs`, no account required
 /// - `cloud`: ship to the [console](https://console.tracel.ai) (needs `tracel login`)
-/// - `station`: ship to the Burn Station at [`station_url`]
+/// - `station`: ship to the Tracel Station at [`station_url`]
 ///
 /// This is the pattern to copy into a real application: resolve the [`Connection`] once, from the
 /// environment or your own config, then share the [`Context`] across the program.
@@ -18,7 +18,7 @@ pub fn context() -> anyhow::Result<Context> {
     Ok(Context::new(connection()?)?)
 }
 
-/// The Burn Station base URL, from `TRACEL_STATION_URL` (default `http://localhost:8000`).
+/// The Tracel Station base URL, from `TRACEL_STATION_URL` (default `http://localhost:8000`).
 ///
 /// The same URL serves both roles: the experiment backend of the `station` connection, and the
 /// queue a runner example registers with.
