@@ -81,7 +81,7 @@ impl Inference for WordTokenizer {
 }
 
 /// A stand-in training loop with the plumbing a real one uses: metric definitions, nested activity
-/// tracking, per-batch metrics, and cancellation. Only the per-step math is fake.
+/// tracking, per-batch metrics, progress logs, and cancellation. Only the per-step math is fake.
 pub mod training {
     use serde::{Deserialize, Serialize};
     use tracel::experiment::{ExperimentRun, MetricSpec, MetricValue};
@@ -173,6 +173,13 @@ pub mod training {
                 loss_sum += loss;
                 accuracy_sum += accuracy;
                 epoch_activity.inc(1);
+
+                experiment.log_info(format!(
+                    "epoch {epoch}/{} · batch {batch}/{} · {:.0}% complete · loss={loss:.3}",
+                    config.epochs,
+                    config.batches_per_epoch,
+                    step / total_steps * 100.0,
+                ))?;
             }
 
             let mean_loss = loss_sum / config.batches_per_epoch as f64;
