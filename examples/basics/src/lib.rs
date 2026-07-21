@@ -150,14 +150,15 @@ pub mod training {
 
                 std::thread::sleep(std::time::Duration::from_millis(200));
 
-                let step = ((epoch - 1) * config.batches_per_epoch + batch) as f64;
+                let global_step = (epoch - 1) * config.batches_per_epoch + batch;
+                let step = global_step as f64;
                 let loss = 1.2 / (1.0 + step * 0.3);
                 let accuracy = (0.5 + step / total_steps * 0.45).min(0.97);
 
                 experiment.log_metric(
                     epoch,
                     "train",
-                    batch,
+                    global_step,
                     vec![
                         MetricValue {
                             name: "loss".to_string(),

@@ -37,32 +37,32 @@ pub struct StationRunnerClient {
     base_url: Url,
     /// Streaming client: no overall timeout (the stream lives for the whole session); TCP
     /// keepalive is the backstop that resets half-open connections.
-    events: Client,
-    http: Client,
+    events_stream_client: Client,
+    short_call_client: Client,
 }
 
 impl StationRunnerClient {
     pub fn new(base_url: Url) -> Self {
-        let events = Client::builder()
+        let events_stream_client = Client::builder()
             .timeout(None)
             .tcp_keepalive(Duration::from_secs(60))
             .build()
             .expect("failed to build HTTP client");
-        let http = Client::builder()
+        let short_call_client = Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
             .expect("failed to build HTTP client");
         Self {
             base_url,
-            events,
-            http,
+            events_stream_client,
+            short_call_client,
         }
     }
 
     /// Register with the station; the successful response IS the runner's event stream.
     pub fn open_events(&self, register: &RegisterRunner) -> Result<RunnerEventStream, ClientError> {
         let response = self
-            .events
+            .events_stream_client
             .post(self.join("runners/events"))
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .json(register)
@@ -73,7 +73,7 @@ impl StationRunnerClient {
 
     pub fn finish_job(&self, job_id: Uuid, finish: &FinishJob) -> Result<(), ClientError> {
         let response = self
-            .http
+            .short_call_client
             .post(self.join(&format!("jobs/{job_id}/finish")))
             .json(finish)
             .send()?;
