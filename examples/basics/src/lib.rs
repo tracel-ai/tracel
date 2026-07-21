@@ -174,12 +174,13 @@ pub mod training {
                 accuracy_sum += accuracy;
                 epoch_activity.inc(1);
 
-                experiment.log_info(format!(
+                // This will also get log as an experiment logs
+                tracing::info!(
                     "epoch {epoch}/{} · batch {batch}/{} · {:.0}% complete · loss={loss:.3}",
                     config.epochs,
                     config.batches_per_epoch,
                     step / total_steps * 100.0,
-                ))?;
+                );
             }
 
             let mean_loss = loss_sum / config.batches_per_epoch as f64;
