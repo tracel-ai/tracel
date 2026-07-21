@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
-use crate::{ExperimentRun, ExperimentRunHandleExt};
+use crate::{CancelToken, ExperimentRun, ExperimentRunHandleExt};
 
 pub trait ExperimentProvider: Send + Sync + 'static {
     fn create_experiment(
@@ -108,18 +108,39 @@ impl<I, O> ExperimentJob<I, O> {
     }
 
     pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
+        self.run_with_cancellation(input, CancelToken::new())
+    }
+
+    /// Like [`run`](Self::run), but links `cancel` into the run's control plane: cancelling the
+    /// token propagates to the run and its linked activities (e.g. Burn training through the
+    /// interrupter integration), and a run whose token fired is finalized as cancelled.
+    pub fn run_with_cancellation(
+        &self,
+        input: I,
+        cancel: CancelToken,
+    ) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
         let _ = try_init_tracing_subscriber();
 
         let experiment = self
             .provider
             .create_experiment(self.name.clone(), self.attributes.clone())?;
+        cancel.link(experiment.cancel_token());
         let handle = experiment.handle();
         let result = handle.in_scope(|| self.f.call(&experiment, input));
 
         match result {
             Ok(output) => {
-                experiment.finish()?;
+                if cancel.is_cancelled() {
+                    // Dropping without an explicit completion finalizes the run as cancelled.
+                    drop(experiment);
+                } else {
+                    experiment.finish()?;
+                }
                 Ok(output)
+            }
+            Err(e) if cancel.is_cancelled() => {
+                drop(experiment);
+                Err(e)
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -127,5 +148,138 @@ impl<I, O> ExperimentJob<I, O> {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
+    use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
+    use crate::{ArtifactKind, ExperimentId};
+
+    #[derive(Default)]
+    struct MockSession {
+        completions: Mutex<Vec<ExperimentCompletion>>,
+    }
+
+    impl ExperimentSession for MockSession {
+        fn record_event(&self, _event: crate::session::Event) -> Result<(), ExperimentError> {
+            Ok(())
+        }
+
+        fn save_artifact(
+            &self,
+            _name: &str,
+            _kind: ArtifactKind,
+            _artifact: Box<BundleFn>,
+        ) -> Result<(), ExperimentError> {
+            Ok(())
+        }
+
+        fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+            self.completions.lock().unwrap().push(completion);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct NoopExperimentDataReader;
+
+    impl ExperimentArtifactReader for NoopExperimentDataReader {
+        fn load_artifact_raw(
+            &self,
+            _experiment_id: ExperimentId,
+            _name: &str,
+        ) -> Result<LoadedArtifact, ExperimentReaderError> {
+            Err(ExperimentReaderError::new("Artifact not found"))
+        }
+    }
+
+    struct MockProvider {
+        session: Arc<MockSession>,
+    }
+
+    impl ExperimentProvider for MockProvider {
+        fn create_experiment(
+            &self,
+            _name: String,
+            _attributes: HashMap<String, Value>,
+        ) -> Result<ExperimentRun, ExperimentError> {
+            Ok(ExperimentRun::new(
+                "test/experiment/1",
+                self.session.clone(),
+                NoopExperimentDataReader,
+                CancelToken::new(),
+            ))
+        }
+    }
+
+    fn module(session: Arc<MockSession>) -> ExperimentModule {
+        ExperimentModule::new(Arc::new(MockProvider { session }))
+    }
+
+    #[test]
+    fn given_run_when_completing_then_finalizes_with_success() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
+
+        job.run_with_cancellation((), CancelToken::new()).unwrap();
+
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
+    }
+
+    #[test]
+    fn given_run_cancelled_when_running_them_complete_cancelled() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
+            // Cancelling the caller's token must reach the run's own token.
+            assert!(run.cancel_token().is_cancelled());
+            Ok(())
+        });
+
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        job.run_with_cancellation((), cancel).unwrap();
+
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+    }
+
+    #[test]
+    fn given_run_error_when_cancel_started_then_complete_cancelled() {
+        let session = Arc::new(MockSession::default());
+        let cancel = CancelToken::new();
+        let observed = cancel.clone();
+        let job = module(session.clone()).create("job", move |_run: &ExperimentRun, _input: ()| {
+            observed.cancel();
+            Err::<(), _>("interrupted".into())
+        });
+
+        let result = job.run_with_cancellation((), cancel);
+
+        assert!(result.is_err());
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+    }
+
+    #[test]
+    fn given_run_error_when_running_then_complete_failed() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| {
+            Err::<(), _>("boom".into())
+        });
+
+        let result = job.run_with_cancellation((), CancelToken::new());
+
+        assert!(result.is_err());
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(
+            completions.as_slice(),
+            &[ExperimentCompletion::Failed("boom".to_string())]
+        );
     }
 }
