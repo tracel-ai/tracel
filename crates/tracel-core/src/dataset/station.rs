@@ -2,7 +2,9 @@ use tracel_client::ClientError;
 use tracel_client::station::dataset::StreamDatasetVersionItemsRequest;
 
 use crate::backend::station::StationBackend;
-use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider, RawDatasetItem};
+use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
+use tracel_client::station::dataset::QueryDatasetVersionsRequest;
+use tracel_client::station::dataset::QueryDatasetsRequest;
 
 const QUERY_PAGE_SIZE: u32 = 100;
 
@@ -11,7 +13,7 @@ impl DatasetProvider for StationBackend {
         &self,
         name: &str,
         version: u32,
-        cursor: Option<u64>,
+        index: Option<u64>,
         limit: Option<u32>,
     ) -> Result<DatasetItemsPage, DatasetError> {
         let response = self
@@ -20,7 +22,10 @@ impl DatasetProvider for StationBackend {
             .stream_items(
                 name,
                 version,
-                StreamDatasetVersionItemsRequest { cursor, limit },
+                StreamDatasetVersionItemsRequest {
+                    cursor: index,
+                    limit,
+                },
             )
             .map_err(|err| self.describe_stream_error(err, name, version))?;
 
@@ -28,10 +33,7 @@ impl DatasetProvider for StationBackend {
             items: response
                 .items
                 .into_iter()
-                .map(|item| RawDatasetItem {
-                    entry_idx: item.entry_idx,
-                    payload: item.payload,
-                })
+                .map(|item| item.payload)
                 .collect(),
             next_cursor: response.next_cursor,
         })
@@ -55,8 +57,6 @@ impl StationBackend {
     }
 
     fn ensure_dataset_exists(&self, name: &str) -> Result<(), DatasetError> {
-        use tracel_client::station::dataset::QueryDatasetsRequest;
-
         let mut page = 0;
         loop {
             let response = self
@@ -82,8 +82,6 @@ impl StationBackend {
     }
 
     fn ensure_dataset_version_exists(&self, name: &str, version: u32) -> Result<(), DatasetError> {
-        use tracel_client::station::dataset::QueryDatasetVersionsRequest;
-
         let mut page = 0;
         loop {
             let response = self

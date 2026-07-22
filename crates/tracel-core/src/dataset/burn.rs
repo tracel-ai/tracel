@@ -1,24 +1,18 @@
-use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use burn::data::dataset::Dataset;
 use serde::de::DeserializeOwned;
 
-use super::DatasetModule;
+use super::{DatasetError, DatasetModule};
 
 const DEFAULT_PAGE_SIZE: u32 = 256;
-
-#[derive(Debug, Clone, Copy)]
-struct IndexEntry {
-    entry_idx: u64,
-    page_cursor: Option<u64>,
-}
 
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
     version: u32,
     page_size: u32,
-    index: Mutex<Option<Vec<IndexEntry>>>,
+    len: OnceLock<usize>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -38,93 +32,76 @@ impl<T> AnnotationDataset<T> {
             name: name.into(),
             version,
             page_size,
-            index: Mutex::new(None),
+            len: OnceLock::new(),
             _marker: std::marker::PhantomData,
         }
     }
-}
 
-impl<T> AnnotationDataset<T>
-where
-    T: DeserializeOwned,
-{
-    fn build_index(&self) -> Option<Vec<IndexEntry>> {
-        let mut entries = Vec::new();
-        let mut cursor = None;
+    fn count_items(&self) -> Option<usize> {
+        let mut count = 0usize;
+        let mut index = None;
         loop {
-            let page_cursor = cursor;
             let page = self
                 .module
-                .stream_items(&self.name, self.version, page_cursor, Some(self.page_size))
+                .stream_items(&self.name, self.version, index, Some(self.page_size))
                 .ok()?;
-
-            for raw_item in &page.items {
-                match serde_json::from_slice::<T>(&raw_item.payload) {
-                    Ok(_) => entries.push(IndexEntry {
-                        entry_idx: raw_item.entry_idx,
-                        page_cursor,
-                    }),
-                    Err(e) => {
-                        tracing::warn!(
-                            entry_idx = raw_item.entry_idx,
-                            error = %e,
-                            "skipping malformed dataset item"
-                        );
-                    }
-                }
-            }
+            count += page.items.len();
 
             match page.next_cursor {
-                Some(next) => cursor = Some(next),
+                Some(next) => index = Some(next),
                 None => break,
             }
         }
-        Some(entries)
+        Some(count)
     }
 
-    fn index_guard(&self) -> std::sync::MutexGuard<'_, Option<Vec<IndexEntry>>> {
-        let mut guard = self.index.lock().unwrap();
-        if guard.is_none() {
-            *guard = self.build_index();
+    fn cached_len(&self) -> usize {
+        if let Some(&len) = self.len.get() {
+            return len;
         }
-        guard
+
+        match self.count_items() {
+            Some(len) => *self.len.get_or_init(|| len),
+            None => 0,
+        }
     }
 }
 
-impl<T> Dataset<T> for AnnotationDataset<T>
+impl<T> Dataset<T, DatasetError> for AnnotationDataset<T>
 where
     T: DeserializeOwned + Clone + Send + Sync,
 {
-    fn get(&self, index: usize) -> Option<T> {
-        let entry = {
-            let guard = self.index_guard();
-            *guard.as_ref()?.get(index)?
-        };
+    fn get(&self, index: usize) -> Result<T, DatasetError> {
+        let len = self.cached_len();
+        assert!(
+            index < len,
+            "Index out of bounds for AnnotationDataset: {index} >= {len}"
+        );
 
-        let raw = self
-            .module
-            .stream_items(
-                &self.name,
-                self.version,
-                entry.page_cursor,
-                Some(self.page_size),
-            )
-            .ok()?;
+        let page =
+            self.module
+                .stream_items(&self.name, self.version, Some(index as u64), Some(1))?;
 
-        raw.items
+        let raw_item = page
+            .items
             .into_iter()
-            .find(|raw_item| raw_item.entry_idx == entry.entry_idx)
-            .and_then(|raw_item| serde_json::from_slice::<T>(&raw_item.payload).ok())
+            .next()
+            .expect("provider returned no item for an index within the dataset length");
+
+        serde_json::from_slice::<T>(&raw_item).map_err(|err| DatasetError::CorruptItem {
+            name: self.name.clone(),
+            version: self.version,
+            index: index as u64,
+            source: Box::new(err),
+        })
     }
 
     fn len(&self) -> usize {
-        self.index_guard().as_ref().map(Vec::len).unwrap_or(0)
+        self.cached_len()
     }
 }
 
 impl DatasetModule {
-    /// Wraps this dataset streaming module as a `burn::data::dataset::Dataset<T>`, decoding
-    /// each item's payload as JSON.
     pub fn as_burn_dataset<T>(&self, name: impl Into<String>, version: u32) -> AnnotationDataset<T>
     where
         T: DeserializeOwned + Clone + Send + Sync,
@@ -142,9 +119,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::AnnotationDataset;
-    use crate::dataset::{
-        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, RawDatasetItem,
-    };
+    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider};
 
     #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
     struct TestItem {
@@ -172,11 +147,8 @@ mod tests {
         }
     }
 
-    fn item(entry_idx: u64, value: u32) -> RawDatasetItem {
-        RawDatasetItem {
-            entry_idx,
-            payload: serde_json::to_vec(&TestItem { value }).unwrap(),
-        }
+    fn item(value: u32) -> Vec<u8> {
+        serde_json::to_vec(&TestItem { value }).unwrap()
     }
 
     #[test]
@@ -184,7 +156,7 @@ mod tests {
         let provider = FakeProvider {
             stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
-                    items: vec![item(0, 42)],
+                    items: vec![item(42)],
                     next_cursor: None,
                 })
             },
@@ -192,34 +164,31 @@ mod tests {
         let module = DatasetModule::new(Arc::new(provider));
         let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
 
-        assert_eq!(dataset.get(0), Some(TestItem { value: 42 }));
+        assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
     }
 
     #[test]
-    fn given_malformed_item_when_get_then_it_is_skipped_and_valid_items_still_decode() {
+    fn given_malformed_item_when_get_then_error_is_returned_and_item_still_counts() {
         let provider = FakeProvider {
-            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+            stream: |_name: &str, _version: u32, cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
-                    items: vec![
-                        RawDatasetItem {
-                            entry_idx: 0,
-                            payload: b"not json".to_vec(),
-                        },
-                        item(1, 7),
-                    ],
-                    next_cursor: None,
+                    items: vec![match cursor {
+                        Some(1) => item(7),
+                        _ => b"not json".to_vec(),
+                    }],
+                    next_cursor: match cursor {
+                        Some(1) => None,
+                        _ => Some(1),
+                    },
                 })
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
 
-        // The malformed item is excluded from the index entirely, so the dataset's length
-        // reflects only the one valid item — index 1 doesn't exist, it isn't a shifted view
-        // of the raw page.
-        assert_eq!(dataset.len(), 1);
-        assert_eq!(dataset.get(0), Some(TestItem { value: 7 }));
-        assert_eq!(dataset.get(1), None);
+        assert_eq!(dataset.len(), 2);
+        assert!(dataset.get(0).is_err());
+        assert_eq!(dataset.get(1).unwrap(), TestItem { value: 7 });
     }
 
     #[test]
@@ -231,11 +200,11 @@ mod tests {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 match cursor {
                     None => Ok(DatasetItemsPage {
-                        items: vec![item(0, 1)],
+                        items: vec![item(1)],
                         next_cursor: Some(1),
                     }),
                     Some(1) => Ok(DatasetItemsPage {
-                        items: vec![item(1, 2)],
+                        items: vec![item(2)],
                         next_cursor: None,
                     }),
                     _ => Ok(DatasetItemsPage {
@@ -254,33 +223,37 @@ mod tests {
     }
 
     #[test]
-    fn given_two_indices_in_same_page_when_get_called_twice_then_provider_is_called_twice() {
+    fn given_two_indices_when_get_called_twice_then_cursor_matches_index() {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
+        let all_items = vec![item(1), item(2)];
         let provider = FakeProvider {
-            stream: move |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+            stream: move |_name: &str, _version: u32, cursor: Option<u64>, limit: Option<u32>| {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                Ok(DatasetItemsPage {
-                    items: vec![item(0, 1), item(1, 2)],
-                    next_cursor: None,
-                })
+                let start = cursor.unwrap_or(0) as usize;
+                let limit = limit.map(|l| l as usize).unwrap_or(all_items.len());
+                let items: Vec<_> = all_items.iter().skip(start).take(limit).cloned().collect();
+                let next_cursor =
+                    (start + items.len() < all_items.len()).then(|| (start + items.len()) as u64);
+                Ok(DatasetItemsPage { items, next_cursor })
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset: AnnotationDataset<TestItem> =
             AnnotationDataset::with_page_size(module, "ds", 1, 10);
 
-        assert_eq!(dataset.get(0), Some(TestItem { value: 1 }));
-        assert_eq!(dataset.get(1), Some(TestItem { value: 2 }));
+        assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
+        assert_eq!(dataset.get(1).unwrap(), TestItem { value: 2 });
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
-    fn given_index_past_page_contents_when_get_then_none_is_returned() {
+    #[should_panic(expected = "Index out of bounds")]
+    fn given_index_past_dataset_length_when_get_then_it_panics() {
         let provider = FakeProvider {
             stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
-                    items: vec![item(0, 1)],
+                    items: vec![item(1)],
                     next_cursor: None,
                 })
             },
@@ -289,7 +262,7 @@ mod tests {
         let dataset: AnnotationDataset<TestItem> =
             AnnotationDataset::with_page_size(module, "ds", 1, 10);
 
-        assert_eq!(dataset.get(5), None);
+        dataset.get(5).unwrap();
     }
 
     #[test]
@@ -303,7 +276,7 @@ mod tests {
                     Err(DatasetError::Client("transient".into()))
                 } else {
                     Ok(DatasetItemsPage {
-                        items: vec![item(0, 1)],
+                        items: vec![item(1)],
                         next_cursor: None,
                     })
                 }
