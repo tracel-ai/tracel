@@ -1151,3 +1151,125 @@ base resolved by origin query; naming is write-time-only) makes the registry the
 C2/C4 converter approach. **Immediate next step: Phase 9 (Library/Catalog UI split) — realizes C3
 (list-from-registry) + the fork's Library-card launch (resolve parent `origin.hub_repo`) + folds in the deferred
 Phase 7 runtime verification.** Defer `Engine::pull` transfer + sync strategy to Deliverable 2.
+
+## 14. Next domain — inference monitoring (local-first, engine-owned, dual-render)
+
+**Status: exploration/design, 2026-07-21.** Refines the §4 line-110 "Inference telemetry" row and the
+§5 "Later" bullet into a concrete vertical. Grounded in metabolic as the real consumer (like §10).
+Picked as the next migration domain for a specific reason: it delivers value **native-first**, and —
+counterintuitively — it is *more* wasm-tractable than the registry was, so it advances the metabolic
+migration **without** committing to the SDK-wide async/wasm pivot the team is not ready for.
+
+### 14.1 Nothing here is greenfield — three stacks already exist
+
+| | metabolic | tracel SDK | burn-central backend |
+|---|---|---|---|
+| What | live local stat panel (chat UI) | `InferenceSession` + `InferenceSink` + cloud provider | inference-group telemetry sink + console dashboard |
+| Model | capability-typed events -> fold -> derived rates | generic gauge/counter/distribution samples + metadata bag | gauge/counter/distribution in Postgres |
+| Scope | one exchange, ephemeral, in-memory | per-request session w/ `InferenceId` | per named group, persisted, queryable |
+| Transport | SSE `BackendEvent` to its own egui | `reqwest::blocking` batched POST | `POST .../inference-groups/{name}/telemetry` |
+| Render | egui panels, live | fire-and-forget (no local view) | dashboard + log explorer (commit `2f7480a4b`, #1479) |
+
+The SDK `MetricKind`/`MetricSample`/`MetricDescriptor` are a 1:1 match with the backend ingestion
+payload — the SDK->backend cloud path is wired end-to-end. **The hole:** the *local-first* path does
+not exist. `Connection::Offline` wires `DefaultInferenceProvider` -> `NoopSink`, whose own doc says
+"it ships nothing … metrics/logs are discarded." The experiment side has `experiment/local.rs`
+(writes to disk); the inference side has only `cloud.rs` + `mod.rs`. And `tracel-engine` is
+registry-only (no inference surface). metabolic, meanwhile, has a rich producer but it is ephemeral —
+`EngineStats`/`SessionStats` are in-memory `Vec`s that clear on model switch, never persisted, never
+synced.
+
+### 14.2 Design — engine-owned local vertical, dual-render
+
+- **A new inference-telemetry vertical in `tracel-engine`**, as its OWN hexagonal vertical
+  (domain: append-only sample log + descriptors + group logs; application: append + query/aggregate
+  use-cases; infra: persist via the existing `storage/{fs,opfs}` seam). Honors revised **D8** — NOT a
+  `DomainSync` strategy trait plugged into a shared toolkit (the §4 sketch is superseded); share
+  transport/blob infra only by rule-of-three.
+- **A local `InferenceSink`** — the missing sibling of `experiment/local.rs` — persisting into that
+  vertical instead of `NoopSink`/cloud POST. Wire `Connection::Offline` (and an engine-backed
+  connection) to it.
+- **Dual-render (the recommendation):** metabolic KEEPS its live capability-typed panel unchanged;
+  the engine vertical runs *alongside* it, adding the two things metabolic lacks — durable local
+  history + a sync path. metabolic's producer feeds both; the engine sink is a second consumer of the
+  same `BackendEvent` stream. Rejected "engine-owns-and-renders" (would flatten metabolic's rich
+  derive-on-read model into generic samples and demote its live UX for no gain).
+- **Sync deferred** to Deliverable 2+: append-only samples, aggregate/union — a *sibling* to the
+  registry's sync living in this vertical's own layers, not a reuse of the registry ref-merge.
+
+### 14.3 Session boundary — grounded in metabolic
+
+The SDK session ends "when the output finishes" (one `infer()`-scoped request; `SessionStatsObserver`
+fires `on_finish`). metabolic's reply is a `for round in 0..MAX_ROUNDS` loop (`MAX_ROUNDS = 4`,
+`metabolic-backend/src/embedded.rs:1141`): each `run_round` is one decode run (Prefill -> Step* ->
+outcome); tool-call rounds loop again; the **first non-tool round emits `TextGenerationEvent::Done`
+and returns** (`embedded.rs:1150`).
+
+- **=> one SDK `InferenceSession` == one metabolic *exchange*** (the whole reply). The tool rounds are
+  **sub-runs within** the session, tagged `round=n` via `session.with_attributes`.
+- **Use `InferenceSession` directly — NOT `Inference`/`InferenceJob`/`session.run`.** That machinery
+  is the SDK *driving* inference (owns input->output, spawns a worker, applies the auto observer).
+  metabolic drives its own engine loop over its own SSE bus with tool execution interleaved; routing
+  it through `InferenceJob` would double-drive (SDK worker wrapping metabolic's pump) and duplicate
+  the output path. Take the session, leave the job. `InferenceSession` is standalone by design (`run`
+  is documented as *one* optional driver).
+- **Adapter lives at the backend event seam** (where `Done` is synthesized), not in the decode loop:
+  open a session on the round-0 Prefill (footprint -> scoped attrs); fold each round with metabolic's
+  EXISTING `TextGenerationMetrics` and emit derived rates as `session.log_*` tagged `round=n`; close
+  on final `Done`, or on early return (cancel/error) with `cancelled=true`.
+- **SDK gap:** `InferenceModule` exposes `create(name, inf) -> InferenceJob` but **no**
+  `create_session(name) -> InferenceSession` for observe-only use (`create_session` is on the provider
+  trait, unsurfaced). Add it — it is the exact API the dual-render path needs.
+
+### 14.4 The deep fork — where aggregation lives
+
+The cloud model punts reduction to the server (`quantile_exact_weighted` plpgsql; "quantiles computed
+server-side"). **Local-first has no server, so aggregation must be client-side** (engine or producer).
+This is where metabolic's design is the *better* one: it transports raw events and derives rates once
+on read (one honest "tokens/sec"); the SDK sink has no fold primitive. Fork: **(a)** the engine grows
+a local aggregation layer, or **(b)** the SDK adopts metabolic's event-fold for the local sink. Lean
+**(b)** — the honest unification, and it reuses metabolic's proven fold rather than reimplementing
+quantiles server-style on the client.
+
+### 14.5 Wasm posture — why this domain, now
+
+The SDK telemetry transport today (`reqwest::blocking` + `std::thread` + `tungstenite`) is native-only,
+zero wasm handling — that transport IS the pivot the team is deferring. **Local-first sidesteps all of
+it:** hot path = a sync fire-and-forget enqueue (pivot-rule: fire-and-forget stays sync on wasm);
+persistence = OPFS (already wasm-native and test-passed for the registry); no HTTP on the hot path.
+Only sync-to-hub touches the cloud transport, and it is deferrable. Net: native metabolic works today;
+browser metabolic reuses the proven OPFS seam; neither needs the async pivot. When the pivot does land,
+fire-and-forget REST telemetry is also the *easiest first* wasm transport to port.
+
+### 14.6 What the SDK/stack is missing (the gap list this surfaces)
+
+1. **Local inference-telemetry vertical** in the engine (the big build; §14.2).
+2. **Local `InferenceSink`** (`inference/local.rs`) — take `Connection::Offline` off `NoopSink`.
+3. **Client-side aggregation** — no fold/derive primitive today (§14.4).
+4. **Bare-session API** — `module.create_session` for observe-only (§14.3).
+5. **One telemetry contract** — cloud (`inference/request.rs`) and fleet (`fleet/request.rs`) already
+   duplicate `IngestTelemetryRequest`/`MetricData`; a local sink would be a third. Unify before three.
+6. **No durability on the plain cloud path** (only the fleet WAL has it) — local persist gives it free.
+7. **wasm sync transport** — deferred (Deliverable 2+).
+
+### 14.7 Metric mapping (metabolic -> generic samples)
+
+| metabolic (`metabolic-metrics`) | sample |
+|---|---|
+| `decode_rate` / `live_rate` | gauge `tokens_per_second` |
+| `Prefill.duration` (== TTFT) | distribution `prefill_ms` |
+| `Step.duration` | distribution `decode_step_ms` |
+| `prompt_tokens`, `reused`, `tokens` | counters |
+| `cache_used` / `cache_capacity` | gauges |
+| `ModelFootprint.weights_bytes` / `kv_cache_bytes` / pool | gauges |
+| `ModelFootprint{repo,device,precision,parameters}`, `capabilities`, `round` | session metadata (dimensions) |
+
+### 14.8 Phasing (suggested)
+
+- **P0 — native adapter (prove the shape):** engine-local sink + the backend-seam adapter; dual-render;
+  drives the local vertical end-to-end with metabolic's real producer. No wasm.
+- **P1 — local aggregation + query:** the §14.4 decision; render history from the engine (not just the
+  ephemeral panel).
+- **P2 — browser/OPFS:** reuse the registry's OPFS path; browser metabolic persists + renders locally.
+- **P3 — sync-to-hub:** append-only-samples domain (aggregate/union) into the existing hub, reusing the
+  Deliverable-2 transport where shapes match.
