@@ -7,6 +7,7 @@ publish = false
 [features]
 default = ["server"]
 server = ["tracel/server"]
+station = ["tracel/station", "tracel/runner"]
 
 [dependencies]
 common = { path = "../common" }
@@ -26,3 +27,8 @@ tokio-stream.workspace = true
 [[example]]
 name = "serve"
 required-features = ["server"]
+
+# The station runner example serves jobs to a Tracel Station job queue.
+[[example]]
+name = "runner"
+required-features = ["station"]
