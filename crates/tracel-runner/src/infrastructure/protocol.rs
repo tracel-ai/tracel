@@ -47,7 +47,9 @@ pub struct DispatchedJob {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RunnerEvent {
     /// Always the first event; carries the session id to report finishes with.
-    Registered { runner_id: Uuid },
+    Registered {
+        runner_id: Uuid,
+    },
     Job(DispatchedJob),
 }
 
