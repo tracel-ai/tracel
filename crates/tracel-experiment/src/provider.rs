@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
-use crate::{CancelToken, ExperimentRun, ExperimentRunHandleExt};
+use crate::{ExperimentRun, ExperimentRunHandleExt};
 
 pub trait ExperimentProvider: Send + Sync + 'static {
     fn create_experiment(
@@ -108,29 +108,17 @@ impl<I, O> ExperimentJob<I, O> {
     }
 
     pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
-        self.run_with_cancellation(input, CancelToken::new())
-    }
-
-    /// Like [`run`](Self::run), but links `cancel` into the run's control plane: cancelling the
-    /// token propagates to the run and its linked activities (e.g. Burn training through the
-    /// interrupter integration), and a run whose token fired is finalized as cancelled.
-    pub fn run_with_cancellation(
-        &self,
-        input: I,
-        cancel: CancelToken,
-    ) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
         let _ = try_init_tracing_subscriber();
 
         let experiment = self
             .provider
             .create_experiment(self.name.clone(), self.attributes.clone())?;
-        cancel.link(experiment.cancel_token());
         let handle = experiment.handle();
         let result = handle.in_scope(|| self.f.call(&experiment, input));
 
         match result {
             Ok(output) => {
-                if cancel.is_cancelled() {
+                if experiment.cancel_token().is_cancelled() {
                     // Dropping without an explicit completion finalizes the run as cancelled.
                     drop(experiment);
                 } else {
@@ -138,7 +126,7 @@ impl<I, O> ExperimentJob<I, O> {
                 }
                 Ok(output)
             }
-            Err(e) if cancel.is_cancelled() => {
+            Err(e) if experiment.cancel_token().is_cancelled() => {
                 drop(experiment);
                 Err(e)
             }
@@ -158,7 +146,7 @@ mod tests {
     use super::*;
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
     use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, ExperimentId};
+    use crate::{ArtifactKind, CancelToken, ExperimentId};
 
     #[derive(Default)]
     struct MockSession {
@@ -226,24 +214,22 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
 
-        job.run_with_cancellation((), CancelToken::new()).unwrap();
+        job.run(()).unwrap();
 
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
     }
 
     #[test]
-    fn given_run_cancelled_when_running_them_complete_cancelled() {
+    fn given_run_cancelled_through_control_when_running_then_complete_cancelled() {
         let session = Arc::new(MockSession::default());
         let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
-            // Cancelling the caller's token must reach the run's own token.
-            assert!(run.cancel_token().is_cancelled());
+            // A remote backend would cancel the run's own control plane; simulate that here.
+            run.cancel_token().cancel();
             Ok(())
         });
 
-        let cancel = CancelToken::new();
-        cancel.cancel();
-        job.run_with_cancellation((), cancel).unwrap();
+        job.run(()).unwrap();
 
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
@@ -252,14 +238,12 @@ mod tests {
     #[test]
     fn given_run_error_when_cancel_started_then_complete_cancelled() {
         let session = Arc::new(MockSession::default());
-        let cancel = CancelToken::new();
-        let observed = cancel.clone();
-        let job = module(session.clone()).create("job", move |_run: &ExperimentRun, _input: ()| {
-            observed.cancel();
+        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
+            run.cancel_token().cancel();
             Err::<(), _>("interrupted".into())
         });
 
-        let result = job.run_with_cancellation((), cancel);
+        let result = job.run(());
 
         assert!(result.is_err());
         let completions = session.completions.lock().unwrap();
@@ -273,7 +257,7 @@ mod tests {
             Err::<(), _>("boom".into())
         });
 
-        let result = job.run_with_cancellation((), CancelToken::new());
+        let result = job.run(());
 
         assert!(result.is_err());
         let completions = session.completions.lock().unwrap();

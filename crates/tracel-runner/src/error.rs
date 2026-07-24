@@ -2,10 +2,11 @@ use std::error::Error;
 
 pub type BoxError = Box<dyn Error + Send + Sync>;
 
-/// Errors that prevent the runner from starting.
+/// Fatal runner errors.
 ///
-/// Once serving, the runner never returns an error: connection losses are retried with backoff
-/// and job failures are reported to the station as job outcomes.
+/// Transient connection losses are retried with backoff and job failures are reported to the
+/// station as job outcomes; the runner returns only when it cannot start or when the station
+/// permanently rejects its registration.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error("invalid station url '{url}': {source}")]
@@ -15,4 +16,6 @@ pub enum RunnerError {
     },
     #[error("no jobs registered")]
     NoJobs,
+    #[error("station rejected runner registration: {0}")]
+    Registration(String),
 }

@@ -23,7 +23,6 @@ pub struct RegisterRunner {
 pub enum FinishStatus {
     Completed,
     Failed,
-    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,13 +47,8 @@ pub struct DispatchedJob {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RunnerEvent {
     /// Always the first event; carries the session id to report finishes with.
-    Registered {
-        runner_id: Uuid,
-    },
+    Registered { runner_id: Uuid },
     Job(DispatchedJob),
-    Cancel {
-        job_id: Uuid,
-    },
 }
 
 impl RunnerEvent {
@@ -65,10 +59,6 @@ impl RunnerEvent {
         struct Registered {
             runner_id: Uuid,
         }
-        #[derive(Deserialize)]
-        struct Cancel {
-            job_id: Uuid,
-        }
 
         Ok(match event {
             "registered" => {
@@ -76,10 +66,6 @@ impl RunnerEvent {
                 Some(Self::Registered { runner_id })
             }
             "job" => Some(Self::Job(serde_json::from_str(data)?)),
-            "cancel" => {
-                let Cancel { job_id } = serde_json::from_str(data)?;
-                Some(Self::Cancel { job_id })
-            }
             _ => None,
         })
     }
@@ -102,9 +88,6 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let cancel = RunnerEvent::decode("cancel", &format!("{{\"job_id\":\"{id}\"}}"))
-            .unwrap()
-            .unwrap();
 
         assert_eq!(registered, RunnerEvent::Registered { runner_id: id });
         assert_eq!(
@@ -115,7 +98,6 @@ mod tests {
                 input: serde_json::json!({"epochs": 2}),
             })
         );
-        assert_eq!(cancel, RunnerEvent::Cancel { job_id: id });
     }
 
     #[test]

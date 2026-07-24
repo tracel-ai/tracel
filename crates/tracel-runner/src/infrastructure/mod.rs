@@ -32,6 +32,18 @@ pub enum ClientError {
     Decode(#[from] serde_json::Error),
 }
 
+impl ClientError {
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            ClientError::Api { status, .. }
+                if status.is_client_error()
+                    && *status != reqwest::StatusCode::REQUEST_TIMEOUT
+                    && *status != reqwest::StatusCode::TOO_MANY_REQUESTS
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StationRunnerClient {
     base_url: Url,

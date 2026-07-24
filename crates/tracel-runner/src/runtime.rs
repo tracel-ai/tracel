@@ -7,9 +7,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tracel_experiment::CancelToken;
 use uuid::Uuid;
 
+use crate::error::RunnerError;
 use crate::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
@@ -36,32 +36,27 @@ impl FinishSink for StationRunnerClient {
 struct Dispatch {
     runner_id: Uuid,
     job: DispatchedJob,
-    cancel: CancelToken,
 }
 
-type CurrentJob = Arc<(Mutex<Option<(Uuid, CancelToken)>>, Condvar)>;
+/// In-flight job count, paired with a condvar so [`Executor::wait_idle`] can block until it drains.
+type InFlight = Arc<(Mutex<usize>, Condvar)>;
 
 /// Executes dispatched jobs one at a time on a dedicated thread, so the event stream keeps being
-/// read (for cancels and liveness) while user code runs.
+/// read (for liveness) while user code runs.
 pub(crate) struct Executor {
     sender: mpsc::Sender<Dispatch>,
-    current: CurrentJob,
+    in_flight: InFlight,
 }
 
 impl Executor {
     pub fn spawn(jobs: Arc<JobTable>, sink: Arc<dyn FinishSink>) -> Self {
         let (sender, receiver) = mpsc::channel::<Dispatch>();
-        let current: CurrentJob = Arc::default();
+        let in_flight: InFlight = Arc::default();
 
-        let worker_current = current.clone();
+        let worker_in_flight = in_flight.clone();
         std::thread::spawn(move || {
-            for Dispatch {
-                runner_id,
-                job,
-                cancel,
-            } in receiver
-            {
-                let (status, reason) = execute(&jobs, &job, cancel);
+            for Dispatch { runner_id, job } in receiver {
+                let (status, reason) = execute(&jobs, &job);
                 sink.finish_job(
                     job.id,
                     &FinishJob {
@@ -70,71 +65,45 @@ impl Executor {
                         reason,
                     },
                 );
-                let (slot, finished) = &*worker_current;
-                *slot.lock().unwrap() = None;
-                finished.notify_all();
+                finish_in_flight(&worker_in_flight);
             }
         });
 
-        Self { sender, current }
+        Self { sender, in_flight }
     }
 
-    /// Hand a job to the executor. The current-job slot is set before the hand-off so a cancel
-    /// arriving right after dispatch always finds the token.
     pub fn dispatch(&self, runner_id: Uuid, job: DispatchedJob) {
-        let cancel = CancelToken::new();
         {
-            let (slot, _) = &*self.current;
-            let mut slot = slot.lock().unwrap();
-            if slot.is_some() {
+            let (count, _) = &*self.in_flight;
+            let mut count = count.lock().unwrap();
+            if *count > 0 {
                 tracing::warn!(job_id = %job.id, "Job dispatched while another is still running");
             }
-            *slot = Some((job.id, cancel.clone()));
+            *count += 1;
         }
-        if self
-            .sender
-            .send(Dispatch {
-                runner_id,
-                job,
-                cancel,
-            })
-            .is_err()
-        {
+        if self.sender.send(Dispatch { runner_id, job }).is_err() {
             tracing::error!("Executor thread is gone; dropping dispatched job");
+            finish_in_flight(&self.in_flight);
         }
     }
 
-    pub fn cancel(&self, job_id: Uuid) {
-        let (slot, _) = &*self.current;
-        if let Some((current_id, cancel)) = slot.lock().unwrap().as_ref()
-            && *current_id == job_id
-        {
-            cancel.cancel();
-        }
-    }
-
-    pub fn cancel_current(&self) {
-        let (slot, _) = &*self.current;
-        if let Some((_, cancel)) = slot.lock().unwrap().as_ref() {
-            cancel.cancel();
-        }
-    }
-
-    /// Block until the in-flight job (if any) has finished and reported.
+    /// Block until every in-flight job has finished and reported.
     pub fn wait_idle(&self) {
-        let (slot, finished) = &*self.current;
-        let mut slot = slot.lock().unwrap();
-        while slot.is_some() {
-            slot = finished.wait(slot).unwrap();
+        let (count, finished) = &*self.in_flight;
+        let mut count = count.lock().unwrap();
+        while *count > 0 {
+            count = finished.wait(count).unwrap();
         }
     }
 }
 
-fn execute(
-    jobs: &JobTable,
-    job: &DispatchedJob,
-    cancel: CancelToken,
-) -> (FinishStatus, Option<String>) {
+fn finish_in_flight(in_flight: &InFlight) {
+    let (count, finished) = &**in_flight;
+    *count.lock().unwrap() -= 1;
+    finished.notify_all();
+}
+
+fn execute(jobs: &JobTable, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
     let Some(runner_job) = jobs.get(&job.job_name) else {
         // Unreachable under the station's strict policy; defend anyway.
         return (
@@ -143,15 +112,12 @@ fn execute(
         );
     };
     tracing::info!(job_id = %job.id, job_name = %job.job_name, "Running job");
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        runner_job.run(&job.input, cancel.clone())
-    }));
+    let result = catch_unwind(AssertUnwindSafe(|| runner_job.run(&job.input)));
     match result {
         Err(panic) => (
             FinishStatus::Failed,
             Some(format!("job panicked: {}", panic_message(panic.as_ref()))),
         ),
-        Ok(_) if cancel.is_cancelled() => (FinishStatus::Cancelled, None),
         Ok(Ok(())) => (FinishStatus::Completed, None),
         Ok(Err(e)) => (FinishStatus::Failed, Some(e.to_string())),
     }
@@ -175,7 +141,7 @@ pub(crate) enum StreamOutcome {
 }
 
 /// Drive one session: expect the leading `registered` event, then route job dispatches to the
-/// executor and cancels to the in-flight token, until the stream ends.
+/// executor until the stream ends.
 pub(crate) fn serve_stream(
     mut events: impl Iterator<Item = Result<RunnerEvent, ClientError>>,
     executor: &Executor,
@@ -200,7 +166,6 @@ pub(crate) fn serve_stream(
     for event in events {
         match event {
             Ok(RunnerEvent::Job(job)) => executor.dispatch(runner_id, job),
-            Ok(RunnerEvent::Cancel { job_id }) => executor.cancel(job_id),
             Ok(RunnerEvent::Registered { .. }) => {
                 tracing::warn!("Unexpected registered event mid-stream");
             }
@@ -236,12 +201,13 @@ impl Backoff {
     }
 }
 
-/// Serve sessions forever: (re)connect, serve until the stream drops, drain, back off, repeat.
+/// Serve sessions until a fatal registration rejection: (re)connect, serve until the stream drops,
+/// drain, back off, repeat. Transient connection failures are retried; a permanent rejection stops.
 pub(crate) fn serve_forever(
     client: StationRunnerClient,
     register: RegisterRunner,
     executor: Executor,
-) -> ! {
+) -> RunnerError {
     let mut backoff = Backoff::new();
     loop {
         match client.open_events(&register) {
@@ -249,12 +215,11 @@ pub(crate) fn serve_forever(
                 if let StreamOutcome::Served = serve_stream(stream, &executor) {
                     backoff.reset();
                 }
-                // The station has already failed the in-flight job on disconnect: stop it
-                // locally, and never re-register while user code still runs — a fresh session
-                // would get a concurrent dispatch.
-                executor.cancel_current();
+                // Never re-register while user code still runs — a fresh session would get a
+                // concurrent dispatch. Drain the in-flight job first.
                 executor.wait_idle();
             }
+            Err(e) if e.is_permanent() => return RunnerError::Registration(e.to_string()),
             Err(e) => tracing::warn!(error = %e, "Failed to connect to station"),
         }
         let delay = backoff.next();
@@ -296,7 +261,6 @@ mod tests {
         Succeed,
         Fail(&'static str),
         Panic(&'static str),
-        WaitForCancel,
     }
 
     struct FakeJob {
@@ -325,18 +289,12 @@ mod tests {
             }
         }
 
-        fn run(&self, _input: &Value, cancel: CancelToken) -> Result<(), BoxError> {
+        fn run(&self, _input: &Value) -> Result<(), BoxError> {
             self.ran.store(true, Ordering::SeqCst);
             match &self.behaviour {
                 FakeBehaviour::Succeed => Ok(()),
                 FakeBehaviour::Fail(reason) => Err((*reason).into()),
                 FakeBehaviour::Panic(message) => panic!("{message}"),
-                FakeBehaviour::WaitForCancel => {
-                    while !cancel.is_cancelled() {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    Ok(())
-                }
             }
         }
     }
@@ -455,64 +413,6 @@ mod tests {
         let finishes = sink.finishes.lock().unwrap();
         assert_eq!(finishes[0].2, FinishStatus::Failed);
         assert_eq!(finishes[0].3.as_deref(), Some("unknown job 'mystery'"));
-    }
-
-    #[test]
-    fn given_cancel_for_running_job_then_cancellation_reported() {
-        let Setup {
-            executor,
-            sink,
-            runner_id,
-        } = setup(vec![FakeJob::new("train", FakeBehaviour::WaitForCancel)]);
-        let job = dispatched("train");
-
-        serve_stream(
-            events(
-                runner_id,
-                vec![
-                    RunnerEvent::Job(job.clone()),
-                    RunnerEvent::Cancel { job_id: job.id },
-                ],
-            ),
-            &executor,
-        );
-        executor.wait_idle();
-
-        let finishes = sink.finishes.lock().unwrap();
-        assert_eq!(
-            finishes.as_slice(),
-            &[(job.id, runner_id, FinishStatus::Cancelled, None)]
-        );
-    }
-
-    #[test]
-    fn given_cancel_for_other_job_then_running_job_unaffected() {
-        let Setup {
-            executor,
-            sink,
-            runner_id,
-        } = setup(vec![FakeJob::new("train", FakeBehaviour::WaitForCancel)]);
-        let job = dispatched("train");
-
-        serve_stream(
-            events(
-                runner_id,
-                vec![
-                    RunnerEvent::Job(job.clone()),
-                    RunnerEvent::Cancel {
-                        job_id: Uuid::new_v4(),
-                    },
-                ],
-            ),
-            &executor,
-        );
-        // The stream is over (station gone): the loop stops the in-flight job before draining.
-        executor.cancel_current();
-        executor.wait_idle();
-
-        let finishes = sink.finishes.lock().unwrap();
-        assert_eq!(finishes.len(), 1);
-        assert_eq!(finishes[0].2, FinishStatus::Cancelled);
     }
 
     #[test]

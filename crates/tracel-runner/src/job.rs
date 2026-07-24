@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use tracel_experiment::{CancelToken, ExperimentJob};
+use tracel_experiment::ExperimentJob;
 
 use crate::error::BoxError;
 use crate::mapper::InputMapper;
@@ -30,9 +30,8 @@ pub struct JobDefinition {
 pub trait RunnerJob: Send + Sync {
     /// The manifest entry advertised to the station.
     fn definition(&self) -> JobDefinition;
-    /// Run the job with the dispatched input. `cancel` fires when the station requests
-    /// cancellation; observing it is cooperative.
-    fn run(&self, input: &Value, cancel: CancelToken) -> Result<(), BoxError>;
+    /// Run the job with the dispatched input.
+    fn run(&self, input: &Value) -> Result<(), BoxError>;
 }
 
 /// Turns a capability job plus an input mapper into a [`RunnerJob`].
@@ -43,8 +42,8 @@ pub trait IntoRunnerJob<M> {
     fn into_runner_job(self, mapper: M) -> Box<dyn RunnerJob>;
 }
 
-/// Runs an [`ExperimentJob`] on the runner: decode the input, run the experiment to completion
-/// with the station's cancel signal linked into the run.
+/// Runs an [`ExperimentJob`] on the runner: decode the input, then run the experiment to
+/// completion.
 struct ExperimentRunnerJob<I, O, M> {
     job: ExperimentJob<I, O>,
     mapper: M,
@@ -65,12 +64,12 @@ where
         }
     }
 
-    fn run(&self, input: &Value, cancel: CancelToken) -> Result<(), BoxError> {
+    fn run(&self, input: &Value) -> Result<(), BoxError> {
         let input = self
             .mapper
             .map(input)
             .map_err(|e| BoxError::from(format!("invalid input: {e}")))?;
-        self.job.run_with_cancellation(input, cancel).map(|_| ())
+        self.job.run(input).map(|_| ())
     }
 }
 

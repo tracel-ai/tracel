@@ -119,14 +119,13 @@ impl StationRunner {
         };
         let client = StationRunnerClient::new(url);
         let executor = Executor::spawn(Arc::new(self.jobs), Arc::new(client.clone()));
-        runtime::serve_forever(client, register, executor)
+        Err(runtime::serve_forever(client, register, executor))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
-    use tracel_experiment::CancelToken;
 
     use super::*;
 
@@ -144,7 +143,7 @@ mod tests {
             }
         }
 
-        fn run(&self, _input: &Value, _cancel: CancelToken) -> Result<(), crate::BoxError> {
+        fn run(&self, _input: &Value) -> Result<(), crate::BoxError> {
             Ok(())
         }
     }
