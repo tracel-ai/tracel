@@ -3,25 +3,40 @@ use std::sync::OnceLock;
 use burn::data::dataset::Dataset;
 use serde::de::DeserializeOwned;
 
-use super::{DatasetError, DatasetModule};
+use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
-    version: u32,
+    spec: DatasetVersionSpec,
+    version: OnceLock<u32>,
     len: OnceLock<usize>,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> AnnotationDataset<T> {
-    pub fn new(module: DatasetModule, name: impl Into<String>, version: u32) -> Self {
+    pub fn new(
+        module: DatasetModule,
+        name: impl Into<String>,
+        spec: impl Into<DatasetVersionSpec>,
+    ) -> Self {
         Self {
             module,
             name: name.into(),
-            version,
+            spec: spec.into(),
+            version: OnceLock::new(),
             len: OnceLock::new(),
             _marker: std::marker::PhantomData,
         }
+    }
+
+    fn resolved_version(&self) -> Result<u32, DatasetError> {
+        if let Some(&version) = self.version.get() {
+            return Ok(version);
+        }
+
+        let version = self.module.resolve_version(&self.name, self.spec)?;
+        Ok(*self.version.get_or_init(|| version))
     }
 
     fn cached_len(&self) -> usize {
@@ -29,7 +44,11 @@ impl<T> AnnotationDataset<T> {
             return len;
         }
 
-        match self.module.item_count(&self.name, self.version) {
+        let Ok(version) = self.resolved_version() else {
+            return 0;
+        };
+
+        match self.module.item_count(&self.name, version) {
             Ok(len) => *self.len.get_or_init(|| len as usize),
             Err(_) => 0,
         }
@@ -47,9 +66,10 @@ where
             "Index out of bounds for AnnotationDataset: {index} >= {len}"
         );
 
-        let page =
-            self.module
-                .stream_items(&self.name, self.version, Some(index as u64), Some(1))?;
+        let version = self.resolved_version()?;
+        let page = self
+            .module
+            .stream_items(&self.name, version, Some(index as u64), Some(1))?;
 
         let raw_item = page
             .items
@@ -59,7 +79,7 @@ where
 
         serde_json::from_slice::<T>(&raw_item).map_err(|err| DatasetError::CorruptItem {
             name: self.name.clone(),
-            version: self.version,
+            version,
             index: index as u64,
             source: Box::new(err),
         })
@@ -71,11 +91,15 @@ where
 }
 
 impl DatasetModule {
-    pub fn as_burn_dataset<T>(&self, name: impl Into<String>, version: u32) -> AnnotationDataset<T>
+    pub fn as_burn_dataset<T>(
+        &self,
+        name: impl Into<String>,
+        spec: impl Into<DatasetVersionSpec>,
+    ) -> AnnotationDataset<T>
     where
         T: DeserializeOwned + Clone + Send + Sync,
     {
-        AnnotationDataset::new(self.clone(), name, version)
+        AnnotationDataset::new(self.clone(), name, spec)
     }
 }
 
@@ -88,7 +112,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::AnnotationDataset;
-    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider};
+    use crate::dataset::{
+        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetVersionSpec,
+    };
 
     #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
     struct TestItem {
@@ -119,6 +145,10 @@ mod tests {
 
         fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
             (self.count)(name, version)
+        }
+
+        fn resolve_version(&self, _name: &str) -> Result<u32, DatasetError> {
+            unimplemented!("tests in this module only use DatasetVersionSpec::Exact")
         }
     }
 
@@ -222,6 +252,86 @@ mod tests {
         let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1);
 
         dataset.get(5).unwrap();
+    }
+
+    struct LatestFakeProvider<F, C, L> {
+        stream: F,
+        count: C,
+        latest: L,
+    }
+
+    impl<F, C, L> DatasetProvider for LatestFakeProvider<F, C, L>
+    where
+        F: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
+            + Send
+            + Sync,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
+        L: Fn(&str) -> Result<u32, DatasetError> + Send + Sync,
+    {
+        fn stream_items(
+            &self,
+            name: &str,
+            version: u32,
+            cursor: Option<u64>,
+            limit: Option<u32>,
+        ) -> Result<DatasetItemsPage, DatasetError> {
+            (self.stream)(name, version, cursor, limit)
+        }
+
+        fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+            (self.count)(name, version)
+        }
+
+        fn resolve_version(&self, name: &str) -> Result<u32, DatasetError> {
+            (self.latest)(name)
+        }
+    }
+
+    #[test]
+    fn given_latest_spec_when_get_then_version_is_resolved_and_used() {
+        let provider = LatestFakeProvider {
+            stream: |_name: &str, version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+                assert_eq!(version, 5);
+                Ok(DatasetItemsPage {
+                    items: vec![item(42)],
+                })
+            },
+            count: |_name: &str, version: u32| {
+                assert_eq!(version, 5);
+                Ok(1)
+            },
+            latest: |_name: &str| Ok(5),
+        };
+        let module = DatasetModule::new(Arc::new(provider));
+        let dataset: AnnotationDataset<TestItem> =
+            module.as_burn_dataset("ds", DatasetVersionSpec::Latest);
+
+        assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
+    }
+
+    #[test]
+    fn given_latest_spec_when_resolved_twice_then_version_is_resolved_only_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        let provider = LatestFakeProvider {
+            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+                Ok(DatasetItemsPage {
+                    items: vec![item(1)],
+                })
+            },
+            count: |_name: &str, _version: u32| Ok(1),
+            latest: move |_name: &str| {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                Ok(9)
+            },
+        };
+        let module = DatasetModule::new(Arc::new(provider));
+        let dataset: AnnotationDataset<TestItem> =
+            module.as_burn_dataset("ds", DatasetVersionSpec::Latest);
+
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
