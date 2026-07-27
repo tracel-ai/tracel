@@ -1284,6 +1284,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "tracel",
+ "url",
 ]
 
 [[package]]
@@ -5422,6 +5423,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "serde",
+ "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
@@ -6620,6 +6622,7 @@ dependencies = [
  "tracel-experiment",
  "tracel-fleet",
  "tracel-inference",
+ "tracel-runner",
 ]
 
 [[package]]
@@ -6800,6 +6803,22 @@ version = "22.1.4-4"
 source = "git+https://github.com/tracel-ai/tracel-llvm?rev=82401e3c00a35a3fb7d5e2b415e79692e09e1079#82401e3c00a35a3fb7d5e2b415e79692e09e1079"
 dependencies = [
  "tracel-llvm-bundler",
+]
+
+[[package]]
+name = "tracel-runner"
+version = "0.7.0"
+dependencies = [
+ "json-patch",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracel-experiment",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -7187,7 +7206,9 @@ version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
 dependencies = [
+ "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 
