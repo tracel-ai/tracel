@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn given_two_indices_when_get_called_twice_then_cursor_matches_index() {
+    fn given_two_indices_when_get_called_twice_then_index_matches_indices() {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         let all_items = vec![item(1), item(2)];

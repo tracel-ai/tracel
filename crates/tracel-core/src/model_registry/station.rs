@@ -40,7 +40,7 @@ impl StationBackend {
         name: &str,
         version: u32,
     ) -> ModelRegistryError {
-        if !matches!(err, ClientError::NotFound) {
+        if !err.is_not_found() {
             return ModelRegistryError::Client(Box::new(err));
         }
         if let Err(e) = self.ensure_model_exists(name) {
@@ -57,7 +57,7 @@ impl StationBackend {
     fn ensure_model_exists(&self, name: &str) -> Result<(), ModelRegistryError> {
         match self.client.models().get(name) {
             Ok(_) => Ok(()),
-            Err(ClientError::NotFound) => Err(ModelRegistryError::ModelNotFound {
+            Err(err) if err.is_not_found() => Err(ModelRegistryError::ModelNotFound {
                 name: name.to_string(),
             }),
             Err(err) => Err(ModelRegistryError::Client(Box::new(err))),
@@ -67,7 +67,7 @@ impl StationBackend {
     fn ensure_version_exists(&self, name: &str, version: u32) -> Result<(), ModelRegistryError> {
         match self.client.models().version(name, version) {
             Ok(_) => Ok(()),
-            Err(ClientError::NotFound) => Err(ModelRegistryError::VersionNotFound {
+            Err(err) if err.is_not_found() => Err(ModelRegistryError::VersionNotFound {
                 name: name.to_string(),
                 version,
             }),

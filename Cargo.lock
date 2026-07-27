@@ -6596,7 +6596,6 @@ dependencies = [
 [[package]]
 name = "tracel-client"
 version = "0.11.1"
-source = "git+https://github.com/tracel-ai/tracel-client?rev=505d17410ed7152ceede9e35b52971467a3a19b2#505d17410ed7152ceede9e35b52971467a3a19b2"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",

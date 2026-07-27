@@ -1,12 +1,8 @@
-use tracel_client::ClientError;
-use tracel_client::station::dataset::{DatasetVersionResponse, StreamDatasetVersionItemsRequest};
+use tracel_client::station::dataset::StreamDatasetVersionItemsRequest;
+use tracel_client::{ApiErrorCode, ClientError};
 
 use crate::backend::station::StationBackend;
 use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
-use tracel_client::station::dataset::QueryDatasetVersionsRequest;
-use tracel_client::station::dataset::QueryDatasetsRequest;
-
-const QUERY_PAGE_SIZE: u32 = 100;
 
 impl DatasetProvider for StationBackend {
     fn stream_items(
@@ -24,7 +20,7 @@ impl DatasetProvider for StationBackend {
                 version,
                 StreamDatasetVersionItemsRequest { index, limit },
             )
-            .map_err(|err| self.describe_stream_error(err, name, version))?;
+            .map_err(|err| Self::describe_error(err, name, version))?;
 
         Ok(DatasetItemsPage {
             items: response
@@ -36,85 +32,27 @@ impl DatasetProvider for StationBackend {
     }
 
     fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
-        self.find_dataset_version(name, version)
+        self.client
+            .datasets()
+            .get_version(name, version)
             .map(|response| response.item_count)
+            .map_err(|err| Self::describe_error(err, name, version))
     }
 }
 
 impl StationBackend {
-    fn describe_stream_error(&self, err: ClientError, name: &str, version: u32) -> DatasetError {
-        if !matches!(err, ClientError::NotFound) {
-            return DatasetError::Client(Box::new(err));
-        }
-        if let Err(e) = self.ensure_dataset_exists(name) {
-            return e;
-        }
-        self.ensure_dataset_version_exists(name, version)
-            .err()
-            .unwrap_or(DatasetError::VersionNotFound {
+    fn describe_error(err: ClientError, name: &str, version: u32) -> DatasetError {
+        match err {
+            ClientError::NotFoundWithCode(ApiErrorCode::Dataset) => DatasetError::DatasetNotFound {
                 name: name.to_string(),
-                version,
-            })
-    }
-
-    fn ensure_dataset_exists(&self, name: &str) -> Result<(), DatasetError> {
-        let mut page = 0;
-        loop {
-            let response = self
-                .client
-                .datasets()
-                .query(QueryDatasetsRequest {
-                    page: Some(page),
-                    per_page: Some(QUERY_PAGE_SIZE),
-                    filter: None,
-                })
-                .map_err(|err| DatasetError::Client(Box::new(err)))?;
-
-            if response.items.iter().any(|d| d.name == name) {
-                return Ok(());
-            }
-            if response.items.len() < QUERY_PAGE_SIZE as usize {
-                return Err(DatasetError::DatasetNotFound {
-                    name: name.to_string(),
-                });
-            }
-            page += 1;
-        }
-    }
-
-    fn ensure_dataset_version_exists(&self, name: &str, version: u32) -> Result<(), DatasetError> {
-        self.find_dataset_version(name, version).map(|_| ())
-    }
-
-    fn find_dataset_version(
-        &self,
-        name: &str,
-        version: u32,
-    ) -> Result<DatasetVersionResponse, DatasetError> {
-        let mut page = 0;
-        loop {
-            let response = self
-                .client
-                .datasets()
-                .versions(
-                    name,
-                    QueryDatasetVersionsRequest {
-                        page: Some(page),
-                        per_page: Some(QUERY_PAGE_SIZE),
-                    },
-                )
-                .map_err(|err| DatasetError::Client(Box::new(err)))?;
-
-            if let Some(found) = response.items.iter().find(|v| v.version == version as i32) {
-                return Ok(found.clone());
-            }
-            if response.items.len() < QUERY_PAGE_SIZE as usize {
-                return Err(DatasetError::VersionNotFound {
+            },
+            ClientError::NotFoundWithCode(ApiErrorCode::DatasetVersion) => {
+                DatasetError::VersionNotFound {
                     name: name.to_string(),
                     version,
-                });
+                }
             }
-            page += 1;
+            err => DatasetError::Client(Box::new(err)),
         }
     }
 }

@@ -39,7 +39,7 @@ impl CloudBackend {
         name: &str,
         version: u32,
     ) -> ModelRegistryError {
-        if !matches!(err, ClientError::NotFound) {
+        if !err.is_not_found() {
             return ModelRegistryError::Client(Box::new(err));
         }
         if let Err(e) = self.ensure_model_exists(name) {
@@ -56,7 +56,7 @@ impl CloudBackend {
     fn ensure_model_exists(&self, name: &str) -> Result<(), ModelRegistryError> {
         match self.client.get_model(&self.namespace, &self.project, name) {
             Ok(_) => Ok(()),
-            Err(ClientError::NotFound) => Err(ModelRegistryError::ModelNotFound {
+            Err(err) if err.is_not_found() => Err(ModelRegistryError::ModelNotFound {
                 name: name.to_string(),
             }),
             Err(err) => Err(ModelRegistryError::Client(Box::new(err))),
@@ -69,7 +69,7 @@ impl CloudBackend {
             .get_model_version(&self.namespace, &self.project, name, version)
         {
             Ok(_) => Ok(()),
-            Err(ClientError::NotFound) => Err(ModelRegistryError::VersionNotFound {
+            Err(err) if err.is_not_found() => Err(ModelRegistryError::VersionNotFound {
                 name: name.to_string(),
                 version,
             }),
