@@ -1,5 +1,5 @@
 use tracel_client::ClientError;
-use tracel_client::station::dataset::StreamDatasetVersionItemsRequest;
+use tracel_client::station::dataset::{DatasetVersionResponse, StreamDatasetVersionItemsRequest};
 
 use crate::backend::station::StationBackend;
 use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
@@ -22,10 +22,7 @@ impl DatasetProvider for StationBackend {
             .stream_items(
                 name,
                 version,
-                StreamDatasetVersionItemsRequest {
-                    cursor: index,
-                    limit,
-                },
+                StreamDatasetVersionItemsRequest { index, limit },
             )
             .map_err(|err| self.describe_stream_error(err, name, version))?;
 
@@ -35,8 +32,12 @@ impl DatasetProvider for StationBackend {
                 .into_iter()
                 .map(|item| item.payload)
                 .collect(),
-            next_cursor: response.next_cursor,
         })
+    }
+
+    fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+        self.find_dataset_version(name, version)
+            .map(|response| response.item_count)
     }
 }
 
@@ -82,6 +83,14 @@ impl StationBackend {
     }
 
     fn ensure_dataset_version_exists(&self, name: &str, version: u32) -> Result<(), DatasetError> {
+        self.find_dataset_version(name, version).map(|_| ())
+    }
+
+    fn find_dataset_version(
+        &self,
+        name: &str,
+        version: u32,
+    ) -> Result<DatasetVersionResponse, DatasetError> {
         let mut page = 0;
         loop {
             let response = self
@@ -96,8 +105,8 @@ impl StationBackend {
                 )
                 .map_err(|err| DatasetError::Client(Box::new(err)))?;
 
-            if response.items.iter().any(|v| v.version == version as i32) {
-                return Ok(());
+            if let Some(found) = response.items.iter().find(|v| v.version == version as i32) {
+                return Ok(found.clone());
             }
             if response.items.len() < QUERY_PAGE_SIZE as usize {
                 return Err(DatasetError::VersionNotFound {

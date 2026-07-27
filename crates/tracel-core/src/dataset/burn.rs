@@ -5,54 +5,23 @@ use serde::de::DeserializeOwned;
 
 use super::{DatasetError, DatasetModule};
 
-const DEFAULT_PAGE_SIZE: u32 = 256;
-
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
     version: u32,
-    page_size: u32,
     len: OnceLock<usize>,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> AnnotationDataset<T> {
     pub fn new(module: DatasetModule, name: impl Into<String>, version: u32) -> Self {
-        Self::with_page_size(module, name, version, DEFAULT_PAGE_SIZE)
-    }
-
-    pub fn with_page_size(
-        module: DatasetModule,
-        name: impl Into<String>,
-        version: u32,
-        page_size: u32,
-    ) -> Self {
         Self {
             module,
             name: name.into(),
             version,
-            page_size,
             len: OnceLock::new(),
             _marker: std::marker::PhantomData,
         }
-    }
-
-    fn count_items(&self) -> Option<usize> {
-        let mut count = 0usize;
-        let mut index = None;
-        loop {
-            let page = self
-                .module
-                .stream_items(&self.name, self.version, index, Some(self.page_size))
-                .ok()?;
-            count += page.items.len();
-
-            match page.next_cursor {
-                Some(next) => index = Some(next),
-                None => break,
-            }
-        }
-        Some(count)
     }
 
     fn cached_len(&self) -> usize {
@@ -60,9 +29,9 @@ impl<T> AnnotationDataset<T> {
             return len;
         }
 
-        match self.count_items() {
-            Some(len) => *self.len.get_or_init(|| len),
-            None => 0,
+        match self.module.item_count(&self.name, self.version) {
+            Ok(len) => *self.len.get_or_init(|| len as usize),
+            Err(_) => 0,
         }
     }
 }
@@ -126,15 +95,17 @@ mod tests {
         value: u32,
     }
 
-    struct FakeProvider<F> {
+    struct FakeProvider<F, C> {
         stream: F,
+        count: C,
     }
 
-    impl<F> DatasetProvider for FakeProvider<F>
+    impl<F, C> DatasetProvider for FakeProvider<F, C>
     where
         F: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
             + Send
             + Sync,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
     {
         fn stream_items(
             &self,
@@ -144,6 +115,10 @@ mod tests {
             limit: Option<u32>,
         ) -> Result<DatasetItemsPage, DatasetError> {
             (self.stream)(name, version, cursor, limit)
+        }
+
+        fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+            (self.count)(name, version)
         }
     }
 
@@ -157,9 +132,9 @@ mod tests {
             stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
                     items: vec![item(42)],
-                    next_cursor: None,
                 })
             },
+            count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
@@ -168,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn given_malformed_item_when_get_then_error_is_returned_and_item_still_counts() {
+    fn given_malformed_item_when_get_then_error_is_returned_and_valid_item_still_decodes() {
         let provider = FakeProvider {
             stream: |_name: &str, _version: u32, cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
@@ -176,12 +151,9 @@ mod tests {
                         Some(1) => item(7),
                         _ => b"not json".to_vec(),
                     }],
-                    next_cursor: match cursor {
-                        Some(1) => None,
-                        _ => Some(1),
-                    },
                 })
             },
+            count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
         let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
@@ -192,26 +164,16 @@ mod tests {
     }
 
     #[test]
-    fn given_dataset_when_len_called_twice_then_provider_is_walked_only_once() {
+    fn given_dataset_when_len_called_twice_then_item_count_is_fetched_only_once() {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         let provider = FakeProvider {
-            stream: move |_name: &str, _version: u32, cursor: Option<u64>, _limit: Option<u32>| {
+            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+                Ok(DatasetItemsPage { items: vec![] })
+            },
+            count: move |_name: &str, _version: u32| {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                match cursor {
-                    None => Ok(DatasetItemsPage {
-                        items: vec![item(1)],
-                        next_cursor: Some(1),
-                    }),
-                    Some(1) => Ok(DatasetItemsPage {
-                        items: vec![item(2)],
-                        next_cursor: None,
-                    }),
-                    _ => Ok(DatasetItemsPage {
-                        items: vec![],
-                        next_cursor: None,
-                    }),
-                }
+                Ok(2)
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
@@ -219,7 +181,7 @@ mod tests {
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.len(), 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -233,18 +195,16 @@ mod tests {
                 let start = cursor.unwrap_or(0) as usize;
                 let limit = limit.map(|l| l as usize).unwrap_or(all_items.len());
                 let items: Vec<_> = all_items.iter().skip(start).take(limit).cloned().collect();
-                let next_cursor =
-                    (start + items.len() < all_items.len()).then(|| (start + items.len()) as u64);
-                Ok(DatasetItemsPage { items, next_cursor })
+                Ok(DatasetItemsPage { items })
             },
+            count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> =
-            AnnotationDataset::with_page_size(module, "ds", 1, 10);
+        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1);
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
         assert_eq!(dataset.get(1).unwrap(), TestItem { value: 2 });
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -254,13 +214,12 @@ mod tests {
             stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
                     items: vec![item(1)],
-                    next_cursor: None,
                 })
             },
+            count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> =
-            AnnotationDataset::with_page_size(module, "ds", 1, 10);
+        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1);
 
         dataset.get(5).unwrap();
     }
@@ -270,15 +229,15 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         let provider = FakeProvider {
-            stream: move |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+                Ok(DatasetItemsPage { items: vec![] })
+            },
+            count: move |_name: &str, _version: u32| {
                 let call = calls_clone.fetch_add(1, Ordering::SeqCst);
                 if call == 0 {
                     Err(DatasetError::Client("transient".into()))
                 } else {
-                    Ok(DatasetItemsPage {
-                        items: vec![item(1)],
-                        next_cursor: None,
-                    })
+                    Ok(1)
                 }
             },
         };

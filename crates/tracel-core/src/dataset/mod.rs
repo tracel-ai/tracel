@@ -28,7 +28,6 @@ pub enum DatasetError {
 #[derive(Debug, Clone)]
 pub struct DatasetItemsPage {
     pub items: Vec<Vec<u8>>,
-    pub next_cursor: Option<u64>,
 }
 
 pub trait DatasetProvider: Send + Sync {
@@ -43,6 +42,9 @@ pub trait DatasetProvider: Send + Sync {
         index: Option<u64>,
         limit: Option<u32>,
     ) -> Result<DatasetItemsPage, DatasetError>;
+
+    // Returns the total number of items in the named /dataset version.
+    fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError>;
 }
 
 #[derive(Clone)]
@@ -63,6 +65,10 @@ impl DatasetModule {
         limit: Option<u32>,
     ) -> Result<DatasetItemsPage, DatasetError> {
         self.provider.stream_items(name, version, index, limit)
+    }
+
+    pub(crate) fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+        self.provider.item_count(name, version)
     }
 }
 
@@ -89,6 +95,10 @@ mod tests {
         ) -> Result<DatasetItemsPage, DatasetError> {
             (self.stream)(name, version, index, limit)
         }
+
+        fn item_count(&self, _name: &str, _version: u32) -> Result<u64, DatasetError> {
+            Ok(0)
+        }
     }
 
     #[test]
@@ -97,7 +107,6 @@ mod tests {
             stream: |_name: &str, _version: u32, _index: Option<u64>, _limit: Option<u32>| {
                 Ok(DatasetItemsPage {
                     items: vec![b"hello".to_vec()],
-                    next_cursor: None,
                 })
             },
         };
@@ -109,7 +118,6 @@ mod tests {
 
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0], b"hello");
-        assert!(page.next_cursor.is_none());
     }
 
     #[test]
