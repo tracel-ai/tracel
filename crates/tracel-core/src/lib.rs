@@ -9,5 +9,5 @@ pub mod inference;
 
 pub use connection::{Connection, ContextError};
 pub use context::Context;
-pub use dataset::{AnnotationDataset, DatasetModule};
+pub use dataset::{AnnotationDataset, DatasetError, DatasetModule, DatasetVersionSpec};
 pub use model_registry::{ModelRegistryError, ModelRegistryModule};
