@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use burn::data::dataset::Dataset;
 use serde::de::DeserializeOwned;
 
@@ -8,9 +6,8 @@ use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
-    spec: DatasetVersionSpec,
-    version: OnceLock<u32>,
-    len: OnceLock<usize>,
+    version: u32,
+    len: usize,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -19,39 +16,19 @@ impl<T> AnnotationDataset<T> {
         module: DatasetModule,
         name: impl Into<String>,
         spec: impl Into<DatasetVersionSpec>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, DatasetError> {
+        let name = name.into();
+        let spec = spec.into();
+        let version = module.resolve_version(&name, spec)?;
+        let len = module.item_count(&name, version)? as usize;
+
+        Ok(Self {
             module,
-            name: name.into(),
-            spec: spec.into(),
-            version: OnceLock::new(),
-            len: OnceLock::new(),
+            name,
+            version,
+            len,
             _marker: std::marker::PhantomData,
-        }
-    }
-
-    fn resolved_version(&self) -> Result<u32, DatasetError> {
-        if let Some(&version) = self.version.get() {
-            return Ok(version);
-        }
-
-        let version = self.module.resolve_version(&self.name, self.spec)?;
-        Ok(*self.version.get_or_init(|| version))
-    }
-
-    fn cached_len(&self) -> usize {
-        if let Some(&len) = self.len.get() {
-            return len;
-        }
-
-        let Ok(version) = self.resolved_version() else {
-            return 0;
-        };
-
-        match self.module.item_count(&self.name, version) {
-            Ok(len) => *self.len.get_or_init(|| len as usize),
-            Err(_) => 0,
-        }
+        })
     }
 }
 
@@ -60,13 +37,13 @@ where
     T: DeserializeOwned + Clone + Send + Sync,
 {
     fn get(&self, index: usize) -> Result<T, DatasetError> {
-        let len = self.cached_len();
+        let len = self.len();
         assert!(
             index < len,
             "Index out of bounds for AnnotationDataset: {index} >= {len}"
         );
 
-        let version = self.resolved_version()?;
+        let version = self.version;
         let page = self
             .module
             .stream_items(&self.name, version, Some(index as u64), Some(1))?;
@@ -86,7 +63,7 @@ where
     }
 
     fn len(&self) -> usize {
-        self.cached_len()
+        self.len
     }
 }
 
@@ -95,7 +72,7 @@ impl DatasetModule {
         &self,
         name: impl Into<String>,
         spec: impl Into<DatasetVersionSpec>,
-    ) -> AnnotationDataset<T>
+    ) -> Result<AnnotationDataset<T>, DatasetError>
     where
         T: DeserializeOwned + Clone + Send + Sync,
     {
@@ -167,7 +144,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1).unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
     }
@@ -186,7 +163,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1).unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert!(dataset.get(0).is_err());
@@ -207,7 +184,7 @@ mod tests {
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
+        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1).unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.len(), 2);
@@ -230,7 +207,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1);
+        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1).unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
         assert_eq!(dataset.get(1).unwrap(), TestItem { value: 2 });
@@ -249,7 +226,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1);
+        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1).unwrap();
 
         dataset.get(5).unwrap();
     }
@@ -303,8 +280,9 @@ mod tests {
             latest: |_name: &str| Ok(5),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> =
-            module.as_burn_dataset("ds", DatasetVersionSpec::Latest);
+        let dataset: AnnotationDataset<TestItem> = module
+            .as_burn_dataset("ds", DatasetVersionSpec::Latest)
+            .unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
     }
@@ -326,35 +304,12 @@ mod tests {
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> =
-            module.as_burn_dataset("ds", DatasetVersionSpec::Latest);
+        let dataset: AnnotationDataset<TestItem> = module
+            .as_burn_dataset("ds", DatasetVersionSpec::Latest)
+            .unwrap();
 
         assert_eq!(dataset.len(), 1);
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn given_transient_error_when_len_then_next_call_retries_instead_of_caching_failure() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_clone = calls.clone();
-        let provider = FakeProvider {
-            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
-                Ok(DatasetItemsPage { items: vec![] })
-            },
-            count: move |_name: &str, _version: u32| {
-                let call = calls_clone.fetch_add(1, Ordering::SeqCst);
-                if call == 0 {
-                    Err(DatasetError::Client("transient".into()))
-                } else {
-                    Ok(1)
-                }
-            },
-        };
-        let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1);
-
-        assert_eq!(dataset.len(), 0);
-        assert_eq!(dataset.len(), 1);
     }
 }
