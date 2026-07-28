@@ -86,8 +86,3 @@ tracel-xtask = "4.19.0"
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
-
-# Temporary: point at the local tracel-client checkout to build against
-# unpublished client changes. Remove before committing.
-[patch."https://github.com/tracel-ai/tracel-client"]
-tracel-client = { path = "../client/tracel-client" }
