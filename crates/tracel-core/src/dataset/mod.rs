@@ -1,3 +1,20 @@
+//! Streaming access to datasets registered in Tracel Station.
+//!
+//! Datasets are versioned collections of items stored in Station. This module lets you
+//! stream items from a dataset version, page by page, without downloading the whole thing
+//! up front.
+//!
+//! # Getting a dataset
+//!
+//! Obtain a [`DatasetModule`] from [`Context::datasets`](crate::Context::datasets). It
+//! returns `None` unless the context is connected to Station, since dataset streaming is a
+//! Station-only feature. [`DatasetModule`] gives you raw item bytes and leaves decoding up
+//! to the caller — see [`DatasetModule::as_burn_dataset`] for the built-in adapter that
+//! decodes items as JSON and plugs into a Burn dataloader.
+//!
+//! Versions are selected with a [`DatasetVersionSpec`]: pass a `u32` for an exact version, or
+//! [`DatasetVersionSpec::Latest`] to resolve whichever version is newest.
+
 mod burn;
 #[cfg(feature = "station")]
 mod station;
@@ -7,16 +24,23 @@ pub use burn::AnnotationDataset;
 use std::error::Error;
 use std::sync::Arc;
 
+/// Errors that can occur while resolving or streaming a dataset.
 #[derive(Debug, thiserror::Error)]
 pub enum DatasetError {
+    /// No dataset with this name is registered in Station.
     #[error("dataset '{name}' not found")]
     DatasetNotFound { name: String },
+    /// The dataset exists, but not the requested version.
     #[error("version {version} of dataset '{name}' not found")]
     VersionNotFound { name: String, version: u32 },
+    /// The dataset exists but has no published versions, so [`DatasetVersionSpec::Latest`]
+    /// could not be resolved.
     #[error("dataset '{name}' has no versions")]
     NoVersionsFound { name: String },
+    /// The underlying Station client failed to communicate with the dataset registry.
     #[error("communication with the dataset registry failed: {0}")]
     Client(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// An item could not be decoded into the type requested by the caller.
     #[error("item {index} in dataset '{name}' version {version} is corrupt: {source}")]
     CorruptItem {
         name: String,
@@ -28,9 +52,14 @@ pub enum DatasetError {
 }
 
 /// Selects which version of a dataset to use.
+///
+/// A bare `u32` converts into [`DatasetVersionSpec::Exact`], so most call sites can just
+/// pass a version number instead of constructing this enum directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatasetVersionSpec {
+    /// Use this exact version number.
     Exact(u32),
+    /// Resolve and use whichever version is newest at the time of the call.
     Latest,
 }
 
@@ -40,11 +69,17 @@ impl From<u32> for DatasetVersionSpec {
     }
 }
 
+/// One page of raw items returned by a [`DatasetProvider`].
 #[derive(Debug, Clone)]
 pub struct DatasetItemsPage {
+    /// The raw item bytes, in the order returned by the backend.
     pub items: Vec<Vec<u8>>,
 }
 
+/// Backend used by [`DatasetModule`] to resolve versions and stream dataset items.
+///
+/// This is implemented once per backend (e.g. Station) and is not meant to be called
+/// directly by SDK users — go through [`DatasetModule`] instead.
 pub trait DatasetProvider: Send + Sync {
     /// Fetches one page of raw items for the named dataset version, starting at `index`
     /// (`None` for the first item) and capped at `limit` items (backend-defined default if
@@ -58,19 +93,27 @@ pub trait DatasetProvider: Send + Sync {
         limit: Option<u32>,
     ) -> Result<DatasetItemsPage, DatasetError>;
 
-    // Returns the total number of items in the named /dataset version.
+    /// Returns the total number of items in the named dataset version.
     fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError>;
 
     /// Resolves the latest version number for the named dataset.
     fn resolve_version(&self, name: &str) -> Result<u32, DatasetError>;
 }
 
+/// Entry point for reading datasets registered in Tracel Station.
+///
+/// Obtain one from [`Context::datasets`](crate::Context::datasets), then convert it into a
+/// usable [`AnnotationDataset`] with [`DatasetModule::as_burn_dataset`], which has a full
+/// usage example.
 #[derive(Clone)]
 pub struct DatasetModule {
     provider: Arc<dyn DatasetProvider>,
 }
 
 impl DatasetModule {
+    /// Wraps a dataset backend into a `DatasetModule`. SDK users normally get a
+    /// `DatasetModule` from [`Context::datasets`](crate::Context::datasets) instead of
+    /// calling this directly.
     pub fn new(provider: Arc<dyn DatasetProvider>) -> Self {
         Self { provider }
     }

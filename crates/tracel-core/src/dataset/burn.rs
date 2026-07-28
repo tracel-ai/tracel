@@ -1,8 +1,22 @@
-use burn::data::dataset::Dataset;
+use burn::data::dataset::{Dataset, DatasetError as BurnDatasetError};
 use serde::de::DeserializeOwned;
 
 use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 
+/// A Station dataset version, adapted to Burn's [`Dataset`] trait.
+///
+/// Items are streamed on demand rather than downloaded up front: each call to [`Dataset::get`]
+/// fetches the item at that index from Station and decodes it from JSON into `T`. The item
+/// count is resolved once, on construction, and cached for [`Dataset::len`].
+///
+/// `get` reports failures as Burn's own [`BurnDatasetError`] rather than [`DatasetError`], so
+/// `AnnotationDataset` implements the same `Dataset<T>` that Burn's other datasets and
+/// combinators (`DataLoaderBuilder`, `MapperDataset`, `SamplerDataset`, ...) expect. The
+/// original [`DatasetError`] is preserved as the source and can be recovered with
+/// `std::error::Error::source` and a downcast.
+///
+/// Build one with [`DatasetModule::as_burn_dataset`] rather than constructing it directly; its
+/// docs include a full usage example.
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
     name: String,
@@ -12,6 +26,9 @@ pub struct AnnotationDataset<T> {
 }
 
 impl<T> AnnotationDataset<T> {
+    /// Resolves `spec` to a concrete version and fetches its item count from `module`.
+    ///
+    /// Prefer [`DatasetModule::as_burn_dataset`], which calls this for you.
     pub fn new(
         module: DatasetModule,
         name: impl Into<String>,
@@ -32,11 +49,11 @@ impl<T> AnnotationDataset<T> {
     }
 }
 
-impl<T> Dataset<T, DatasetError> for AnnotationDataset<T>
+impl<T> Dataset<T> for AnnotationDataset<T>
 where
     T: DeserializeOwned + Clone + Send + Sync,
 {
-    fn get(&self, index: usize) -> Result<T, DatasetError> {
+    fn get(&self, index: usize) -> Result<T, BurnDatasetError> {
         let len = self.len();
         assert!(
             index < len,
@@ -46,7 +63,8 @@ where
         let version = self.version;
         let page = self
             .module
-            .stream_items(&self.name, version, Some(index as u64), Some(1))?;
+            .stream_items(&self.name, version, Some(index as u64), Some(1))
+            .map_err(BurnDatasetError::new)?;
 
         let raw_item = page
             .items
@@ -54,11 +72,13 @@ where
             .next()
             .expect("provider returned no item for an index within the dataset length");
 
-        serde_json::from_slice::<T>(&raw_item).map_err(|err| DatasetError::CorruptItem {
-            name: self.name.clone(),
-            version,
-            index: index as u64,
-            source: Box::new(err),
+        serde_json::from_slice::<T>(&raw_item).map_err(|err| {
+            BurnDatasetError::new(DatasetError::CorruptItem {
+                name: self.name.clone(),
+                version,
+                index: index as u64,
+                source: Box::new(err),
+            })
         })
     }
 
@@ -68,6 +88,40 @@ where
 }
 
 impl DatasetModule {
+    /// Adapts a named dataset version into a Burn [`Dataset`], ready to hand to a dataloader.
+    ///
+    /// `spec` selects the version: pass a `u32` for an exact version, or
+    /// [`DatasetVersionSpec::Latest`] to resolve whichever version is newest. Items are decoded
+    /// as JSON into `T` on access, so `T` must implement [`DeserializeOwned`].
+    ///
+    /// ```rust,no_run
+    /// use burn::data::dataloader::DataLoaderBuilder;
+    /// use burn::data::dataloader::batcher::Batcher;
+    /// use serde::Deserialize;
+    /// use tracel_core::{DatasetModule, DatasetVersionSpec};
+    ///
+    /// #[derive(Deserialize, Clone, Debug)]
+    /// struct Annotation {
+    ///     label: String,
+    /// }
+    ///
+    /// struct AnnotationBatcher;
+    ///
+    /// impl Batcher<Annotation, Vec<Annotation>> for AnnotationBatcher {
+    ///     fn batch(&self, items: Vec<Annotation>, _device: &burn::tensor::Device) -> Vec<Annotation> {
+    ///         items
+    ///     }
+    /// }
+    ///
+    /// # fn example(datasets: DatasetModule) -> Result<(), tracel_core::DatasetError> {
+    /// let dataset = datasets.as_burn_dataset::<Annotation>("mnist-corrections", DatasetVersionSpec::Latest)?;
+    ///
+    /// let dataloader = DataLoaderBuilder::new(AnnotationBatcher)
+    ///     .batch_size(32)
+    ///     .build(dataset);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn as_burn_dataset<T>(
         &self,
         name: impl Into<String>,
