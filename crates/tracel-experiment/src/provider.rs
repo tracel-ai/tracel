@@ -118,8 +118,17 @@ impl<I, O> ExperimentJob<I, O> {
 
         match result {
             Ok(output) => {
-                experiment.finish()?;
+                if experiment.cancel_token().is_cancelled() {
+                    // Dropping without an explicit completion finalizes the run as cancelled.
+                    drop(experiment);
+                } else {
+                    experiment.finish()?;
+                }
                 Ok(output)
+            }
+            Err(e) if experiment.cancel_token().is_cancelled() => {
+                drop(experiment);
+                Err(e)
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -127,5 +136,134 @@ impl<I, O> ExperimentJob<I, O> {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
+    use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
+    use crate::{ArtifactKind, CancelToken, ExperimentId};
+
+    #[derive(Default)]
+    struct MockSession {
+        completions: Mutex<Vec<ExperimentCompletion>>,
+    }
+
+    impl ExperimentSession for MockSession {
+        fn record_event(&self, _event: crate::session::Event) -> Result<(), ExperimentError> {
+            Ok(())
+        }
+
+        fn save_artifact(
+            &self,
+            _name: &str,
+            _kind: ArtifactKind,
+            _artifact: Box<BundleFn>,
+        ) -> Result<(), ExperimentError> {
+            Ok(())
+        }
+
+        fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+            self.completions.lock().unwrap().push(completion);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct NoopExperimentDataReader;
+
+    impl ExperimentArtifactReader for NoopExperimentDataReader {
+        fn load_artifact_raw(
+            &self,
+            _experiment_id: ExperimentId,
+            _name: &str,
+        ) -> Result<LoadedArtifact, ExperimentReaderError> {
+            Err(ExperimentReaderError::new("Artifact not found"))
+        }
+    }
+
+    struct MockProvider {
+        session: Arc<MockSession>,
+    }
+
+    impl ExperimentProvider for MockProvider {
+        fn create_experiment(
+            &self,
+            _name: String,
+            _attributes: HashMap<String, Value>,
+        ) -> Result<ExperimentRun, ExperimentError> {
+            Ok(ExperimentRun::new(
+                "test/experiment/1",
+                self.session.clone(),
+                NoopExperimentDataReader,
+                CancelToken::new(),
+            ))
+        }
+    }
+
+    fn module(session: Arc<MockSession>) -> ExperimentModule {
+        ExperimentModule::new(Arc::new(MockProvider { session }))
+    }
+
+    #[test]
+    fn given_run_when_completing_then_finalizes_with_success() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
+
+        job.run(()).unwrap();
+
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
+    }
+
+    #[test]
+    fn given_run_cancelled_through_control_when_running_then_complete_cancelled() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
+            // A remote backend would cancel the run's own control plane; simulate that here.
+            run.cancel_token().cancel();
+            Ok(())
+        });
+
+        job.run(()).unwrap();
+
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+    }
+
+    #[test]
+    fn given_run_error_when_cancel_started_then_complete_cancelled() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
+            run.cancel_token().cancel();
+            Err::<(), _>("interrupted".into())
+        });
+
+        let result = job.run(());
+
+        assert!(result.is_err());
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+    }
+
+    #[test]
+    fn given_run_error_when_running_then_complete_failed() {
+        let session = Arc::new(MockSession::default());
+        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| {
+            Err::<(), _>("boom".into())
+        });
+
+        let result = job.run(());
+
+        assert!(result.is_err());
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(
+            completions.as_slice(),
+            &[ExperimentCompletion::Failed("boom".to_string())]
+        );
     }
 }
