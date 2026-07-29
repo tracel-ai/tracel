@@ -12,8 +12,8 @@
 //! to the caller — see [`DatasetModule::as_burn_dataset`] for the built-in adapter that
 //! decodes items as JSON and plugs into a Burn dataloader.
 //!
-//! Versions are selected with a [`DatasetVersionSpec`]: pass a `u32` for an exact version, or
-//! [`DatasetVersionSpec::Latest`] to resolve whichever version is newest.
+//! Versions are selected with a [`DatasetVersionSpec`]: [`DatasetVersionSpec::Fixed`] for an
+//! exact version, or [`DatasetVersionSpec::Latest`] to resolve whichever version is newest.
 
 mod burn;
 #[cfg(feature = "station")]
@@ -52,21 +52,12 @@ pub enum DatasetError {
 }
 
 /// Selects which version of a dataset to use.
-///
-/// A bare `u32` converts into [`DatasetVersionSpec::Exact`], so most call sites can just
-/// pass a version number instead of constructing this enum directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatasetVersionSpec {
     /// Use this exact version number.
-    Exact(u32),
+    Fixed(u32),
     /// Resolve and use whichever version is newest at the time of the call.
     Latest,
-}
-
-impl From<u32> for DatasetVersionSpec {
-    fn from(version: u32) -> Self {
-        DatasetVersionSpec::Exact(version)
-    }
 }
 
 /// One page of raw items returned by a [`DatasetProvider`].
@@ -138,7 +129,7 @@ impl DatasetModule {
         spec: DatasetVersionSpec,
     ) -> Result<u32, DatasetError> {
         match spec {
-            DatasetVersionSpec::Exact(version) => Ok(version),
+            DatasetVersionSpec::Fixed(version) => Ok(version),
             DatasetVersionSpec::Latest => self.provider.resolve_version(name),
         }
     }
@@ -187,7 +178,7 @@ mod tests {
         let module = DatasetModule::new(Arc::new(provider));
 
         let version = module
-            .resolve_version("mnist-corrections", DatasetVersionSpec::Exact(7))
+            .resolve_version("mnist-corrections", DatasetVersionSpec::Fixed(7))
             .unwrap();
 
         assert_eq!(version, 7);

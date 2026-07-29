@@ -6,7 +6,7 @@ use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 /// A Station dataset version, adapted to Burn's [`Dataset`] trait.
 ///
 /// Items are streamed on demand rather than downloaded up front: each call to [`Dataset::get`]
-/// fetches the item at that index from the backend (currently only supported by Station) and decodes 
+/// fetches the item at that index from the backend (currently only supported by Station) and decodes
 /// it from JSON into `T`. The item count is resolved once, on construction, and cached for [`Dataset::len`].
 ///
 /// `get` reports failures as Burn's own [`BurnDatasetError`] rather than [`DatasetError`], so
@@ -32,7 +32,7 @@ impl<T> AnnotationDataset<T> {
     pub fn new(
         module: DatasetModule,
         name: impl Into<String>,
-        spec: impl Into<DatasetVersionSpec>,
+        spec: DatasetVersionSpec,
     ) -> Result<Self, DatasetError> {
         let name = name.into();
         let spec = spec.into();
@@ -125,7 +125,7 @@ impl DatasetModule {
     pub fn as_burn_dataset<T>(
         &self,
         name: impl Into<String>,
-        spec: impl Into<DatasetVersionSpec>,
+        spec: DatasetVersionSpec,
     ) -> Result<AnnotationDataset<T>, DatasetError>
     where
         T: DeserializeOwned + Clone + Send + Sync,
@@ -198,7 +198,9 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1).unwrap();
+        let dataset: AnnotationDataset<TestItem> = module
+            .as_burn_dataset("ds", DatasetVersionSpec::Fixed(1))
+            .unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
     }
@@ -217,7 +219,9 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1).unwrap();
+        let dataset: AnnotationDataset<TestItem> = module
+            .as_burn_dataset("ds", DatasetVersionSpec::Fixed(1))
+            .unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert!(dataset.get(0).is_err());
@@ -238,7 +242,9 @@ mod tests {
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module.as_burn_dataset("ds", 1).unwrap();
+        let dataset: AnnotationDataset<TestItem> = module
+            .as_burn_dataset("ds", DatasetVersionSpec::Fixed(1))
+            .unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.len(), 2);
@@ -261,7 +267,8 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1).unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            AnnotationDataset::new(module, "ds", DatasetVersionSpec::Fixed(1)).unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
         assert_eq!(dataset.get(1).unwrap(), TestItem { value: 2 });
@@ -280,7 +287,8 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = AnnotationDataset::new(module, "ds", 1).unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            AnnotationDataset::new(module, "ds", DatasetVersionSpec::Fixed(1)).unwrap();
 
         dataset.get(5).unwrap();
     }
