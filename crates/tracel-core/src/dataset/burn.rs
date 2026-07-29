@@ -6,8 +6,8 @@ use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 /// A Station dataset version, adapted to Burn's [`Dataset`] trait.
 ///
 /// Items are streamed on demand rather than downloaded up front: each call to [`Dataset::get`]
-/// fetches the item at that index from Station and decodes it from JSON into `T`. The item
-/// count is resolved once, on construction, and cached for [`Dataset::len`].
+/// fetches the item at that index from the backend (currently only supported by Station) and decodes 
+/// it from JSON into `T`. The item count is resolved once, on construction, and cached for [`Dataset::len`].
 ///
 /// `get` reports failures as Burn's own [`BurnDatasetError`] rather than [`DatasetError`], so
 /// `AnnotationDataset` implements the same `Dataset<T>` that Burn's other datasets and
