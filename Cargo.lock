@@ -6786,7 +6786,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-runner"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "json-patch",
  "reqwest 0.13.4",
