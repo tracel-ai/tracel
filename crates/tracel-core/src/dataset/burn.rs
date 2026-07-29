@@ -35,7 +35,6 @@ impl<T> AnnotationDataset<T> {
         spec: DatasetVersionSpec,
     ) -> Result<Self, DatasetError> {
         let name = name.into();
-        let spec = spec.into();
         let version = module.resolve_version(&name, spec)?;
         let len = module.item_count(&name, version)? as usize;
 
