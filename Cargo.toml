@@ -8,7 +8,7 @@ members = ["crates/*", "examples/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.7.0"
+version = "0.7.1"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -75,14 +75,13 @@ tracel-client = { version = "0.11.1", default-features = false, features = [
 ] }
 
 ## Crate
-tracel-app = { path = "crates/tracel-app", version = "0.7.0" }
-tracel-runner = { path = "crates/tracel-runner", version = "0.7.0" }
-tracel-inference = { path = "crates/tracel-inference", version = "0.7.0" }
-tracel-fleet = { path = "crates/tracel-fleet", version = "0.7.0" }
-tracel-artifact = { path = "crates/tracel-artifact", version = "0.7.0" }
-tracel-experiment = { path = "crates/tracel-experiment", version = "0.7.0" }
-tracel-core = { path = "crates/tracel-core", version = "0.7.0" }
-tracel = { path = "crates/tracel", version = "0.7.0" }
+tracel-app = { path = "crates/tracel-app", version = "0.7.1" }
+tracel-inference = { path = "crates/tracel-inference", version = "0.7.1" }
+tracel-fleet = { path = "crates/tracel-fleet", version = "0.7.1" }
+tracel-artifact = { path = "crates/tracel-artifact", version = "0.7.1" }
+tracel-experiment = { path = "crates/tracel-experiment", version = "0.7.1" }
+tracel-core = { path = "crates/tracel-core", version = "0.7.1" }
+tracel = { path = "crates/tracel", version = "0.7.1" }
 
 ### For xtask crate ###
 tracel-xtask = "4.19.0"
