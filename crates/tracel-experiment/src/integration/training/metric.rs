@@ -61,19 +61,22 @@ impl MetricLogger for ExperimentMetricLogger {
                 NumericEntry::Aggregated {
                     aggregated_value, ..
                 } => aggregated_value,
+                NumericEntry::Final(v) => v,
             };
-            let value = get_value_from_entry(numeric_entry);
-            let running_value = get_value_from_entry(running_entry);
 
-            logs.push(MetricValue {
-                name: definition.name.clone(),
-                value,
-            });
+            if let Some(value) = numeric_entry.as_ref().map(get_value_from_entry) {
+                logs.push(MetricValue {
+                    name: definition.name.to_string(),
+                    value,
+                });
+            }
 
-            summaries.push(MetricValue {
-                name: definition.name.clone(),
-                value: running_value,
-            });
+            if let Some(running_value) = running_entry.as_ref().map(get_value_from_entry) {
+                summaries.push(MetricValue {
+                    name: definition.name.to_string(),
+                    value: running_value,
+                });
+            }
         }
         self.experiment_handle
             .log_metric(epoch, split.to_string(), self.iteration_count, logs)
@@ -101,7 +104,7 @@ impl MetricLogger for ExperimentMetricLogger {
         };
 
         match self.experiment_handle.log_metric_definition(MetricSpec {
-            name: definition.name,
+            name: definition.name.to_string(),
             description: definition.description,
             unit,
             higher_is_better,
