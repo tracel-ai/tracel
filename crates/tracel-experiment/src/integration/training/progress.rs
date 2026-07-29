@@ -61,8 +61,8 @@ impl ExperimentTrainingProgressLogger {
 }
 
 impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
-    fn start(&mut self, total_epochs: usize, _total_items: Option<usize>) {
-        self.completed_epochs = 0;
+    fn start(&mut self, total_epochs: usize, starting_epoch: usize, _total_items: Option<usize>) {
+        self.completed_epochs = starting_epoch;
         self.total_epochs = Some(total_epochs);
         self.epoch_guard = None;
         self.split_guard = None;
@@ -255,7 +255,7 @@ mod tests {
         let run = create_run(session.clone());
         let mut logger = ExperimentTrainingProgressLogger::new(run.handle());
 
-        logger.start(2, None);
+        logger.start(2, 0, None);
         logger.start_split("train", 10);
         logger.update_split(4);
         logger.end_split();
