@@ -278,13 +278,14 @@ mod tests {
         let module = DatasetModule::new(Arc::new(provider));
         let cache_root = tempfile::tempdir().unwrap();
 
-        let dataset: LocalAnnotationDataset<TestItem> = LocalAnnotationDataset::try_get_or_download(
-            &module,
-            "ds",
-            DatasetVersionSpec::Fixed(1),
-            cache_root.path(),
-        )
-        .unwrap();
+        let dataset: LocalAnnotationDataset<TestItem> =
+            LocalAnnotationDataset::try_get_or_download(
+                &module,
+                "ds",
+                DatasetVersionSpec::Fixed(1),
+                cache_root.path(),
+            )
+            .unwrap();
 
         assert_eq!(dataset.len(), total);
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 0 });
@@ -313,13 +314,14 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
 
-        let dataset: LocalAnnotationDataset<TestItem> = LocalAnnotationDataset::try_get_or_download(
-            &module,
-            "ds",
-            DatasetVersionSpec::Fixed(1),
-            cache_root.path(),
-        )
-        .unwrap();
+        let dataset: LocalAnnotationDataset<TestItem> =
+            LocalAnnotationDataset::try_get_or_download(
+                &module,
+                "ds",
+                DatasetVersionSpec::Fixed(1),
+                cache_root.path(),
+            )
+            .unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
@@ -340,13 +342,14 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
 
-        let dataset: LocalAnnotationDataset<TestItem> = LocalAnnotationDataset::try_get_or_download(
-            &module,
-            "ds",
-            DatasetVersionSpec::Fixed(1),
-            cache_root.path(),
-        )
-        .unwrap();
+        let dataset: LocalAnnotationDataset<TestItem> =
+            LocalAnnotationDataset::try_get_or_download(
+                &module,
+                "ds",
+                DatasetVersionSpec::Fixed(1),
+                cache_root.path(),
+            )
+            .unwrap();
 
         let err = dataset.get(0).unwrap_err();
         let source = err
