@@ -23,7 +23,7 @@ impl StationBackend {
             None => host.to_string(),
         };
 
-        let cache_root = crate::model_registry::resolve_cache_dir()
+        let cache_root = crate::resolve_cache_dir()
             .ok_or(StationError::NoCacheDir)?
             .join("station")
             .join(station_id)

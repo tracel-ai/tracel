@@ -9,19 +9,24 @@
 //! Obtain a [`DatasetModule`] from [`Context::datasets`](crate::Context::datasets). It
 //! returns `None` unless the context is connected to Station, since dataset streaming is a
 //! Station-only feature. [`DatasetModule`] gives you raw item bytes and leaves decoding up
-//! to the caller — see [`DatasetModule::as_burn_dataset`] for the built-in adapter that
-//! decodes items as JSON and plugs into a Burn dataloader.
+//! to the caller, through two Burn dataloader adapters that decode items as JSON:
+//!
+//! - [`DatasetModule::stream`] fetches each item from Station on demand, with nothing
+//!   written to disk.
+//! - [`DatasetModule::download`] downloads the whole dataset version to a local on-disk
+//!   cache the first time it's requested, then serves every later access from that file
+//!   with no further network calls.
 //!
 //! Versions are selected with a [`DatasetVersionSpec`]: [`DatasetVersionSpec::Fixed`] for an
 //! exact version, or [`DatasetVersionSpec::Latest`] to resolve whichever version is newest.
 
-mod burn;
+mod download;
 #[cfg(feature = "station")]
 mod station;
-
-pub use burn::AnnotationDataset;
+mod stream;
 
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Errors that can occur while resolving or streaming a dataset.
@@ -49,6 +54,29 @@ pub enum DatasetError {
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },
+    /// An item read from a downloaded dataset's local cache file could not be decoded.
+    /// Unlike [`DatasetError::CorruptItem`], this means the on-disk cache itself is bad,
+    /// not the data Station sent — the message tells the caller which directory to delete
+    /// to force a fresh download.
+    #[error(
+        "item {index} in downloaded dataset '{name}' version {version} is corrupt: {source}. \
+         The local cache may be corrupted — delete {path} and download the dataset again."
+    )]
+    CorruptCachedItem {
+        name: String,
+        version: u32,
+        index: u64,
+        path: PathBuf,
+        #[source]
+        source: Box<dyn Error + Send + Sync>,
+    },
+    /// No local cache directory could be resolved for a downloaded dataset (e.g. no
+    /// home directory available).
+    #[error("no local cache directory is available for downloaded datasets")]
+    CacheUnavailable,
+    /// Reading or writing the local dataset cache on disk failed.
+    #[error("local dataset cache I/O failed: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Selects which version of a dataset to use.
@@ -76,7 +104,7 @@ pub trait DatasetProvider: Send + Sync {
     /// (`None` for the first item) and capped at `limit` items (backend-defined default if
     /// `None`). `index` addresses items directly: fetching with `index = Some(3)` and
     /// `limit = Some(1)` returns the single item at position 3.
-    fn stream_items(
+    fn get_items(
         &self,
         name: &str,
         version: u32,
@@ -93,9 +121,9 @@ pub trait DatasetProvider: Send + Sync {
 
 /// Entry point for reading datasets registered in Tracel Station.
 ///
-/// Obtain one from [`Context::datasets`](crate::Context::datasets), then convert it into a
-/// usable [`AnnotationDataset`] with [`DatasetModule::as_burn_dataset`], which has a full
-/// usage example.
+/// Obtain one from [`Context::datasets`](crate::Context::datasets), then hand it to
+/// [`DatasetModule::stream`] or [`DatasetModule::download`] to get a Burn `Dataset` —
+/// either method's docs include a full usage example.
 #[derive(Clone)]
 pub struct DatasetModule {
     provider: Arc<dyn DatasetProvider>,
@@ -109,14 +137,14 @@ impl DatasetModule {
         Self { provider }
     }
 
-    pub(crate) fn stream_items(
+    pub(crate) fn get_items(
         &self,
         name: &str,
         version: u32,
         index: Option<u64>,
         limit: Option<u32>,
     ) -> Result<DatasetItemsPage, DatasetError> {
-        self.provider.stream_items(name, version, index, limit)
+        self.provider.get_items(name, version, index, limit)
     }
 
     pub(crate) fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
@@ -149,7 +177,7 @@ mod tests {
             + Send
             + Sync,
     {
-        fn stream_items(
+        fn get_items(
             &self,
             name: &str,
             version: u32,
@@ -212,7 +240,7 @@ mod tests {
         let module = DatasetModule::new(Arc::new(provider));
 
         let page = module
-            .stream_items("mnist-corrections", 1, None, None)
+            .get_items("mnist-corrections", 1, None, None)
             .unwrap();
 
         assert_eq!(page.items.len(), 1);
@@ -230,7 +258,7 @@ mod tests {
         };
         let module = DatasetModule::new(Arc::new(provider));
 
-        let result = module.stream_items("mnist-corrections", 1, None, None);
+        let result = module.get_items("mnist-corrections", 1, None, None);
 
         assert!(matches!(
             result,

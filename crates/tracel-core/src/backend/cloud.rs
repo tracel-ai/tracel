@@ -51,7 +51,7 @@ struct TracelTomlConfig {
 
 impl CloudBackend {
     fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
-        let cache_root = crate::model_registry::resolve_cache_dir()
+        let cache_root = crate::resolve_cache_dir()
             .ok_or(CloudError::NoCacheDir)?
             .join("cloud")
             .join(&namespace)

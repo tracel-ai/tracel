@@ -5,7 +5,7 @@ use crate::backend::station::StationBackend;
 use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
 
 impl DatasetProvider for StationBackend {
-    fn stream_items(
+    fn get_items(
         &self,
         name: &str,
         version: u32,

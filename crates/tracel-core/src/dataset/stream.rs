@@ -8,6 +8,8 @@ use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 /// Items are streamed on demand rather than downloaded up front: each call to [`Dataset::get`]
 /// fetches the item at that index from the backend (currently only supported by Station) and decodes
 /// it from JSON into `T`. The item count is resolved once, on construction, and cached for [`Dataset::len`].
+/// See [`LocalAnnotationDataset`](super::LocalAnnotationDataset) for a variant that downloads
+/// the dataset to a local cache instead of hitting the network on every access.
 ///
 /// `get` reports failures as Burn's own [`BurnDatasetError`] rather than [`DatasetError`], so
 /// `AnnotationDataset` implements the same `Dataset<T>` that Burn's other datasets and
@@ -15,7 +17,7 @@ use super::{DatasetError, DatasetModule, DatasetVersionSpec};
 /// original [`DatasetError`] is preserved as the source and can be recovered with
 /// `std::error::Error::source` and a downcast.
 ///
-/// Build one with [`DatasetModule::as_burn_dataset`] rather than constructing it directly; its
+/// Build one with [`DatasetModule::stream`] rather than constructing it directly; its
 /// docs include a full usage example.
 pub struct AnnotationDataset<T> {
     module: DatasetModule,
@@ -26,10 +28,7 @@ pub struct AnnotationDataset<T> {
 }
 
 impl<T> AnnotationDataset<T> {
-    /// Resolves `spec` to a concrete version and fetches its item count from `module`.
-    ///
-    /// Prefer [`DatasetModule::as_burn_dataset`], which calls this for you.
-    pub fn new(
+    fn new(
         module: DatasetModule,
         name: impl Into<String>,
         spec: DatasetVersionSpec,
@@ -62,7 +61,7 @@ where
         let version = self.version;
         let page = self
             .module
-            .stream_items(&self.name, version, Some(index as u64), Some(1))
+            .get_items(&self.name, version, Some(index as u64), Some(1))
             .map_err(BurnDatasetError::new)?;
 
         let raw_item = page
@@ -88,6 +87,9 @@ where
 
 impl DatasetModule {
     /// Adapts a named dataset version into a Burn [`Dataset`], ready to hand to a dataloader.
+    /// Each item is fetched from Station on access — nothing is written to disk. See
+    /// [`DatasetModule::download`] for a variant that downloads the dataset to a local
+    /// cache instead.
     ///
     /// `spec` selects the version: pass a `u32` for an exact version, or
     /// [`DatasetVersionSpec::Latest`] to resolve whichever version is newest. Items are decoded
@@ -113,7 +115,7 @@ impl DatasetModule {
     /// }
     ///
     /// # fn example(datasets: DatasetModule) -> Result<(), tracel_core::DatasetError> {
-    /// let dataset = datasets.as_burn_dataset::<Annotation>("mnist-corrections", DatasetVersionSpec::Latest)?;
+    /// let dataset = datasets.stream::<Annotation>("mnist-corrections", DatasetVersionSpec::Latest)?;
     ///
     /// let dataloader = DataLoaderBuilder::new(AnnotationBatcher)
     ///     .batch_size(32)
@@ -121,7 +123,7 @@ impl DatasetModule {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn as_burn_dataset<T>(
+    pub fn stream<T>(
         &self,
         name: impl Into<String>,
         spec: DatasetVersionSpec,
@@ -163,7 +165,7 @@ mod tests {
             + Sync,
         C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
     {
-        fn stream_items(
+        fn get_items(
             &self,
             name: &str,
             version: u32,
@@ -197,9 +199,8 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module
-            .as_burn_dataset("ds", DatasetVersionSpec::Fixed(1))
-            .unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            module.stream("ds", DatasetVersionSpec::Fixed(1)).unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
     }
@@ -218,9 +219,8 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module
-            .as_burn_dataset("ds", DatasetVersionSpec::Fixed(1))
-            .unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            module.stream("ds", DatasetVersionSpec::Fixed(1)).unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert!(dataset.get(0).is_err());
@@ -241,9 +241,8 @@ mod tests {
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module
-            .as_burn_dataset("ds", DatasetVersionSpec::Fixed(1))
-            .unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            module.stream("ds", DatasetVersionSpec::Fixed(1)).unwrap();
 
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.len(), 2);
@@ -306,7 +305,7 @@ mod tests {
         C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
         L: Fn(&str) -> Result<u32, DatasetError> + Send + Sync,
     {
-        fn stream_items(
+        fn get_items(
             &self,
             name: &str,
             version: u32,
@@ -341,9 +340,8 @@ mod tests {
             latest: |_name: &str| Ok(5),
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module
-            .as_burn_dataset("ds", DatasetVersionSpec::Latest)
-            .unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            module.stream("ds", DatasetVersionSpec::Latest).unwrap();
 
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 42 });
     }
@@ -365,9 +363,8 @@ mod tests {
             },
         };
         let module = DatasetModule::new(Arc::new(provider));
-        let dataset: AnnotationDataset<TestItem> = module
-            .as_burn_dataset("ds", DatasetVersionSpec::Latest)
-            .unwrap();
+        let dataset: AnnotationDataset<TestItem> =
+            module.stream("ds", DatasetVersionSpec::Latest).unwrap();
 
         assert_eq!(dataset.len(), 1);
         assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
