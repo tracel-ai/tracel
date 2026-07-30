@@ -17,7 +17,7 @@ pub use model_registry::{ModelRegistryError, ModelRegistryModule};
 /// one isn't available (e.g. missing `$HOME` in a stripped-down container). Returns `None`
 /// if neither can be determined.
 fn resolve_cache_dir() -> Option<std::path::PathBuf> {
-    directories::ProjectDirs::from("com", "tracel", "burncentral")
+    directories::ProjectDirs::from("ai", "tracel", "console")
         .map(|dirs| dirs.cache_dir().to_path_buf())
         .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.cache_dir().join("tracel")))
 }
