@@ -8,14 +8,18 @@
 //!
 //! Obtain a [`DatasetModule`] from [`Context::datasets`](crate::Context::datasets). It
 //! returns `None` unless the context is connected to Station, since dataset streaming is a
-//! Station-only feature. [`DatasetModule`] gives you raw item bytes and leaves decoding up
-//! to the caller, through two Burn dataloader adapters that decode items as JSON:
+//! Station-only feature. [`DatasetModule`] exposes two Burn dataloader adapters — its only
+//! supported entry points — which decode each item as JSON into the type you ask for:
 //!
 //! - [`DatasetModule::stream`] fetches each item from Station on demand, with nothing
 //!   written to disk.
 //! - [`DatasetModule::download`] downloads the whole dataset version to a local on-disk
 //!   cache the first time it's requested, then serves every later access from that file
 //!   with no further network calls.
+//!
+//! Items must be JSON-encoded on the Station side; there is currently no way to plug in a
+//! custom [`Dataset`](burn::data::dataset::Dataset) implementation or a different decode
+//! format.
 //!
 //! Versions are selected with a [`DatasetVersionSpec`]: [`DatasetVersionSpec::Fixed`] for an
 //! exact version, or [`DatasetVersionSpec::Latest`] to resolve whichever version is newest.
