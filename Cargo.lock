@@ -1786,9 +1786,9 @@ dependencies = [
 
 [[package]]
 name = "cubecl-hip-sys"
-version = "7.2.5321100"
+version = "7.14.6085000"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58887c6d217859c2261a868a3a6b66aa8f44ea2f4bfa51d0dbe4dcb0d1f5768d"
+checksum = "760c605ca1b54d12ba9209d2a47992082ff66346fbd96d830af22ac43adfeebc"
 dependencies = [
  "libc",
  "regex",
@@ -6653,8 +6653,9 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.11.1"
-source = "git+https://github.com/tracel-ai/tracel-client?rev=862e370ed3f1c8cbf5d926c891b7ff1b008f6c08#862e370ed3f1c8cbf5d926c891b7ff1b008f6c08"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e73381f5a151ff607e9eff1c9620ae2e70dd2b0364818d018855c482f1f36a95"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",

@@ -207,7 +207,7 @@ fn default_data_dir(env: &Env) -> Result<PathBuf, FleetError> {
         Env::Staging(version) => format!("fleets-staging-{version}"),
         Env::Development => "fleets-dev".to_string(),
     };
-    if let Some(project) = ProjectDirs::from("ai", "tracel", "tracel") {
+    if let Some(project) = ProjectDirs::from("", "", "tracel") {
         return Ok(project.data_dir().join(fleets_subdir));
     }
     if let Some(base) = BaseDirs::new() {
