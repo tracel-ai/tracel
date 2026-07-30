@@ -24,7 +24,7 @@ const DOWNLOAD_PAGE_SIZE: u32 = 500;
 /// The cache file lives at `<platform cache dir>/datasets/<name>/<version>/items.jsonl`
 /// (the platform cache dir is the one reported by the `directories` crate for
 /// `ai.tracel.console`, e.g. `~/Library/Caches/ai.tracel.console` on macOS or
-/// `~/.cache/burncentral` on Linux). If the local file has been corrupted, `get` surfaces
+/// `~/.cache/console` on Linux). If the local file has been corrupted, `get` surfaces
 /// it as a [`DatasetError::CorruptCachedItem`], whose error message names the exact file
 /// to delete before calling [`DatasetModule::download`] again to force a fresh download.
 ///
