@@ -1,61 +1,57 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use burn::data::dataset::Dataset;
-use burn::data::dataset::DatasetError as BurnDatasetError;
+use burn::data::dataset::{Dataset, DatasetError as BurnDatasetError};
 use serde::de::DeserializeOwned;
 
-use crate::{DatasetError, DatasetModule, DatasetVersionSpec, resolve_cache_dir};
+use super::item::{ItemLocation, decode_item};
+use super::{DatasetError, DatasetItem, DatasetProvider};
 
 /// Number of items requested per page while downloading a dataset to disk.
 const DOWNLOAD_PAGE_SIZE: u32 = 500;
 
-/// A Station dataset version, downloaded once to a local on-disk cache and adapted to
-/// Burn's [`Dataset`] trait.
+/// A Station dataset version downloaded into a local cache before it is used.
 ///
-/// Unlike [`AnnotationDataset`](super::AnnotationDataset), which streams each item from
-/// the backend on demand, `LocalAnnotationDataset` downloads the whole dataset version to
-/// a local cache file the first time it's requested, then serves every subsequent
-/// [`Dataset::get`] from that file with no further network access. Later requests for the
-/// same name/version reuse the cached file as-is: presence on disk is the only check, no
-/// integrity/hash verification is performed.
+/// Unlike [`StreamedDataset`](super::StreamedDataset), which requests an item from the backend
+/// on every access, `DownloadedDataset` downloads all raw item envelopes on a cache miss. At
+/// construction, the cache file is read into memory once; [`Dataset::get`] then decodes an item
+/// from those in-memory bytes without further file or network access. Later constructions for the
+/// same name and version reuse the cache file as-is: presence on disk is the only check, with no
+/// integrity or hash verification.
 ///
-/// The cache file lives at `<platform cache dir>/datasets/<name>/<version>/items.jsonl`
-/// (the platform cache dir is the one reported by the `directories` crate for
-/// `tracel`, e.g. `~/Library/Caches/tracel` on macOS or
-/// `~/.cache/tracel` on Linux). If the local file has been corrupted, `get` surfaces
-/// it as a [`DatasetError::CorruptCachedItem`], whose error message names the exact file
-/// to delete before calling [`DatasetModule::download`] again to force a fresh download.
-///
-/// Build one with [`DatasetModule::download`] rather than constructing it directly; its
-/// docs include a full usage example.
-pub struct LocalAnnotationDataset<T> {
+/// The cache file lives at `<platform cache dir>/datasets/<name>/<version>/items.jsonl` (the
+/// platform cache directory reported for `tracel`, such as `~/Library/Caches/tracel` on macOS or
+/// `~/.cache/tracel` on Linux). If the local file has been corrupted, `get` returns
+/// [`DatasetError::CorruptCachedItem`], whose message names the exact file to delete before
+/// calling [`DatasetModule::download`](super::DatasetModule::download) again.
+pub struct DownloadedDataset<A> {
+    _provider: Arc<dyn DatasetProvider>,
     name: String,
     version: u32,
     path: PathBuf,
     items: Vec<Vec<u8>>,
-    _marker: std::marker::PhantomData<T>,
+    _marker: std::marker::PhantomData<A>,
 }
 
-impl<T> LocalAnnotationDataset<T> {
-    fn try_get_or_download(
-        module: &DatasetModule,
-        name: impl Into<String>,
-        spec: DatasetVersionSpec,
+impl<A> DownloadedDataset<A> {
+    pub(super) fn try_get_or_download(
+        provider: Arc<dyn DatasetProvider>,
+        name: String,
+        version: u32,
         cache_root: &Path,
     ) -> Result<Self, DatasetError> {
-        let name = name.into();
-        let version = module.resolve_version(&name, spec)?;
         let path = cache_path(cache_root, &name, version);
 
         if !path.is_file() {
-            download_to(module, &name, version, &path)?;
+            download_to(provider.as_ref(), &name, version, &path)?;
         }
 
         let items = read_items(&path)?;
 
         Ok(Self {
+            _provider: provider,
             name,
             version,
             path,
@@ -65,27 +61,25 @@ impl<T> LocalAnnotationDataset<T> {
     }
 }
 
-impl<T> Dataset<T> for LocalAnnotationDataset<T>
+impl<A> Dataset<DatasetItem<A>> for DownloadedDataset<A>
 where
-    T: DeserializeOwned + Clone + Send + Sync,
+    A: DeserializeOwned + Clone + Send + Sync,
 {
-    fn get(&self, index: usize) -> Result<T, BurnDatasetError> {
+    fn get(&self, index: usize) -> Result<DatasetItem<A>, BurnDatasetError> {
         let len = self.len();
         assert!(
             index < len,
-            "Index out of bounds for LocalAnnotationDataset: {index} >= {len}"
+            "Index out of bounds for DownloadedDataset: {index} >= {len}"
         );
 
-        let version = self.version;
-        serde_json::from_slice::<T>(&self.items[index]).map_err(|err| {
-            BurnDatasetError::new(DatasetError::CorruptCachedItem {
-                name: self.name.clone(),
-                version,
-                index: index as u64,
-                path: self.path.clone(),
-                source: Box::new(err),
-            })
-        })
+        decode_item(
+            &self.items[index],
+            &self.name,
+            self.version,
+            index as u64,
+            ItemLocation::Cached(&self.path),
+        )
+        .map_err(BurnDatasetError::new)
     }
 
     fn len(&self) -> usize {
@@ -100,102 +94,91 @@ fn cache_path(root: &Path, name: &str, version: u32) -> PathBuf {
         .join("items.jsonl")
 }
 
+fn temporary_path(path: &Path) -> PathBuf {
+    path.with_extension(format!("jsonl.{}.tmp", std::process::id()))
+}
+
 fn download_to(
-    module: &DatasetModule,
+    provider: &dyn DatasetProvider,
     name: &str,
     version: u32,
     path: &Path,
 ) -> Result<(), DatasetError> {
+    let expected = provider.item_count(name, version)?;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let tmp_path = path.with_extension("tmp");
-    let mut writer = BufWriter::new(File::create(&tmp_path)?);
-
-    let mut cursor: u64 = 0;
-    loop {
-        let page = module.get_items(name, version, Some(cursor), Some(DOWNLOAD_PAGE_SIZE))?;
-        let page_len = page.items.len();
-
-        for item in &page.items {
-            writer.write_all(item)?;
-            writer.write_all(b"\n")?;
+    let tmp_path = temporary_path(path);
+    let actual = match write_download(provider, name, version, expected, &tmp_path) {
+        Ok(actual) => actual,
+        Err(error) => {
+            remove_temporary_file(&tmp_path);
+            return Err(error);
         }
+    };
 
-        if page_len < DOWNLOAD_PAGE_SIZE as usize {
+    if actual != expected {
+        remove_temporary_file(&tmp_path);
+        return Err(DatasetError::IncompleteDownload {
+            name: name.to_string(),
+            version,
+            expected,
+            actual,
+        });
+    }
+
+    if let Err(error) = fs::rename(&tmp_path, path) {
+        remove_temporary_file(&tmp_path);
+        return Err(error.into());
+    }
+
+    Ok(())
+}
+
+fn write_download(
+    provider: &dyn DatasetProvider,
+    name: &str,
+    version: u32,
+    expected: u64,
+    tmp_path: &Path,
+) -> Result<u64, DatasetError> {
+    let mut writer = BufWriter::new(File::create(tmp_path)?);
+    let mut cursor = 0_u64;
+
+    while cursor < expected {
+        let page = provider.get_items(name, version, Some(cursor), Some(DOWNLOAD_PAGE_SIZE))?;
+        if page.items.is_empty() {
             break;
         }
-        cursor += page_len as u64;
+
+        for item in page.items {
+            writer.write_all(&item)?;
+            writer.write_all(b"\n")?;
+            cursor += 1;
+        }
     }
 
     writer.flush()?;
-    drop(writer);
-    fs::rename(&tmp_path, path)?;
+    Ok(cursor)
+}
 
-    Ok(())
+fn remove_temporary_file(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => {}
+    }
 }
 
 fn read_items(path: &Path) -> Result<Vec<Vec<u8>>, DatasetError> {
     let contents = fs::read(path)?;
     Ok(contents
-        .split(|&b| b == b'\n')
+        .split(|&byte| byte == b'\n')
         .filter(|line| !line.is_empty())
-        .map(|line| line.to_vec())
+        .map(<[u8]>::to_vec)
         .collect())
-}
-
-impl DatasetModule {
-    /// Adapts a named dataset version into a Burn [`Dataset`] backed by a local on-disk
-    /// cache, downloading it once on first use.
-    ///
-    /// `spec` selects the version, same as [`DatasetModule::stream`]. Unlike that method,
-    /// this one downloads the whole dataset version to a local cache file the first time
-    /// it's requested, then serves items from disk with no further network access on later
-    /// calls for the same name/version. See [`LocalAnnotationDataset`] for where that cache
-    /// file lives and what to do if it's ever corrupted.
-    ///
-    /// ```rust,no_run
-    /// use burn::data::dataloader::DataLoaderBuilder;
-    /// use burn::data::dataloader::batcher::Batcher;
-    /// use serde::Deserialize;
-    /// use tracel_core::{DatasetModule, DatasetVersionSpec};
-    ///
-    /// #[derive(Deserialize, Clone, Debug)]
-    /// struct Annotation {
-    ///     label: String,
-    /// }
-    ///
-    /// struct AnnotationBatcher;
-    ///
-    /// impl Batcher<Annotation, Vec<Annotation>> for AnnotationBatcher {
-    ///     fn batch(&self, items: Vec<Annotation>, _device: &burn::tensor::Device) -> Vec<Annotation> {
-    ///         items
-    ///     }
-    /// }
-    ///
-    /// # fn example(datasets: DatasetModule) -> Result<(), tracel_core::DatasetError> {
-    /// // If the local cache is corrupted, the returned error already names the exact file
-    /// // to delete before calling `download` again — see `DatasetError::CorruptCachedItem`.
-    /// let dataset = datasets.download::<Annotation>("mnist-corrections", DatasetVersionSpec::Latest)?;
-    ///
-    /// let dataloader = DataLoaderBuilder::new(AnnotationBatcher)
-    ///     .batch_size(32)
-    ///     .build(dataset);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn download<T>(
-        &self,
-        name: impl Into<String>,
-        spec: DatasetVersionSpec,
-    ) -> Result<LocalAnnotationDataset<T>, DatasetError>
-    where
-        T: DeserializeOwned + Clone + Send + Sync,
-    {
-        let cache_root = resolve_cache_dir().ok_or(DatasetError::CacheUnavailable)?;
-        LocalAnnotationDataset::try_get_or_download(self, name, spec, &cache_root)
-    }
 }
 
 #[cfg(test)]
@@ -207,27 +190,28 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use burn::data::dataset::Dataset;
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
 
-    use super::{DOWNLOAD_PAGE_SIZE, LocalAnnotationDataset};
-    use crate::dataset::{
-        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetVersionSpec,
-    };
+    use super::{DOWNLOAD_PAGE_SIZE, DownloadedDataset, temporary_path};
+    use crate::dataset::item::envelope_item;
+    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
 
-    #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-    struct TestItem {
+    #[derive(Debug, Clone, Deserialize, PartialEq)]
+    struct TestAnnotation {
         value: u32,
     }
 
-    struct FakeProvider<F> {
+    struct FakeProvider<F, C> {
         stream: F,
+        count: C,
     }
 
-    impl<F> DatasetProvider for FakeProvider<F>
+    impl<F, C> DatasetProvider for FakeProvider<F, C>
     where
         F: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
             + Send
             + Sync,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
     {
         fn get_items(
             &self,
@@ -239,17 +223,20 @@ mod tests {
             (self.stream)(name, version, index, limit)
         }
 
-        fn item_count(&self, _name: &str, _version: u32) -> Result<u64, DatasetError> {
-            Ok(0)
+        fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+            (self.count)(name, version)
         }
 
         fn resolve_version(&self, _name: &str) -> Result<u32, DatasetError> {
-            Ok(0)
+            unreachable!("DownloadedDataset only receives resolved versions")
         }
     }
 
     fn item(value: u32) -> Vec<u8> {
-        serde_json::to_vec(&TestItem { value }).unwrap()
+        envelope_item(
+            format!("example-{value}").as_bytes(),
+            Some(serde_json::json!({ "value": value })),
+        )
     }
 
     fn cache_file(root: &Path, name: &str, version: u32) -> PathBuf {
@@ -265,39 +252,67 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         let provider = FakeProvider {
-            stream: move |_name: &str, _version: u32, cursor: Option<u64>, limit: Option<u32>| {
+            stream: move |_name: &str, _version: u32, index: Option<u64>, limit: Option<u32>| {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                let start = cursor.unwrap_or(0) as usize;
-                let limit = limit.map(|l| l as usize).unwrap_or(total);
+                let start = index.unwrap_or(0) as usize;
+                let limit = limit.map(|value| value as usize).unwrap_or(total);
                 let end = (start + limit).min(total);
                 Ok(DatasetItemsPage {
-                    items: (start..end).map(|i| item(i as u32)).collect(),
+                    items: (start..end).map(|index| item(index as u32)).collect(),
                 })
             },
+            count: move |_name: &str, _version: u32| Ok(total as u64),
         };
-        let module = DatasetModule::new(Arc::new(provider));
         let cache_root = tempfile::tempdir().unwrap();
 
-        let dataset: LocalAnnotationDataset<TestItem> =
-            LocalAnnotationDataset::try_get_or_download(
-                &module,
-                "ds",
-                DatasetVersionSpec::Fixed(1),
-                cache_root.path(),
-            )
-            .unwrap();
+        let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            1,
+            cache_root.path(),
+        )
+        .unwrap();
 
         assert_eq!(dataset.len(), total);
-        assert_eq!(dataset.get(0).unwrap(), TestItem { value: 0 });
+        assert_eq!(dataset.get(0).unwrap().example, b"example-0");
         assert_eq!(
-            dataset.get(total - 1).unwrap(),
-            TestItem {
+            dataset.get(total - 1).unwrap().annotation,
+            Some(TestAnnotation {
                 value: (total - 1) as u32
-            }
+            })
         );
-        // One full page plus one shorter page to signal the end of the dataset.
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(cache_file(cache_root.path(), "ds", 1).is_file());
+    }
+
+    #[test]
+    fn given_server_clamps_pages_when_download_then_fetching_continues_to_item_count() {
+        let total = 650_usize;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        let provider = FakeProvider {
+            stream: move |_name: &str, _version: u32, index: Option<u64>, _limit: Option<u32>| {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                let start = index.unwrap_or(0) as usize;
+                let end = (start + 200).min(total);
+                Ok(DatasetItemsPage {
+                    items: (start..end).map(|index| item(index as u32)).collect(),
+                })
+            },
+            count: move |_name: &str, _version: u32| Ok(total as u64),
+        };
+        let cache_root = tempfile::tempdir().unwrap();
+
+        let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            1,
+            cache_root.path(),
+        )
+        .unwrap();
+
+        assert_eq!(dataset.len(), total);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[test]
@@ -305,27 +320,34 @@ mod tests {
         let cache_root = tempfile::tempdir().unwrap();
         let path = cache_file(cache_root.path(), "ds", 1);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, [item(1), item(2)].join(&b'\n').as_slice()).unwrap();
+        fs::write(&path, [item(1), item(2)].join(&b'\n')).unwrap();
 
         let provider = FakeProvider {
-            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+            stream: |_name: &str, _version: u32, _index: Option<u64>, _limit: Option<u32>| {
                 panic!("provider should not be called on a cache hit")
             },
+            count: |_name: &str, _version: u32| {
+                panic!("item count should not be called on a cache hit")
+            },
         };
-        let module = DatasetModule::new(Arc::new(provider));
 
-        let dataset: LocalAnnotationDataset<TestItem> =
-            LocalAnnotationDataset::try_get_or_download(
-                &module,
-                "ds",
-                DatasetVersionSpec::Fixed(1),
-                cache_root.path(),
-            )
-            .unwrap();
+        let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            1,
+            cache_root.path(),
+        )
+        .unwrap();
 
         assert_eq!(dataset.len(), 2);
-        assert_eq!(dataset.get(0).unwrap(), TestItem { value: 1 });
-        assert_eq!(dataset.get(1).unwrap(), TestItem { value: 2 });
+        assert_eq!(
+            dataset.get(0).unwrap().annotation,
+            Some(TestAnnotation { value: 1 })
+        );
+        assert_eq!(
+            dataset.get(1).unwrap().annotation,
+            Some(TestAnnotation { value: 2 })
+        );
     }
 
     #[test]
@@ -336,62 +358,120 @@ mod tests {
         fs::write(&path, b"not json\n").unwrap();
 
         let provider = FakeProvider {
-            stream: |_name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+            stream: |_name: &str, _version: u32, _index: Option<u64>, _limit: Option<u32>| {
                 panic!("provider should not be called on a cache hit")
             },
+            count: |_name: &str, _version: u32| {
+                panic!("item count should not be called on a cache hit")
+            },
         };
-        let module = DatasetModule::new(Arc::new(provider));
-
-        let dataset: LocalAnnotationDataset<TestItem> =
-            LocalAnnotationDataset::try_get_or_download(
-                &module,
-                "ds",
-                DatasetVersionSpec::Fixed(1),
-                cache_root.path(),
-            )
-            .unwrap();
+        let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            1,
+            cache_root.path(),
+        )
+        .unwrap();
 
         let err = dataset.get(0).unwrap_err();
         let source = err
             .source()
-            .expect("BurnDatasetError should carry the original DatasetError as its source");
+            .expect("BurnDatasetError should carry DatasetError as its source");
         let dataset_err = source
             .downcast_ref::<DatasetError>()
-            .expect("source should be our own DatasetError");
+            .expect("source should be DatasetError");
 
-        match dataset_err {
+        assert!(matches!(
+            dataset_err,
             DatasetError::CorruptCachedItem {
-                index,
-                path: err_path,
+                index: 0,
+                path: error_path,
                 ..
-            } => {
-                assert_eq!(*index, 0);
-                assert_eq!(err_path, &path);
-            }
-            other => panic!("expected CorruptCachedItem, got {other:?}"),
-        }
+            } if error_path == &path
+        ));
     }
 
     #[test]
-    fn given_provider_error_when_download_then_no_file_is_left_at_the_final_path() {
+    fn given_provider_error_when_download_then_no_cache_or_temporary_file_is_left() {
         let provider = FakeProvider {
-            stream: |name: &str, _version: u32, _cursor: Option<u64>, _limit: Option<u32>| {
+            stream: |name: &str, _version: u32, _index: Option<u64>, _limit: Option<u32>| {
                 Err(DatasetError::DatasetNotFound {
                     name: name.to_string(),
                 })
             },
+            count: |_name: &str, _version: u32| Ok(1),
         };
-        let module = DatasetModule::new(Arc::new(provider));
         let cache_root = tempfile::tempdir().unwrap();
+        let path = cache_file(cache_root.path(), "ds", 1);
 
-        let result = LocalAnnotationDataset::<TestItem>::try_get_or_download(
-            &module,
-            "ds",
-            DatasetVersionSpec::Fixed(1),
+        let result = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            1,
             cache_root.path(),
         );
 
         assert!(result.is_err());
-        assert!(!cache_file(cache_root.path(), "ds", 1).exists());
+        assert!(!path.exists());
+        assert!(!temporary_path(&path).exists());
+    }
+
+    #[test]
+    fn given_empty_page_before_item_count_when_download_then_incomplete_error_removes_tmp_file() {
+        let provider = FakeProvider {
+            stream: |_name: &str, _version: u32, index: Option<u64>, _limit: Option<u32>| {
+                Ok(DatasetItemsPage {
+                    items: if index == Some(0) {
+                        vec![item(1)]
+                    } else {
+                        vec![]
+                    },
+                })
+            },
+            count: |_name: &str, _version: u32| Ok(2),
+        };
+        let cache_root = tempfile::tempdir().unwrap();
+        let path = cache_file(cache_root.path(), "ds", 4);
+
+        let result = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            4,
+            cache_root.path(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(DatasetError::IncompleteDownload {
+                name,
+                version: 4,
+                expected: 2,
+                actual: 1,
+            }) if name == "ds"
+        ));
+        assert!(!path.exists());
+        assert!(!temporary_path(&path).exists());
+    }
+
+    #[test]
+    #[should_panic(expected = "Index out of bounds")]
+    fn given_index_past_dataset_length_when_get_then_it_panics() {
+        let cache_root = tempfile::tempdir().unwrap();
+        let path = cache_file(cache_root.path(), "ds", 1);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, item(1)).unwrap();
+        let provider = FakeProvider {
+            stream: |_name: &str, _version: u32, _index: Option<u64>, _limit: Option<u32>| unreachable!(),
+            count: |_name: &str, _version: u32| unreachable!(),
+        };
+        let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
+            Arc::new(provider),
+            "ds".to_string(),
+            1,
+            cache_root.path(),
+        )
+        .unwrap();
+
+        dataset.get(5).unwrap();
     }
 }
