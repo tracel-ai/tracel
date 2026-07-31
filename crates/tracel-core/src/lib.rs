@@ -9,7 +9,10 @@ pub mod inference;
 
 pub use connection::{Connection, ContextError};
 pub use context::Context;
-pub use dataset::{DatasetError, DatasetModule, DatasetVersionSpec};
+pub use dataset::{
+    DatasetError, DatasetItem, DatasetModule, DatasetVersionSpec, DownloadedDataset,
+    StreamedDataset,
+};
 pub use model_registry::{ModelRegistryError, ModelRegistryModule};
 
 use directories::{BaseDirs, ProjectDirs};

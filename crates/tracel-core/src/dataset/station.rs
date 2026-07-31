@@ -20,7 +20,7 @@ impl DatasetProvider for StationBackend {
                 version,
                 StreamDatasetVersionItemsRequest { index, limit },
             )
-            .map_err(|err| Self::describe_error(err, name, Some(version)))?;
+            .map_err(|err| describe_error(err, name, Some(version)))?;
 
         Ok(DatasetItemsPage {
             items: response
@@ -36,34 +36,42 @@ impl DatasetProvider for StationBackend {
             .datasets()
             .get_version(name, version)
             .map(|response| response.item_count)
-            .map_err(|err| Self::describe_error(err, name, Some(version)))
+            .map_err(|err| describe_error(err, name, Some(version)))
     }
 
     fn resolve_version(&self, name: &str) -> Result<u32, DatasetError> {
-        self.client
+        let response = self
+            .client
             .datasets()
             .get_latest_version(name)
-            .map(|response| response.version as u32)
-            .map_err(|err| Self::describe_error(err, name, None))
+            .map_err(|err| describe_error(err, name, None))?;
+
+        u32::try_from(response.version).map_err(|_| {
+            DatasetError::Client(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "dataset '{name}' latest version {} cannot be represented as a u32",
+                    response.version
+                ),
+            )))
+        })
     }
 }
 
-impl StationBackend {
-    fn describe_error(err: ClientError, name: &str, version: Option<u32>) -> DatasetError {
-        match err {
-            ClientError::NotFoundWithCode(ApiErrorCode::Dataset) => DatasetError::DatasetNotFound {
+fn describe_error(err: ClientError, name: &str, version: Option<u32>) -> DatasetError {
+    match err {
+        ClientError::NotFoundWithCode(ApiErrorCode::Dataset) => DatasetError::DatasetNotFound {
+            name: name.to_string(),
+        },
+        ClientError::NotFoundWithCode(ApiErrorCode::DatasetVersion) => match version {
+            Some(version) => DatasetError::VersionNotFound {
+                name: name.to_string(),
+                version,
+            },
+            None => DatasetError::NoVersionsFound {
                 name: name.to_string(),
             },
-            ClientError::NotFoundWithCode(ApiErrorCode::DatasetVersion) => match version {
-                Some(version) => DatasetError::VersionNotFound {
-                    name: name.to_string(),
-                    version,
-                },
-                None => DatasetError::NoVersionsFound {
-                    name: name.to_string(),
-                },
-            },
-            err => DatasetError::Client(Box::new(err)),
-        }
+        },
+        err => DatasetError::Client(Box::new(err)),
     }
 }
