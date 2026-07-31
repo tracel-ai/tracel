@@ -88,8 +88,7 @@ fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
         return Ok(creds);
     }
 
-    let proj_dirs =
-        directories::ProjectDirs::from("", "", "tracel").ok_or(CloudError::NoCredentials)?;
+    let config_dir = crate::resolve_config_dir().ok_or(CloudError::NoCredentials)?;
 
     let filename = match env {
         Env::Production => "credentials.json".to_string(),
@@ -97,7 +96,7 @@ fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
         Env::Development => "credentials-dev.json".to_string(),
     };
 
-    let path = proj_dirs.config_dir().join(&filename);
+    let path = config_dir.join(&filename);
     if path.exists() {
         let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
         let creds: CliCredentials =
