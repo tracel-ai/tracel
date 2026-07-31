@@ -207,11 +207,15 @@ fn default_data_dir(env: &Env) -> Result<PathBuf, FleetError> {
         Env::Staging(version) => format!("fleets-staging-{version}"),
         Env::Development => "fleets-dev".to_string(),
     };
-    if let Some(project) = ProjectDirs::from("ai", "tracel", "tracel") {
+    if let Some(project) = resolve_project_dir() {
         return Ok(project.data_dir().join(fleets_subdir));
     }
     if let Some(base) = BaseDirs::new() {
         return Ok(base.data_dir().join("tracel").join(fleets_subdir));
     }
     Err(FleetError::CacheDirUnavailable)
+}
+
+fn resolve_project_dir() -> Option<ProjectDirs> {
+    ProjectDirs::from("", "", "tracel")
 }

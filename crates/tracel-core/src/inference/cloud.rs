@@ -68,7 +68,7 @@ impl CloudInferenceProvider {
             .get_inference_group(&self.namespace, &self.project, name)
         {
             Ok(_) => Ok(()),
-            Err(ClientError::NotFound) => {
+            Err(err) if err.is_not_found() => {
                 match self.client.create_inference_group(
                     &self.namespace,
                     &self.project,

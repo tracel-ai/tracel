@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::connection::{Connection, ContextError};
+use crate::dataset::{DatasetModule, DatasetProvider};
 use crate::model_registry::{ModelRegistryModule, ModelRegistryProvider};
 use tracel_experiment::ExperimentModule;
 use tracel_experiment::ExperimentProvider;
@@ -11,6 +12,7 @@ pub struct Context {
     experiment_provider: Arc<dyn ExperimentProvider>,
     inference_provider: Arc<dyn InferenceProvider>,
     model_registry_provider: Option<Arc<dyn ModelRegistryProvider>>,
+    dataset_provider: Option<Arc<dyn DatasetProvider>>,
 }
 
 impl Context {
@@ -20,6 +22,7 @@ impl Context {
             experiment_provider: providers.experiment,
             inference_provider: providers.inference,
             model_registry_provider: providers.model_registry,
+            dataset_provider: providers.dataset,
         })
     }
 
@@ -35,5 +38,9 @@ impl Context {
         self.model_registry_provider
             .clone()
             .map(ModelRegistryModule::new)
+    }
+
+    pub fn datasets(&self) -> Option<DatasetModule> {
+        self.dataset_provider.clone().map(DatasetModule::new)
     }
 }

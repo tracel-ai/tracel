@@ -3,7 +3,7 @@ mod cloud;
 #[cfg(feature = "station")]
 mod station;
 
-pub(crate) use cache::{ModelCache, resolve_cache_dir};
+pub(crate) use cache::ModelCache;
 
 use std::sync::Arc;
 
