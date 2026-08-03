@@ -1,5 +1,6 @@
 [package]
 name = "xtask"
+description = "Build, test, and release automation tasks for the Tracel SDK workspace."
 version.workspace = true
 edition.workspace = true
 

@@ -1,5 +1,6 @@
 [package]
 name = "tracel-app"
+description = "App front-ends for the Tracel SDK: run registered capabilities from a CLI or serve them over HTTP."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
