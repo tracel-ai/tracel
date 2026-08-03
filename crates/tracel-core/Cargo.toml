@@ -1,5 +1,6 @@
 [package]
 name = "tracel-core"
+description = "Core runtime for the Tracel SDK: connects experiment tracking, inference, and the model registry to cloud, station, or offline backends."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
