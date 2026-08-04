@@ -26,6 +26,40 @@ impl ModelRegistryProvider for CloudBackend {
         self.model_cache
             .get_or_download(&self.file_transfer_client, name, version, &files)
     }
+
+    fn import_model_bundle(
+        &self,
+        namespace: &str,
+        project: &str,
+        name: &str,
+        version: u32,
+    ) -> Result<FsBundle, ModelRegistryError> {
+        let resp_download = self
+            .client
+            .presign_model_import_download(
+                namespace,
+                project,
+                name,
+                version,
+                &self.namespace,
+                &self.project,
+            )
+            .map_err(|err| self.describe_download_error(err, name, version))?;
+
+        let files: Vec<_> = resp_download
+            .files
+            .into_iter()
+            .map(|f| ArtifactDownloadFile {
+                rel_path: f.rel_path,
+                url: f.url,
+                size_bytes: None,
+                checksum: None,
+            })
+            .collect();
+
+        self.model_cache
+            .get_or_download(&self.file_transfer_client, name, version, &files)
+    }
 }
 
 impl CloudBackend {

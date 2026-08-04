@@ -70,10 +70,17 @@ opentelemetry = { version = "0.31.0", features = ["metrics"] }
 serde_with = { version = "3.20.0", features = ["base64", "macros"] }
 
 ## External Crate
-tracel-client = { version = "0.12.0", default-features = false, features = [
+# tracel-client = { version = "0.12.0", default-features = false, features = [
+#     "tracel",
+#     "station",
+# ] }
+
+# Local dev
+tracel-client = { path = "../client/tracel-client", default-features = false, features = [
     "tracel",
     "station",
 ] }
+
 
 ## Crate
 tracel-runner = { path = "crates/tracel-runner", version = "0.8.1" }

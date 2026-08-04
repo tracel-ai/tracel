@@ -5,7 +5,7 @@ mod station;
 
 pub(crate) use cache::ModelCache;
 
-use std::sync::Arc;
+use std::{io::Error, sync::Arc};
 
 use tracel_artifact::bundle::{BundleDecode, FsBundle};
 #[cfg(test)]
@@ -31,6 +31,18 @@ pub trait ModelRegistryProvider: Send + Sync {
     /// Fetches (downloading if needed) the bundle for `name`/`version` and returns it as a
     /// [`FsBundle`] ready to be decoded.
     fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError>;
+    /// Fetches a model from another namespace/project and returns it as a [`FsBundle`] ready to be decoded.
+    fn import_model_bundle(
+        &self,
+        _namespace: &str,
+        _project: &str,
+        _name: &str,
+        _version: u32,
+    ) -> Result<FsBundle, ModelRegistryError> {
+        Err(ModelRegistryError::Client(Box::new(Error::other(
+            "import_model_bundle not implemented for this provider",
+        ))))
+    }
 }
 
 #[derive(Clone)]
@@ -52,6 +64,25 @@ impl ModelRegistryModule {
     ) -> Result<D, ModelRegistryError> {
         let source = self.provider.load_model_bundle(name, version)?;
         D::decode(&source, settings).map_err(|e| ModelRegistryError::DecodeError(e.into()))
+    }
+
+    pub fn import_download_imported_model(
+        &self,
+        namespace: &str,
+        project: &str,
+        name: &str,
+        version: u32,
+    ) -> Result<FsBundle, ModelRegistryError> {
+        self.provider
+            .import_model_bundle(namespace, project, name, version)
+    }
+
+    pub fn download_model_bundle(
+        &self,
+        name: &str,
+        version: u32,
+    ) -> Result<FsBundle, ModelRegistryError> {
+        self.provider.load_model_bundle(name, version)
     }
 }
 
