@@ -11,9 +11,9 @@ const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
-    #[error("No API key found: set {TRACEL_API_KEY} or run `burn login`")]
+    #[error("No API key found: set {TRACEL_API_KEY} or run `tracel login`")]
     NoCredentials,
-    #[error("API key is invalid or has expired: run `burn login` to log in again")]
+    #[error("API key is invalid or has expired: run `tracel login` to log in again")]
     InvalidCredentials,
     #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
