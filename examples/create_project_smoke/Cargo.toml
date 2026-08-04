@@ -1,0 +1,10 @@
+[package]
+name = "create_project_smoke"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+tracel = { workspace = true }
+anyhow.workspace = true
+clap.workspace = true
