@@ -21,6 +21,12 @@ pub enum CloudError {
     NoProject,
     #[error("Invalid environment variable {env_var}: {message}")]
     InvalidEnv { env_var: String, message: String },
+    #[error("could not read tracel.toml: {0}")]
+    ReadTracelToml(#[source] std::io::Error),
+    #[error("could not write tracel.toml: {0}")]
+    WriteTracelToml(#[source] std::io::Error),
+    #[error("could not parse tracel.toml: {0}")]
+    InvalidTracelToml(#[from] toml::de::Error),
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
     #[error(transparent)]
@@ -68,18 +74,15 @@ impl CloudBackend {
     }
 
     pub fn create_context() -> Result<CloudBackend, CloudError> {
-        let env = discover_env()?;
-        let credentials = discover_credentials(&env)?;
+        let client = authenticate()?;
         let (namespace, project) = discover_namespace_project()?;
-
-        let client = Client::new(env, &credentials).map_err(|err| {
-            if err.is_login_error() {
-                CloudError::InvalidCredentials
-            } else {
-                CloudError::Client(err)
-            }
-        })?;
         CloudBackend::new(client, namespace, project)
+    }
+
+    pub fn create_project(owner: &str, name: &str, description: &str) -> Result<(), CloudError> {
+        let client = authenticate()?;
+        client.create_organization_project(owner, name, Some(description))?;
+        write_tracel_toml(owner, name)
     }
 }
 
@@ -115,7 +118,7 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
         return Ok((ns.clone(), proj.clone()));
     }
 
-    let toml_config = read_tracel_toml();
+    let toml_config = read_tracel_toml()?;
 
     let namespace = namespace_env
         .or(toml_config.namespace)
@@ -150,13 +153,54 @@ fn discover_env() -> Result<Env, CloudError> {
     }
 }
 
-fn read_tracel_toml() -> TracelTomlConfig {
+fn authenticate() -> Result<Client, CloudError> {
+    let env = discover_env()?;
+    let credentials = discover_credentials(&env)?;
+    let client = Client::new(env, &credentials).map_err(|err| {
+        if err.is_login_error() {
+            CloudError::InvalidCredentials
+        } else {
+            CloudError::Client(err)
+        }
+    })?;
+    Ok(client)
+}
+
+fn read_tracel_toml() -> Result<TracelTomlConfig, CloudError> {
     let path = Path::new("tracel.toml");
     if !path.exists() {
-        return TracelTomlConfig::default();
+        return Ok(TracelTomlConfig::default());
     }
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return TracelTomlConfig::default();
+    let contents = std::fs::read_to_string(path).map_err(CloudError::ReadTracelToml)?;
+    Ok(toml::from_str(&contents)?)
+}
+
+fn write_tracel_toml(namespace: &str, project: &str) -> Result<(), CloudError> {
+    let path = Path::new("tracel.toml");
+
+    let mut table = if path.exists() {
+        let contents = std::fs::read_to_string(path).map_err(CloudError::ReadTracelToml)?;
+        contents.parse::<toml::Value>()?
+    } else {
+        toml::Value::Table(toml::value::Table::new())
     };
-    toml::from_str(&contents).unwrap_or_default()
+
+    let table = table
+        .as_table_mut()
+        .expect("tracel.toml root must be a table");
+
+    table.remove("owner");
+    table.remove("name");
+    table.insert(
+        "namespace".to_string(),
+        toml::Value::String(namespace.to_string()),
+    );
+    table.insert(
+        "project".to_string(),
+        toml::Value::String(project.to_string()),
+    );
+
+    let serialized = toml::to_string_pretty(&toml::Value::Table(table.clone()))
+        .expect("TracelTomlConfig table always serializes");
+    std::fs::write(path, serialized).map_err(CloudError::WriteTracelToml)
 }

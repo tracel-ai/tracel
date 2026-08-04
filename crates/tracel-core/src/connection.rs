@@ -30,6 +30,11 @@ pub enum Connection {
 }
 
 impl Connection {
+    pub fn create_project(owner: &str, name: &str, description: &str) -> Result<(), ContextError> {
+        CloudBackend::create_project(owner, name, description)?;
+        Ok(())
+    }
+
     pub(crate) fn into_providers(self) -> Result<Providers, ContextError> {
         match self {
             Connection::Cloud => {
