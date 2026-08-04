@@ -1,6 +1,13 @@
+use std::sync::Arc;
+
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::StationClient;
 use url::Url;
+
+use crate::{
+    context::{ContextError, IntoProviders, Providers},
+    inference::DefaultInferenceProvider,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StationError {
@@ -13,6 +20,18 @@ pub struct StationBackend {
     pub client: StationClient,
     pub file_transfer_client: ReqwestTransferClient,
     pub model_cache: crate::model_registry::ModelCache,
+}
+
+impl IntoProviders for StationBackend {
+    fn into_providers(self) -> Result<Providers, ContextError> {
+        let backend = Arc::new(self);
+        Ok(Providers {
+            experiment: backend.clone(),
+            inference: Arc::new(DefaultInferenceProvider::new()),
+            model_registry: Some(backend.clone()),
+            dataset: Some(backend),
+        })
+    }
 }
 
 impl StationBackend {

@@ -94,6 +94,5 @@ pub use tracel_app as app;
 #[doc(inline)]
 pub use tracel_runner as runner;
 
-pub use tracel_core::Connection;
 pub use tracel_core::Context;
 pub use tracel_core::ContextError;

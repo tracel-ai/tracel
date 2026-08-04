@@ -1,8 +1,13 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{Client, ClientError, Env, TracelCredentials};
+
+use crate::{
+    context::{IntoProviders, Providers},
+    inference::CloudInferenceProvider,
+};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
@@ -83,6 +88,23 @@ impl CloudBackend {
         let client = authenticate()?;
         client.create_organization_project(owner, name, Some(description))?;
         write_tracel_toml(owner, name)
+    }
+}
+
+impl IntoProviders for CloudBackend {
+    fn into_providers(self) -> Result<crate::context::Providers, crate::ContextError> {
+        let backend = Arc::new(self.clone());
+        let inference = Arc::new(CloudInferenceProvider::new(
+            self.client.clone(),
+            self.namespace.clone(),
+            self.project.clone(),
+        ));
+        Ok(Providers {
+            experiment: backend.clone(),
+            inference,
+            model_registry: Some(backend),
+            dataset: None,
+        })
     }
 }
 
