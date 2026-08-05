@@ -35,7 +35,7 @@ impl IntoProviders for StationBackend {
 }
 
 impl StationBackend {
-    pub fn create_context(url: Url) -> Result<StationBackend, StationError> {
+    pub fn new(url: Url) -> Result<Self, StationError> {
         let host = url.host_str().unwrap_or("unknown");
         let station_id = match url.port() {
             Some(port) => format!("{host}_{port}"),

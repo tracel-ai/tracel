@@ -22,10 +22,6 @@ impl IntoProviders for LocalBackend {
 }
 
 impl LocalBackend {
-    pub fn create_context(path: impl Into<PathBuf>) -> LocalBackend {
-        LocalBackend::new(path.into())
-    }
-
     fn new(path: PathBuf) -> Self {
         Self { path }
     }
