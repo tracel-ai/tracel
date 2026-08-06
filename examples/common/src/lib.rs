@@ -1,6 +1,9 @@
 //! Shared setup for the Tracel examples.
 
-use tracel::{AuthMethod, CloudBackend, Context, LocalBackend, StationBackend};
+use tracel::cloud::{AuthMethod, CloudBackend};
+use tracel::local::LocalBackend;
+use tracel::station::StationBackend;
+use tracel::Context;
 use url::Url;
 
 /// Builds the SDK [`Context`] the examples run against.

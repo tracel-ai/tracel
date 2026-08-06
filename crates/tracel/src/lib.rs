@@ -30,11 +30,12 @@
 //! ```ignore
 //! use tracel::app::cli::Cli;
 //! use tracel::app::cli::mapper::JsonMapper;
+//! use tracel::cloud::{AuthMethod, CloudBackend};
 //! use tracel::experiment::ExperimentRun;
-//! use tracel::{Connection, Context};
+//! use tracel::Context;
 //!
 //! fn main() -> anyhow::Result<()> {
-//!     let module = Context::new(Connection::Cloud)?.experiment();
+//!     let module = Context::new(CloudBackend::new(AuthMethod::Env)?)?.experiment();
 //!
 //!     let job = module.create("my_training_procedure", |session: &ExperimentRun, config| {
 //!         // Your training code here
@@ -94,23 +95,22 @@ pub use tracel_app as app;
 #[doc(inline)]
 pub use tracel_runner as runner;
 
-/// How to authenticate against the Tracel cloud.
-pub use tracel_core::AuthMethod;
-/// Experiment backend running against the Tracel cloud.
-pub use tracel_core::CloudBackend;
-/// Errors from cloud authentication, project creation, or backend construction.
-pub use tracel_core::CloudError;
-/// An authenticated cloud session, usable to create projects.
-pub use tracel_core::CloudSession;
 pub use tracel_core::Context;
 pub use tracel_core::ContextError;
+
+/// Experiment backend running against the Tracel cloud, plus cloud authentication and project
+/// creation.
+pub mod cloud {
+    pub use tracel_core::{AuthMethod, CloudBackend, CloudError, CloudSession};
+}
+
 /// Experiment backend that records locally to disk, no account required.
-pub use tracel_core::LocalBackend;
+pub mod local {
+    pub use tracel_core::LocalBackend;
+}
+
 /// Experiment backend running against a Tracel Station.
 #[cfg(feature = "station")]
-pub use tracel_core::StationBackend;
-/// Errors from Tracel Station backend construction.
-#[cfg(feature = "station")]
-pub use tracel_core::StationError;
-/// Authenticate against the Tracel cloud, either from the environment or an explicit API key.
-pub use tracel_core::authenticate;
+pub mod station {
+    pub use tracel_core::{StationBackend, StationError};
+}

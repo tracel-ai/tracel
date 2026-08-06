@@ -1476,15 +1476,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "create_project_smoke"
-version = "0.8.1"
-dependencies = [
- "anyhow",
- "clap",
- "tracel",
-]
-
-[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

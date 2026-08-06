@@ -3,9 +3,9 @@
 //! Two independent flows share this module:
 //!
 //! - **Running experiments**: [`AuthMethod`] plus [`CloudBackend::new`] (or
-//!   [`authenticate`] + [`CloudBackend::from_session`]) builds a backend for
+//!   [`CloudSession::authenticate`] + [`CloudBackend::from_session`]) builds a backend for
 //!   [`Context::new`](crate::Context::new), scoped to an existing namespace/project.
-//! - **Creating a project**: [`authenticate`] returns a [`CloudSession`], whose
+//! - **Creating a project**: [`CloudSession::authenticate`] returns a [`CloudSession`], whose
 //!   [`CloudSession::create_project`] creates a new cloud project. The same session can then be
 //!   turned into a [`CloudBackend`] with [`CloudBackend::from_session`], scoped to the project
 //!   that was just created — see that method's docs for why this needs a separate constructor
@@ -80,7 +80,7 @@ pub struct CloudBackend {
     pub(crate) model_cache: crate::model_registry::ModelCache,
 }
 
-/// How to authenticate against the Tracel cloud, passed to [`authenticate`] or
+/// How to authenticate against the Tracel cloud, passed to [`CloudSession::authenticate`] or
 /// [`CloudBackend::new`].
 pub enum AuthMethod {
     /// Discover credentials from the environment (`TRACEL_API_KEY`) or the local `tracel login`
@@ -90,7 +90,7 @@ pub enum AuthMethod {
     ApiKey(String),
 }
 
-/// An authenticated cloud session, returned by [`authenticate`].
+/// An authenticated cloud session, returned by [`CloudSession::authenticate`].
 ///
 /// Use [`CloudSession::create_project`] to create a new project, and
 /// [`CloudBackend::from_session`] to turn the session into a backend scoped to a project.
@@ -99,6 +99,29 @@ pub struct CloudSession {
 }
 
 impl CloudSession {
+    /// Authenticates against the Tracel cloud, returning a [`CloudSession`] that can create
+    /// projects or be turned into a [`CloudBackend`] with [`CloudBackend::from_session`].
+    pub fn authenticate(method: AuthMethod) -> Result<Self, CloudError> {
+        let (env, credentials) = match method {
+            AuthMethod::Env => {
+                let env = discover_env()?;
+                let credentials = discover_credentials(&env)?;
+                (env, credentials)
+            }
+            AuthMethod::ApiKey(api_key) => (Env::Production, TracelCredentials::new(api_key)),
+        };
+
+        let client = Client::new(env, &credentials).map_err(|err| {
+            if err.is_login_error() {
+                CloudError::InvalidCredentials
+            } else {
+                CloudError::Client(err)
+            }
+        })?;
+
+        Ok(Self { client })
+    }
+
     /// Creates a new project under `owner` in the Tracel cloud.
     ///
     /// Always created private for now; there's no way to request public visibility yet.
@@ -169,7 +192,7 @@ impl CloudBackend {
     /// Authenticates with `authentication`, then builds a `CloudBackend` for the namespace and
     /// project resolved from `TRACEL_NAMESPACE`/`TRACEL_PROJECT` or `tracel.toml`.
     pub fn new(authentication: AuthMethod) -> Result<Self, CloudError> {
-        let session = authenticate(authentication)?;
+        let session = CloudSession::authenticate(authentication)?;
         let (namespace, project) = discover_namespace_project()?;
         Self::from_session(session, namespace, project)
     }
@@ -257,29 +280,6 @@ fn discover_env() -> Result<Env, CloudError> {
         },
         Err(_) => Ok(Env::Production),
     }
-}
-
-/// Authenticates against the Tracel cloud, returning a [`CloudSession`] that can create projects
-/// or be turned into a [`CloudBackend`] with [`CloudBackend::from_session`].
-pub fn authenticate(method: AuthMethod) -> Result<CloudSession, CloudError> {
-    let (env, credentials) = match method {
-        AuthMethod::Env => {
-            let env = discover_env()?;
-            let credentials = discover_credentials(&env)?;
-            (env, credentials)
-        }
-        AuthMethod::ApiKey(api_key) => (Env::Production, TracelCredentials::new(api_key)),
-    };
-
-    let client = Client::new(env, &credentials).map_err(|err| {
-        if err.is_login_error() {
-            CloudError::InvalidCredentials
-        } else {
-            CloudError::Client(err)
-        }
-    })?;
-
-    Ok(CloudSession { client })
 }
 
 fn read_tracel_toml() -> Result<TracelTomlConfig, CloudError> {

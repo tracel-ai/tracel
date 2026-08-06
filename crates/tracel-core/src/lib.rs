@@ -6,7 +6,7 @@ mod model_registry;
 pub mod experiment;
 pub mod inference;
 
-pub use backend::cloud::{AuthMethod, CloudBackend, CloudError, CloudSession, authenticate};
+pub use backend::cloud::{AuthMethod, CloudBackend, CloudError, CloudSession};
 pub use backend::local::LocalBackend;
 #[cfg(feature = "station")]
 pub use backend::station::{StationBackend, StationError};
