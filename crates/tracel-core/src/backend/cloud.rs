@@ -1,3 +1,16 @@
+//! Experiment backend running against the Tracel cloud.
+//!
+//! Two independent flows share this module:
+//!
+//! - **Running experiments**: [`AuthMethod`] plus [`CloudBackend::new`] (or
+//!   [`authenticate`] + [`CloudBackend::from_session`]) builds a backend for
+//!   [`Context::new`](crate::Context::new), scoped to an existing namespace/project.
+//! - **Creating a project**: [`authenticate`] returns a [`CloudSession`], whose
+//!   [`CloudSession::create_project`] creates a new cloud project. The same session can then be
+//!   turned into a [`CloudBackend`] with [`CloudBackend::from_session`], scoped to the project
+//!   that was just created — see that method's docs for why this needs a separate constructor
+//!   from [`CloudBackend::new`].
+
 use std::{path::Path, sync::Arc};
 
 use serde::Deserialize;
@@ -15,28 +28,48 @@ const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
 const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
 const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 
+/// Errors from cloud authentication, project creation, or [`CloudBackend`] construction.
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
+    /// [`AuthMethod::Env`] found no credentials to authenticate with.
     #[error("No API key found: set {TRACEL_API_KEY} or run `tracel login`")]
     NoCredentials,
+    /// The provided or discovered API key was rejected by the cloud.
     #[error("API key is invalid or has expired: run `tracel login` to log in again")]
     InvalidCredentials,
+    /// [`CloudBackend::new`] could not resolve a namespace from the environment or `tracel.toml`.
     #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
+    /// [`CloudBackend::new`] could not resolve a project from the environment or `tracel.toml`.
     #[error("No project found: set {TRACEL_PROJECT} or add project to tracel.toml")]
     NoProject,
+    /// `TRACEL_ENV` was set to a value other than `Production`, `Development`, or `Staging(N)`.
     #[error("Invalid environment variable {env_var}: {message}")]
-    InvalidEnv { env_var: String, message: String },
+    InvalidEnv {
+        /// The environment variable that failed to parse.
+        env_var: String,
+        /// What value was expected.
+        message: String,
+    },
+    /// `tracel.toml` exists but could not be read from disk.
     #[error("could not read tracel.toml: {0}")]
     ReadTracelToml(#[source] std::io::Error),
+    /// `tracel.toml` exists but is not valid TOML.
     #[error("could not write tracel.toml: {0}")]
     InvalidTracelToml(#[from] toml::de::Error),
+    /// No local cache directory could be resolved for downloaded models.
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
+    /// The underlying cloud client failed to communicate with the Tracel API.
     #[error(transparent)]
     Client(#[from] ClientError),
 }
 
+/// Experiment backend that ships telemetry to a Tracel cloud project.
+///
+/// Build one with [`CloudBackend::new`] (resolves namespace/project from the environment or
+/// `tracel.toml`) or [`CloudBackend::from_session`] (scoped to a project you already have a
+/// [`CloudSession`] for), then pass it to [`Context::new`](crate::Context::new).
 #[derive(Clone)]
 pub struct CloudBackend {
     pub(crate) client: Client,
@@ -46,16 +79,26 @@ pub struct CloudBackend {
     pub(crate) model_cache: crate::model_registry::ModelCache,
 }
 
+/// How to authenticate against the Tracel cloud, passed to [`authenticate`] or
+/// [`CloudBackend::new`].
 pub enum AuthMethod {
+    /// Discover credentials from the environment (`TRACEL_API_KEY`) or the local `tracel login`
+    /// credentials file.
     Env,
+    /// Authenticate with this explicit API key, against the production environment.
     ApiKey(String),
 }
 
+/// An authenticated cloud session, returned by [`authenticate`].
+///
+/// Use [`CloudSession::create_project`] to create a new project, and
+/// [`CloudBackend::from_session`] to turn the session into a backend scoped to a project.
 pub struct CloudSession {
     client: Client,
 }
 
 impl CloudSession {
+    /// Creates a new project under `owner` in the Tracel cloud.
     pub fn create_project(
         &self,
         owner: &str,
@@ -86,6 +129,13 @@ struct TracelTomlConfig {
 }
 
 impl CloudBackend {
+    /// Builds a `CloudBackend` scoped to `namespace`/`project`, from an already-authenticated
+    /// [`CloudSession`].
+    ///
+    /// Use this after [`CloudSession::create_project`], to run experiments in the project that
+    /// was just created without relying on `TRACEL_NAMESPACE`/`TRACEL_PROJECT` or `tracel.toml`
+    /// (nothing writes those automatically, and they may point elsewhere). For an existing
+    /// project resolved from the environment, use [`CloudBackend::new`] instead.
     pub fn from_session(
         session: CloudSession,
         namespace: String,
@@ -109,6 +159,8 @@ impl CloudBackend {
         })
     }
 
+    /// Authenticates with `authentication`, then builds a `CloudBackend` for the namespace and
+    /// project resolved from `TRACEL_NAMESPACE`/`TRACEL_PROJECT` or `tracel.toml`.
     pub fn new(authentication: AuthMethod) -> Result<Self, CloudError> {
         let session = authenticate(authentication)?;
         let (namespace, project) = discover_namespace_project()?;
@@ -200,6 +252,8 @@ fn discover_env() -> Result<Env, CloudError> {
     }
 }
 
+/// Authenticates against the Tracel cloud, returning a [`CloudSession`] that can create projects
+/// or be turned into a [`CloudBackend`] with [`CloudBackend::from_session`].
 pub fn authenticate(method: AuthMethod) -> Result<CloudSession, CloudError> {
     let (env, credentials) = match method {
         AuthMethod::Env => {

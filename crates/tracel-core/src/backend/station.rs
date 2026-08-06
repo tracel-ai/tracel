@@ -1,3 +1,5 @@
+//! Experiment backend running against a Tracel Station.
+
 use std::sync::Arc;
 
 use tracel_artifact::ReqwestTransferClient;
@@ -10,15 +12,24 @@ use crate::{
     model_registry::ModelCache,
 };
 
+/// Errors from [`StationBackend`] construction.
 #[derive(Debug, thiserror::Error)]
 pub enum StationError {
+    /// No local cache directory could be resolved for downloaded models.
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
 }
 
+/// Experiment backend that ships telemetry to a Tracel Station.
+///
+/// Build one with [`StationBackend::new`], then pass it to [`Context::new`](crate::Context::new).
+/// Unlike [`CloudBackend`](crate::CloudBackend), it provides dataset access in addition to
+/// experiments and a model registry.
 #[derive(Clone)]
 pub struct StationBackend {
+    /// Client used to reach the Tracel Station's HTTP API.
     pub client: StationClient,
+    /// Client used to upload and download model files.
     pub file_transfer_client: ReqwestTransferClient,
     pub(crate) model_cache: ModelCache,
 }
@@ -36,6 +47,7 @@ impl IntoProviders for StationBackend {
 }
 
 impl StationBackend {
+    /// Builds a `StationBackend` for the Tracel Station at `url`.
     pub fn new(url: Url) -> Result<Self, StationError> {
         let host = url.host_str().unwrap_or("unknown");
         let station_id = match url.port() {
