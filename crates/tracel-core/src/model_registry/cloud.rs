@@ -18,8 +18,8 @@ impl ModelRegistryProvider for CloudBackend {
             .map(|f| ArtifactDownloadFile {
                 rel_path: f.rel_path,
                 url: f.url,
-                size_bytes: None,
-                checksum: None,
+                size_bytes: Some(f.size_bytes),
+                checksum: Some(f.checksum),
             })
             .collect();
 
