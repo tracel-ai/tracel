@@ -94,5 +94,23 @@ pub use tracel_app as app;
 #[doc(inline)]
 pub use tracel_runner as runner;
 
+/// How to authenticate against the Tracel cloud.
+pub use tracel_core::AuthMethod;
+/// Experiment backend running against the Tracel cloud.
+pub use tracel_core::CloudBackend;
+/// Errors from cloud authentication, project creation, or backend construction.
+pub use tracel_core::CloudError;
+/// An authenticated cloud session, usable to create projects.
+pub use tracel_core::CloudSession;
 pub use tracel_core::Context;
 pub use tracel_core::ContextError;
+/// Experiment backend that records locally to disk, no account required.
+pub use tracel_core::LocalBackend;
+/// Experiment backend running against a Tracel Station.
+#[cfg(feature = "station")]
+pub use tracel_core::StationBackend;
+/// Errors from Tracel Station backend construction.
+#[cfg(feature = "station")]
+pub use tracel_core::StationError;
+/// Authenticate against the Tracel cloud, either from the environment or an explicit API key.
+pub use tracel_core::authenticate;

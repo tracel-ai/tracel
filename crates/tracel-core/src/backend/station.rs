@@ -7,6 +7,7 @@ use url::Url;
 use crate::{
     context::{ContextError, IntoProviders, Providers},
     inference::DefaultInferenceProvider,
+    model_registry::ModelCache,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -19,7 +20,7 @@ pub enum StationError {
 pub struct StationBackend {
     pub client: StationClient,
     pub file_transfer_client: ReqwestTransferClient,
-    pub model_cache: crate::model_registry::ModelCache,
+    pub(crate) model_cache: ModelCache,
 }
 
 impl IntoProviders for StationBackend {

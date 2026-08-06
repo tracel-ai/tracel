@@ -22,7 +22,7 @@ impl IntoProviders for LocalBackend {
 }
 
 impl LocalBackend {
-    fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }

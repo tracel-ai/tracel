@@ -37,12 +37,6 @@ pub trait IntoProviders {
     fn into_providers(self) -> Result<Providers, ContextError>;
 }
 
-impl<T: IntoProviders + 'static> From<T> for Box<dyn IntoProviders> {
-    fn from(backend: T) -> Self {
-        Box::new(backend)
-    }
-}
-
 impl Context {
     pub fn new(connection: impl IntoProviders) -> Result<Self, ContextError> {
         let providers = connection.into_providers()?;

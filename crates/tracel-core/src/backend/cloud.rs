@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc, task::Context};
+use std::{path::Path, sync::Arc};
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
@@ -51,6 +51,27 @@ pub enum AuthMethod {
     ApiKey(String),
 }
 
+pub struct CloudSession {
+    client: Client,
+}
+
+impl CloudSession {
+    pub fn create_project(
+        &self,
+        owner: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<(), CloudError> {
+        self.client
+            .create_organization_project(owner, name, Some(description))?;
+        Ok(())
+    }
+
+    pub(crate) fn into_client(self) -> Client {
+        self.client
+    }
+}
+
 #[derive(Deserialize)]
 struct CliCredentials {
     api_key: String,
@@ -65,14 +86,12 @@ struct TracelTomlConfig {
 }
 
 impl CloudBackend {
-    fn new(authentication: AuthMethod) -> Result<Self, CloudError> {
-        let client = match authentication {
-            AuthMethod::Env => authenticate()?,
-            AuthMethod::ApiKey(api_key) => {
-                Client::new(Env::Production, &TracelCredentials::new(api_key))?
-            }
-        };
-        let (namespace, project) = discover_namespace_project()?;
+    pub fn from_session(
+        session: CloudSession,
+        namespace: String,
+        project: String,
+    ) -> Result<Self, CloudError> {
+        let client = session.into_client();
 
         let cache_root = crate::resolve_cache_dir()
             .ok_or(CloudError::NoCacheDir)?
@@ -90,15 +109,10 @@ impl CloudBackend {
         })
     }
 
-    pub fn create_project(
-        self,
-        owner: &str,
-        name: &str,
-        description: &str,
-    ) -> Result<(), CloudError> {
-        self.client
-            .create_organization_project(owner, name, Some(description))?;
-        Ok(())
+    pub fn new(authentication: AuthMethod) -> Result<Self, CloudError> {
+        let session = authenticate(authentication)?;
+        let (namespace, project) = discover_namespace_project()?;
+        Self::from_session(session, namespace, project)
     }
 }
 
@@ -186,9 +200,16 @@ fn discover_env() -> Result<Env, CloudError> {
     }
 }
 
-fn authenticate() -> Result<Client, CloudError> {
-    let env = discover_env()?;
-    let credentials = discover_credentials(&env)?;
+pub fn authenticate(method: AuthMethod) -> Result<CloudSession, CloudError> {
+    let (env, credentials) = match method {
+        AuthMethod::Env => {
+            let env = discover_env()?;
+            let credentials = discover_credentials(&env)?;
+            (env, credentials)
+        }
+        AuthMethod::ApiKey(api_key) => (Env::Production, TracelCredentials::new(api_key)),
+    };
+
     let client = Client::new(env, &credentials).map_err(|err| {
         if err.is_login_error() {
             CloudError::InvalidCredentials
@@ -196,7 +217,8 @@ fn authenticate() -> Result<Client, CloudError> {
             CloudError::Client(err)
         }
     })?;
-    Ok(client)
+
+    Ok(CloudSession { client })
 }
 
 fn read_tracel_toml() -> Result<TracelTomlConfig, CloudError> {

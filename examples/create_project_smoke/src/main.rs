@@ -7,7 +7,7 @@
 
 use clap::Parser;
 use tracel::experiment::ExperimentRun;
-use tracel::{Connection, Context};
+use tracel::{AuthMethod, CloudBackend, Context, authenticate};
 
 #[derive(Parser)]
 struct Args {
@@ -20,10 +20,12 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    Connection::create_project(&args.owner, &args.name, &args.description)?;
+    let session = authenticate(AuthMethod::Env)?;
+    session.create_project(&args.owner, &args.name, &args.description)?;
     println!("project '{}/{}' created", args.owner, args.name);
 
-    let context = Context::new(Connection::Cloud)?;
+    let backend = CloudBackend::from_session(session, args.owner.clone(), args.name.clone())?;
+    let context = Context::new(backend)?;
 
     context
         .experiment()

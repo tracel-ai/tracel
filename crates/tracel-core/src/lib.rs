@@ -6,6 +6,10 @@ mod model_registry;
 pub mod experiment;
 pub mod inference;
 
+pub use backend::cloud::{AuthMethod, CloudBackend, CloudError, CloudSession, authenticate};
+pub use backend::local::LocalBackend;
+#[cfg(feature = "station")]
+pub use backend::station::{StationBackend, StationError};
 pub use context::{Context, ContextError};
 pub use dataset::{
     DatasetError, DatasetItem, DatasetModule, DatasetVersionSpec, DownloadedDataset,
