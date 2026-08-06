@@ -66,9 +66,6 @@ pub(crate) trait IntoProviders {
 impl Context {
     /// Builds a `Context` from a backend, e.g. [`CloudBackend`](crate::CloudBackend),
     /// [`LocalBackend`](crate::LocalBackend), or [`StationBackend`](crate::StationBackend).
-    ///
-    /// `IntoProviders` is sealed (not exported), so `connection` must be one of this crate's own
-    /// backend types; callers never name the trait itself.
     #[allow(private_bounds)]
     pub fn new(connection: impl IntoProviders) -> Result<Self, ContextError> {
         let providers = connection.into_providers()?;

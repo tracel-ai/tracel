@@ -15,6 +15,7 @@ use std::{path::Path, sync::Arc};
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
+use tracel_client::request::Visibility;
 use tracel_client::{Client, ClientError, Env, TracelCredentials};
 
 use crate::{
@@ -99,14 +100,20 @@ pub struct CloudSession {
 
 impl CloudSession {
     /// Creates a new project under `owner` in the Tracel cloud.
+    ///
+    /// Always created private for now; there's no way to request public visibility yet.
     pub fn create_project(
         &self,
         owner: &str,
         name: &str,
         description: &str,
     ) -> Result<(), CloudError> {
-        self.client
-            .create_organization_project(owner, name, Some(description))?;
+        self.client.create_organization_project(
+            owner,
+            name,
+            Some(description),
+            Visibility::Private,
+        )?;
         Ok(())
     }
 

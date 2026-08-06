@@ -27,10 +27,8 @@ pub enum StationError {
 /// experiments and a model registry.
 #[derive(Clone)]
 pub struct StationBackend {
-    /// Client used to reach the Tracel Station's HTTP API.
-    pub client: StationClient,
-    /// Client used to upload and download model files.
-    pub file_transfer_client: ReqwestTransferClient,
+    pub(crate) client: StationClient,
+    pub(crate) file_transfer_client: ReqwestTransferClient,
     pub(crate) model_cache: ModelCache,
 }
 

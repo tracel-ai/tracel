@@ -88,5 +88,10 @@ tracel = { path = "crates/tracel", version = "0.8.1" }
 ### For xtask crate ###
 tracel-xtask = "4.19.0"
 
+# Temporary: pick up the unreleased `visibility` param on project creation from the local
+# tracel-client checkout, until it's published. Remove once tracel-client is bumped past 0.12.0.
+[patch.crates-io]
+tracel-client = { path = "../client/tracel-client" }
+
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
