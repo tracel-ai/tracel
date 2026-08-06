@@ -12,17 +12,29 @@ version.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
-server = ["tracel-app/server"]
-station = ["tracel-core/station"]
-runner = ["dep:tracel-runner"]
+default = ["sdk"]
+# Console client and artifact bundles only. Carries no deep learning backend, so it can be
+# consumed by applications that build Burn themselves or not at all.
+client = ["dep:tracel-client", "dep:tracel-artifact"]
+# Experiment tracking, job registration, inference and fleet. Pulls in Burn.
+sdk = [
+    "client",
+    "dep:tracel-core",
+    "dep:tracel-app",
+    "dep:tracel-experiment",
+    "dep:tracel-inference",
+    "dep:tracel-fleet",
+]
+server = ["sdk", "tracel-app/server"]
+station = ["sdk", "tracel-core/station"]
+runner = ["sdk", "dep:tracel-runner"]
 
 [dependencies]
-tracel-core.workspace = true
-tracel-app.workspace = true
+tracel-core = { workspace = true, optional = true }
+tracel-app = { workspace = true, optional = true }
 tracel-runner = { workspace = true, optional = true }
-tracel-experiment.workspace = true
-tracel-inference.workspace = true
-tracel-fleet.workspace = true
-tracel-artifact.workspace = true
-tracel-client.workspace = true
+tracel-experiment = { workspace = true, optional = true }
+tracel-inference = { workspace = true, optional = true }
+tracel-fleet = { workspace = true, optional = true }
+tracel-artifact = { workspace = true, optional = true }
+tracel-client = { workspace = true, optional = true }
