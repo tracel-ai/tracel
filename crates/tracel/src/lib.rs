@@ -21,6 +21,7 @@
 //! - `app`: job registration, plus CLI and HTTP server front-ends to run those jobs.
 //! - `artifact`: bundle and artifact utilities.
 //! - `client`: HTTP client for the Tracel console.
+//! - `console`: console-domain SDK for authentication, browsing, and verified downloads.
 //!
 //! ## Features
 //!
@@ -68,6 +69,11 @@ pub use tracel_client::TracelCredentials;
 #[cfg(feature = "client")]
 #[doc(inline)]
 pub use tracel_client as client;
+
+/// Console-domain SDK for authentication, browsing, and verified downloads.
+#[cfg(feature = "sdk")]
+#[doc(inline)]
+pub use tracel_console as console;
 
 /// Experiment tracking and management.
 #[cfg(feature = "sdk")]

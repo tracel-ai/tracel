@@ -19,6 +19,7 @@ client = ["dep:tracel-client", "dep:tracel-artifact"]
 # Experiment tracking, job registration, inference and fleet. Pulls in Burn.
 sdk = [
     "client",
+    "dep:tracel-console",
     "dep:tracel-core",
     "dep:tracel-app",
     "dep:tracel-experiment",
@@ -38,3 +39,4 @@ tracel-inference = { workspace = true, optional = true }
 tracel-fleet = { workspace = true, optional = true }
 tracel-artifact = { workspace = true, optional = true }
 tracel-client = { workspace = true, optional = true }
+tracel-console = { workspace = true, optional = true }
