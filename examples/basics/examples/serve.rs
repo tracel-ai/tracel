@@ -14,17 +14,15 @@ use tracel::app::server::{JsonBody, Server};
 use tracel::experiment::ExperimentRun;
 
 fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+    let (experiment, inference) = common::modules()?;
 
-    let infer = context.inference().create(
+    let infer = inference.create(
         "wordtok",
         WordTokenizer::with_delay(Duration::from_millis(120)),
     );
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
+    let train = experiment.create("toy-training", |run: &ExperimentRun, config| {
+        training::train(run, config)
+    });
 
     Server::new()
         .port(3000)

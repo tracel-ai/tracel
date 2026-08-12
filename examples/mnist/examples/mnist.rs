@@ -11,7 +11,7 @@ use mnist::training::{self, MnistTrainingConfig};
 use tracel::experiment::ExperimentRun;
 
 fn main() -> anyhow::Result<()> {
-    let module = common::context()?.experiment();
+    let (module, _) = common::modules()?;
 
     module
         .create("mnist", |experiment: &ExperimentRun, config| {

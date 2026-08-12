@@ -202,7 +202,7 @@ where
     /// Drive the managed model for one request, building a session that ships telemetry to the
     /// process-global `metrics` recorder tagged with fleet metadata.
     ///
-    /// This is fleet's provider-free entry point: it owns the session, so no `InferenceProvider` or
+    /// This is fleet's direct entry point: it owns the session, so no `InferenceModule` or
     /// `InferenceJob` is involved. Per-request stats and any metrics the model records are scoped
     /// with `fleet_key`/`inference_name`/`model_name`/`model_version`.
     pub fn run<It, W>(

@@ -10,16 +10,12 @@ use tracel::app::cli::mapper::JsonMapper;
 use tracel::experiment::ExperimentRun;
 
 fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+    let (experiment, inference) = common::modules()?;
 
-    let infer = context
-        .inference()
-        .create("wordtok", WordTokenizer::default());
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
+    let infer = inference.create("wordtok", WordTokenizer::default());
+    let train = experiment.create("toy-training", |run: &ExperimentRun, config| {
+        training::train(run, config)
+    });
 
     Cli::new()
         .register(infer, JsonMapper::new())

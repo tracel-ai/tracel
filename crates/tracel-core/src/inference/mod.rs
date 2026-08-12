@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracel_inference::sink::NoopSink;
-use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
+use tracel_inference::{InferenceError, InferenceSession};
 
 mod cloud;
 
@@ -22,8 +22,9 @@ impl DefaultInferenceProvider {
     }
 }
 
-impl InferenceProvider for DefaultInferenceProvider {
-    fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
+impl DefaultInferenceProvider {
+    /// Creates a no-op telemetry session for one request of the named inference.
+    pub fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
         let n = self.request_counter.fetch_add(1, Ordering::Relaxed);
         let session_id = format!("{name}/{n}");
         Ok(InferenceSession::new(session_id, Arc::new(NoopSink))

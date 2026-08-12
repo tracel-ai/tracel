@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use basics::{Prompt, WordTokenizer};
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let module = common::context()?.inference();
+    let (_, module) = common::modules()?;
     let job = module.create(
         "wordtok",
         WordTokenizer::with_delay(Duration::from_millis(120)),

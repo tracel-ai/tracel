@@ -11,7 +11,6 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use tracel_experiment::ExperimentProvider;
 use tracel_experiment::ExperimentRun;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::reader::{
@@ -22,8 +21,9 @@ use tracel_experiment::{ArtifactKind, ExperimentId};
 
 use crate::backend::local::LocalBackend;
 
-impl ExperimentProvider for LocalBackend {
-    fn create_experiment(
+impl LocalBackend {
+    /// Starts a named experiment run in the backend's local directory.
+    pub fn create_experiment(
         &self,
         name: String,
         _attributes: HashMap<String, Value>,

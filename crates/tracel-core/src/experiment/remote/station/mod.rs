@@ -23,8 +23,6 @@ use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
 
-use tracel_experiment::ExperimentProvider;
-
 use crate::backend::station::StationBackend;
 use crate::experiment::remote::session::RemoteExperimentSession;
 
@@ -205,8 +203,9 @@ pub enum ArtifactError {
     Internal(String),
 }
 
-impl ExperimentProvider for StationBackend {
-    fn create_experiment(
+impl StationBackend {
+    /// Starts a named experiment run on the configured Station.
+    pub fn create_experiment(
         &self,
         name: String,
         attributes: HashMap<String, Value>,

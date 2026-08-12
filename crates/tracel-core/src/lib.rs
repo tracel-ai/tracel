@@ -1,17 +1,17 @@
 mod backend;
-mod connection;
-mod context;
 mod dataset;
 mod model_registry;
 
 pub mod experiment;
 pub mod inference;
 
-pub use connection::{Connection, ContextError};
-pub use context::Context;
+pub use backend::cloud::{CloudBackend, CloudError};
+pub use backend::local::LocalBackend;
+#[cfg(feature = "station")]
+pub use backend::station::{StationBackend, StationError};
 pub use dataset::{
-    DatasetError, DatasetItem, DatasetModule, DatasetVersionSpec, DownloadedDataset,
-    StreamedDataset,
+    DatasetError, DatasetItem, DatasetItemsPage, DatasetModule, DatasetVersionSpec,
+    DownloadedDataset, StreamedDataset,
 };
 pub use model_registry::{ModelRegistryError, ModelRegistryModule};
 

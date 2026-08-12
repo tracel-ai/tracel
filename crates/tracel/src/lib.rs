@@ -36,13 +36,17 @@
 //! (to dispatch over HTTP, requires the `server` feature):
 //!
 //! ```ignore
+//! use std::sync::Arc;
 //! use tracel::app::cli::Cli;
 //! use tracel::app::cli::mapper::JsonMapper;
-//! use tracel::experiment::ExperimentRun;
-//! use tracel::{Connection, Context};
+//! use tracel::experiment::{ExperimentModule, ExperimentRun};
+//! use tracel::CloudBackend;
 //!
 //! fn main() -> anyhow::Result<()> {
-//!     let module = Context::new(Connection::Cloud)?.experiment();
+//!     let backend = Arc::new(CloudBackend::discover()?);
+//!     let module = ExperimentModule::new(move |name, attributes| {
+//!         backend.create_experiment(name, attributes)
+//!     });
 //!
 //!     let job = module.create("my_training_procedure", |session: &ExperimentRun, config| {
 //!         // Your training code here
@@ -87,8 +91,8 @@ pub mod experiment {
 #[cfg(feature = "sdk")]
 pub mod dataset {
     pub use tracel_core::{
-        DatasetError, DatasetItem, DatasetModule, DatasetVersionSpec, DownloadedDataset,
-        StreamedDataset,
+        DatasetError, DatasetItem, DatasetItemsPage, DatasetModule, DatasetVersionSpec,
+        DownloadedDataset, StreamedDataset,
     };
 }
 
@@ -121,8 +125,10 @@ pub use tracel_app as app;
 pub use tracel_runner as runner;
 
 #[cfg(feature = "sdk")]
-pub use tracel_core::Connection;
+pub use tracel_core::inference::{CloudInferenceProvider, DefaultInferenceProvider};
 #[cfg(feature = "sdk")]
-pub use tracel_core::Context;
-#[cfg(feature = "sdk")]
-pub use tracel_core::ContextError;
+pub use tracel_core::{
+    CloudBackend, CloudError, LocalBackend, ModelRegistryError, ModelRegistryModule,
+};
+#[cfg(feature = "station")]
+pub use tracel_core::{StationBackend, StationError};

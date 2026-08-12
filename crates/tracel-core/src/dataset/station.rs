@@ -2,10 +2,11 @@ use tracel_client::station::dataset::StreamDatasetVersionItemsRequest;
 use tracel_client::{ApiErrorCode, ClientError};
 
 use crate::backend::station::StationBackend;
-use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
+use crate::dataset::{DatasetError, DatasetItemsPage};
 
-impl DatasetProvider for StationBackend {
-    fn get_items(
+impl StationBackend {
+    /// Fetches one page of raw item envelopes, starting at `index` and capped at `limit` items.
+    pub fn get_items(
         &self,
         name: &str,
         version: u32,
@@ -31,7 +32,8 @@ impl DatasetProvider for StationBackend {
         })
     }
 
-    fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+    /// Returns the total number of items in the named dataset version.
+    pub fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
         self.client
             .datasets()
             .get_version(name, version)
@@ -39,7 +41,8 @@ impl DatasetProvider for StationBackend {
             .map_err(|err| describe_error(err, name, Some(version)))
     }
 
-    fn resolve_version(&self, name: &str) -> Result<u32, DatasetError> {
+    /// Resolves the latest version number for the named dataset.
+    pub fn resolve_version(&self, name: &str) -> Result<u32, DatasetError> {
         let response = self
             .client
             .datasets()

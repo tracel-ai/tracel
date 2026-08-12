@@ -4,19 +4,21 @@ use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StationError {
+    /// No platform cache directory could be resolved for model downloads.
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
 }
 
 #[derive(Clone)]
 pub struct StationBackend {
-    pub client: StationClient,
-    pub file_transfer_client: ReqwestTransferClient,
-    pub model_cache: crate::model_registry::ModelCache,
+    pub(crate) client: StationClient,
+    pub(crate) file_transfer_client: ReqwestTransferClient,
+    pub(crate) model_cache: crate::model_registry::ModelCache,
 }
 
 impl StationBackend {
-    pub fn create_context(url: Url) -> Result<StationBackend, StationError> {
+    /// Creates a backend for the Station at `url`.
+    pub fn new(url: Url) -> Result<StationBackend, StationError> {
         let host = url.host_str().unwrap_or("unknown");
         let station_id = match url.port() {
             Some(port) => format!("{host}_{port}"),

@@ -9,13 +9,12 @@ use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
 use crate::{ExperimentRun, ExperimentRunHandleExt};
 
-pub trait ExperimentProvider: Send + Sync + 'static {
-    fn create_experiment(
-        &self,
-        name: String,
-        attributes: HashMap<String, Value>,
-    ) -> Result<ExperimentRun, ExperimentError>;
-}
+type CreateExperimentFn = Arc<
+    dyn Fn(String, HashMap<String, Value>) -> Result<ExperimentRun, ExperimentError>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 pub trait ExperimentFn<I, O>: Send + Sync {
     fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error + Send + Sync>>;
@@ -31,13 +30,23 @@ where
 }
 
 pub struct ExperimentModule {
-    provider: Arc<dyn ExperimentProvider>,
+    create_experiment: CreateExperimentFn,
 }
 
 impl ExperimentModule {
     // TODO: Add settings here (e.g., an ExperimentModule builder).
-    pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
-        Self { provider }
+    pub fn new(
+        create_experiment: impl Fn(
+            String,
+            HashMap<String, Value>,
+        ) -> Result<ExperimentRun, ExperimentError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            create_experiment: Arc::new(create_experiment),
+        }
     }
 
     pub fn create<I, O>(
@@ -45,12 +54,12 @@ impl ExperimentModule {
         name: &str,
         f: impl ExperimentFn<I, O> + 'static,
     ) -> ExperimentJob<I, O> {
-        ExperimentJob::new(self.provider.clone(), name.to_string(), f)
+        ExperimentJob::new(self.create_experiment.clone(), name.to_string(), f)
     }
 }
 
 pub struct ExperimentJob<I, O> {
-    provider: Arc<dyn ExperimentProvider>,
+    create_experiment: CreateExperimentFn,
     name: String,
     attributes: HashMap<String, Value>,
     f: Arc<dyn ExperimentFn<I, O>>,
@@ -59,7 +68,7 @@ pub struct ExperimentJob<I, O> {
 impl<I, O> Clone for ExperimentJob<I, O> {
     fn clone(&self) -> Self {
         Self {
-            provider: self.provider.clone(),
+            create_experiment: self.create_experiment.clone(),
             name: self.name.clone(),
             attributes: self.attributes.clone(),
             f: self.f.clone(),
@@ -68,12 +77,12 @@ impl<I, O> Clone for ExperimentJob<I, O> {
 }
 
 impl<I, O> ExperimentJob<I, O> {
-    fn new<F>(provider: Arc<dyn ExperimentProvider>, name: String, f: F) -> Self
+    fn new<F>(create_experiment: CreateExperimentFn, name: String, f: F) -> Self
     where
         F: ExperimentFn<I, O> + 'static,
     {
         Self {
-            provider,
+            create_experiment,
             name,
             attributes: HashMap::new(),
             f: Arc::new(f),
@@ -110,9 +119,7 @@ impl<I, O> ExperimentJob<I, O> {
     pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
         let _ = try_init_tracing_subscriber();
 
-        let experiment = self
-            .provider
-            .create_experiment(self.name.clone(), self.attributes.clone())?;
+        let experiment = (self.create_experiment)(self.name.clone(), self.attributes.clone())?;
         let handle = experiment.handle();
         let result = handle.in_scope(|| self.f.call(&experiment, input));
 
@@ -186,27 +193,15 @@ mod tests {
         }
     }
 
-    struct MockProvider {
-        session: Arc<MockSession>,
-    }
-
-    impl ExperimentProvider for MockProvider {
-        fn create_experiment(
-            &self,
-            _name: String,
-            _attributes: HashMap<String, Value>,
-        ) -> Result<ExperimentRun, ExperimentError> {
+    fn module(session: Arc<MockSession>) -> ExperimentModule {
+        ExperimentModule::new(move |_name, _attributes| {
             Ok(ExperimentRun::new(
                 "test/experiment/1",
-                self.session.clone(),
+                session.clone(),
                 NoopExperimentDataReader,
                 CancelToken::new(),
             ))
-        }
-    }
-
-    fn module(session: Arc<MockSession>) -> ExperimentModule {
-        ExperimentModule::new(Arc::new(MockProvider { session }))
+        })
     }
 
     #[test]

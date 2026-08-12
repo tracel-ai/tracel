@@ -38,10 +38,11 @@ Wrap your training function into a job with `ExperimentModule::create`, then reg
 `Cli` (to run it from the command line) or a `Server` (to dispatch it over HTTP):
 
 ```rust
+use std::sync::Arc;
 use tracel::app::cli::Cli;
 use tracel::app::mapper::JsonMapper;
-use tracel::experiment::ExperimentRun;
-use tracel::{Connection, Context};
+use tracel::experiment::{ExperimentModule, ExperimentRun};
+use tracel::CloudBackend;
 
 fn training(
     experiment: &ExperimentRun,
@@ -58,7 +59,10 @@ fn training(
 }
 
 fn main() -> anyhow::Result<()> {
-    let module = Context::new(Connection::Cloud)?.experiment();
+    let backend = Arc::new(CloudBackend::discover()?);
+    let module = ExperimentModule::new(move |name, attributes| {
+        backend.create_experiment(name, attributes)
+    });
     let job = module.create("mnist", training);
 
     Cli::new()

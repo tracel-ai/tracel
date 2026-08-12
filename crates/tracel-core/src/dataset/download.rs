@@ -1,13 +1,12 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use burn::data::dataset::{Dataset, DatasetError as BurnDatasetError};
 use serde::de::DeserializeOwned;
 
 use super::item::{ItemLocation, decode_item};
-use super::{DatasetError, DatasetItem, DatasetProvider};
+use super::{DatasetError, DatasetItem, DatasetSource};
 
 /// Number of items requested per page while downloading a dataset to disk.
 const DOWNLOAD_PAGE_SIZE: u32 = 500;
@@ -27,7 +26,7 @@ const DOWNLOAD_PAGE_SIZE: u32 = 500;
 /// [`DatasetError::CorruptCachedItem`], whose message names the exact file to delete before
 /// calling [`DatasetModule::download`](super::DatasetModule::download) again.
 pub struct DownloadedDataset<A> {
-    _provider: Arc<dyn DatasetProvider>,
+    _source: DatasetSource,
     name: String,
     version: u32,
     path: PathBuf,
@@ -37,7 +36,7 @@ pub struct DownloadedDataset<A> {
 
 impl<A> DownloadedDataset<A> {
     pub(super) fn try_get_or_download(
-        provider: Arc<dyn DatasetProvider>,
+        source: DatasetSource,
         name: String,
         version: u32,
         cache_root: &Path,
@@ -45,13 +44,13 @@ impl<A> DownloadedDataset<A> {
         let path = cache_path(cache_root, &name, version);
 
         if !path.is_file() {
-            download_to(provider.as_ref(), &name, version, &path)?;
+            download_to(&source, &name, version, &path)?;
         }
 
         let items = read_items(&path)?;
 
         Ok(Self {
-            _provider: provider,
+            _source: source,
             name,
             version,
             path,
@@ -99,19 +98,19 @@ fn temporary_path(path: &Path) -> PathBuf {
 }
 
 fn download_to(
-    provider: &dyn DatasetProvider,
+    source: &DatasetSource,
     name: &str,
     version: u32,
     path: &Path,
 ) -> Result<(), DatasetError> {
-    let expected = provider.item_count(name, version)?;
+    let expected = source.item_count(name, version)?;
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
     let tmp_path = temporary_path(path);
-    let actual = match write_download(provider, name, version, expected, &tmp_path) {
+    let actual = match write_download(source, name, version, expected, &tmp_path) {
         Ok(actual) => actual,
         Err(error) => {
             remove_temporary_file(&tmp_path);
@@ -138,7 +137,7 @@ fn download_to(
 }
 
 fn write_download(
-    provider: &dyn DatasetProvider,
+    source: &DatasetSource,
     name: &str,
     version: u32,
     expected: u64,
@@ -148,7 +147,7 @@ fn write_download(
     let mut cursor = 0_u64;
 
     while cursor < expected {
-        let page = provider.get_items(name, version, Some(cursor), Some(DOWNLOAD_PAGE_SIZE))?;
+        let page = source.get_items(name, version, Some(cursor), Some(DOWNLOAD_PAGE_SIZE))?;
         if page.items.is_empty() {
             break;
         }
@@ -194,7 +193,7 @@ mod tests {
 
     use super::{DOWNLOAD_PAGE_SIZE, DownloadedDataset, temporary_path};
     use crate::dataset::item::envelope_item;
-    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
+    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetSource};
 
     #[derive(Debug, Clone, Deserialize, PartialEq)]
     struct TestAnnotation {
@@ -206,29 +205,18 @@ mod tests {
         count: C,
     }
 
-    impl<F, C> DatasetProvider for FakeProvider<F, C>
+    impl<F, C> FakeProvider<F, C>
     where
         F: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
             + Send
-            + Sync,
-        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
+            + Sync
+            + 'static,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync + 'static,
     {
-        fn get_items(
-            &self,
-            name: &str,
-            version: u32,
-            index: Option<u64>,
-            limit: Option<u32>,
-        ) -> Result<DatasetItemsPage, DatasetError> {
-            (self.stream)(name, version, index, limit)
-        }
-
-        fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
-            (self.count)(name, version)
-        }
-
-        fn resolve_version(&self, _name: &str) -> Result<u32, DatasetError> {
-            unreachable!("DownloadedDataset only receives resolved versions")
+        fn into_source(self) -> DatasetSource {
+            DatasetSource::new(self.stream, self.count, |_name| {
+                unreachable!("DownloadedDataset only receives resolved versions")
+            })
         }
     }
 
@@ -266,7 +254,7 @@ mod tests {
         let cache_root = tempfile::tempdir().unwrap();
 
         let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             1,
             cache_root.path(),
@@ -304,7 +292,7 @@ mod tests {
         let cache_root = tempfile::tempdir().unwrap();
 
         let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             1,
             cache_root.path(),
@@ -332,7 +320,7 @@ mod tests {
         };
 
         let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             1,
             cache_root.path(),
@@ -366,7 +354,7 @@ mod tests {
             },
         };
         let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             1,
             cache_root.path(),
@@ -405,7 +393,7 @@ mod tests {
         let path = cache_file(cache_root.path(), "ds", 1);
 
         let result = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             1,
             cache_root.path(),
@@ -434,7 +422,7 @@ mod tests {
         let path = cache_file(cache_root.path(), "ds", 4);
 
         let result = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             4,
             cache_root.path(),
@@ -465,7 +453,7 @@ mod tests {
             count: |_name: &str, _version: u32| unreachable!(),
         };
         let dataset = DownloadedDataset::<TestAnnotation>::try_get_or_download(
-            Arc::new(provider),
+            provider.into_source(),
             "ds".to_string(),
             1,
             cache_root.path(),

@@ -47,7 +47,7 @@ pub struct StationRunner {
 }
 
 impl StationRunner {
-    /// Create a runner for the station at `url` — the same base URL as `Connection::Station`.
+    /// Create a runner for the station at `url` — the same base URL used by `StationBackend`.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),

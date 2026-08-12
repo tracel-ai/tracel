@@ -3,10 +3,15 @@ use tracel_artifact::download::ArtifactDownloadFile;
 use tracel_client::ClientError;
 
 use crate::backend::cloud::CloudBackend;
-use crate::model_registry::{ModelRegistryError, ModelRegistryProvider};
+use crate::model_registry::ModelRegistryError;
 
-impl ModelRegistryProvider for CloudBackend {
-    fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError> {
+impl CloudBackend {
+    /// Fetches the cloud download plan and returns the cached or downloaded model bundle.
+    pub fn load_model_bundle(
+        &self,
+        name: &str,
+        version: u32,
+    ) -> Result<FsBundle, ModelRegistryError> {
         let resp_download = self
             .client
             .presign_model_download(&self.namespace, &self.project, name, version)
@@ -26,9 +31,6 @@ impl ModelRegistryProvider for CloudBackend {
         self.model_cache
             .get_or_download(&self.file_transfer_client, name, version, &files)
     }
-}
-
-impl CloudBackend {
     /// Turns a failed download-plan request into a precise not-found error. Only queries
     /// the model and version individually when the request actually failed as not-found,
     /// so a successful load (including a cache hit) pays for a single round trip instead

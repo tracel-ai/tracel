@@ -19,8 +19,6 @@ use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
 
-use tracel_experiment::ExperimentProvider;
-
 use crate::backend::cloud::CloudBackend;
 use crate::experiment::remote::session::RemoteExperimentSession;
 
@@ -221,8 +219,9 @@ enum CloudError {
     WebSocket(#[from] WebSocketError),
 }
 
-impl ExperimentProvider for CloudBackend {
-    fn create_experiment(
+impl CloudBackend {
+    /// Starts a named experiment run in the configured cloud project.
+    pub fn create_experiment(
         &self,
         name: String,
         attributes: HashMap<String, Value>,

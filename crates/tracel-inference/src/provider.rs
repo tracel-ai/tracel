@@ -6,24 +6,26 @@ use crate::inference::{Inference, IntoInference};
 use crate::session::InferenceSession;
 use crate::stream::InferenceStream;
 
-/// Backend port that creates per-request [`InferenceSession`]s.
-///
-/// Implementations decide how a request's telemetry is observed and shipped.
-pub trait InferenceProvider: Send + Sync + 'static {
-    /// Create a session for one request of the inference named `name`.
-    fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError>;
-}
+type CreateSessionFn =
+    Arc<dyn Fn(&str) -> Result<InferenceSession, InferenceError> + Send + Sync + 'static>;
 
 /// Entry point for building inference jobs against a backend.
 #[derive(Clone)]
 pub struct InferenceModule {
-    provider: Arc<dyn InferenceProvider>,
+    create_session: CreateSessionFn,
 }
 
 impl InferenceModule {
-    /// Create a module backed by the given provider.
-    pub fn new(provider: Arc<dyn InferenceProvider>) -> Self {
-        Self { provider }
+    /// Create a module backed by the given per-request session factory.
+    pub fn new(
+        create_session: impl Fn(&str) -> Result<InferenceSession, InferenceError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            create_session: Arc::new(create_session),
+        }
     }
 
     /// Build a named [`InferenceJob`] from either a type implementing [`Inference`](crate::Inference)
@@ -34,17 +36,17 @@ impl InferenceModule {
     {
         let inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync> =
             Arc::new(inference.into_inference());
-        InferenceJob::new(self.provider.clone(), name.to_string(), inference)
+        InferenceJob::new(self.create_session.clone(), name.to_string(), inference)
     }
 }
 
-/// A named inference bound to a backend provider.
+/// A named inference bound to a backend session factory.
 ///
 /// Run it inline on the calling thread with [`run`](Self::run), or spawn a worker and pull outputs
 /// back as an iterator with [`stream`](Self::stream) / [`stream_once`](Self::stream_once). Each call
 /// opens a fresh per-request [`InferenceSession`] for telemetry.
 pub struct InferenceJob<I, O> {
-    provider: Arc<dyn InferenceProvider>,
+    create_session: CreateSessionFn,
     name: String,
     inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
 }
@@ -52,7 +54,7 @@ pub struct InferenceJob<I, O> {
 impl<I, O> Clone for InferenceJob<I, O> {
     fn clone(&self) -> Self {
         Self {
-            provider: self.provider.clone(),
+            create_session: self.create_session.clone(),
             name: self.name.clone(),
             inference: self.inference.clone(),
         }
@@ -61,12 +63,12 @@ impl<I, O> Clone for InferenceJob<I, O> {
 
 impl<I, O> InferenceJob<I, O> {
     fn new(
-        provider: Arc<dyn InferenceProvider>,
+        create_session: CreateSessionFn,
         name: String,
         inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
     ) -> Self {
         Self {
-            provider,
+            create_session,
             name,
             inference,
         }
@@ -85,7 +87,7 @@ where
 {
     /// Run the inference inline on the calling thread, blocking until it completes.
     ///
-    /// Opens a fresh session from the provider and drives the inference under it via
+    /// Opens a fresh session from the configured factory and drives the inference under it via
     /// [`InferenceSession::run`]. The returned error covers only a failure to open the session.
     pub fn run<It, W>(&self, input: It, output: W) -> Result<(), InferenceError>
     where
@@ -93,7 +95,7 @@ where
         It::IntoIter: Send + 'static,
         W: OutputWriter<O> + 'static,
     {
-        let session = self.provider.create_session(&self.name)?;
+        let session = (self.create_session)(&self.name)?;
         session.run(self.inference.as_ref(), input, output);
         Ok(())
     }
@@ -108,7 +110,7 @@ where
         It: IntoIterator<Item = I>,
         It::IntoIter: Send + 'static,
     {
-        let session = self.provider.create_session(&self.name)?;
+        let session = (self.create_session)(&self.name)?;
         let inference = self.inference.clone();
         let input = input.into_iter();
         Ok(InferenceStream::spawn(move |channel| {
@@ -126,13 +128,6 @@ where
 mod tests {
     use super::*;
     use crate::{Inference, InferenceInput, InferenceOutput, InferenceSession};
-
-    struct TestProvider;
-    impl InferenceProvider for TestProvider {
-        fn create_session(&self, _name: &str) -> Result<InferenceSession, InferenceError> {
-            unimplemented!()
-        }
-    }
 
     struct Echo;
     impl Inference for Echo {
@@ -152,7 +147,10 @@ mod tests {
 
     #[test]
     fn create_accepts_both_impls_and_closures() {
-        let module = InferenceModule::new(Arc::new(TestProvider));
+        let module =
+            InferenceModule::new(|_name: &str| -> Result<InferenceSession, InferenceError> {
+                unimplemented!()
+            });
 
         let _from_impl = module.create("impl", Echo);
         let _from_closure = module.create(

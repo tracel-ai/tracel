@@ -11,18 +11,30 @@ const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
+    /// No API key was available from the environment or Tracel CLI configuration.
     #[error("No API key found: set {TRACEL_API_KEY} or run `tracel login`")]
     NoCredentials,
+    /// The console rejected the discovered API key.
     #[error("API key is invalid or has expired: run `tracel login` to log in again")]
     InvalidCredentials,
+    /// No namespace was available from the environment or `tracel.toml`.
     #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
+    /// No project was available from the environment or `tracel.toml`.
     #[error("No project found: set {TRACEL_PROJECT} or add project to tracel.toml")]
     NoProject,
+    /// `TRACEL_ENV` did not identify a supported console environment.
     #[error("Invalid environment variable {env_var}: {message}")]
-    InvalidEnv { env_var: String, message: String },
+    InvalidEnv {
+        /// Name of the invalid environment variable.
+        env_var: String,
+        /// Expected-value guidance.
+        message: String,
+    },
+    /// No platform cache directory could be resolved for model downloads.
     #[error("could not determine a cache directory for downloaded models")]
     NoCacheDir,
+    /// The console client failed while authenticating or communicating.
     #[error(transparent)]
     Client(#[from] ClientError),
 }
@@ -50,7 +62,8 @@ struct TracelTomlConfig {
 }
 
 impl CloudBackend {
-    fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
+    /// Binds the backend to an authenticated client and explicit project coordinates.
+    pub fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
         let cache_root = crate::resolve_cache_dir()
             .ok_or(CloudError::NoCacheDir)?
             .join("cloud")
@@ -67,7 +80,8 @@ impl CloudBackend {
         })
     }
 
-    pub fn create_context() -> Result<CloudBackend, CloudError> {
+    /// Discovers credentials and project coordinates using the Tracel CLI conventions.
+    pub fn discover() -> Result<CloudBackend, CloudError> {
         let env = discover_env()?;
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
@@ -80,6 +94,21 @@ impl CloudBackend {
             }
         })?;
         CloudBackend::new(client, namespace, project)
+    }
+
+    /// Returns the authenticated client used by this backend.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Returns the namespace that owns this backend's project.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Returns the project name used by this backend.
+    pub fn project(&self) -> &str {
+        &self.project
     }
 }
 

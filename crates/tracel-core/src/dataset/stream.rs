@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use burn::data::dataset::{Dataset, DatasetError as BurnDatasetError};
 use serde::de::DeserializeOwned;
 
 use super::item::{ItemLocation, decode_item};
-use super::{DatasetError, DatasetItem, DatasetProvider};
+use super::{DatasetError, DatasetItem, DatasetSource};
 
 /// A Station dataset version whose items are fetched from the backend on demand.
 ///
@@ -21,7 +19,7 @@ use super::{DatasetError, DatasetItem, DatasetProvider};
 /// Build one with [`DatasetModule::stream`](super::DatasetModule::stream) rather than
 /// constructing it directly.
 pub struct StreamedDataset<A> {
-    provider: Arc<dyn DatasetProvider>,
+    source: DatasetSource,
     name: String,
     version: u32,
     len: usize,
@@ -30,14 +28,14 @@ pub struct StreamedDataset<A> {
 
 impl<A> StreamedDataset<A> {
     pub(super) fn new(
-        provider: Arc<dyn DatasetProvider>,
+        source: DatasetSource,
         name: String,
         version: u32,
     ) -> Result<Self, DatasetError> {
-        let len = provider.item_count(&name, version)? as usize;
+        let len = source.item_count(&name, version)? as usize;
 
         Ok(Self {
-            provider,
+            source,
             name,
             version,
             len,
@@ -58,7 +56,7 @@ where
         );
 
         let page = self
-            .provider
+            .source
             .get_items(&self.name, self.version, Some(index as u64), Some(1))
             .map_err(BurnDatasetError::new)?;
 
@@ -96,7 +94,7 @@ mod tests {
 
     use super::StreamedDataset;
     use crate::dataset::item::envelope_item;
-    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetProvider};
+    use crate::dataset::{DatasetError, DatasetItemsPage, DatasetSource};
 
     #[derive(Debug, Clone, Deserialize, PartialEq)]
     struct TestAnnotation {
@@ -108,29 +106,18 @@ mod tests {
         count: C,
     }
 
-    impl<F, C> DatasetProvider for FakeProvider<F, C>
+    impl<F, C> FakeProvider<F, C>
     where
         F: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
             + Send
-            + Sync,
-        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
+            + Sync
+            + 'static,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync + 'static,
     {
-        fn get_items(
-            &self,
-            name: &str,
-            version: u32,
-            index: Option<u64>,
-            limit: Option<u32>,
-        ) -> Result<DatasetItemsPage, DatasetError> {
-            (self.stream)(name, version, index, limit)
-        }
-
-        fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
-            (self.count)(name, version)
-        }
-
-        fn resolve_version(&self, _name: &str) -> Result<u32, DatasetError> {
-            unreachable!("StreamedDataset only receives resolved versions")
+        fn into_source(self) -> DatasetSource {
+            DatasetSource::new(self.stream, self.count, |_name| {
+                unreachable!("StreamedDataset only receives resolved versions")
+            })
         }
     }
 
@@ -152,7 +139,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let dataset =
-            StreamedDataset::<TestAnnotation>::new(Arc::new(provider), "ds".to_string(), 1)
+            StreamedDataset::<TestAnnotation>::new(provider.into_source(), "ds".to_string(), 1)
                 .unwrap();
 
         let item = dataset.get(0).unwrap();
@@ -174,7 +161,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let dataset =
-            StreamedDataset::<TestAnnotation>::new(Arc::new(provider), "ds".to_string(), 1)
+            StreamedDataset::<TestAnnotation>::new(provider.into_source(), "ds".to_string(), 1)
                 .unwrap();
 
         assert_eq!(dataset.len(), 2);
@@ -199,7 +186,7 @@ mod tests {
             },
         };
         let dataset =
-            StreamedDataset::<TestAnnotation>::new(Arc::new(provider), "ds".to_string(), 1)
+            StreamedDataset::<TestAnnotation>::new(provider.into_source(), "ds".to_string(), 1)
                 .unwrap();
 
         assert_eq!(dataset.len(), 2);
@@ -223,7 +210,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(2),
         };
         let dataset =
-            StreamedDataset::<TestAnnotation>::new(Arc::new(provider), "ds".to_string(), 1)
+            StreamedDataset::<TestAnnotation>::new(provider.into_source(), "ds".to_string(), 1)
                 .unwrap();
 
         assert_eq!(
@@ -246,7 +233,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let dataset =
-            StreamedDataset::<TestAnnotation>::new(Arc::new(provider), "ds".to_string(), 3)
+            StreamedDataset::<TestAnnotation>::new(provider.into_source(), "ds".to_string(), 3)
                 .unwrap();
 
         let err = dataset.get(0).unwrap_err();
@@ -274,7 +261,7 @@ mod tests {
             count: |_name: &str, _version: u32| Ok(1),
         };
         let dataset =
-            StreamedDataset::<TestAnnotation>::new(Arc::new(provider), "ds".to_string(), 1)
+            StreamedDataset::<TestAnnotation>::new(provider.into_source(), "ds".to_string(), 1)
                 .unwrap();
 
         dataset.get(5).unwrap();

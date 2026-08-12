@@ -19,9 +19,9 @@ see [`basics`](../basics) for the framework without it.
 cargo run -p mnist --example mnist
 ```
 
-Runs offline by default, so it needs no credentials. The `Context` comes from the shared
-[`common`](../common) crate: set `TRACEL_CONNECTION=cloud` to ship metrics, checkpoints, and live
-progress to the [console](https://console.tracel.ai), after authenticating:
+Runs offline by default, so it needs no credentials. The experiment module is constructed by the
+shared [`common`](../common) crate: set `TRACEL_CONNECTION=cloud` to ship metrics, checkpoints, and
+live progress to the [console](https://console.tracel.ai), after authenticating:
 
 ```bash
 tracel login          # or set TRACEL_API_KEY

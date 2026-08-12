@@ -14,13 +14,11 @@ use tracel::runner::StationRunner;
 use tracel::runner::mapper::JsonInput;
 
 fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+    let (experiment, _) = common::modules()?;
 
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
+    let train = experiment.create("toy-training", |run: &ExperimentRun, config| {
+        training::train(run, config)
+    });
 
     StationRunner::new(common::station_url()?.as_str())
         .name("basics-runner")

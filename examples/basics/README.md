@@ -5,8 +5,9 @@ Small runnable examples of the Tracel framework, using toy capabilities:
 - `WordTokenizer`, a streaming inference that splits a prompt into tokens.
 - a stand-in training loop that tracks activities, logs metrics, and handles cancellation.
 
-They run offline by default, so no credentials are needed. Each example gets its `Context` from
-the shared [`common`](../common) crate, which chooses the backend from `TRACEL_CONNECTION`:
+They run offline by default, so no credentials are needed. Each example gets directly constructed
+modules from the shared [`common`](../common) crate, which chooses the backend from
+`TRACEL_CONNECTION`:
 
 ```sh
 cargo run -p basics --example train                          # offline (default)

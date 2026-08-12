@@ -19,7 +19,7 @@ use tracel_client::{Client, ClientError};
 use tracel_inference::sink::{
     InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
 };
-use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
+use tracel_inference::{InferenceError, InferenceSession};
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_BATCH: usize = 512;
@@ -86,8 +86,9 @@ impl CloudInferenceProvider {
     }
 }
 
-impl InferenceProvider for CloudInferenceProvider {
-    fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
+impl CloudInferenceProvider {
+    /// Creates a telemetry session for one request of the named inference group.
+    pub fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
         let worker = self.ensure_group(name)?;
         let n = self.request_counter.fetch_add(1, Ordering::Relaxed);
         let request_id = format!("{name}/{n}");

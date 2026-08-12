@@ -187,9 +187,8 @@ impl InferenceSession {
     /// Drive `inference` to completion on the calling thread under this session.
     ///
     /// Installs this session as the ambient session for the thread, attaches its observer to the
-    /// output, feeds `input`, and passes `self` to [`Inference::infer`]. This is the provider-free
-    /// driver: pair it with [`new`](Self::new) or [`noop`](Self::noop) to run any [`Inference`]
-    /// without an [`InferenceProvider`](crate::InferenceProvider) or
+    /// output, feeds `input`, and passes `self` to [`Inference::infer`]. This is the direct driver:
+    /// pair it with [`new`](Self::new) or [`noop`](Self::noop) to run any [`Inference`] without an
     /// [`InferenceJob`](crate::InferenceJob).
     pub fn run<Inf, It, W>(&self, inference: &Inf, input: It, output: W)
     where
@@ -281,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn run_drives_an_inference_without_a_provider_or_job() {
+    fn run_drives_an_inference_without_a_module_or_job() {
         let collected = Arc::new(Mutex::new(Vec::new()));
         InferenceSession::noop().run(&Echo, vec![1, 2, 3], VecWriter(collected.clone()));
         assert_eq!(*collected.lock().unwrap(), vec![1, 2, 3]);

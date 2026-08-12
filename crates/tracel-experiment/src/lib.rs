@@ -11,8 +11,8 @@
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
-//! Backends are connected through the [`ExperimentProvider`] port. [`ExperimentModule`] and
-//! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
+//! [`ExperimentModule`] accepts a backend experiment-creation callback and builds
+//! [`ExperimentJob`]s, the user-facing entry points for running a job and logging its result.
 
 use std::fmt;
 use std::str::FromStr;
@@ -44,7 +44,7 @@ pub use context::{
 };
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
-pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
+pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule};
 
 use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
 use crate::error::{ExperimentError, ExperimentErrorKind};

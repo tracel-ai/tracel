@@ -13,6 +13,9 @@ use tracel_artifact::download::DownloadError;
 #[cfg(test)]
 use tracel_client::ClientError;
 
+type ModelLoader =
+    dyn Fn(&str, u32) -> Result<FsBundle, ModelRegistryError> + Send + Sync + 'static;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ModelRegistryError {
     #[error("model '{name}' not found")]
@@ -27,20 +30,21 @@ pub enum ModelRegistryError {
     DecodeError(Box<dyn std::error::Error>),
 }
 
-pub trait ModelRegistryProvider: Send + Sync {
-    /// Fetches (downloading if needed) the bundle for `name`/`version` and returns it as a
-    /// [`FsBundle`] ready to be decoded.
-    fn load_model_bundle(&self, name: &str, version: u32) -> Result<FsBundle, ModelRegistryError>;
-}
-
 #[derive(Clone)]
 pub struct ModelRegistryModule {
-    provider: Arc<dyn ModelRegistryProvider>,
+    load_model_bundle: Arc<ModelLoader>,
 }
 
 impl ModelRegistryModule {
-    pub fn new(provider: Arc<dyn ModelRegistryProvider>) -> Self {
-        Self { provider }
+    pub fn new(
+        load_model_bundle: impl Fn(&str, u32) -> Result<FsBundle, ModelRegistryError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            load_model_bundle: Arc::new(load_model_bundle),
+        }
     }
 
     /// Loads model `name` at `version`, decoding its downloaded bundle into `D` using `settings`.
@@ -50,7 +54,7 @@ impl ModelRegistryModule {
         version: u32,
         settings: &D::Settings,
     ) -> Result<D, ModelRegistryError> {
-        let source = self.provider.load_model_bundle(name, version)?;
+        let source = (self.load_model_bundle)(name, version)?;
         D::decode(&source, settings).map_err(|e| ModelRegistryError::DecodeError(e.into()))
     }
 }
@@ -60,23 +64,6 @@ mod tests {
     use super::*;
     use std::io::Read;
     use tracel_artifact::bundle::{BundleSink, BundleSource};
-
-    struct FakeProvider<F> {
-        load: F,
-    }
-
-    impl<F> ModelRegistryProvider for FakeProvider<F>
-    where
-        F: Fn(&str, u32) -> Result<FsBundle, ModelRegistryError> + Send + Sync,
-    {
-        fn load_model_bundle(
-            &self,
-            name: &str,
-            version: u32,
-        ) -> Result<FsBundle, ModelRegistryError> {
-            (self.load)(name, version)
-        }
-    }
 
     #[derive(Debug, PartialEq)]
     struct TestArtifact {
@@ -108,10 +95,8 @@ mod tests {
 
     #[test]
     fn given_provider_returns_bundle_when_load_then_decodes_artifact() {
-        let provider = FakeProvider {
-            load: |_name: &str, _version: u32| Ok(bundle_with_value("hello")),
-        };
-        let module = ModelRegistryModule::new(Arc::new(provider));
+        let module =
+            ModelRegistryModule::new(|_name: &str, _version: u32| Ok(bundle_with_value("hello")));
 
         let artifact: TestArtifact = module.load("mnist", 1, &()).unwrap();
 
@@ -120,14 +105,11 @@ mod tests {
 
     #[test]
     fn given_provider_returns_model_not_found_when_load_then_error_is_propagated() {
-        let provider = FakeProvider {
-            load: |name: &str, _version: u32| {
-                Err(ModelRegistryError::ModelNotFound {
-                    name: name.to_string(),
-                })
-            },
-        };
-        let module = ModelRegistryModule::new(Arc::new(provider));
+        let module = ModelRegistryModule::new(|name: &str, _version: u32| {
+            Err(ModelRegistryError::ModelNotFound {
+                name: name.to_string(),
+            })
+        });
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 
@@ -139,15 +121,12 @@ mod tests {
 
     #[test]
     fn given_provider_returns_version_not_found_when_load_then_error_is_propagated() {
-        let provider = FakeProvider {
-            load: |name: &str, version: u32| {
-                Err(ModelRegistryError::VersionNotFound {
-                    name: name.to_string(),
-                    version,
-                })
-            },
-        };
-        let module = ModelRegistryModule::new(Arc::new(provider));
+        let module = ModelRegistryModule::new(|name: &str, version: u32| {
+            Err(ModelRegistryError::VersionNotFound {
+                name: name.to_string(),
+                version,
+            })
+        });
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 
@@ -160,12 +139,9 @@ mod tests {
 
     #[test]
     fn given_provider_returns_client_error_when_load_then_error_is_propagated() {
-        let provider = FakeProvider {
-            load: |_name: &str, _version: u32| {
-                Err(ModelRegistryError::Client(Box::new(ClientError::NotFound)))
-            },
-        };
-        let module = ModelRegistryModule::new(Arc::new(provider));
+        let module = ModelRegistryModule::new(|_name: &str, _version: u32| {
+            Err(ModelRegistryError::Client(Box::new(ClientError::NotFound)))
+        });
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 
@@ -174,14 +150,11 @@ mod tests {
 
     #[test]
     fn given_provider_returns_download_error_when_load_then_error_is_propagated() {
-        let provider = FakeProvider {
-            load: |_name: &str, _version: u32| {
-                Err(ModelRegistryError::Download(Box::new(
-                    DownloadError::TargetError("boom".to_string()),
-                )))
-            },
-        };
-        let module = ModelRegistryModule::new(Arc::new(provider));
+        let module = ModelRegistryModule::new(|_name: &str, _version: u32| {
+            Err(ModelRegistryError::Download(Box::new(
+                DownloadError::TargetError("boom".to_string()),
+            )))
+        });
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 
@@ -198,10 +171,8 @@ mod tests {
 
     #[test]
     fn given_bundle_missing_expected_file_when_load_then_returns_decode_error() {
-        let provider = FakeProvider {
-            load: |_name: &str, _version: u32| Ok(FsBundle::temp().unwrap()),
-        };
-        let module = ModelRegistryModule::new(Arc::new(provider));
+        let module =
+            ModelRegistryModule::new(|_name: &str, _version: u32| Ok(FsBundle::temp().unwrap()));
 
         let result: Result<TestArtifact, _> = module.load("mnist", 1, &());
 

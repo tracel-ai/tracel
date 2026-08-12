@@ -6,8 +6,7 @@
 //! application type selected by the caller. The example payload's byte format and the annotation
 //! schema are contracts defined by the application that publishes and consumes the dataset.
 //!
-//! Obtain a [`DatasetModule`] from [`Context::datasets`](crate::Context::datasets). It provides two
-//! Burn [`Dataset`](burn::data::dataset::Dataset) adapters:
+//! [`DatasetModule`] provides two Burn [`Dataset`](burn::data::dataset::Dataset) adapters:
 //!
 //! - [`DatasetModule::stream`] requests an item from Station on each access and writes nothing to
 //!   disk.
@@ -87,14 +86,14 @@ pub enum DatasetError {
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },
-    /// The provider returned no item for an index within the reported dataset length.
+    /// The backend returned no item for an index within the reported dataset length.
     #[error("dataset '{name}' version {version} returned no item at index {index}")]
     MissingItem {
         name: String,
         version: u32,
         index: u64,
     },
-    /// A download ended before the provider's reported item count was reached.
+    /// A download ended before the backend's reported item count was reached.
     #[error(
         "dataset '{name}' version {version} download was incomplete: expected {expected} items, \
          received {actual}"
@@ -128,48 +127,86 @@ impl From<u32> for DatasetVersionSpec {
     }
 }
 
-/// One page of raw item envelopes returned by a [`DatasetProvider`].
+/// One page of raw item envelopes returned by a dataset backend.
 #[derive(Debug, Clone)]
 pub struct DatasetItemsPage {
     /// Raw JSON envelope bytes in backend order.
     pub items: Vec<Vec<u8>>,
 }
 
-/// Backend used by [`DatasetModule`] to resolve versions and retrieve dataset items.
-///
-/// This is implemented once per backend and is not normally called directly by SDK users.
-pub trait DatasetProvider: Send + Sync {
-    /// Fetches one page of raw item envelopes for the named dataset version, starting at `index`
-    /// (`None` for the first item) and capped at `limit` items (backend-defined default if `None`).
+type GetItems = dyn Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
+    + Send
+    + Sync;
+type ItemCount = dyn Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync;
+type ResolveVersion = dyn Fn(&str) -> Result<u32, DatasetError> + Send + Sync;
+
+#[derive(Clone)]
+struct DatasetSource {
+    get_items: Arc<GetItems>,
+    item_count: Arc<ItemCount>,
+    resolve_version: Arc<ResolveVersion>,
+}
+
+impl DatasetSource {
+    fn new<G, C, R>(get_items: G, item_count: C, resolve_version: R) -> Self
+    where
+        G: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
+            + Send
+            + Sync
+            + 'static,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync + 'static,
+        R: Fn(&str) -> Result<u32, DatasetError> + Send + Sync + 'static,
+    {
+        Self {
+            get_items: Arc::new(get_items),
+            item_count: Arc::new(item_count),
+            resolve_version: Arc::new(resolve_version),
+        }
+    }
+
     fn get_items(
         &self,
         name: &str,
         version: u32,
         index: Option<u64>,
         limit: Option<u32>,
-    ) -> Result<DatasetItemsPage, DatasetError>;
+    ) -> Result<DatasetItemsPage, DatasetError> {
+        (self.get_items)(name, version, index, limit)
+    }
 
-    /// Returns the total number of items in the named dataset version.
-    fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError>;
+    fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
+        (self.item_count)(name, version)
+    }
 
-    /// Resolves the latest version number for the named dataset.
-    fn resolve_version(&self, name: &str) -> Result<u32, DatasetError>;
+    fn resolve_version(&self, name: &str) -> Result<u32, DatasetError> {
+        (self.resolve_version)(name)
+    }
 }
 
 /// Entry point for reading datasets registered in Tracel Station.
 ///
-/// Obtain one from [`Context::datasets`](crate::Context::datasets), then use
+/// Construct one from a backend's item, count, and version operations, then use
 /// [`DatasetModule::stream`] or [`DatasetModule::download`] to construct a Burn dataset adapter.
 #[derive(Clone)]
 pub struct DatasetModule {
-    provider: Arc<dyn DatasetProvider>,
+    source: DatasetSource,
 }
 
 impl DatasetModule {
-    /// Wraps a dataset backend into a `DatasetModule`. SDK users normally get a module from
-    /// [`Context::datasets`](crate::Context::datasets) instead.
-    pub fn new(provider: Arc<dyn DatasetProvider>) -> Self {
-        Self { provider }
+    /// Creates a module from callbacks that fetch items, count items, and resolve the latest
+    /// version for a dataset backend.
+    pub fn new<G, C, R>(get_items: G, item_count: C, resolve_version: R) -> Self
+    where
+        G: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
+            + Send
+            + Sync
+            + 'static,
+        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync + 'static,
+        R: Fn(&str) -> Result<u32, DatasetError> + Send + Sync + 'static,
+    {
+        Self {
+            source: DatasetSource::new(get_items, item_count, resolve_version),
+        }
     }
 
     /// Adapts a named dataset version into a Burn [`Dataset`](burn::data::dataset::Dataset).
@@ -210,8 +247,8 @@ impl DatasetModule {
         A: DeserializeOwned + Clone + Send + Sync,
     {
         let name = name.into();
-        let version = resolve_version(self.provider.as_ref(), &name, version.into())?;
-        StreamedDataset::new(self.provider.clone(), name, version)
+        let version = resolve_version(&self.source, &name, version.into())?;
+        StreamedDataset::new(self.source.clone(), name, version)
     }
 
     /// Adapts a named dataset version into a Burn [`Dataset`](burn::data::dataset::Dataset),
@@ -253,20 +290,20 @@ impl DatasetModule {
         A: DeserializeOwned + Clone + Send + Sync,
     {
         let name = name.into();
-        let version = resolve_version(self.provider.as_ref(), &name, version.into())?;
+        let version = resolve_version(&self.source, &name, version.into())?;
         let cache_root = crate::resolve_cache_dir().ok_or(DatasetError::CacheUnavailable)?;
-        DownloadedDataset::try_get_or_download(self.provider.clone(), name, version, &cache_root)
+        DownloadedDataset::try_get_or_download(self.source.clone(), name, version, &cache_root)
     }
 }
 
 fn resolve_version(
-    provider: &dyn DatasetProvider,
+    source: &DatasetSource,
     name: &str,
     spec: DatasetVersionSpec,
 ) -> Result<u32, DatasetError> {
     match spec {
         DatasetVersionSpec::Fixed(version) => Ok(version),
-        DatasetVersionSpec::Latest => provider.resolve_version(name),
+        DatasetVersionSpec::Latest => source.resolve_version(name),
     }
 }
 
@@ -278,9 +315,7 @@ mod tests {
     use burn::data::dataset::Dataset;
     use serde::Deserialize;
 
-    use super::{
-        DatasetError, DatasetItemsPage, DatasetModule, DatasetProvider, DatasetVersionSpec,
-    };
+    use super::{DatasetItemsPage, DatasetModule, DatasetVersionSpec};
     use crate::dataset::item::envelope_item;
 
     #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -288,43 +323,10 @@ mod tests {
         value: u32,
     }
 
-    struct FakeProvider<F, C, L> {
-        stream: F,
-        count: C,
-        latest: L,
-    }
-
-    impl<F, C, L> DatasetProvider for FakeProvider<F, C, L>
-    where
-        F: Fn(&str, u32, Option<u64>, Option<u32>) -> Result<DatasetItemsPage, DatasetError>
-            + Send
-            + Sync,
-        C: Fn(&str, u32) -> Result<u64, DatasetError> + Send + Sync,
-        L: Fn(&str) -> Result<u32, DatasetError> + Send + Sync,
-    {
-        fn get_items(
-            &self,
-            name: &str,
-            version: u32,
-            index: Option<u64>,
-            limit: Option<u32>,
-        ) -> Result<DatasetItemsPage, DatasetError> {
-            (self.stream)(name, version, index, limit)
-        }
-
-        fn item_count(&self, name: &str, version: u32) -> Result<u64, DatasetError> {
-            (self.count)(name, version)
-        }
-
-        fn resolve_version(&self, name: &str) -> Result<u32, DatasetError> {
-            (self.latest)(name)
-        }
-    }
-
     #[test]
     fn given_u32_version_when_stream_then_fixed_version_is_used_without_resolution() {
-        let provider = FakeProvider {
-            stream: |_name: &str, version: u32, _index: Option<u64>, _limit: Option<u32>| {
+        let module = DatasetModule::new(
+            |_name: &str, version: u32, _index: Option<u64>, _limit: Option<u32>| {
                 assert_eq!(version, 7);
                 Ok(DatasetItemsPage {
                     items: vec![envelope_item(
@@ -333,13 +335,12 @@ mod tests {
                     )],
                 })
             },
-            count: |_name: &str, version: u32| {
+            |_name: &str, version: u32| {
                 assert_eq!(version, 7);
                 Ok(1)
             },
-            latest: |_name: &str| panic!("fixed version should not be resolved"),
-        };
-        let module = DatasetModule::new(Arc::new(provider));
+            |_name: &str| panic!("fixed version should not be resolved"),
+        );
 
         let dataset = module.stream::<TestAnnotation>("ds", 7).unwrap();
 
@@ -353,8 +354,8 @@ mod tests {
     fn given_latest_version_when_dataset_is_used_then_version_is_resolved_only_once() {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        let provider = FakeProvider {
-            stream: |_name: &str, version: u32, _index: Option<u64>, _limit: Option<u32>| {
+        let module = DatasetModule::new(
+            |_name: &str, version: u32, _index: Option<u64>, _limit: Option<u32>| {
                 assert_eq!(version, 9);
                 Ok(DatasetItemsPage {
                     items: vec![envelope_item(
@@ -363,16 +364,15 @@ mod tests {
                     )],
                 })
             },
-            count: |_name: &str, version: u32| {
+            |_name: &str, version: u32| {
                 assert_eq!(version, 9);
                 Ok(1)
             },
-            latest: move |_name: &str| {
+            move |_name: &str| {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 Ok(9)
             },
-        };
-        let module = DatasetModule::new(Arc::new(provider));
+        );
 
         let dataset = module
             .stream::<TestAnnotation>("ds", DatasetVersionSpec::Latest)
