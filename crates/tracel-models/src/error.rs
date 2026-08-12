@@ -8,23 +8,26 @@ pub enum ModelsError {
     /// The capability's backend-defined scope does not exist or is not visible.
     #[error("the model scope was not found or is not visible")]
     ScopeNotFound,
-    /// The named model does not exist in the capability's scope.
-    #[error("model '{name}' not found")]
+    /// The named model does not exist or is not visible in the capability's scope.
+    #[error("model '{name}' was not found or is not visible")]
     ModelNotFound {
         /// Requested model name.
         name: String,
     },
-    /// The opaque version identity does not belong to the named model.
-    #[error("version '{id}' of model '{model}' not found")]
+    /// The opaque version identity does not belong to the named model or is not visible.
+    #[error("version '{id}' of model '{model}' was not found or is not visible")]
     VersionNotFound {
         /// Requested model name.
         model: String,
         /// Requested opaque version identity.
         id: VersionId,
     },
-    /// The backend rejected or could not authenticate the request.
-    #[error("model authentication failed: {0}")]
-    Authentication(String),
+    /// The session used by the capability is no longer accepted by its backend.
+    #[error("the model session has expired")]
+    SessionExpired,
+    /// The caller cancelled an active model transfer.
+    #[error("model transfer cancelled")]
+    Cancelled,
     /// Communication with the model backend or file source failed.
     #[error("model transport failed: {0}")]
     Transport(String),
@@ -60,5 +63,15 @@ impl ModelsError {
     /// Returns whether downloaded bytes failed integrity or path verification.
     pub fn is_verification(&self) -> bool {
         matches!(self, Self::Verification(_))
+    }
+
+    /// Returns whether the caller must obtain a new backend session.
+    pub fn is_session_expired(&self) -> bool {
+        matches!(self, Self::SessionExpired)
+    }
+
+    /// Returns whether an active model transfer was cancelled by its observer.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled)
     }
 }

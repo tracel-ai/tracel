@@ -1,11 +1,12 @@
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
 use tracel_client::ClientError;
 use tracel_models::{
-    ExperimentSource, Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile,
+    Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile, VersionFileReader,
     VersionFileSource, VersionId, VersionManifest,
 };
 use url::Url;
@@ -61,6 +62,61 @@ pub struct Console {
 
 struct ConsoleInner {
     client: tracel_client::Client,
+    model_version_routes: Mutex<HashMap<ModelVersionRouteKey, u32>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ModelVersionRouteKey {
+    owner: String,
+    project: String,
+    model: String,
+    id: VersionId,
+}
+
+impl ConsoleInner {
+    fn model_version_route(
+        &self,
+        owner: &str,
+        project: &str,
+        model: &str,
+        id: &VersionId,
+    ) -> Result<Option<u32>, ModelsError> {
+        let key = ModelVersionRouteKey {
+            owner: owner.to_string(),
+            project: project.to_string(),
+            model: model.to_string(),
+            id: id.clone(),
+        };
+        self.model_version_routes
+            .lock()
+            .map_err(|_| ModelsError::InvalidResponse("model version route state failed".into()))
+            .map(|routes| routes.get(&key).copied())
+    }
+
+    fn remember_model_version_routes(
+        &self,
+        owner: &str,
+        project: &str,
+        model: &str,
+        versions: &[tracel_client::response::ModelVersionResponse],
+    ) -> Result<(), ModelsError> {
+        let mut routes = self
+            .model_version_routes
+            .lock()
+            .map_err(|_| ModelsError::InvalidResponse("model version route state failed".into()))?;
+        for version in versions {
+            routes.insert(
+                ModelVersionRouteKey {
+                    owner: owner.to_string(),
+                    project: project.to_string(),
+                    model: model.to_string(),
+                    id: VersionId::new(&version.id),
+                },
+                version.version,
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Console {
@@ -78,7 +134,10 @@ impl Console {
         };
 
         Ok(Self {
-            inner: Arc::new(ConsoleInner { client }),
+            inner: Arc::new(ConsoleInner {
+                client,
+                model_version_routes: Mutex::new(HashMap::new()),
+            }),
         })
     }
 
@@ -231,11 +290,24 @@ struct ConsoleModelOps {
 
 impl ConsoleModelOps {
     fn resolve_route_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
+        if let Some(version) =
+            self.inner
+                .model_version_route(&self.owner, &self.project, model, id)?
+        {
+            return Ok(version);
+        }
+
         let response = self
             .inner
             .client
             .list_model_versions(&self.owner, &self.project, model)
             .map_err(|error| map_model_error(error, model))?;
+        self.inner.remember_model_version_routes(
+            &self.owner,
+            &self.project,
+            model,
+            &response.items,
+        )?;
         find_route_version(model, id, &response.items)
     }
 }
@@ -264,6 +336,12 @@ impl ModelOps for ConsoleModelOps {
             .client
             .list_model_versions(&self.owner, &self.project, model)
             .map_err(|error| map_model_error(error, model))?;
+        self.inner.remember_model_version_routes(
+            &self.owner,
+            &self.project,
+            model,
+            &response.items,
+        )?;
         model_version_page_from_wire(response)
     }
 
@@ -280,7 +358,7 @@ impl ModelOps for ConsoleModelOps {
         &self,
         model: &str,
         id: &VersionId,
-    ) -> Result<Vec<VersionFileSource>, ModelsError> {
+    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
         let version = self.resolve_route_version(model, id)?;
         let response = self
             .inner
@@ -303,6 +381,7 @@ fn model_from_wire(value: tracel_client::response::ModelResponse) -> Model {
         id: value.id,
         name: value.name,
         description: value.description,
+        published_by: Some(value.created_by.username),
         created_at: value.created_at,
         version_count: value.version_count,
         latest_version: value.latest_version,
@@ -331,13 +410,10 @@ fn model_version_from_wire(
 
     Ok(ModelVersion {
         id: VersionId::new(value.id),
-        experiment: value.experiment.map(|source| ExperimentSource {
-            id: source.id,
-            experiment_num: source.experiment_num,
-        }),
         version: value.version,
         size_bytes: value.size,
         checksum: value.checksum,
+        published_by: Some(value.created_by.username),
         created_at: value.created_at,
         manifest,
         metadata: value.metadata,
@@ -361,38 +437,51 @@ fn find_route_version(
 fn file_sources_from_wire(
     transfer_client: &ReqwestTransferClient,
     response: tracel_client::response::ModelDownloadResponse,
-) -> Vec<VersionFileSource> {
+) -> Vec<Box<dyn VersionFileSource>> {
     response
         .files
         .into_iter()
         .map(|file| {
-            let transfer_client = transfer_client.clone();
-            let url = file.url;
-            VersionFileSource::new(
-                VersionFile {
+            Box::new(ConsoleVersionFileSource {
+                file: VersionFile {
                     rel_path: file.rel_path,
                     size_bytes: file.size_bytes,
                     checksum: file.checksum,
                 },
-                move || {
-                    transfer_client
-                        .get_reader(&url)
-                        .map_err(|error| ModelsError::Transport(error.to_string()))
-                },
-            )
+                url: file.url,
+                transfer_client: transfer_client.clone(),
+            }) as Box<dyn VersionFileSource>
         })
         .collect()
 }
 
+struct ConsoleVersionFileSource {
+    file: VersionFile,
+    url: String,
+    transfer_client: ReqwestTransferClient,
+}
+
+impl VersionFileSource for ConsoleVersionFileSource {
+    fn file(&self) -> &VersionFile {
+        &self.file
+    }
+
+    fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
+        self.transfer_client
+            .get_reader(&self.url)
+            .map_err(|error| ModelsError::Transport(error.to_string()))
+    }
+}
+
 fn map_scope_error(error: ClientError) -> ModelsError {
-    if client_error_is_not_found(&error) {
+    if client_error_is_not_visible(&error) {
         return ModelsError::ScopeNotFound;
     }
     map_model_client_error(error)
 }
 
 fn map_model_error(error: ClientError, name: &str) -> ModelsError {
-    if client_error_is_not_found(&error) {
+    if client_error_is_not_visible(&error) {
         return ModelsError::ModelNotFound {
             name: name.to_string(),
         };
@@ -401,7 +490,7 @@ fn map_model_error(error: ClientError, name: &str) -> ModelsError {
 }
 
 fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsError {
-    if client_error_is_not_found(&error) {
+    if client_error_is_not_visible(&error) {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
             id: id.clone(),
@@ -410,24 +499,26 @@ fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsE
     map_model_client_error(error)
 }
 
-fn client_error_is_not_found(error: &ClientError) -> bool {
+fn client_error_is_not_visible(error: &ClientError) -> bool {
     error.is_not_found()
         || matches!(
             error,
-            ClientError::ApiError { status, .. } if *status == reqwest::StatusCode::NOT_FOUND
+            ClientError::ApiError { status, .. } if status_is_not_visible(*status)
         )
+}
+
+fn status_is_not_visible(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND
 }
 
 fn map_model_client_error(error: ClientError) -> ModelsError {
     match error {
-        ClientError::Unauthorized | ClientError::BadSessionId => {
-            ModelsError::Authentication(error.to_string())
+        ClientError::Unauthorized => ModelsError::SessionExpired,
+        ClientError::ApiError { status, .. } if status == reqwest::StatusCode::UNAUTHORIZED => {
+            ModelsError::SessionExpired
         }
-        ClientError::ApiError { status, body }
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN =>
-        {
-            ModelsError::Authentication(format!("HTTP {status}: {body}"))
+        ClientError::BadSessionId => {
+            ModelsError::InvalidResponse("login response omitted the session cookie".to_string())
         }
         ClientError::Serialization(error) => ModelsError::InvalidResponse(error.to_string()),
         error => ModelsError::Transport(error.to_string()),
@@ -487,6 +578,7 @@ mod tests {
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].name, "resnet");
         assert_eq!(page.items[0].latest_version, Some(2));
+        assert_eq!(page.items[0].published_by.as_deref(), Some("ada"));
     }
 
     #[test]
@@ -513,7 +605,7 @@ mod tests {
         let version = model_version_from_wire(wire).unwrap();
 
         assert_eq!(version.id.as_str(), "0198f0a1-0000-7000-8000-000000000001");
-        assert_eq!(version.experiment.unwrap().experiment_num, 4);
+        assert_eq!(version.published_by.as_deref(), Some("ada"));
         assert_eq!(version.manifest.files[0].rel_path, "weights.bpk");
         assert_eq!(version.metadata["burnpack"]["schema"], 1);
     }
@@ -564,6 +656,46 @@ mod tests {
             find_route_version("resnet", &VersionId::new("missing"), &wire.items),
             Err(ModelsError::VersionNotFound { model, .. }) if model == "resnet"
         ));
+
+        let console = Console::new("http://localhost:9001", Auth::Anonymous).unwrap();
+        console
+            .inner
+            .remember_model_version_routes("ada", "vision", "resnet", &wire.items)
+            .unwrap();
+        assert_eq!(
+            console
+                .inner
+                .model_version_route("ada", "vision", "resnet", &VersionId::new("opaque-id"))
+                .unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            console
+                .inner
+                .model_version_route(
+                    "ada",
+                    "other-project",
+                    "resnet",
+                    &VersionId::new("opaque-id")
+                )
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            serde_json::to_string(&VersionId::new("opaque-id")).unwrap(),
+            r#""opaque-id""#
+        );
+        let ops = ConsoleModelOps {
+            inner: Arc::clone(&console.inner),
+            owner: "ada".to_string(),
+            project: "vision".to_string(),
+            transfer_client: ReqwestTransferClient::new(),
+        };
+        assert_eq!(
+            ops.resolve_route_version("resnet", &VersionId::new("opaque-id"))
+                .unwrap(),
+            42
+        );
     }
 
     #[test]
@@ -593,5 +725,16 @@ mod tests {
 
         assert_eq!(format!("{token:?}"), "SessionToken([REDACTED])");
         assert!(!format!("{:?}", Auth::Session(token)).contains("do-not-log-me"));
+    }
+
+    #[test]
+    fn model_errors_distinguish_expired_sessions_from_invisible_resources() {
+        assert!(matches!(
+            map_model_client_error(ClientError::Unauthorized),
+            ModelsError::SessionExpired
+        ));
+        assert!(status_is_not_visible(reqwest::StatusCode::FORBIDDEN));
+        assert!(status_is_not_visible(reqwest::StatusCode::NOT_FOUND));
+        assert!(!status_is_not_visible(reqwest::StatusCode::UNAUTHORIZED));
     }
 }

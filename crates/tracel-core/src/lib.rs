@@ -1,6 +1,7 @@
 mod backend;
 mod dataset;
 mod model_cache;
+mod model_routes;
 
 pub mod experiment;
 pub mod inference;

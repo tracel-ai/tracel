@@ -1,121 +1,25 @@
-use std::fmt;
 use std::io::Read;
-use std::sync::Arc;
 
 use crate::{Model, ModelVersion, ModelsError, Page, VersionFile, VersionId};
 
-/// A readable stream returned by a model backend.
+/// A readable stream for one model-version file.
 pub type VersionFileReader = Box<dyn Read + Send>;
 
-type OpenFile = dyn Fn() -> Result<VersionFileReader, ModelsError> + Send + Sync + 'static;
-type OpenCachedFile =
-    dyn Fn(&str) -> Result<Option<VersionFileReader>, ModelsError> + Send + Sync + 'static;
-type StoreVerifiedFile =
-    dyn Fn(&str, &mut dyn Read) -> Result<(), ModelsError> + Send + Sync + 'static;
-type InvalidateCachedFile = dyn Fn(&str) -> Result<(), ModelsError> + Send + Sync + 'static;
-
-#[derive(Clone)]
-struct FileCacheOps {
-    open: Arc<OpenCachedFile>,
-    store: Arc<StoreVerifiedFile>,
-    invalidate: Arc<InvalidateCachedFile>,
-}
-
-/// One backend-provided model file and the primitive used to read its bytes.
+/// One backend-owned file in a model version.
 ///
-/// Presigned URLs, authentication, wire protocols, and cache locations stay captured by the
-/// callbacks. The [`crate::Models`] capability decides when bytes are verified and when a cache
-/// may receive them.
-#[derive(Clone)]
-pub struct VersionFileSource {
-    file: VersionFile,
-    open: Arc<OpenFile>,
-    cache: Option<FileCacheOps>,
-}
+/// Implementations own transport, authentication, presigning, and any backend-specific cache
+/// behavior. [`crate::Models`] owns descriptor validation, transfer orchestration, staging,
+/// integrity verification, progress, and delivery.
+pub trait VersionFileSource: Send + Sync + 'static {
+    /// Returns the published descriptor that the capability must verify.
+    fn file(&self) -> &VersionFile;
 
-impl VersionFileSource {
-    /// Creates a source from its published descriptor and a repeatable reader factory.
-    pub fn new<F>(file: VersionFile, open: F) -> Self
-    where
-        F: Fn() -> Result<VersionFileReader, ModelsError> + Send + Sync + 'static,
-    {
-        Self {
-            file,
-            open: Arc::new(open),
-            cache: None,
-        }
-    }
-
-    /// Adds backend-scoped cache primitives to this source.
+    /// Opens the file at byte zero using its capability-validated logical path.
     ///
-    /// Each callback receives the capability-validated relative path. `open_cached` returns `None`
-    /// on a cache miss. `store_verified` is called only after the complete fetched file set has
-    /// passed verification. `invalidate` removes a cached file that fails reading or verification
-    /// so the capability can retry it from the authoritative source.
-    pub fn with_cache<C, S, I>(mut self, open_cached: C, store_verified: S, invalidate: I) -> Self
-    where
-        C: Fn(&str) -> Result<Option<VersionFileReader>, ModelsError> + Send + Sync + 'static,
-        S: Fn(&str, &mut dyn Read) -> Result<(), ModelsError> + Send + Sync + 'static,
-        I: Fn(&str) -> Result<(), ModelsError> + Send + Sync + 'static,
-    {
-        self.cache = Some(FileCacheOps {
-            open: Arc::new(open_cached),
-            store: Arc::new(store_verified),
-            invalidate: Arc::new(invalidate),
-        });
-        self
-    }
-
-    /// Returns the published path, size, and checksum for this source.
-    pub fn file(&self) -> &VersionFile {
-        &self.file
-    }
-
-    pub(crate) fn open_authoritative(&self) -> Result<VersionFileReader, ModelsError> {
-        (self.open)()
-    }
-
-    pub(crate) fn open_cached(
-        &self,
-        rel_path: &str,
-    ) -> Result<Option<VersionFileReader>, ModelsError> {
-        match &self.cache {
-            Some(cache) => (cache.open)(rel_path),
-            None => Ok(None),
-        }
-    }
-
-    pub(crate) fn store_verified(
-        &self,
-        rel_path: &str,
-        reader: &mut dyn Read,
-    ) -> Result<(), ModelsError> {
-        match &self.cache {
-            Some(cache) => (cache.store)(rel_path, reader),
-            None => Ok(()),
-        }
-    }
-
-    pub(crate) fn invalidate_cached(&self, rel_path: &str) -> Result<(), ModelsError> {
-        match &self.cache {
-            Some(cache) => (cache.invalidate)(rel_path),
-            None => Ok(()),
-        }
-    }
-
-    pub(crate) fn has_cache(&self) -> bool {
-        self.cache.is_some()
-    }
-}
-
-impl fmt::Debug for VersionFileSource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("VersionFileSource")
-            .field("file", &self.file)
-            .field("has_cache", &self.cache.is_some())
-            .finish_non_exhaustive()
-    }
+    /// The supplied path is the canonical form of [`Self::file`]'s published relative path. It
+    /// lets implementations use one stable identity for backend-private concerns without taking
+    /// ownership of path validation.
+    fn open(&self, canonical_path: &str) -> Result<VersionFileReader, ModelsError>;
 }
 
 /// Backend primitives required by the model capability.
@@ -135,10 +39,10 @@ pub trait ModelOps: Send + Sync + 'static {
     /// Fetches one version using its opaque identity.
     fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError>;
 
-    /// Fetches descriptors and reader factories for one version's files.
+    /// Fetches the backend-owned file sources for one version.
     fn fetch_version_files(
         &self,
         model: &str,
         id: &VersionId,
-    ) -> Result<Vec<VersionFileSource>, ModelsError>;
+    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError>;
 }

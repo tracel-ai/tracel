@@ -16,8 +16,8 @@ pub use console::{Auth, Console, ProjectHandle, SessionToken};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, UserSummary, Visibility};
 pub use error::ConsoleError;
 pub use tracel_models::{
-    BundleSink, DownloadObserver, ExperimentSource, Model, ModelVersion, Models, ModelsError, Page,
-    VersionFile, VersionId, VersionManifest,
+    BundleSink, DownloadObserver, Model, ModelVersion, Models, ModelsError, Page, VersionFile,
+    VersionId, VersionManifest,
 };
 
 use url::Url;

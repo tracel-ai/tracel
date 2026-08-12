@@ -20,6 +20,9 @@ pub struct Model {
     pub name: String,
     /// Optional model description.
     pub description: Option<String>,
+    /// Backend-supplied display name or handle for the model's publisher.
+    #[serde(default)]
+    pub published_by: Option<String>,
     /// Creation timestamp as returned by the backend.
     pub created_at: String,
     /// Number of published versions.
@@ -57,15 +60,6 @@ impl fmt::Display for VersionId {
     }
 }
 
-/// Experiment provenance attached to a model version.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExperimentSource {
-    /// Backend-local experiment identifier.
-    pub id: i32,
-    /// Experiment number intended for display and ordering.
-    pub experiment_num: i32,
-}
-
 /// A file declared by a model version manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionFile {
@@ -89,14 +83,15 @@ pub struct VersionManifest {
 pub struct ModelVersion {
     /// Opaque version identity.
     pub id: VersionId,
-    /// Optional experiment that produced this version.
-    pub experiment: Option<ExperimentSource>,
     /// Version number intended only for display and ordering.
     pub version: u32,
     /// Aggregate version size in bytes.
     pub size_bytes: u64,
     /// Aggregate version checksum.
     pub checksum: String,
+    /// Backend-supplied display name or handle for the version's publisher.
+    #[serde(default)]
+    pub published_by: Option<String>,
     /// Creation timestamp as returned by the backend.
     pub created_at: String,
     /// Files published in this version.
