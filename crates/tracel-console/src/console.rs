@@ -2,16 +2,16 @@ use std::fmt;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tracel_artifact::bundle::BundleSink;
-use tracel_artifact::download::{
-    ArtifactDownloadFile, DownloadObserver, download_artifacts_to_sink_with_client_and_observer,
-};
 use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
+use tracel_client::ClientError;
+use tracel_models::{
+    ExperimentSource, Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile,
+    VersionFileSource, VersionId, VersionManifest,
+};
 use url::Url;
 
 use crate::{
-    ConsoleError, Model, ModelVersion, Namespace, NamespaceKind, Organization, Page, Project, User,
-    VersionId, normalize_base_url,
+    ConsoleError, Namespace, NamespaceKind, Organization, Project, User, normalize_base_url,
 };
 
 /// A session identifier issued by a Tracel console.
@@ -200,26 +200,14 @@ impl ProjectHandle {
             .and_then(Project::try_from)
     }
 
-    /// Lists models registered in the project.
-    pub fn models(&self) -> Result<Page<Model>, ConsoleError> {
-        self.inner
-            .client
-            .list_models(&self.owner, &self.project)
-            .map(|response| Page {
-                items: response.items.into_iter().map(Model::from).collect(),
-                total: response.total,
-            })
-            .map_err(Into::into)
-    }
-
-    /// Creates a model handle without performing I/O.
-    pub fn model(&self, name: impl Into<String>) -> ModelHandle {
-        ModelHandle {
+    /// Returns model operations already scoped to this project without performing I/O.
+    pub fn models(&self) -> Models {
+        Models::new(Arc::new(ConsoleModelOps {
             inner: Arc::clone(&self.inner),
             owner: self.owner.clone(),
             project: self.project.clone(),
-            model: name.into(),
-        }
+            transfer_client: ReqwestTransferClient::new(),
+        }))
     }
 }
 
@@ -233,250 +221,222 @@ impl fmt::Debug for ProjectHandle {
     }
 }
 
-/// A cheap view of one registered model that shares its console client's session.
 #[derive(Clone)]
-pub struct ModelHandle {
+struct ConsoleModelOps {
     inner: Arc<ConsoleInner>,
     owner: String,
     project: String,
-    model: String,
+    transfer_client: ReqwestTransferClient,
 }
 
-impl ModelHandle {
-    /// Returns the model name.
-    pub fn name(&self) -> &str {
-        &self.model
+impl ConsoleModelOps {
+    fn resolve_route_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
+        let response = self
+            .inner
+            .client
+            .list_model_versions(&self.owner, &self.project, model)
+            .map_err(|error| map_model_error(error, model))?;
+        find_route_version(model, id, &response.items)
+    }
+}
+
+impl ModelOps for ConsoleModelOps {
+    fn list_models(&self) -> Result<Page<Model>, ModelsError> {
+        let response = self
+            .inner
+            .client
+            .list_models(&self.owner, &self.project)
+            .map_err(map_scope_error)?;
+        Ok(model_page_from_wire(response))
     }
 
-    /// Fetches model details.
-    pub fn get(&self) -> Result<Model, ConsoleError> {
+    fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
         self.inner
             .client
-            .get_model(&self.owner, &self.project, &self.model)
-            .map(Model::from)
-            .map_err(Into::into)
+            .get_model(&self.owner, &self.project, name)
+            .map(model_from_wire)
+            .map_err(|error| map_model_error(error, name))
     }
 
-    /// Lists published model versions.
-    pub fn versions(&self) -> Result<Page<ModelVersion>, ConsoleError> {
-        let response =
-            self.inner
-                .client
-                .list_model_versions(&self.owner, &self.project, &self.model)?;
-        let items = response
-            .items
-            .into_iter()
-            .map(ModelVersion::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
+    fn list_versions(&self, model: &str) -> Result<Page<ModelVersion>, ModelsError> {
+        let response = self
+            .inner
+            .client
+            .list_model_versions(&self.owner, &self.project, model)
+            .map_err(|error| map_model_error(error, model))?;
+        model_version_page_from_wire(response)
+    }
 
-        Ok(Page {
-            items,
-            total: response.total,
+    fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError> {
+        let version = self.resolve_route_version(model, id)?;
+        self.inner
+            .client
+            .get_model_version(&self.owner, &self.project, model, version)
+            .map_err(|error| map_version_error(error, model, id))
+            .and_then(model_version_from_wire)
+    }
+
+    fn fetch_version_files(
+        &self,
+        model: &str,
+        id: &VersionId,
+    ) -> Result<Vec<VersionFileSource>, ModelsError> {
+        let version = self.resolve_route_version(model, id)?;
+        let response = self
+            .inner
+            .client
+            .presign_model_download(&self.owner, &self.project, model, version)
+            .map_err(|error| map_version_error(error, model, id))?;
+        Ok(file_sources_from_wire(&self.transfer_client, response))
+    }
+}
+
+fn model_page_from_wire(response: tracel_client::response::ModelListResponse) -> Page<Model> {
+    Page {
+        items: response.items.into_iter().map(model_from_wire).collect(),
+        total: response.total,
+    }
+}
+
+fn model_from_wire(value: tracel_client::response::ModelResponse) -> Model {
+    Model {
+        id: value.id,
+        name: value.name,
+        description: value.description,
+        created_at: value.created_at,
+        version_count: value.version_count,
+        latest_version: value.latest_version,
+    }
+}
+
+fn model_version_page_from_wire(
+    response: tracel_client::response::ModelVersionListResponse,
+) -> Result<Page<ModelVersion>, ModelsError> {
+    let items = response
+        .items
+        .into_iter()
+        .map(model_version_from_wire)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Page {
+        items,
+        total: response.total,
+    })
+}
+
+fn model_version_from_wire(
+    value: tracel_client::response::ModelVersionResponse,
+) -> Result<ModelVersion, ModelsError> {
+    let manifest: VersionManifest = serde_json::from_value(value.manifest)
+        .map_err(|error| ModelsError::InvalidResponse(error.to_string()))?;
+
+    Ok(ModelVersion {
+        id: VersionId::new(value.id),
+        experiment: value.experiment.map(|source| ExperimentSource {
+            id: source.id,
+            experiment_num: source.experiment_num,
+        }),
+        version: value.version,
+        size_bytes: value.size,
+        checksum: value.checksum,
+        created_at: value.created_at,
+        manifest,
+        metadata: value.metadata,
+    })
+}
+
+fn find_route_version(
+    model: &str,
+    id: &VersionId,
+    versions: &[tracel_client::response::ModelVersionResponse],
+) -> Result<u32, ModelsError> {
+    versions
+        .iter()
+        .find_map(|version| (version.id == id.as_str()).then_some(version.version))
+        .ok_or_else(|| ModelsError::VersionNotFound {
+            model: model.to_string(),
+            id: id.clone(),
         })
-    }
+}
 
-    /// Creates a version handle from an opaque version identity without performing I/O.
-    pub fn version(&self, id: VersionId) -> VersionHandle {
-        VersionHandle {
-            inner: Arc::clone(&self.inner),
-            owner: self.owner.clone(),
-            project: self.project.clone(),
-            model: self.model.clone(),
-            id,
+fn file_sources_from_wire(
+    transfer_client: &ReqwestTransferClient,
+    response: tracel_client::response::ModelDownloadResponse,
+) -> Vec<VersionFileSource> {
+    response
+        .files
+        .into_iter()
+        .map(|file| {
+            let transfer_client = transfer_client.clone();
+            let url = file.url;
+            VersionFileSource::new(
+                VersionFile {
+                    rel_path: file.rel_path,
+                    size_bytes: file.size_bytes,
+                    checksum: file.checksum,
+                },
+                move || {
+                    transfer_client
+                        .get_reader(&url)
+                        .map_err(|error| ModelsError::Transport(error.to_string()))
+                },
+            )
+        })
+        .collect()
+}
+
+fn map_scope_error(error: ClientError) -> ModelsError {
+    if client_error_is_not_found(&error) {
+        return ModelsError::ScopeNotFound;
+    }
+    map_model_client_error(error)
+}
+
+fn map_model_error(error: ClientError, name: &str) -> ModelsError {
+    if client_error_is_not_found(&error) {
+        return ModelsError::ModelNotFound {
+            name: name.to_string(),
+        };
+    }
+    map_model_client_error(error)
+}
+
+fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsError {
+    if client_error_is_not_found(&error) {
+        return ModelsError::VersionNotFound {
+            model: model.to_string(),
+            id: id.clone(),
+        };
+    }
+    map_model_client_error(error)
+}
+
+fn client_error_is_not_found(error: &ClientError) -> bool {
+    error.is_not_found()
+        || matches!(
+            error,
+            ClientError::ApiError { status, .. } if *status == reqwest::StatusCode::NOT_FOUND
+        )
+}
+
+fn map_model_client_error(error: ClientError) -> ModelsError {
+    match error {
+        ClientError::Unauthorized | ClientError::BadSessionId => {
+            ModelsError::Authentication(error.to_string())
         }
-    }
-}
-
-impl fmt::Debug for ModelHandle {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ModelHandle")
-            .field("owner", &self.owner)
-            .field("project", &self.project)
-            .field("model", &self.model)
-            .finish()
-    }
-}
-
-/// A cheap view of one published model version that shares its console client's session.
-#[derive(Clone)]
-pub struct VersionHandle {
-    inner: Arc<ConsoleInner>,
-    owner: String,
-    project: String,
-    model: String,
-    id: VersionId,
-}
-
-impl VersionHandle {
-    /// Returns the opaque version identity.
-    pub fn id(&self) -> &VersionId {
-        &self.id
-    }
-
-    /// Fetches version metadata and its typed manifest file listing.
-    pub fn get(&self) -> Result<ModelVersion, ConsoleError> {
-        let version = self.resolve_route_version()?;
-        self.inner
-            .client
-            .get_model_version(&self.owner, &self.project, &self.model, version)
-            .map_err(ConsoleError::from)
-            .and_then(ModelVersion::try_from)
-    }
-
-    /// Presigns and downloads every version file into a caller-owned sink.
-    ///
-    /// Transfers report progress synchronously through `observer` and verify every announced size
-    /// and checksum before reporting completion. A sink may stop reading and return an error at any
-    /// point, which lets it share a cancellation flag with the observer and abort mid-file.
-    pub fn download<S, O>(&self, dest: &mut S, observer: &mut O) -> Result<(), ConsoleError>
-    where
-        S: BundleSink,
-        O: DownloadObserver,
-    {
-        let version = self.resolve_route_version()?;
-        let response = self.inner.client.presign_model_download(
-            &self.owner,
-            &self.project,
-            &self.model,
-            version,
-        )?;
-        let files = response
-            .files
-            .into_iter()
-            .map(|file| ArtifactDownloadFile {
-                rel_path: file.rel_path,
-                url: file.url,
-                size_bytes: Some(file.size_bytes),
-                checksum: Some(file.checksum),
-            })
-            .collect::<Vec<_>>();
-        transfer_files(&ReqwestTransferClient::new(), dest, observer, &files)
-    }
-
-    fn resolve_route_version(&self) -> Result<u32, ConsoleError> {
-        if let Some(version) = self.id.route_version() {
-            return Ok(version);
+        ClientError::ApiError { status, body }
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN =>
+        {
+            ModelsError::Authentication(format!("HTTP {status}: {body}"))
         }
-
-        let response =
-            self.inner
-                .client
-                .list_model_versions(&self.owner, &self.project, &self.model)?;
-        response
-            .items
-            .into_iter()
-            .find_map(|version| (version.id == self.id.as_str()).then_some(version.version))
-            .ok_or(ConsoleError::NotVisible)
+        ClientError::Serialization(error) => ModelsError::InvalidResponse(error.to_string()),
+        error => ModelsError::Transport(error.to_string()),
     }
-}
-
-impl fmt::Debug for VersionHandle {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("VersionHandle")
-            .field("owner", &self.owner)
-            .field("project", &self.project)
-            .field("model", &self.model)
-            .field("id", &self.id)
-            .finish()
-    }
-}
-
-fn transfer_files<FTC, S, O>(
-    client: &FTC,
-    dest: &mut S,
-    observer: &mut O,
-    files: &[ArtifactDownloadFile],
-) -> Result<(), ConsoleError>
-where
-    FTC: FileTransferClient,
-    S: BundleSink,
-    O: DownloadObserver,
-{
-    download_artifacts_to_sink_with_client_and_observer(client, dest, files, observer)
-        .map_err(Into::into)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::io::{Cursor, Read};
-    use std::sync::Arc;
-
-    use sha2::Digest;
-    use tracel_artifact::TransferError;
-    use tracel_artifact::bundle::InMemoryBundleSources;
-    use tracel_artifact::download::DownloadError;
-
     use super::*;
-
-    #[derive(Clone)]
-    struct FakeTransferClient {
-        files: Arc<HashMap<String, Vec<u8>>>,
-    }
-
-    impl FakeTransferClient {
-        fn new(files: HashMap<String, Vec<u8>>) -> Self {
-            Self {
-                files: Arc::new(files),
-            }
-        }
-    }
-
-    impl FileTransferClient for FakeTransferClient {
-        fn put_reader<R: Read + Send + 'static>(
-            &self,
-            _url: &str,
-            _reader: R,
-            _size_bytes: u64,
-        ) -> Result<(), TransferError> {
-            Ok(())
-        }
-
-        fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
-            self.files
-                .get(url)
-                .cloned()
-                .map(Cursor::new)
-                .map(|reader| Box::new(reader) as Box<dyn Read + Send>)
-                .ok_or_else(|| TransferError::Transport(format!("missing fake URL: {url}")))
-        }
-    }
-
-    #[derive(Default)]
-    struct RecordingObserver {
-        progress: Vec<u64>,
-        completed: Vec<u64>,
-    }
-
-    impl DownloadObserver for RecordingObserver {
-        fn file_progress(&mut self, _rel_path: &str, downloaded_bytes: u64) {
-            self.progress.push(downloaded_bytes);
-        }
-
-        fn file_completed(&mut self, _rel_path: &str, downloaded_bytes: u64) {
-            self.completed.push(downloaded_bytes);
-        }
-    }
-
-    struct CancellingSink;
-
-    impl BundleSink for CancellingSink {
-        fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
-            let mut buffer = [0; 3];
-            reader
-                .read_exact(&mut buffer)
-                .map_err(|error| error.to_string())?;
-            Err("cancelled".to_string())
-        }
-    }
-
-    fn checksum(bytes: &[u8]) -> String {
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(bytes);
-        format!("{:x}", hasher.finalize())
-    }
 
     #[test]
     fn console_normalizes_root_and_path_prefix_urls() {
@@ -504,74 +464,127 @@ mod tests {
     }
 
     #[test]
-    fn download_reports_progress_and_verifies_size_and_checksum() {
-        let bytes = b"verified payload".to_vec();
-        let files = [ArtifactDownloadFile {
-            rel_path: "weights.bpk".to_string(),
-            url: "fake://weights".to_string(),
-            size_bytes: Some(bytes.len() as u64),
-            checksum: Some(checksum(&bytes)),
-        }];
-        let client = FakeTransferClient::new(HashMap::from([(
-            "fake://weights".to_string(),
-            bytes.clone(),
-        )]));
-        let mut dest = InMemoryBundleSources::new();
-        let mut observer = RecordingObserver::default();
+    fn model_list_fixture_maps_to_tenancy_free_domain() {
+        let wire: tracel_client::response::ModelListResponse = serde_json::from_str(
+            r#"{
+                "items": [{
+                    "id": "0198f0a1-0000-7000-8000-000000000000",
+                    "project_id": 3,
+                    "name": "resnet",
+                    "description": null,
+                    "created_by": {"id": 7, "username": "ada", "namespace": "ada"},
+                    "created_at": "2026-03-05 18:45:43.397",
+                    "version_count": 2,
+                    "latest_version": 2
+                }],
+                "total": 1
+            }"#,
+        )
+        .unwrap();
 
-        transfer_files(&client, &mut dest, &mut observer, &files).unwrap();
+        let page = model_page_from_wire(wire);
 
-        assert_eq!(observer.progress.last(), Some(&(bytes.len() as u64)));
-        assert_eq!(observer.completed, vec![bytes.len() as u64]);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].name, "resnet");
+        assert_eq!(page.items[0].latest_version, Some(2));
     }
 
     #[test]
-    fn download_surfaces_verification_failures() {
-        let bytes = b"payload".to_vec();
-        let files = [ArtifactDownloadFile {
-            rel_path: "weights.bpk".to_string(),
-            url: "fake://weights".to_string(),
-            size_bytes: Some(bytes.len() as u64 + 1),
-            checksum: Some(checksum(&bytes)),
-        }];
-        let client =
-            FakeTransferClient::new(HashMap::from([("fake://weights".to_string(), bytes)]));
-        let mut dest = InMemoryBundleSources::new();
-        let mut observer = RecordingObserver::default();
+    fn version_fixture_maps_manifest_metadata_and_opaque_id() {
+        let wire: tracel_client::response::ModelVersionResponse = serde_json::from_str(
+            r#"{
+                "id": "0198f0a1-0000-7000-8000-000000000001",
+                "experiment": {"id": 12, "experiment_num": 4},
+                "version": 2,
+                "size": 2048,
+                "checksum": "sha256:abc",
+                "created_by": {"id": 7, "username": "ada", "namespace": "ada"},
+                "created_at": "2026-03-05 18:45:43.397",
+                "manifest": {"files": [{
+                    "rel_path": "weights.bpk",
+                    "size_bytes": 2048,
+                    "checksum": "sha256:abc"
+                }]},
+                "metadata": {"burnpack": {"schema": 1}}
+            }"#,
+        )
+        .unwrap();
 
-        let error = transfer_files(&client, &mut dest, &mut observer, &files).unwrap_err();
+        let version = model_version_from_wire(wire).unwrap();
 
-        assert!(matches!(
-            error,
-            ConsoleError::Download(DownloadError::SizeMismatch { .. })
-        ));
-        assert!(observer.completed.is_empty());
+        assert_eq!(version.id.as_str(), "0198f0a1-0000-7000-8000-000000000001");
+        assert_eq!(version.experiment.unwrap().experiment_num, 4);
+        assert_eq!(version.manifest.files[0].rel_path, "weights.bpk");
+        assert_eq!(version.metadata["burnpack"]["schema"], 1);
     }
 
     #[test]
-    fn a_sink_can_abort_during_a_file() {
-        let bytes = b"a payload longer than one sink read".to_vec();
-        let files = [ArtifactDownloadFile {
-            rel_path: "weights.bpk".to_string(),
-            url: "fake://weights".to_string(),
-            size_bytes: Some(bytes.len() as u64),
-            checksum: Some(checksum(&bytes)),
-        }];
-        let client = FakeTransferClient::new(HashMap::from([(
-            "fake://weights".to_string(),
-            bytes.clone(),
-        )]));
-        let mut dest = CancellingSink;
-        let mut observer = RecordingObserver::default();
+    fn legacy_version_fixture_defaults_metadata_to_null() {
+        let wire: tracel_client::response::ModelVersionResponse = serde_json::from_str(
+            r#"{
+                "id": "opaque-id",
+                "experiment": null,
+                "version": 2,
+                "size": 0,
+                "checksum": "sha256:empty",
+                "created_by": {"id": 7, "username": "ada", "namespace": "ada"},
+                "created_at": "2026-03-05 18:45:43.397",
+                "manifest": {"files": []}
+            }"#,
+        )
+        .unwrap();
 
-        let error = transfer_files(&client, &mut dest, &mut observer, &files).unwrap_err();
+        assert!(model_version_from_wire(wire).unwrap().metadata.is_null());
+    }
 
+    #[test]
+    fn route_version_resolution_uses_only_the_opaque_identity() {
+        let wire: tracel_client::response::ModelVersionListResponse = serde_json::from_str(
+            r#"{
+                "items": [{
+                    "id": "opaque-id",
+                    "experiment": null,
+                    "version": 42,
+                    "size": 0,
+                    "checksum": "sha256:empty",
+                    "created_by": {"id": 7, "username": "ada", "namespace": "ada"},
+                    "created_at": "2026-03-05 18:45:43.397",
+                    "manifest": {"files": []}
+                }],
+                "total": 1
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_route_version("resnet", &VersionId::new("opaque-id"), &wire.items).unwrap(),
+            42
+        );
         assert!(matches!(
-            error,
-            ConsoleError::Download(DownloadError::TargetError(_))
+            find_route_version("resnet", &VersionId::new("missing"), &wire.items),
+            Err(ModelsError::VersionNotFound { model, .. }) if model == "resnet"
         ));
-        assert_eq!(observer.progress, vec![3]);
-        assert!(observer.completed.is_empty());
+    }
+
+    #[test]
+    fn download_plan_fixture_maps_verified_file_descriptors() {
+        let wire: tracel_client::response::ModelDownloadResponse = serde_json::from_str(
+            r#"{
+                "files": [{
+                    "rel_path": "model.bpk",
+                    "url": "https://blobs.example.com/model.bpk?signature=x",
+                    "size_bytes": 1048576,
+                    "checksum": "9f86d0818"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let files = file_sources_from_wire(&ReqwestTransferClient::new(), wire);
+
+        assert_eq!(files[0].file().rel_path, "model.bpk");
+        assert_eq!(files[0].file().size_bytes, 1048576);
+        assert_eq!(files[0].file().checksum, "9f86d0818");
     }
 
     #[test]

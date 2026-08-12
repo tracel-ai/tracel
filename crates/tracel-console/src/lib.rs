@@ -2,8 +2,9 @@
 
 //! Burn-free, blocking SDK for the Tracel console domain.
 //!
-//! [`Console`] owns one normalized console URL and authentication state. Project, model, and
-//! version handles are cheap views over that shared client and do not perform I/O when created.
+//! [`Console`] owns one normalized console URL and authentication state. Project handles are cheap
+//! views over that shared client and vend backend-agnostic model capabilities without performing
+//! I/O when created.
 
 mod console;
 mod domain;
@@ -11,14 +12,13 @@ mod error;
 
 pub mod auth;
 
-pub use console::{Auth, Console, ModelHandle, ProjectHandle, SessionToken, VersionHandle};
-pub use domain::{
-    ExperimentSource, Model, ModelVersion, Namespace, NamespaceKind, Organization, Page, Project,
-    User, UserSummary, VersionFile, VersionId, VersionManifest, Visibility,
-};
+pub use console::{Auth, Console, ProjectHandle, SessionToken};
+pub use domain::{Namespace, NamespaceKind, Organization, Project, User, UserSummary, Visibility};
 pub use error::ConsoleError;
-pub use tracel_artifact::bundle::BundleSink;
-pub use tracel_artifact::download::DownloadObserver;
+pub use tracel_models::{
+    BundleSink, DownloadObserver, ExperimentSource, Model, ModelVersion, Models, ModelsError, Page,
+    VersionFile, VersionId, VersionManifest,
+};
 
 use url::Url;
 

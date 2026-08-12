@@ -1,8 +1,13 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Deserialize;
-use tracel_artifact::ReqwestTransferClient;
+use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
 use tracel_client::{Client, ClientError, Env, TracelCredentials};
+use tracel_models::{
+    ExperimentSource, Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile,
+    VersionFileSource, VersionId, VersionManifest,
+};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
@@ -45,7 +50,7 @@ pub struct CloudBackend {
     pub(crate) namespace: String,
     pub(crate) project: String,
     pub(crate) file_transfer_client: ReqwestTransferClient,
-    pub(crate) model_cache: crate::model_registry::ModelCache,
+    pub(crate) model_cache: crate::model_cache::ModelCache,
 }
 
 #[derive(Deserialize)]
@@ -67,8 +72,11 @@ impl CloudBackend {
         let cache_root = crate::resolve_cache_dir()
             .ok_or(CloudError::NoCacheDir)?
             .join("cloud")
-            .join(&namespace)
-            .join(&project)
+            .join(crate::model_cache::opaque_cache_key(
+                client.base_url().as_str(),
+            ))
+            .join(crate::model_cache::opaque_cache_key(&namespace))
+            .join(crate::model_cache::opaque_cache_key(&project))
             .join("models");
 
         Ok(Self {
@@ -76,7 +84,7 @@ impl CloudBackend {
             namespace,
             project,
             file_transfer_client: ReqwestTransferClient::new(),
-            model_cache: crate::model_registry::ModelCache::new(cache_root),
+            model_cache: crate::model_cache::ModelCache::new(cache_root),
         })
     }
 
@@ -109,6 +117,203 @@ impl CloudBackend {
     /// Returns the project name used by this backend.
     pub fn project(&self) -> &str {
         &self.project
+    }
+
+    /// Returns model operations scoped to this backend's console project.
+    pub fn models(&self) -> Models {
+        Models::new(Arc::new(self.clone()))
+    }
+
+    fn resolve_model_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
+        let response = self
+            .client
+            .list_model_versions(&self.namespace, &self.project, model)
+            .map_err(|error| model_request_error(error, model))?;
+
+        response
+            .items
+            .into_iter()
+            .find_map(|version| (version.id == id.as_str()).then_some(version.version))
+            .ok_or_else(|| ModelsError::VersionNotFound {
+                model: model.to_string(),
+                id: id.clone(),
+            })
+    }
+
+    fn version_file_source(
+        &self,
+        model: &str,
+        id: &VersionId,
+        response: tracel_client::response::PresignedModelFileUrlResponse,
+    ) -> VersionFileSource {
+        let rel_path = response.rel_path;
+        let file = VersionFile {
+            rel_path: rel_path.clone(),
+            size_bytes: response.size_bytes,
+            checksum: response.checksum,
+        };
+
+        let transfer_client = self.file_transfer_client.clone();
+        let url = response.url;
+
+        let open_cache = self.model_cache.clone();
+        let open_model = model.to_string();
+        let open_id = id.clone();
+        let store_cache = self.model_cache.clone();
+        let store_model = model.to_string();
+        let store_id = id.clone();
+        let invalidate_cache = self.model_cache.clone();
+        let invalidate_model = model.to_string();
+        let invalidate_id = id.clone();
+
+        VersionFileSource::new(file, move || {
+            transfer_client
+                .get_reader(&url)
+                .map_err(|error| ModelsError::Transport(error.to_string()))
+        })
+        .with_cache(
+            move |path| open_cache.open(&open_model, &open_id, path),
+            move |path, reader| store_cache.store(&store_model, &store_id, path, reader),
+            move |path| invalidate_cache.invalidate(&invalidate_model, &invalidate_id, path),
+        )
+    }
+}
+
+impl ModelOps for CloudBackend {
+    fn list_models(&self) -> Result<Page<Model>, ModelsError> {
+        self.client
+            .list_models(&self.namespace, &self.project)
+            .map(|response| Page {
+                items: response.items.into_iter().map(map_model).collect(),
+                total: response.total,
+            })
+            .map_err(scope_request_error)
+    }
+
+    fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
+        self.client
+            .get_model(&self.namespace, &self.project, name)
+            .map(map_model)
+            .map_err(|error| model_request_error(error, name))
+    }
+
+    fn list_versions(&self, model: &str) -> Result<Page<ModelVersion>, ModelsError> {
+        let response = self
+            .client
+            .list_model_versions(&self.namespace, &self.project, model)
+            .map_err(|error| model_request_error(error, model))?;
+        let items = response
+            .items
+            .into_iter()
+            .map(map_version)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Page {
+            items,
+            total: response.total,
+        })
+    }
+
+    fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError> {
+        let version = self.resolve_model_version(model, id)?;
+        self.client
+            .get_model_version(&self.namespace, &self.project, model, version)
+            .map_err(|error| version_request_error(error, model, id))
+            .and_then(map_version)
+    }
+
+    fn fetch_version_files(
+        &self,
+        model: &str,
+        id: &VersionId,
+    ) -> Result<Vec<VersionFileSource>, ModelsError> {
+        let version = self.resolve_model_version(model, id)?;
+        self.client
+            .presign_model_download(&self.namespace, &self.project, model, version)
+            .map_err(|error| version_request_error(error, model, id))
+            .map(|response| {
+                response
+                    .files
+                    .into_iter()
+                    .map(|file| self.version_file_source(model, id, file))
+                    .collect()
+            })
+    }
+}
+
+fn map_model(response: tracel_client::response::ModelResponse) -> Model {
+    Model {
+        id: response.id,
+        name: response.name,
+        description: response.description,
+        created_at: response.created_at,
+        version_count: response.version_count,
+        latest_version: response.latest_version,
+    }
+}
+
+fn map_version(
+    response: tracel_client::response::ModelVersionResponse,
+) -> Result<ModelVersion, ModelsError> {
+    let manifest = serde_json::from_value::<VersionManifest>(response.manifest)
+        .map_err(|error| ModelsError::InvalidResponse(error.to_string()))?;
+
+    Ok(ModelVersion {
+        id: VersionId::new(response.id),
+        experiment: response.experiment.map(|source| ExperimentSource {
+            id: source.id,
+            experiment_num: source.experiment_num,
+        }),
+        version: response.version,
+        size_bytes: response.size,
+        checksum: response.checksum,
+        created_at: response.created_at,
+        manifest,
+        metadata: response.metadata,
+    })
+}
+
+fn model_request_error(error: ClientError, name: &str) -> ModelsError {
+    if error.is_not_found() {
+        ModelsError::ModelNotFound {
+            name: name.to_string(),
+        }
+    } else {
+        map_client_error(error)
+    }
+}
+
+fn scope_request_error(error: ClientError) -> ModelsError {
+    if error.is_not_found() {
+        ModelsError::ScopeNotFound
+    } else {
+        map_client_error(error)
+    }
+}
+
+fn version_request_error(error: ClientError, model: &str, id: &VersionId) -> ModelsError {
+    if error.is_not_found() {
+        ModelsError::VersionNotFound {
+            model: model.to_string(),
+            id: id.clone(),
+        }
+    } else {
+        map_client_error(error)
+    }
+}
+
+fn map_client_error(error: ClientError) -> ModelsError {
+    match error {
+        ClientError::Unauthorized | ClientError::BadSessionId => {
+            ModelsError::Authentication(error.to_string())
+        }
+        ClientError::ApiError { ref status, .. }
+            if status.as_u16() == 401 || status.as_u16() == 403 =>
+        {
+            ModelsError::Authentication(error.to_string())
+        }
+        ClientError::Serialization(error) => ModelsError::InvalidResponse(error.to_string()),
+        error => ModelsError::Transport(error.to_string()),
     }
 }
 

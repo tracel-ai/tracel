@@ -1,6 +1,6 @@
 mod backend;
 mod dataset;
-mod model_registry;
+mod model_cache;
 
 pub mod experiment;
 pub mod inference;
@@ -13,7 +13,6 @@ pub use dataset::{
     DatasetError, DatasetItem, DatasetItemsPage, DatasetModule, DatasetVersionSpec,
     DownloadedDataset, StreamedDataset,
 };
-pub use model_registry::{ModelRegistryError, ModelRegistryModule};
 
 use directories::{BaseDirs, ProjectDirs};
 use std::path::PathBuf;

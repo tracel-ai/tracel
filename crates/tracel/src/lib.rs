@@ -22,6 +22,7 @@
 //! - `artifact`: bundle and artifact utilities.
 //! - `client`: HTTP client for the Tracel console.
 //! - `console`: console-domain SDK for authentication, browsing, and verified downloads.
+//! - `models`: backend-agnostic model domain and verified transfer capability.
 //!
 //! ## Features
 //!
@@ -79,6 +80,11 @@ pub use tracel_client as client;
 #[doc(inline)]
 pub use tracel_console as console;
 
+/// Backend-agnostic model domain and verified transfer capability.
+#[cfg(feature = "client")]
+#[doc(inline)]
+pub use tracel_models as models;
+
 /// Experiment tracking and management.
 #[cfg(feature = "sdk")]
 pub mod experiment {
@@ -127,8 +133,6 @@ pub use tracel_runner as runner;
 #[cfg(feature = "sdk")]
 pub use tracel_core::inference::{CloudInferenceProvider, DefaultInferenceProvider};
 #[cfg(feature = "sdk")]
-pub use tracel_core::{
-    CloudBackend, CloudError, LocalBackend, ModelRegistryError, ModelRegistryModule,
-};
+pub use tracel_core::{CloudBackend, CloudError, LocalBackend};
 #[cfg(feature = "station")]
 pub use tracel_core::{StationBackend, StationError};

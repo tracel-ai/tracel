@@ -13,9 +13,9 @@ rust-version.workspace = true
 
 [features]
 default = ["sdk"]
-# Console client and artifact bundles only. Carries no deep learning backend, so it can be
-# consumed by applications that build Burn themselves or not at all.
-client = ["dep:tracel-client", "dep:tracel-artifact"]
+# Console client, model capabilities, and artifact bundles. Carries no deep learning backend, so
+# it can be consumed by applications that build Burn themselves or not at all.
+client = ["dep:tracel-client", "dep:tracel-artifact", "dep:tracel-models"]
 # Experiment tracking, job registration, inference and fleet. Pulls in Burn.
 sdk = [
     "client",
@@ -40,3 +40,4 @@ tracel-fleet = { workspace = true, optional = true }
 tracel-artifact = { workspace = true, optional = true }
 tracel-client = { workspace = true, optional = true }
 tracel-console = { workspace = true, optional = true }
+tracel-models = { workspace = true, optional = true }

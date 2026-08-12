@@ -1,6 +1,6 @@
 [package]
 name = "tracel-core"
-description = "Core runtime for the Tracel SDK: connects experiment tracking, inference, and the model registry to cloud, station, or offline backends."
+description = "Core runtime for Tracel experiment, inference, and model capabilities across cloud, station, and offline backends."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -28,10 +28,9 @@ directories = "6.0"
 toml = "1.1.2"
 crossbeam.workspace = true
 tracel-artifact.workspace = true
+tracel-models.workspace = true
 tracing.workspace = true
 sha2.workspace = true
 chrono.workspace = true
 burn.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
