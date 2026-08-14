@@ -3,8 +3,11 @@ use std::sync::Arc;
 use tracel_artifact::bundle::FsBundle;
 
 use crate::{
-    ArtifactKind, ExperimentId, MetricSpec, MetricValue, activity::ActivityEvent,
-    error::ExperimentError, log::LogRecord, reader::ArtifactRef,
+    ArtifactKind, ExperimentId, MetricSpec, MetricValue,
+    activity::{ActivityEvent, ActivityId},
+    error::ExperimentError,
+    log::LogRecord,
+    reader::ArtifactRef,
 };
 
 #[derive(Debug, Clone)]
@@ -14,18 +17,27 @@ pub enum Event {
         name: String,
         value: serde_json::Value,
     },
-    Log(LogRecord),
+    Log {
+        record: LogRecord,
+        activity: Option<ActivityId>,
+    },
     Metrics {
         epoch: usize,
         split: String,
         iteration: usize,
         items: Vec<MetricValue>,
+        activity: Option<ActivityId>,
     },
     MetricDefinition(MetricSpec),
     EpochSummary {
         epoch: usize,
         split: String,
         items: Vec<MetricValue>,
+        activity: Option<ActivityId>,
+    },
+    Summary {
+        items: Vec<MetricValue>,
+        activity: Option<ActivityId>,
     },
     ArtifactUsed {
         experiment_id: ExperimentId,
@@ -56,6 +68,7 @@ pub trait ExperimentSession: Send + Sync {
         &self,
         name: &str,
         kind: ArtifactKind,
+        activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError>;
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError>;
@@ -73,9 +86,10 @@ where
         &self,
         name: &str,
         kind: ArtifactKind,
+        activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
-        self.as_ref().save_artifact(name, kind, artifact)
+        self.as_ref().save_artifact(name, kind, activity, artifact)
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {

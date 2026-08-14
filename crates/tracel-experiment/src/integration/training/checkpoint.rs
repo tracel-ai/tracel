@@ -98,8 +98,12 @@ impl fmt::Debug for ExperimentCheckpointer {
 impl ExperimentCheckpointer {
     /// Create a checkpointer backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>, file_name: String) -> Self {
+        Self::from_handle(experiment.into(), file_name)
+    }
+
+    pub(crate) fn from_handle(experiment_handle: ExperimentRunHandle, file_name: String) -> Self {
         Self {
-            experiment_handle: experiment.into(),
+            experiment_handle,
             file_name,
             restore_from: None,
         }

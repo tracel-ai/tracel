@@ -21,8 +21,12 @@ pub struct ExperimentTrainingProgressLogger {
 impl ExperimentTrainingProgressLogger {
     /// Create a training progress logger backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
+        Self::from_handle(experiment.into())
+    }
+
+    pub(crate) fn from_handle(experiment: ExperimentRunHandle) -> Self {
         Self {
-            experiment: experiment.into(),
+            experiment,
             training_guard: None,
             epoch_guard: None,
             split_guard: None,
@@ -138,8 +142,12 @@ pub struct ExperimentEvaluationProgressLogger {
 impl ExperimentEvaluationProgressLogger {
     /// Create an evaluation progress logger backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
+        Self::from_handle(experiment.into())
+    }
+
+    pub(crate) fn from_handle(experiment: ExperimentRunHandle) -> Self {
         Self {
-            experiment: experiment.into(),
+            experiment,
             eval_guard: None,
             test_guard: None,
         }
@@ -193,9 +201,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use crate::{
-        ArtifactKind, CancelToken, ExperimentId, ExperimentRun, ExperimentRunHandleExt,
+        ArtifactKind, CancelToken, ExperimentId, ExperimentRun,
         activity::ActivityEvent,
         error::ExperimentError,
+        integration::training::ExperimentTrainingExt,
         reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
         session::{BundleFn, Event, ExperimentCompletion, ExperimentSession},
     };
@@ -217,6 +226,7 @@ mod tests {
             &self,
             _name: &str,
             _kind: ArtifactKind,
+            _activity: Option<crate::ActivityId>,
             _artifact: Box<BundleFn>,
         ) -> Result<(), ExperimentError> {
             Ok(())
@@ -250,10 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn training_progress_groups_splits_under_epoch_activity() {
+    fn training_progress_groups_splits_under_supplied_scope() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
-        let mut logger = ExperimentTrainingProgressLogger::new(run.handle());
+        let parent = run.activity("Fold 1").start();
+        let parent_id = parent.id();
+        let mut logger = parent.training_progress_logger();
 
         logger.start(2, 0, None);
         logger.start_split("train", 10);
@@ -273,14 +285,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(started.len(), 4);
-        let training = started[0];
-        let epoch = started[1];
-        let train = started[2];
-        let valid = started[3];
+        assert_eq!(started.len(), 5);
+        let training = started[1];
+        let epoch = started[2];
+        let train = started[3];
+        let valid = started[4];
 
         assert_eq!(training.name, "Training");
-        assert!(training.parent.is_none());
+        assert_eq!(training.parent, Some(parent_id));
         assert_eq!(
             training.meter.as_ref().unwrap().unit.as_deref(),
             Some("epochs")

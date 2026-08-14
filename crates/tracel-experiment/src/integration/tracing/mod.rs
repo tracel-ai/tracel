@@ -13,7 +13,7 @@
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{ActivityGuard, ActivityId, ExperimentRun, ExperimentRunHandle};
+use crate::{ActivityGuard, ActivityScope, ExperimentRun, ExperimentRunHandle};
 
 mod layer;
 pub(crate) mod registry;
@@ -91,8 +91,12 @@ impl ExperimentTracingExt for ExperimentRunHandle {
 }
 
 /// Build a tracing span scoped to a specific activity.
-fn activity_span(id: ActivityId) -> tracing::Span {
-    tracing::info_span!("activity", activity_id = id.as_u64())
+fn activity_span(scope: ActivityScope) -> tracing::Span {
+    tracing::info_span!(
+        "activity",
+        experiment_id = %scope.handle.id(),
+        activity_id = scope.id().as_u64(),
+    )
 }
 
 /// Extension trait for creating activity-scoped tracing spans.
@@ -106,7 +110,13 @@ pub trait ActivityTracingExt {
 
 impl<State> ActivityTracingExt for ActivityGuard<State> {
     fn tracing_span(&self) -> tracing::Span {
-        activity_span(self.id())
+        activity_span(self.scope())
+    }
+}
+
+impl ActivityTracingExt for ActivityScope {
+    fn tracing_span(&self) -> tracing::Span {
+        activity_span(self.clone())
     }
 }
 
@@ -139,6 +149,7 @@ mod tests {
             &self,
             _name: &str,
             _kind: ArtifactKind,
+            _activity: Option<crate::ActivityId>,
             _artifact: Box<BundleFn>,
         ) -> Result<(), ExperimentError> {
             Ok(())
@@ -186,7 +197,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert!(record.message.contains("epoch completed"));
                 assert_eq!(
                     record.attributes.get("step").and_then(|v| v.as_u64()),
@@ -195,6 +206,56 @@ mod tests {
             }
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    #[test]
+    fn activity_run_installs_its_scope_for_tracing_events() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run("trace-test-activity", session.clone());
+        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+
+        let activity_id = tracing::subscriber::with_default(subscriber, || {
+            run.activity("fold")
+                .run(|scope| {
+                    tracing::info!(fold = 1u64, "training fold");
+                    Ok::<_, std::convert::Infallible>(scope.id())
+                })
+                .unwrap()
+        });
+
+        let events = session.events.lock().unwrap();
+        let activity = events
+            .iter()
+            .find_map(|event| match event {
+                Event::Log { activity, .. } => *activity,
+                _ => None,
+            })
+            .expect("tracing log should carry an activity scope");
+        assert_eq!(activity, activity_id);
+    }
+
+    #[test]
+    fn activity_span_routes_logs_to_its_activity() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run("trace-test-activity-span", session.clone());
+        let activity = run.activity("fold").start();
+        let activity_id = activity.id();
+        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+
+        tracing::subscriber::with_default(subscriber, || {
+            activity
+                .tracing_span()
+                .in_scope(|| tracing::info!("training fold"));
+        });
+
+        let events = session.events.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Log {
+                activity: Some(id),
+                ..
+            } if *id == activity_id
+        )));
     }
 
     #[test]
@@ -212,7 +273,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert!(record.message.contains("span-routed event"));
                 assert_eq!(
                     record.attributes.get("step").and_then(|v| v.as_u64()),
@@ -238,7 +299,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert!(record.message.contains("helper-span-routed event"));
             }
             event => panic!("unexpected event: {event:?}"),
@@ -279,7 +340,7 @@ mod tests {
         let log = events
             .iter()
             .find_map(|event| match event {
-                Event::Log(record) => Some(record),
+                Event::Log { record, .. } => Some(record),
                 _ => None,
             })
             .expect("a log event should have been recorded");

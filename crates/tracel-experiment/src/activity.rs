@@ -14,6 +14,7 @@ use std::{
 
 use crate::cancellation::CancelToken;
 use crate::control::ExperimentRunControl;
+use crate::{ActivityScope, CurrentExperimentGuard, ExperimentRunHandle};
 
 /// Opaque non-zero identifier for an activity.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -177,6 +178,7 @@ pub struct ActivityBuilder<State = Unmetered> {
     name: String,
     cancellable: bool,
     attributes: serde_json::Map<String, serde_json::Value>,
+    context: Option<ExperimentRunHandle>,
     state: State,
 }
 
@@ -199,6 +201,7 @@ impl ActivityBuilder<Unmetered> {
             name: name.into(),
             cancellable: false,
             attributes: serde_json::Map::new(),
+            context: None,
             state: Unmetered,
         }
     }
@@ -214,6 +217,7 @@ impl ActivityBuilder<Unmetered> {
             name,
             cancellable,
             attributes,
+            context,
             state: _,
         } = self;
 
@@ -226,6 +230,7 @@ impl ActivityBuilder<Unmetered> {
             name,
             cancellable,
             attributes,
+            context,
             state: Metered {
                 meter: ActivityMeter {
                     unit: None,
@@ -242,6 +247,14 @@ impl ActivityBuilder<Unmetered> {
             inner: self.start_inner(None),
             state: Unmetered,
         }
+    }
+
+    /// Run a closure inside this activity and finish it according to the result.
+    pub fn run<T, E>(self, f: impl FnOnce(ActivityScope) -> Result<T, E>) -> Result<T, E>
+    where
+        E: std::fmt::Display,
+    {
+        run_activity(self.start(), f)
     }
 }
 
@@ -267,9 +280,32 @@ impl ActivityBuilder<Metered> {
             state,
         }
     }
+
+    /// Run a closure inside this activity and finish it according to the result.
+    pub fn run<T, E>(self, f: impl FnOnce(ActivityScope) -> Result<T, E>) -> Result<T, E>
+    where
+        E: std::fmt::Display,
+    {
+        run_activity(self.start(), f)
+    }
 }
 
 impl<State> ActivityBuilder<State> {
+    pub(crate) fn with_context(mut self, context: ExperimentRunHandle) -> Self {
+        self.context = Some(context);
+        self
+    }
+
+    pub(crate) fn with_parent(
+        mut self,
+        parent: Option<ActivityId>,
+        cancellation_parent: CancelToken,
+    ) -> Self {
+        self.parent = parent;
+        self.cancellation_parent = cancellation_parent;
+        self
+    }
+
     /// Allow this activity to be cancelled by a remote controller.
     ///
     /// The activity always has a local cancellation token that participates in parent/run
@@ -311,6 +347,9 @@ impl<State> ActivityBuilder<State> {
     fn start_inner(self, meter: Option<ActivityMeter>) -> ActiveActivity {
         let id = self.id_allocator.next_id();
         let cancel_token = self.cancellation_parent.linked(CancelToken::new());
+        let context = self
+            .context
+            .map(|context| context.for_activity(id, cancel_token.clone()));
 
         let activity = Activity {
             id,
@@ -336,7 +375,30 @@ impl<State> ActivityBuilder<State> {
             self.control,
             activity,
             cancel_token,
+            context,
         )
+    }
+}
+
+fn run_activity<State, T, E>(
+    guard: ActivityGuard<State>,
+    f: impl FnOnce(ActivityScope) -> Result<T, E>,
+) -> Result<T, E>
+where
+    E: std::fmt::Display,
+{
+    let scope = guard.scope();
+    let ambient = scope.clone();
+    match ambient.in_scope(|| f(scope)) {
+        Ok(value) => {
+            guard.finish();
+            Ok(value)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            guard.fail(message);
+            Err(error)
+        }
     }
 }
 
@@ -347,6 +409,7 @@ struct ActiveActivity {
     control: ExperimentRunControl,
     activity: Activity,
     cancel_token: CancelToken,
+    context: Option<ExperimentRunHandle>,
     finished: bool,
 }
 
@@ -358,6 +421,7 @@ impl ActiveActivity {
         control: ExperimentRunControl,
         activity: Activity,
         cancel_token: CancelToken,
+        context: Option<ExperimentRunHandle>,
     ) -> Self {
         Self {
             reporter,
@@ -365,6 +429,7 @@ impl ActiveActivity {
             control,
             activity,
             cancel_token,
+            context,
             finished: false,
         }
     }
@@ -380,6 +445,7 @@ impl ActiveActivity {
             name: name.into(),
             cancellable: false,
             attributes: serde_json::Map::new(),
+            context: self.context.clone(),
             state: Unmetered,
         }
     }
@@ -442,6 +508,26 @@ impl<State> ActivityGuard<State> {
         self.inner.cancel_token.is_cancelled()
     }
 
+    /// Return a cloneable telemetry view for this activity.
+    pub fn scope(&self) -> ActivityScope {
+        ActivityScope::new(
+            self.inner
+                .context
+                .clone()
+                .expect("activity guards created by an experiment always carry a context"),
+        )
+    }
+
+    /// Enter this activity as the ambient telemetry context on the current thread.
+    pub fn enter(&self) -> CurrentExperimentGuard {
+        self.scope().enter()
+    }
+
+    /// Run a closure with this activity installed as the ambient telemetry context.
+    pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.scope().in_scope(f)
+    }
+
     /// Create a builder for a child activity without a numeric meter.
     pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
         self.inner.activity(name)
@@ -470,6 +556,15 @@ impl<State> ActivityGuard<State> {
 
     /// Mark the activity as abandoned with a message.
     pub fn abandon_with_message(mut self, message: impl Into<String>) {
+        self.inner
+            .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
+    }
+
+    /// Mark the activity as failed with a message.
+    ///
+    /// Failed activities use the abandoned status until a distinct activity failure status is
+    /// available on the wire.
+    pub fn fail(mut self, message: impl Into<String>) {
         self.inner
             .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
     }

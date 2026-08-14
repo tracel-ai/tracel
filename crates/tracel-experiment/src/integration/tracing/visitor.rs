@@ -1,16 +1,20 @@
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 
-use crate::ExperimentId;
+use std::num::NonZeroU64;
+
+use crate::{ActivityId, ExperimentId};
 
 /// Field names that route a record rather than describe it; they are not surfaced as attributes.
 const EXPERIMENT_ID_FIELD: &str = "experiment_id";
+const ACTIVITY_ID_FIELD: &str = "activity_id";
 
 /// Extracts routing identifiers (`experiment_id`, `activity_id`) and every other field as an
 /// inheritable attribute from a span's fields.
 #[derive(Debug, Default)]
 struct SpanFieldVisitor {
     experiment_id: Option<ExperimentId>,
+    activity_id: Option<ActivityId>,
     attributes: Map<String, Value>,
 }
 
@@ -21,6 +25,12 @@ impl SpanFieldVisitor {
                 if let Value::String(id) = value {
                     self.experiment_id = Some(ExperimentId::new(id));
                 }
+            }
+            ACTIVITY_ID_FIELD => {
+                self.activity_id = value
+                    .as_u64()
+                    .and_then(NonZeroU64::new)
+                    .map(ActivityId::new);
             }
             name => {
                 self.attributes.insert(name.to_string(), value);
@@ -59,6 +69,7 @@ impl Visit for SpanFieldVisitor {
 #[derive(Debug, Clone, Default)]
 pub struct SpanFields {
     pub experiment_id: Option<ExperimentId>,
+    pub activity_id: Option<ActivityId>,
     pub attributes: Map<String, Value>,
 }
 
@@ -66,6 +77,9 @@ impl SpanFields {
     pub fn merge(&mut self, other: Self) {
         if other.experiment_id.is_some() {
             self.experiment_id = other.experiment_id;
+        }
+        if other.activity_id.is_some() {
+            self.activity_id = other.activity_id;
         }
         self.attributes.extend(other.attributes);
     }
@@ -87,6 +101,7 @@ impl From<SpanFieldVisitor> for SpanFields {
     fn from(visitor: SpanFieldVisitor) -> Self {
         Self {
             experiment_id: visitor.experiment_id,
+            activity_id: visitor.activity_id,
             attributes: visitor.attributes,
         }
     }

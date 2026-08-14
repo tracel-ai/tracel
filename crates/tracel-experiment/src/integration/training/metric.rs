@@ -20,8 +20,12 @@ pub struct ExperimentMetricLogger {
 impl ExperimentMetricLogger {
     /// Create a metric logger backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
+        Self::from_handle(experiment.into())
+    }
+
+    pub(crate) fn from_handle(experiment_handle: ExperimentRunHandle) -> Self {
         Self {
-            experiment_handle: experiment.into(),
+            experiment_handle,
             metric_definitions: HashMap::default(),
             iteration_count: 0,
             last_summaries: None,

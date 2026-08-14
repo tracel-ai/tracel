@@ -21,22 +21,28 @@
 //! ```
 
 mod checkpoint;
+mod ext;
 mod interrupter;
 mod metric;
 mod progress;
 
 pub use checkpoint::ExperimentCheckpointer;
+pub use ext::SupervisedTrainingExperimentExt;
 pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
 pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
-use crate::ExperimentId;
-use crate::ExperimentRun;
+use crate::scope::context_handle;
+use crate::{ExperimentContext, ExperimentId};
 
-/// Extension trait adding Burn `train` adapter constructors to [`ExperimentRun`].
-pub trait ExperimentTrainingExt {
-    /// Create a new [`ExperimentMetricLogger`] for this run.
-    fn metric_logger(&self) -> ExperimentMetricLogger;
+use self::interrupter::experiment_interrupter_from_handle;
+
+/// Extension trait adding Burn `train` adapters to experiment contexts.
+pub trait ExperimentTrainingExt: ExperimentContext {
+    /// Create a new [`ExperimentMetricLogger`] for this context.
+    fn metric_logger(&self) -> ExperimentMetricLogger {
+        ExperimentMetricLogger::from_handle(context_handle(self))
+    }
 
     /// Create the three checkpointers (model, optimizer, lr scheduler) for supervised training.
     fn checkpointers(
@@ -45,7 +51,14 @@ pub trait ExperimentTrainingExt {
         ExperimentCheckpointer,
         ExperimentCheckpointer,
         ExperimentCheckpointer,
-    );
+    ) {
+        let handle = context_handle(self);
+        (
+            ExperimentCheckpointer::from_handle(handle.clone(), "model".to_string()),
+            ExperimentCheckpointer::from_handle(handle.clone(), "optim".to_string()),
+            ExperimentCheckpointer::from_handle(handle, "scheduler".to_string()),
+        )
+    }
 
     /// Create the three checkpointers configured to restore from a previous experiment.
     ///
@@ -57,113 +70,33 @@ pub trait ExperimentTrainingExt {
         ExperimentCheckpointer,
         ExperimentCheckpointer,
         ExperimentCheckpointer,
-    );
-
-    /// Create a new [`burn::train::Interrupter`] linked to this run's cancellation token.
-    fn interrupter(&self) -> burn::train::Interrupter;
-
-    /// Create a new [`ExperimentTrainingProgressLogger`] for this run.
-    fn training_progress_logger(&self) -> ExperimentTrainingProgressLogger;
-
-    /// Create a new [`ExperimentEvaluationProgressLogger`] for this run.
-    fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger;
-}
-
-impl ExperimentTrainingExt for ExperimentRun {
-    fn metric_logger(&self) -> ExperimentMetricLogger {
-        ExperimentMetricLogger::new(self)
-    }
-
-    fn checkpointers(
-        &self,
-    ) -> (
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
     ) {
-        (
-            ExperimentCheckpointer::new(self, "model".to_string()),
-            ExperimentCheckpointer::new(self, "optim".to_string()),
-            ExperimentCheckpointer::new(self, "scheduler".to_string()),
-        )
-    }
-
-    fn checkpointers_from(
-        &self,
-        source_id: impl Into<ExperimentId>,
-    ) -> (
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-    ) {
+        let handle = context_handle(self);
         let id = source_id.into();
         (
-            ExperimentCheckpointer::new(self, "model".to_string()).with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self, "optim".to_string()).with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self, "scheduler".to_string()).with_restore_from(id),
-        )
-    }
-
-    fn interrupter(&self) -> burn::train::Interrupter {
-        experiment_interrupter(self)
-    }
-
-    fn training_progress_logger(&self) -> ExperimentTrainingProgressLogger {
-        ExperimentTrainingProgressLogger::new(self)
-    }
-
-    fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger {
-        ExperimentEvaluationProgressLogger::new(self)
-    }
-}
-
-impl ExperimentTrainingExt for crate::ExperimentRunHandle {
-    fn metric_logger(&self) -> ExperimentMetricLogger {
-        ExperimentMetricLogger::new(self.clone())
-    }
-
-    fn checkpointers(
-        &self,
-    ) -> (
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-    ) {
-        (
-            ExperimentCheckpointer::new(self.clone(), "model".to_string()),
-            ExperimentCheckpointer::new(self.clone(), "optim".to_string()),
-            ExperimentCheckpointer::new(self.clone(), "scheduler".to_string()),
-        )
-    }
-
-    fn checkpointers_from(
-        &self,
-        source_id: impl Into<ExperimentId>,
-    ) -> (
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-    ) {
-        let id = source_id.into();
-        (
-            ExperimentCheckpointer::new(self.clone(), "model".to_string())
+            ExperimentCheckpointer::from_handle(handle.clone(), "model".to_string())
                 .with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self.clone(), "optim".to_string())
+            ExperimentCheckpointer::from_handle(handle.clone(), "optim".to_string())
                 .with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self.clone(), "scheduler".to_string())
+            ExperimentCheckpointer::from_handle(handle, "scheduler".to_string())
                 .with_restore_from(id),
         )
     }
 
+    /// Create a new [`burn::train::Interrupter`] linked to this context's cancellation token.
     fn interrupter(&self) -> burn::train::Interrupter {
-        experiment_interrupter(self.clone())
+        experiment_interrupter_from_handle(context_handle(self))
     }
 
+    /// Create a new [`ExperimentTrainingProgressLogger`] for this context.
     fn training_progress_logger(&self) -> ExperimentTrainingProgressLogger {
-        ExperimentTrainingProgressLogger::new(self.clone())
+        ExperimentTrainingProgressLogger::from_handle(context_handle(self))
     }
 
+    /// Create a new [`ExperimentEvaluationProgressLogger`] for this context.
     fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger {
-        ExperimentEvaluationProgressLogger::new(self.clone())
+        ExperimentEvaluationProgressLogger::from_handle(context_handle(self))
     }
 }
+
+impl<T> ExperimentTrainingExt for T where T: ExperimentContext + ?Sized {}

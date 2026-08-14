@@ -1,14 +1,17 @@
 //! Experiment tracking primitives.
 //!
-//! This crate revolves around two core types:
+//! The core APIs are:
 //! - [`ExperimentRun`], which owns the lifecycle of an active experiment.
 //! - [`ExperimentRunHandle`], which is a lightweight cloneable view for logging and artifact access
 //!   from background tasks or other threads.
+//! - [`ExperimentContext`], the telemetry surface shared by runs, handles, activity guards, and
+//!   [`ActivityScope`] values.
 //!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentRunHandleExt`] for cloning a shareable handle.
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
+//! - [`integration::training::SupervisedTrainingExperimentExt`] for one-line Burn builder wiring.
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
 //! Backends are connected through the [`ExperimentProvider`] port. [`ExperimentModule`] and
@@ -18,7 +21,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 
-use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
+use tracel_artifact::bundle::{BundleDecode, BundleEncode};
 
 use serde::Serialize;
 
@@ -29,6 +32,7 @@ mod control;
 mod log;
 mod provider;
 pub mod reader;
+mod scope;
 pub mod session;
 
 pub mod error;
@@ -45,6 +49,7 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
+pub use scope::{ActivityScope, ExperimentContext};
 
 use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -181,6 +186,8 @@ pub struct ExperimentRunHandle {
     metadata: ExperimentMetadata,
     inner: Weak<RunInner>,
     control: ExperimentRunControl,
+    activity: Option<ActivityId>,
+    context_cancel_token: CancelToken,
     /// Attributes inherited by every log emitted through this handle. Cloned handles share the
     /// scope until [`ExperimentRunHandle::with_attr`]/[`ExperimentRunHandle::with_attrs`] extends it.
     scope: Arc<serde_json::Map<String, serde_json::Value>>,
@@ -244,7 +251,9 @@ impl ExperimentRun {
         let handle = ExperimentRunHandle {
             metadata,
             inner: Arc::downgrade(&inner),
+            context_cancel_token: control.cancel_token(),
             control,
+            activity: None,
             scope: Arc::new(serde_json::Map::new()),
         };
         let tracing_registration = TracingRegistry::global().register_handle(handle.clone());
@@ -314,32 +323,32 @@ impl ExperimentRun {
         name: impl Into<String>,
         config: &C,
     ) -> Result<(), ExperimentError> {
-        self.handle.log_config(name, config)
+        ExperimentContext::log_config(self, name, config)
     }
 
     /// Log a `trace`-level message for the run.
     pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log_trace(message)
+        ExperimentContext::log_trace(self, message)
     }
 
     /// Log a `debug`-level message for the run.
     pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log_debug(message)
+        ExperimentContext::log_debug(self, message)
     }
 
     /// Log an `info`-level message for the run.
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log_info(message)
+        ExperimentContext::log_info(self, message)
     }
 
     /// Log a `warn`-level message for the run.
     pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log_warn(message)
+        ExperimentContext::log_warn(self, message)
     }
 
     /// Log an `error`-level message for the run.
     pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log_error(message)
+        ExperimentContext::log_error(self, message)
     }
 
     /// Record a structured log entry for the run.
@@ -347,7 +356,7 @@ impl ExperimentRun {
     /// Use the [`LogRecord`] builder to attach structured attributes:
     /// `run.log(LogRecord::warn("slow step").with("elapsed_ms", 900))`.
     pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
-        self.handle.log(record)
+        ExperimentContext::log(self, record)
     }
 
     /// Return a handle whose logs inherit an additional scope attribute.
@@ -359,7 +368,7 @@ impl ExperimentRun {
         key: impl Into<String>,
         value: impl Into<serde_json::Value>,
     ) -> ExperimentRunHandle {
-        self.handle.with_attr(key, value)
+        ExperimentContext::with_attr(self, key, value)
     }
 
     /// Return a handle whose logs inherit several additional scope attributes.
@@ -370,7 +379,7 @@ impl ExperimentRun {
         &self,
         attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
     ) -> ExperimentRunHandle {
-        self.handle.with_attrs(attrs)
+        ExperimentContext::with_attrs(self, attrs)
     }
 
     /// Log metric values for an epoch, split, and iteration.
@@ -381,12 +390,12 @@ impl ExperimentRun {
         iteration: usize,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.handle.log_metric(epoch, split, iteration, items)
+        ExperimentContext::log_metric(self, epoch, split, iteration, items)
     }
 
     /// Log a metric definition so later metric values have metadata attached.
     pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.handle.log_metric_definition(spec)
+        ExperimentContext::log_metric_definition(self, spec)
     }
 
     /// Log aggregated metric values for an epoch and split.
@@ -396,7 +405,12 @@ impl ExperimentRun {
         split: impl Into<String>,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.handle.log_epoch_summary(epoch, split, items)
+        ExperimentContext::log_epoch_summary(self, epoch, split, items)
+    }
+
+    /// Log scalar summary values without an epoch axis.
+    pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
+        ExperimentContext::log_summary(self, items)
     }
 
     /// Encode and persist an artifact in the configured backend.
@@ -407,7 +421,7 @@ impl ExperimentRun {
         artifact: E,
         settings: &E::Settings,
     ) -> Result<(), ExperimentError> {
-        self.handle.save_artifact(name, kind, artifact, settings)
+        ExperimentContext::save_artifact(self, name, kind, artifact, settings)
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
@@ -417,7 +431,7 @@ impl ExperimentRun {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentError> {
-        self.handle.use_artifact(experiment_id, name, settings)
+        ExperimentContext::use_artifact(self, experiment_id, name, settings)
     }
 
     /// Create an activity builder for the run with the provided name.
@@ -425,7 +439,7 @@ impl ExperimentRun {
     /// Call [`ActivityBuilder::progress`] before starting when the activity should have a numeric
     /// meter.
     pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
-        self.handle.activity(name)
+        ExperimentContext::activity(self, name)
     }
 }
 
@@ -468,7 +482,7 @@ impl ExperimentRunHandle {
     /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
     /// tasks and adapters.
     pub fn cancel_token(&self) -> CancelToken {
-        self.control.cancel_token()
+        self.context_cancel_token.clone()
     }
 
     /// See [`ExperimentRun::log_args`].
@@ -490,51 +504,37 @@ impl ExperimentRunHandle {
         name: impl Into<String>,
         config: &C,
     ) -> Result<(), ExperimentError> {
-        let value = serde_json::to_value(config).map_err(|e| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Artifact,
-                "Failed to serialize experiment config",
-                e,
-            )
-        })?;
-
-        self.record_event(Event::Config {
-            name: name.into(),
-            value,
-        })
+        ExperimentContext::log_config(self, name, config)
     }
 
     /// See [`ExperimentRun::log_trace`].
     pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::trace(message))
+        ExperimentContext::log_trace(self, message)
     }
 
     /// See [`ExperimentRun::log_debug`].
     pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::debug(message))
+        ExperimentContext::log_debug(self, message)
     }
 
     /// See [`ExperimentRun::log_info`].
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::info(message))
+        ExperimentContext::log_info(self, message)
     }
 
     /// See [`ExperimentRun::log_warn`].
     pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::warn(message))
+        ExperimentContext::log_warn(self, message)
     }
 
     /// See [`ExperimentRun::log_error`].
     pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::error(message))
+        ExperimentContext::log_error(self, message)
     }
 
     /// Record a structured log entry, folding in this handle's scope attributes.
-    pub fn log(&self, mut record: LogRecord) -> Result<(), ExperimentError> {
-        if !self.scope.is_empty() {
-            record.inherit_attrs(&self.scope);
-        }
-        self.record_event(Event::Log(record))
+    pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
+        ExperimentContext::log(self, record)
     }
 
     /// Return a handle whose logs inherit an additional scope attribute.
@@ -543,23 +543,13 @@ impl ExperimentRunHandle {
     /// still take precedence over inherited ones.
     #[must_use]
     pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
-        let mut scope = (*self.scope).clone();
-        scope.insert(key.into(), value.into());
-        Self {
-            scope: Arc::new(scope),
-            ..self.clone()
-        }
+        ExperimentContext::with_attr(self, key, value)
     }
 
     /// Return a handle whose logs inherit several additional scope attributes.
     #[must_use]
     pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
-        let mut scope = (*self.scope).clone();
-        scope.extend(attrs);
-        Self {
-            scope: Arc::new(scope),
-            ..self.clone()
-        }
+        ExperimentContext::with_attrs(self, attrs)
     }
 
     /// See [`ExperimentRun::log_metric`].
@@ -570,17 +560,12 @@ impl ExperimentRunHandle {
         iteration: usize,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.record_event(Event::Metrics {
-            epoch,
-            split: split.into(),
-            iteration,
-            items,
-        })
+        ExperimentContext::log_metric(self, epoch, split, iteration, items)
     }
 
     /// See [`ExperimentRun::log_metric_definition`].
     pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.record_event(Event::MetricDefinition(spec))
+        ExperimentContext::log_metric_definition(self, spec)
     }
 
     /// See [`ExperimentRun::log_epoch_summary`].
@@ -590,11 +575,12 @@ impl ExperimentRunHandle {
         split: impl Into<String>,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.record_event(Event::EpochSummary {
-            epoch,
-            split: split.into(),
-            items,
-        })
+        ExperimentContext::log_epoch_summary(self, epoch, split, items)
+    }
+
+    /// See [`ExperimentRun::log_summary`].
+    pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
+        ExperimentContext::log_summary(self, items)
     }
 
     /// See [`ExperimentRun::save_artifact`].
@@ -605,22 +591,7 @@ impl ExperimentRunHandle {
         artifact: E,
         settings: &E::Settings,
     ) -> Result<(), ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.ensure_active()?;
-
-        let artifact_fn = |bundle: &mut FsBundle| {
-            artifact.encode(bundle, settings).map_err(|e| {
-                ExperimentError::with_source(
-                    ExperimentErrorKind::Artifact,
-                    "Failed to encode artifact into bundle",
-                    e,
-                )
-            })
-        };
-
-        inner
-            .session
-            .save_artifact(name.as_ref(), kind, Box::new(artifact_fn))
+        ExperimentContext::save_artifact(self, name, kind, artifact, settings)
     }
 
     /// See [`ExperimentRun::use_artifact`].
@@ -630,53 +601,14 @@ impl ExperimentRunHandle {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.ensure_active()?;
-        let name_str = name.as_ref();
-        let experiment_id = experiment_id.into();
-        let artifact = inner
-            .reader
-            .load_artifact_raw(experiment_id, name_str)
-            .map_err(|e| {
-                ExperimentError::with_source(
-                    ExperimentErrorKind::Artifact,
-                    format!("Failed to load artifact bundle for {name_str}"),
-                    e,
-                )
-            })?;
-
-        D::decode(&artifact.bundle, settings).map_err(|e| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Artifact,
-                format!("Failed to decode artifact: {name_str}"),
-                e,
-            )
-        })
+        ExperimentContext::use_artifact(self, experiment_id, name, settings)
     }
 
     /// See [`ExperimentRun::activity`].
     ///
     /// If the originating run has already been finished or dropped, the activity builder will be a no-op.
     pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
-        let inner = match self.upgrade() {
-            Ok(inner) => inner,
-            Err(_) => {
-                return ActivityBuilder::new(
-                    Arc::new(|_| {}),
-                    Arc::new(AtomicActivityIdAllocator::new()),
-                    ExperimentRunControl::default(),
-                    name.into(),
-                );
-            }
-        };
-        ActivityBuilder::new(
-            Arc::new(RunActivityReporter {
-                handle: self.clone(),
-            }),
-            inner.activity_id_allocator.clone(),
-            self.control.clone(),
-            name.into(),
-        )
+        ExperimentContext::activity(self, name)
     }
 }
 
@@ -748,11 +680,10 @@ impl Drop for ExperimentRun {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use crate::activity::ActivityEvent;
     use crate::reader::{ExperimentReaderError, LoadedArtifact};
     use crate::session::BundleFn;
+    use tracel_artifact::bundle::BundleSink;
 
     use super::*;
 
@@ -760,7 +691,7 @@ mod tests {
     struct MockSession {
         events: Mutex<Vec<Event>>,
         completions: Mutex<Vec<ExperimentCompletion>>,
-        artifacts_saved: AtomicUsize,
+        artifact_activities: Mutex<Vec<Option<ActivityId>>>,
     }
 
     impl ExperimentSession for MockSession {
@@ -773,9 +704,10 @@ mod tests {
             &self,
             _name: &str,
             _kind: ArtifactKind,
+            activity: Option<ActivityId>,
             _artifact: Box<BundleFn>,
         ) -> Result<(), ExperimentError> {
-            self.artifacts_saved.fetch_add(1, Ordering::AcqRel);
+            self.artifact_activities.lock().unwrap().push(activity);
             Ok(())
         }
 
@@ -817,9 +749,211 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => assert_eq!(record.message, "hello"),
+            Event::Log { record, .. } => assert_eq!(record.message, "hello"),
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    #[test]
+    fn metrics_record_the_emitting_activity_scope() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("train").start();
+
+        activity
+            .log_metric(
+                1,
+                "train",
+                1,
+                vec![MetricValue {
+                    name: "loss".to_string(),
+                    value: 0.25,
+                }],
+            )
+            .unwrap();
+        run.log_metric(
+            1,
+            "valid",
+            1,
+            vec![MetricValue {
+                name: "loss".to_string(),
+                value: 0.2,
+            }],
+        )
+        .unwrap();
+
+        let events = session.events.lock().unwrap();
+        assert!(matches!(
+            &events[1],
+            Event::Metrics {
+                activity: Some(id),
+                ..
+            } if *id == activity.id()
+        ));
+        assert!(matches!(&events[2], Event::Metrics { activity: None, .. }));
+    }
+
+    #[test]
+    fn summaries_record_the_emitting_activity_scope() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("cross-validation").start();
+        let items = || {
+            vec![MetricValue {
+                name: "mean_score".to_string(),
+                value: 0.8,
+            }]
+        };
+
+        activity.log_summary(items()).unwrap();
+        run.log_summary(items()).unwrap();
+
+        let events = session.events.lock().unwrap();
+        assert!(matches!(
+            &events[1],
+            Event::Summary {
+                activity: Some(id),
+                ..
+            } if *id == activity.id()
+        ));
+        assert!(matches!(&events[2], Event::Summary { activity: None, .. }));
+    }
+
+    #[test]
+    fn activity_run_finishes_fails_and_propagates_panics() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+
+        let value = run
+            .activity("ok")
+            .run(|_| Ok::<_, &'static str>(7))
+            .unwrap();
+        assert_eq!(value, 7);
+
+        let error = run
+            .activity("error")
+            .run(|_| Err::<(), _>("fold failed"))
+            .unwrap_err();
+        assert_eq!(error, "fold failed");
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: Result<(), &'static str> = run.activity("panic").run(|_| panic!("boom"));
+        }));
+        assert!(panic.is_err());
+
+        let events = session.events.lock().unwrap();
+        let completions = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Activity(ActivityEvent::Finished {
+                    status, message, ..
+                }) => Some((status, message.as_deref())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            completions.as_slice(),
+            [
+                (ActivityStatus::Success, None),
+                (ActivityStatus::Abandoned, Some("fold failed")),
+                (ActivityStatus::Abandoned, None),
+            ]
+        ));
+    }
+
+    #[test]
+    fn child_activity_from_scope_uses_scope_as_parent() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let parent = run.activity("parent").start();
+        let scope = parent.scope();
+
+        let _child = scope.activity("child").start();
+
+        let events = session.events.lock().unwrap();
+        let Event::Activity(ActivityEvent::Started { activity: child }) = &events[1] else {
+            panic!("unexpected event: {:?}", events[1]);
+        };
+        assert_eq!(child.parent, Some(parent.id()));
+    }
+
+    #[test]
+    fn activity_scope_preserves_inherited_log_attributes() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.with_attr("pipeline", "cv").activity("fold").start();
+        let scope = activity.with_attr("fold", 1i64);
+
+        scope
+            .log(LogRecord::info("started").with("fold", 2i64))
+            .unwrap();
+
+        let events = session.events.lock().unwrap();
+        let Event::Log {
+            record,
+            activity: Some(id),
+        } = &events[1]
+        else {
+            panic!("unexpected event: {:?}", events[1]);
+        };
+        assert_eq!(*id, activity.id());
+        assert_eq!(
+            record.attributes.get("pipeline"),
+            Some(&serde_json::json!("cv"))
+        );
+        assert_eq!(record.attributes.get("fold"), Some(&serde_json::json!(2)));
+    }
+
+    #[test]
+    fn activity_scope_becomes_inactive_after_the_run_is_dropped() {
+        let session = Arc::new(MockSession::default());
+        let scope = {
+            let run = create_run(session);
+            let activity = run.activity("fold").start();
+            let scope = activity.scope();
+            activity.finish();
+            scope
+        };
+
+        let error = scope.log_info("late").unwrap_err();
+        assert_eq!(error.kind, ExperimentErrorKind::InactiveRun);
+    }
+
+    #[test]
+    fn artifacts_record_the_emitting_activity_scope() {
+        struct EmptyArtifact;
+
+        impl BundleEncode for EmptyArtifact {
+            type Settings = ();
+            type Error = String;
+
+            fn encode<O: BundleSink>(
+                self,
+                _sink: &mut O,
+                _settings: &Self::Settings,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("fold").start();
+
+        activity
+            .save_artifact("fold-model", ArtifactKind::Model, EmptyArtifact, &())
+            .unwrap();
+        run.save_artifact("model", ArtifactKind::Model, EmptyArtifact, &())
+            .unwrap();
+
+        let activities = session.artifact_activities.lock().unwrap();
+        assert_eq!(activities.as_slice(), &[Some(activity.id()), None]);
+    }
+
+    #[test]
+    fn activity_scope_is_shareable_and_static() {
+        fn assert_bounds<T: Clone + Send + Sync + 'static>() {}
+        assert_bounds::<ActivityScope>();
     }
 
     #[test]
@@ -837,7 +971,7 @@ mod tests {
         let levels: Vec<_> = events
             .iter()
             .map(|event| match event {
-                Event::Log(record) => record.level,
+                Event::Log { record, .. } => record.level,
                 event => panic!("unexpected event: {event:?}"),
             })
             .collect();
@@ -870,7 +1004,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert_eq!(record.level, LogLevel::Warn);
                 assert_eq!(record.message, "slow step");
                 // Inherited from scope.
@@ -940,7 +1074,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => assert_eq!(record.message, "still-logging"),
+            Event::Log { record, .. } => assert_eq!(record.message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
     }

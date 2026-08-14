@@ -3,8 +3,8 @@ use std::sync::Mutex;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{
-    ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, LogLevel, LogRecord,
-    MetricSpec, MetricValue,
+    ActivityEvent, ActivityId, ActivityStatus, ArtifactKind, ExperimentRunControl, LogLevel,
+    LogRecord, MetricSpec, MetricValue,
 };
 
 use crossbeam::channel::Sender;
@@ -82,16 +82,22 @@ impl RemoteExperimentSession {
 }
 
 impl ExperimentSession for RemoteExperimentSession {
+    /// Activity attribution is omitted because current wire messages cannot represent it.
+    /// Summaries use epoch zero and the `summary` split as a provisional encoding.
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         let message = match event {
             Event::Args(value) => ExperimentMessage::Arguments(value),
             Event::Config { name, value } => ExperimentMessage::Config { name, value },
-            Event::Log(record) => ExperimentMessage::LogEntries(vec![to_log_entry(record)]),
+            Event::Log {
+                record,
+                activity: _,
+            } => ExperimentMessage::LogEntries(vec![to_log_entry(record)]),
             Event::Metrics {
                 epoch,
                 split,
                 iteration,
                 items,
+                activity: _,
             } => ExperimentMessage::MetricsLog {
                 epoch,
                 split,
@@ -113,9 +119,15 @@ impl ExperimentSession for RemoteExperimentSession {
                 epoch,
                 split,
                 items,
+                activity: _,
             } => ExperimentMessage::EpochSummaryLog {
                 epoch,
                 split,
+                best_metric_values: to_remote_metric_logs(items),
+            },
+            Event::Summary { items, activity: _ } => ExperimentMessage::EpochSummaryLog {
+                epoch: 0,
+                split: "summary".to_owned(),
                 best_metric_values: to_remote_metric_logs(items),
             },
             Event::ArtifactUsed {
@@ -132,10 +144,12 @@ impl ExperimentSession for RemoteExperimentSession {
         self.send(message)
     }
 
+    /// Activity attribution is omitted because artifact uploads cannot represent it.
     fn save_artifact(
         &self,
         name: &str,
         kind: ArtifactKind,
+        _activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
         let mut bundle = FsBundle::temp().map_err(|err| {

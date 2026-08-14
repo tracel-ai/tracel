@@ -162,6 +162,7 @@ mod tests {
             &self,
             _name: &str,
             _kind: ArtifactKind,
+            _activity: Option<crate::ActivityId>,
             _artifact: Box<BundleFn>,
         ) -> Result<(), ExperimentError> {
             Ok(())

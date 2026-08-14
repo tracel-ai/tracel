@@ -65,6 +65,7 @@ where
         }
 
         let mut experiment_id = None;
+        let mut activity_id = None;
         // Attributes inherited from enclosing spans, accumulated outermost-first so inner spans
         // override outer ones.
         let mut attributes = Map::new();
@@ -73,6 +74,9 @@ where
                 if let Some(fields) = span.extensions().get::<SpanFields>() {
                     if fields.experiment_id.is_some() {
                         experiment_id = fields.experiment_id.clone();
+                    }
+                    if fields.activity_id.is_some() {
+                        activity_id = fields.activity_id;
                     }
                     attributes.extend(fields.attributes.clone());
                 }
@@ -88,6 +92,13 @@ where
                 Some(handle) => handle,
                 None => return,
             },
+        };
+        let handle = match activity_id {
+            Some(activity_id) => {
+                let cancel_token = handle.cancel_token();
+                handle.for_activity(activity_id, cancel_token)
+            }
+            None => handle,
         };
 
         let mut visitor = LogFieldVisitor::default();

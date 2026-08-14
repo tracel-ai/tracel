@@ -6,13 +6,23 @@
 
 use std::cell::RefCell;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 
-use crate::{ExperimentId, ExperimentRun, ExperimentRunHandle};
+use crate::{ExperimentRun, ExperimentRunHandle};
 
 thread_local! {
-    static CURRENT_EXPERIMENTS: RefCell<Vec<ExperimentRunHandle>> = const { RefCell::new(Vec::new()) };
+    static CURRENT_EXPERIMENTS: RefCell<Vec<AmbientExperiment>> = const { RefCell::new(Vec::new()) };
+}
+
+static NEXT_AMBIENT_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+struct AmbientExperiment {
+    token: u64,
+    handle: ExperimentRunHandle,
 }
 
 /// Guard returned when entering an ambient experiment scope.
@@ -24,7 +34,8 @@ thread_local! {
 #[derive(Debug)]
 #[must_use = "ambient experiment guards must be kept alive to maintain the experiment scope"]
 pub struct CurrentExperimentGuard {
-    experiment_id: ExperimentId,
+    token: u64,
+    not_send: PhantomData<Rc<()>>,
 }
 
 /// Future wrapper that re-enters the ambient experiment scope on every poll.
@@ -153,16 +164,25 @@ impl<F: Future> Future for WithCurrentExperiment<F> {
 
 /// Return the current ambient experiment handle, if one is in scope on this thread.
 fn current_experiment() -> Option<ExperimentRunHandle> {
-    CURRENT_EXPERIMENTS.with(|experiments| experiments.borrow().last().cloned())
+    CURRENT_EXPERIMENTS.with(|experiments| {
+        experiments
+            .borrow()
+            .last()
+            .map(|experiment| experiment.handle.clone())
+    })
 }
 
 fn enter_experiment_handle(handle: ExperimentRunHandle) -> CurrentExperimentGuard {
+    let token = NEXT_AMBIENT_TOKEN.fetch_add(1, Ordering::Relaxed);
     CURRENT_EXPERIMENTS.with(|experiments| {
-        experiments.borrow_mut().push(handle.clone());
+        experiments
+            .borrow_mut()
+            .push(AmbientExperiment { token, handle });
     });
 
     CurrentExperimentGuard {
-        experiment_id: handle.id().clone(),
+        token,
+        not_send: PhantomData,
     }
 }
 
@@ -174,12 +194,14 @@ fn with_experiment_handle<T>(handle: ExperimentRunHandle, f: impl FnOnce() -> T)
 impl Drop for CurrentExperimentGuard {
     fn drop(&mut self) {
         CURRENT_EXPERIMENTS.with(|experiments| {
-            let popped = experiments.borrow_mut().pop();
-            debug_assert_eq!(
-                popped.as_ref().map(|handle| handle.id()),
-                Some(&self.experiment_id),
-                "ambient experiment scopes must unwind in stack order",
-            );
+            let mut experiments = experiments.borrow_mut();
+            let position = experiments
+                .iter()
+                .rposition(|experiment| experiment.token == self.token);
+            debug_assert!(position.is_some(), "ambient experiment scope is not active");
+            if let Some(position) = position {
+                experiments.remove(position);
+            }
         });
     }
 }
@@ -208,6 +230,7 @@ mod tests {
             &self,
             _name: &str,
             _kind: ArtifactKind,
+            _activity: Option<crate::ActivityId>,
             _artifact: Box<BundleFn>,
         ) -> Result<(), ExperimentError> {
             Ok(())
@@ -261,6 +284,21 @@ mod tests {
             let current = ExperimentRun::current().expect("outer experiment should be restored");
             assert_eq!(current.id(), run_a.id());
         }
+        assert!(ExperimentRun::current().is_none());
+    }
+
+    #[test]
+    fn dropping_an_outer_scope_does_not_remove_the_inner_scope() {
+        let run_a = create_run("ambient-test-out-of-order-a");
+        let run_b = create_run("ambient-test-out-of-order-b");
+        let outer = run_a.enter();
+        let inner = run_b.enter();
+
+        drop(outer);
+
+        let current = ExperimentRun::current().expect("inner experiment should remain current");
+        assert_eq!(current.id(), run_b.id());
+        drop(inner);
         assert!(ExperimentRun::current().is_none());
     }
 
