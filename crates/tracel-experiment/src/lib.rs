@@ -39,8 +39,8 @@ pub mod error;
 pub mod integration;
 
 pub use activity::{
-    ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, ActivityMeter, ActivitySpec,
-    ActivityStatus,
+    Activity, ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, ActivityMeter,
+    ActivitySpec, ActivityStatus,
 };
 pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
@@ -49,7 +49,7 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
-pub use scope::{Activity, ExperimentContext};
+pub use scope::ExperimentContext;
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};

@@ -1,15 +1,9 @@
 //! Uniform telemetry contexts for experiment runs and activities.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
-
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
-use crate::activity::{ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId};
-use crate::context::CurrentExperimentGuard;
+use crate::activity::{Activity, ActivityBuilder, ActivityGuard, ActivityId};
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::session::Event;
 use crate::{
@@ -124,129 +118,6 @@ pub trait ExperimentContext {
     /// Create a child activity builder.
     fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
         self.scope_handle().emit_activity(name)
-    }
-}
-
-/// A cloneable reference to a running activity for telemetry and child work.
-///
-/// The reference does not own the experiment or activity lifecycle. It becomes inactive when the
-/// originating run finishes, while retaining the activity's cancellation token.
-#[derive(Clone)]
-pub struct Activity {
-    pub(crate) handle: ExperimentRunHandle,
-    id: ActivityId,
-    current: Arc<AtomicU64>,
-}
-
-impl Activity {
-    pub(crate) fn new(handle: ExperimentRunHandle, id: ActivityId) -> Self {
-        Self {
-            handle,
-            id,
-            current: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    /// Return the activity identifier.
-    pub fn id(&self) -> ActivityId {
-        self.id
-    }
-
-    /// Return a reference whose logs inherit an additional attribute.
-    #[must_use]
-    pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
-        Self {
-            handle: self.handle.with_attr(key, value),
-            ..self.clone()
-        }
-    }
-
-    /// Return a reference whose logs inherit additional attributes.
-    #[must_use]
-    pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
-        Self {
-            handle: self.handle.with_attrs(attrs),
-            ..self.clone()
-        }
-    }
-
-    /// Return the activity cancellation token.
-    pub fn cancel_token(&self) -> CancelToken {
-        self.handle.cancel_token()
-    }
-
-    /// Return whether cancellation has been requested for this activity.
-    ///
-    /// This is a cooperative signal inherited from the run or parent activity. It does not force
-    /// the activity's terminal status.
-    pub fn is_cancel_requested(&self) -> bool {
-        self.handle.cancel_token().is_cancelled()
-    }
-
-    /// Increase the current progress value by `delta` and emit the absolute result.
-    ///
-    /// Activities without a declared meter accept updates as open-ended counts.
-    pub fn inc(&self, delta: u64) {
-        let mut current = self.current.load(Ordering::Relaxed);
-        let current = loop {
-            let updated = current.saturating_add(delta);
-            match self.current.compare_exchange_weak(
-                current,
-                updated,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break updated,
-                Err(actual) => current = actual,
-            }
-        };
-
-        self.report_update(current);
-    }
-
-    /// Set the current progress value and emit the absolute result.
-    ///
-    /// Activities without a declared meter accept updates as open-ended counts.
-    pub fn set(&self, current: u64) {
-        self.current.store(current, Ordering::Relaxed);
-        self.report_update(current);
-    }
-
-    /// Emit a human-readable message for this activity.
-    pub fn message(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle
-            .record_event(Event::Activity(ActivityEvent::Message {
-                id: self.id(),
-                message: message.into(),
-            }))
-    }
-
-    /// Enter this activity as the ambient telemetry context on the current thread.
-    pub fn enter(&self) -> CurrentExperimentGuard {
-        self.handle.enter()
-    }
-
-    /// Run a closure with this activity installed as the ambient telemetry context.
-    pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
-        self.handle.in_scope(f)
-    }
-
-    fn report_update(&self, current: u64) {
-        self.handle
-            .record_event(Event::Activity(ActivityEvent::Updated {
-                id: self.id,
-                current,
-            }))
-            .ok();
-    }
-}
-
-impl std::fmt::Debug for Activity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Activity")
-            .field("experiment_id", self.handle.id())
-            .field("activity_id", &self.id())
-            .finish_non_exhaustive()
     }
 }
 

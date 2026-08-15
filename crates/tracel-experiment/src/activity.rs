@@ -8,14 +8,16 @@ use std::{
     num::NonZeroU64,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
+use crate::ExperimentRunHandle;
 use crate::cancellation::CancelToken;
+use crate::context::CurrentExperimentGuard;
 use crate::control::ExperimentRunControl;
+use crate::error::ExperimentError;
 use crate::session::Event;
-use crate::{Activity, ExperimentRunHandle};
 
 /// Opaque non-zero identifier for an activity.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -291,10 +293,18 @@ impl ActivityBuilder {
                 .register_activity_cancellation(id, cancel_token.clone());
         }
 
-        let activity = Activity::new(context.clone(), id);
-        let active = ActiveActivity::new(context, self.control, id, cancellable);
+        let activity = Activity {
+            handle: context,
+            state: Arc::new(ActivityState {
+                id,
+                current: AtomicU64::new(0),
+                finished: AtomicBool::new(false),
+                control: self.control,
+                cancellable,
+            }),
+        };
 
-        ActivityGuard { activity, active }
+        ActivityGuard { activity }
     }
 }
 
@@ -320,61 +330,155 @@ where
     }
 }
 
-/// Enforces one terminal event across consuming finish methods and drop.
-struct ActiveActivity {
-    handle: ExperimentRunHandle,
-    control: ExperimentRunControl,
+/// Shared state of one running activity, held by every reference to it.
+struct ActivityState {
     id: ActivityId,
+    current: AtomicU64,
+    finished: AtomicBool,
+    control: ExperimentRunControl,
     cancellable: bool,
-    finished: bool,
 }
 
-impl ActiveActivity {
-    /// Create lifecycle state for an already-started activity.
-    fn new(
-        handle: ExperimentRunHandle,
-        control: ExperimentRunControl,
-        id: ActivityId,
-        cancellable: bool,
-    ) -> Self {
+/// A cloneable reference to a running activity for telemetry and child work.
+///
+/// The reference does not own the experiment or activity lifecycle. It becomes inactive when the
+/// originating run finishes, while retaining the activity's cancellation token.
+#[derive(Clone)]
+pub struct Activity {
+    pub(crate) handle: ExperimentRunHandle,
+    state: Arc<ActivityState>,
+}
+
+impl Activity {
+    /// Return the activity identifier.
+    pub fn id(&self) -> ActivityId {
+        self.state.id
+    }
+
+    /// Return a reference whose logs inherit an additional attribute.
+    #[must_use]
+    pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
         Self {
-            handle,
-            control,
-            id,
-            cancellable,
-            finished: false,
+            handle: self.handle.with_attr(key, value),
+            state: self.state.clone(),
         }
     }
 
-    fn finish_inner(&mut self, status: ActivityStatus, message: Option<String>) {
-        if self.finished {
+    /// Return a reference whose logs inherit additional attributes.
+    #[must_use]
+    pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
+        Self {
+            handle: self.handle.with_attrs(attrs),
+            state: self.state.clone(),
+        }
+    }
+
+    /// Return the activity cancellation token.
+    pub fn cancel_token(&self) -> CancelToken {
+        self.handle.cancel_token()
+    }
+
+    /// Return whether cancellation has been requested for this activity.
+    ///
+    /// This is a cooperative signal inherited from the run or parent activity. It does not force
+    /// the activity's terminal status.
+    pub fn is_cancel_requested(&self) -> bool {
+        self.handle.cancel_token().is_cancelled()
+    }
+
+    /// Increase the current progress value by `delta` and emit the absolute result.
+    ///
+    /// Activities without a declared meter accept updates as open-ended counts.
+    pub fn inc(&self, delta: u64) {
+        let mut current = self.state.current.load(Ordering::Relaxed);
+        let current = loop {
+            let updated = current.saturating_add(delta);
+            match self.state.current.compare_exchange_weak(
+                current,
+                updated,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break updated,
+                Err(actual) => current = actual,
+            }
+        };
+
+        self.report_update(current);
+    }
+
+    /// Set the current progress value and emit the absolute result.
+    ///
+    /// Activities without a declared meter accept updates as open-ended counts.
+    pub fn set(&self, current: u64) {
+        self.state.current.store(current, Ordering::Relaxed);
+        self.report_update(current);
+    }
+
+    /// Emit a human-readable message for this activity.
+    pub fn message(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle
+            .record_event(Event::Activity(ActivityEvent::Message {
+                id: self.id(),
+                message: message.into(),
+            }))
+    }
+
+    /// Enter this activity as the ambient telemetry context on the current thread.
+    pub fn enter(&self) -> CurrentExperimentGuard {
+        self.handle.enter()
+    }
+
+    /// Run a closure with this activity installed as the ambient telemetry context.
+    pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.handle.in_scope(f)
+    }
+
+    fn report_update(&self, current: u64) {
+        self.handle
+            .record_event(Event::Activity(ActivityEvent::Updated {
+                id: self.state.id,
+                current,
+            }))
+            .ok();
+    }
+
+    /// Emit the terminal event exactly once and release any cancellation registration.
+    fn complete(&self, status: ActivityStatus, message: Option<String>) {
+        if self.state.finished.swap(true, Ordering::AcqRel) {
             return;
         }
 
-        self.finished = true;
         self.handle
             .record_event(Event::Activity(ActivityEvent::Finished {
-                id: self.id,
+                id: self.state.id,
                 status,
                 message,
             }))
             .ok();
-        if self.cancellable {
-            self.control.unregister_activity_cancellation(self.id);
+        if self.state.cancellable {
+            self.state
+                .control
+                .unregister_activity_cancellation(self.state.id);
         }
     }
 }
 
-impl Drop for ActiveActivity {
-    fn drop(&mut self) {
-        self.finish_inner(ActivityStatus::Abandoned, None);
+impl std::fmt::Debug for Activity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Activity")
+            .field("experiment_id", self.handle.id())
+            .field("activity_id", &self.id())
+            .finish_non_exhaustive()
     }
 }
 
-/// Lifecycle guard for a running activity.
+/// Owner of an activity's ending; everything else lives on the [`Activity`] it derefs to.
+///
+/// The shared finished flag makes the terminal event single-shot, so a consuming finisher
+/// followed by drop reports exactly once.
 pub struct ActivityGuard {
     pub(crate) activity: Activity,
-    active: ActiveActivity,
 }
 
 impl ActivityGuard {
@@ -384,34 +488,40 @@ impl ActivityGuard {
     }
 
     /// Mark the activity as successful.
-    pub fn finish(mut self) {
-        self.active.finish_inner(ActivityStatus::Success, None);
+    pub fn finish(self) {
+        self.activity.complete(ActivityStatus::Success, None);
     }
 
     /// Mark the activity as successful with a message.
-    pub fn finish_with_message(mut self, message: impl Into<String>) {
-        self.active
-            .finish_inner(ActivityStatus::Success, Some(message.into()));
+    pub fn finish_with_message(self, message: impl Into<String>) {
+        self.activity
+            .complete(ActivityStatus::Success, Some(message.into()));
     }
 
     /// Mark the activity as abandoned.
-    pub fn abandon(mut self) {
-        self.active.finish_inner(ActivityStatus::Abandoned, None);
+    pub fn abandon(self) {
+        self.activity.complete(ActivityStatus::Abandoned, None);
     }
 
     /// Mark the activity as abandoned with a message.
-    pub fn abandon_with_message(mut self, message: impl Into<String>) {
-        self.active
-            .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
+    pub fn abandon_with_message(self, message: impl Into<String>) {
+        self.activity
+            .complete(ActivityStatus::Abandoned, Some(message.into()));
     }
 
     /// Mark the activity as failed with a message.
     ///
     /// Failed activities use the abandoned status until a distinct activity failure status is
     /// available on the wire.
-    pub fn fail(mut self, message: impl Into<String>) {
-        self.active
-            .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
+    pub fn fail(self, message: impl Into<String>) {
+        self.activity
+            .complete(ActivityStatus::Abandoned, Some(message.into()));
+    }
+}
+
+impl Drop for ActivityGuard {
+    fn drop(&mut self) {
+        self.activity.complete(ActivityStatus::Abandoned, None);
     }
 }
 
