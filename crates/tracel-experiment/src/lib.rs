@@ -5,7 +5,7 @@
 //! - [`ExperimentRunHandle`], which is a lightweight cloneable view for logging and artifact access
 //!   from background tasks or other threads.
 //! - [`ExperimentContext`], the telemetry surface shared by runs, handles, activity guards, and
-//!   [`ActivityScope`] values.
+//!   [`Activity`] references.
 //!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentRunHandleExt`] for cloning a shareable handle.
@@ -37,8 +37,8 @@ pub mod error;
 pub mod integration;
 
 pub use activity::{
-    Activity, ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, ActivityMeter,
-    ActivityStatus, Metered, Unmetered,
+    ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, ActivityMeter, ActivitySpec,
+    ActivityStatus,
 };
 pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
@@ -47,8 +47,7 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
-pub use scope::ActivityScope;
-pub use scope::ExperimentContext;
+pub use scope::{Activity, ExperimentContext};
 
 use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -643,13 +642,13 @@ mod tests {
     }
 
     #[test]
-    fn child_activity_from_scope_uses_scope_as_parent() {
+    fn child_activity_from_reference_uses_reference_as_parent() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
         let parent = run.activity("parent").start();
-        let scope = parent.scope();
+        let activity = parent.share();
 
-        let _child = scope.activity("child").start();
+        let _child = activity.activity("child").start();
 
         let events = session.events.lock().unwrap();
         let Event::Activity(ActivityEvent::Started { activity: child }) = &events[1] else {
@@ -659,17 +658,17 @@ mod tests {
     }
 
     #[test]
-    fn activity_scope_preserves_inherited_log_attributes() {
+    fn activity_reference_preserves_inherited_log_attributes() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
-        let activity = run
+        let guard = run
             .handle()
             .with_attr("pipeline", "cv")
             .activity("fold")
             .start();
-        let scope = activity.scope().with_attr("fold", 1i64);
+        let activity = guard.share().with_attr("fold", 1i64);
 
-        scope
+        activity
             .log(LogRecord::info("started").with("fold", 2i64))
             .unwrap();
 
@@ -681,7 +680,7 @@ mod tests {
         else {
             panic!("unexpected event: {:?}", events[1]);
         };
-        assert_eq!(*id, activity.id());
+        assert_eq!(*id, guard.id());
         assert_eq!(
             record.attributes.get("pipeline"),
             Some(&serde_json::json!("cv"))
@@ -690,17 +689,17 @@ mod tests {
     }
 
     #[test]
-    fn activity_scope_becomes_inactive_after_the_run_is_dropped() {
+    fn activity_reference_becomes_inactive_after_the_run_is_dropped() {
         let session = Arc::new(MockSession::default());
-        let scope = {
+        let activity = {
             let run = create_run(session);
-            let activity = run.activity("fold").start();
-            let scope = activity.scope();
-            activity.finish();
-            scope
+            let guard = run.activity("fold").start();
+            let activity = guard.share();
+            guard.finish();
+            activity
         };
 
-        let error = scope.log_info("late").unwrap_err();
+        let error = activity.log_info("late").unwrap_err();
         assert_eq!(error.kind, ExperimentErrorKind::InactiveRun);
     }
 
@@ -736,9 +735,9 @@ mod tests {
     }
 
     #[test]
-    fn activity_scope_is_shareable_and_static() {
+    fn activity_reference_is_shareable_and_static() {
         fn assert_bounds<T: Clone + Send + Sync + 'static>() {}
-        assert_bounds::<ActivityScope>();
+        assert_bounds::<Activity>();
     }
 
     #[test]
@@ -872,7 +871,7 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 
-        let _progress = run.activity("load").progress().start();
+        let _progress = run.activity("load").meter(1, "items").start();
 
         let events = session.events.lock().unwrap();
         assert!(matches!(
@@ -888,7 +887,7 @@ mod tests {
         let handle = run.handle();
         drop(run);
 
-        let _progress = handle.activity("late").progress().start();
+        let _progress = handle.activity("late").meter(1, "items").start();
 
         let events = session.events.lock().unwrap();
         assert!(events.is_empty());

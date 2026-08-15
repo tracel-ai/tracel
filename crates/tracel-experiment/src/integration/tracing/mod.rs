@@ -13,7 +13,7 @@
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{ActivityGuard, ActivityScope, ExperimentRun, ExperimentRunHandle};
+use crate::{Activity, ActivityGuard, ExperimentRun, ExperimentRunHandle};
 
 mod layer;
 pub(crate) mod registry;
@@ -91,11 +91,11 @@ impl ExperimentTracingExt for ExperimentRunHandle {
 }
 
 /// Build a tracing span scoped to a specific activity.
-fn activity_span(scope: ActivityScope) -> tracing::Span {
+fn activity_span(activity: Activity) -> tracing::Span {
     tracing::info_span!(
         "activity",
-        experiment_id = %scope.handle.id(),
-        activity_id = scope.id().as_u64(),
+        experiment_id = %activity.handle.id(),
+        activity_id = activity.id().as_u64(),
     )
 }
 
@@ -108,13 +108,13 @@ pub trait ActivityTracingExt {
     fn tracing_span(&self) -> tracing::Span;
 }
 
-impl<State> ActivityTracingExt for ActivityGuard<State> {
+impl ActivityTracingExt for ActivityGuard {
     fn tracing_span(&self) -> tracing::Span {
-        activity_span(self.scope())
+        activity_span(self.share())
     }
 }
 
-impl ActivityTracingExt for ActivityScope {
+impl ActivityTracingExt for Activity {
     fn tracing_span(&self) -> tracing::Span {
         activity_span(self.clone())
     }
@@ -216,9 +216,9 @@ mod tests {
 
         let activity_id = tracing::subscriber::with_default(subscriber, || {
             run.activity("fold")
-                .run(|scope| {
+                .run(|activity| {
                     tracing::info!(fold = 1u64, "training fold");
-                    Ok::<_, std::convert::Infallible>(scope.id())
+                    Ok::<_, std::convert::Infallible>(activity.id())
                 })
                 .unwrap()
         });

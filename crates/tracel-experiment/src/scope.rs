@@ -1,9 +1,16 @@
 //! Uniform telemetry contexts for experiment runs and activities.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
-use crate::activity::{ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId};
+use crate::activity::{
+    ActivityBuilder, ActivityEvent, ActivityEventReporter, ActivityGuard, ActivityId,
+};
 use crate::context::CurrentExperimentGuard;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::session::Event;
@@ -12,9 +19,9 @@ use crate::{
     MetricSpec, MetricValue, RunActivityReporter,
 };
 
-/// A telemetry surface shared by experiment runs and activity scopes.
+/// A telemetry surface shared by experiment runs and activities.
 ///
-/// Operations emitted through an activity guard or scope are attributed to that activity.
+/// Operations emitted through an activity guard or reference are attributed to that activity.
 /// Operations emitted through a run or root handle remain at the run root.
 pub trait ExperimentContext {
     /// Return an owned weak handle that preserves this context's scope.
@@ -122,19 +129,36 @@ pub trait ExperimentContext {
     }
 }
 
-/// A cloneable view of an active activity for telemetry and child work.
+/// A cloneable reference to a running activity for telemetry and child work.
 ///
-/// The scope does not own the experiment or activity lifecycle. It becomes inactive when the
+/// The reference does not own the experiment or activity lifecycle. It becomes inactive when the
 /// originating run finishes, while retaining the activity's cancellation token.
 #[derive(Clone)]
-pub struct ActivityScope {
+pub struct Activity {
     pub(crate) handle: ExperimentRunHandle,
     id: ActivityId,
+    core: Arc<ActivityCore>,
 }
 
-impl ActivityScope {
-    pub(crate) fn new(handle: ExperimentRunHandle, id: ActivityId) -> Self {
-        Self { handle, id }
+struct ActivityCore {
+    reporter: Arc<dyn ActivityEventReporter>,
+    current: AtomicU64,
+}
+
+impl Activity {
+    pub(crate) fn new(
+        handle: ExperimentRunHandle,
+        id: ActivityId,
+        reporter: Arc<dyn ActivityEventReporter>,
+    ) -> Self {
+        Self {
+            handle,
+            id,
+            core: Arc::new(ActivityCore {
+                reporter,
+                current: AtomicU64::new(0),
+            }),
+        }
     }
 
     /// Return the activity identifier.
@@ -142,16 +166,22 @@ impl ActivityScope {
         self.id
     }
 
-    /// Return a scope whose logs inherit an additional attribute.
+    /// Return a reference whose logs inherit an additional attribute.
     #[must_use]
     pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
-        Self::new(self.handle.with_attr(key, value), self.id)
+        Self {
+            handle: self.handle.with_attr(key, value),
+            ..self.clone()
+        }
     }
 
-    /// Return a scope whose logs inherit additional attributes.
+    /// Return a reference whose logs inherit additional attributes.
     #[must_use]
     pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
-        Self::new(self.handle.with_attrs(attrs), self.id)
+        Self {
+            handle: self.handle.with_attrs(attrs),
+            ..self.clone()
+        }
     }
 
     /// Return the activity cancellation token.
@@ -160,8 +190,40 @@ impl ActivityScope {
     }
 
     /// Return whether cancellation has been requested for this activity.
+    ///
+    /// This is a cooperative signal inherited from the run or parent activity. It does not force
+    /// the activity's terminal status.
     pub fn is_cancel_requested(&self) -> bool {
         self.handle.cancel_token().is_cancelled()
+    }
+
+    /// Increase the current progress value by `delta` and emit the absolute result.
+    ///
+    /// Activities without a declared meter accept updates as open-ended counts.
+    pub fn inc(&self, delta: u64) {
+        let mut current = self.core.current.load(Ordering::Relaxed);
+        let current = loop {
+            let updated = current.saturating_add(delta);
+            match self.core.current.compare_exchange_weak(
+                current,
+                updated,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break updated,
+                Err(actual) => current = actual,
+            }
+        };
+
+        self.report_update(current);
+    }
+
+    /// Set the current progress value and emit the absolute result.
+    ///
+    /// Activities without a declared meter accept updates as open-ended counts.
+    pub fn set(&self, current: u64) {
+        self.core.current.store(current, Ordering::Relaxed);
+        self.report_update(current);
     }
 
     /// Emit a human-readable message for this activity.
@@ -182,11 +244,18 @@ impl ActivityScope {
     pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
         self.handle.in_scope(f)
     }
+
+    fn report_update(&self, current: u64) {
+        self.core.reporter.report(ActivityEvent::Updated {
+            id: self.id,
+            current,
+        });
+    }
 }
 
-impl std::fmt::Debug for ActivityScope {
+impl std::fmt::Debug for Activity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ActivityScope")
+        f.debug_struct("Activity")
             .field("experiment_id", self.handle.id())
             .field("activity_id", &self.id())
             .finish_non_exhaustive()
@@ -205,13 +274,13 @@ impl ExperimentContext for ExperimentRunHandle {
     }
 }
 
-impl<State> ExperimentContext for ActivityGuard<State> {
+impl ExperimentContext for ActivityGuard {
     fn scope_handle(&self) -> ExperimentRunHandle {
-        self.scope().handle
+        self.activity.scope_handle()
     }
 }
 
-impl ExperimentContext for ActivityScope {
+impl ExperimentContext for Activity {
     fn scope_handle(&self) -> ExperimentRunHandle {
         self.handle.clone()
     }
@@ -370,8 +439,8 @@ impl ExperimentRunHandle {
             inner.activity_id_allocator.clone(),
             self.control.clone(),
             name.into(),
+            self.clone(),
         )
         .with_parent(self.activity, self.context_cancel_token.clone())
-        .with_context(self.clone())
     }
 }

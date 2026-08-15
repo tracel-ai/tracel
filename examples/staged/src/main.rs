@@ -35,18 +35,15 @@ fn main() -> anyhow::Result<()> {
 
 fn study(run: &ExperimentRun) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let fold_count = 3usize;
-    let mut preparation = run
-        .activity("Prepare data")
-        .progress()
-        .total(fold_count as u64)
-        .unit("folds")
-        .start();
-
-    for fold in 0..fold_count {
-        preparation.message(format!("Prepared fold {}", fold + 1));
-        preparation.inc(1);
-    }
-    preparation.finish_with_message("Data ready");
+    run.activity("Prepare data")
+        .meter(fold_count as u64, "folds")
+        .run(|preparation| -> anyhow::Result<()> {
+            for fold in 0..fold_count {
+                preparation.message(format!("Prepared fold {}", fold + 1))?;
+                preparation.inc(1);
+            }
+            Ok(())
+        })?;
 
     run.activity("Cross-validation")
         .run(|folds| -> anyhow::Result<()> {

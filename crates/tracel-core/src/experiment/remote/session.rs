@@ -243,17 +243,17 @@ fn to_remote_metric_logs(items: Vec<MetricValue>) -> Vec<MetricLog> {
 
 fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
     match event {
-        ActivityEvent::Started { activity } => ActivityEventRequest::Started {
+        ActivityEvent::Started { activity: spec } => ActivityEventRequest::Started {
             activity: ActivityRequest {
-                id: activity.id.as_u64(),
-                parent: activity.parent.map(|parent| parent.as_u64()),
-                name: activity.name,
-                cancellable: activity.cancellable,
-                meter: activity.meter.map(|meter| ActivityMeterRequest {
+                id: spec.id.as_u64(),
+                parent: spec.parent.map(|parent| parent.as_u64()),
+                name: spec.name,
+                cancellable: spec.cancellable,
+                meter: spec.meter.map(|meter| ActivityMeterRequest {
                     unit: meter.unit,
                     total: meter.total,
                 }),
-                attributes: activity.attributes,
+                attributes: spec.attributes,
             },
         },
         ActivityEvent::Updated { id, current } => ActivityEventRequest::Updated {

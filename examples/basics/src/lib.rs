@@ -120,20 +120,16 @@ pub mod training {
 
         let total_steps = (config.epochs * config.batches_per_epoch) as f64;
 
-        let mut run = experiment
+        let run = experiment
             .activity("training")
-            .progress()
-            .total(config.epochs as u64)
-            .unit("epoch")
+            .meter(config.epochs as u64, "epoch")
             .cancellable()
             .start();
 
         for epoch in 1..=config.epochs {
-            let mut epoch_activity = run
+            let epoch_activity = run
                 .activity(format!("epoch {epoch}"))
-                .progress()
-                .total(config.batches_per_epoch as u64)
-                .unit("batch")
+                .meter(config.batches_per_epoch as u64, "batch")
                 .cancellable()
                 .attr("epoch", epoch)?
                 .start();

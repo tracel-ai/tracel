@@ -1,7 +1,7 @@
 //! Activity tracking primitives for experiment runs.
 //!
 //! Progress is modeled as a tree of named activities. Starting an activity emits a
-//! [`ActivityEvent::Started`] event, metered updates emit [`ActivityEvent::Updated`],
+//! [`ActivityEvent::Started`] event, numeric updates emit [`ActivityEvent::Updated`],
 //! and explicit or drop-based completion emits [`ActivityEvent::Finished`].
 
 use std::{
@@ -14,7 +14,7 @@ use std::{
 
 use crate::cancellation::CancelToken;
 use crate::control::ExperimentRunControl;
-use crate::{ActivityScope, CurrentExperimentGuard, ExperimentRunHandle};
+use crate::{Activity, ExperimentRunHandle};
 
 /// Opaque non-zero identifier for an activity.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -43,7 +43,7 @@ pub struct ActivityMeter {
 
 /// Metadata describing an activity when it starts.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Activity {
+pub struct ActivitySpec {
     /// Unique identifier for this activity.
     pub id: ActivityId,
     /// Parent activity identifier, when this activity is nested under another activity.
@@ -77,7 +77,7 @@ pub enum ActivityEvent {
     /// An activity was started.
     Started {
         /// The started activity metadata.
-        activity: Activity,
+        activity: ActivitySpec,
     },
     /// An activity's numeric progress changed.
     Updated {
@@ -157,19 +157,8 @@ impl ActivityIdAllocator for AtomicActivityIdAllocator {
     }
 }
 
-/// Typestate marker for an activity without a numeric meter.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Unmetered;
-
-/// Typestate marker for an activity with a numeric meter.
-#[derive(Debug, Clone)]
-pub struct Metered {
-    meter: ActivityMeter,
-    current: u64,
-}
-
 /// Builder used to configure and start an activity.
-pub struct ActivityBuilder<State = Unmetered> {
+pub struct ActivityBuilder {
     reporter: Arc<dyn ActivityEventReporter>,
     id_allocator: Arc<dyn ActivityIdAllocator>,
     control: ExperimentRunControl,
@@ -178,17 +167,18 @@ pub struct ActivityBuilder<State = Unmetered> {
     name: String,
     cancellable: bool,
     attributes: serde_json::Map<String, serde_json::Value>,
-    context: Option<ExperimentRunHandle>,
-    state: State,
+    context: ExperimentRunHandle,
+    meter: Option<ActivityMeter>,
 }
 
-impl ActivityBuilder<Unmetered> {
+impl ActivityBuilder {
     /// Create a root activity builder.
     pub(crate) fn new(
         reporter: Arc<dyn ActivityEventReporter>,
         id_allocator: Arc<dyn ActivityIdAllocator>,
         control: ExperimentRunControl,
         name: impl Into<String>,
+        context: ExperimentRunHandle,
     ) -> Self {
         let cancellation_parent = control.cancel_token();
 
@@ -201,8 +191,8 @@ impl ActivityBuilder<Unmetered> {
             name: name.into(),
             cancellable: false,
             attributes: serde_json::Map::new(),
-            context: None,
-            state: Unmetered,
+            context,
+            meter: None,
         }
     }
 
@@ -220,99 +210,31 @@ impl ActivityBuilder<Unmetered> {
             Arc::new(AtomicActivityIdAllocator::new()),
             ExperimentRunControl::default(),
             name,
+            context_handle,
         )
         .with_parent(parent, cancel_token)
-        .with_context(context_handle)
     }
 
-    /// Configure this activity with a numeric meter.
-    pub fn progress(self) -> ActivityBuilder<Metered> {
-        let ActivityBuilder {
-            reporter,
-            id_allocator,
-            control,
-            cancellation_parent,
-            parent,
-            name,
-            cancellable,
-            attributes,
-            context,
-            state: _,
-        } = self;
-
-        ActivityBuilder {
-            reporter,
-            id_allocator,
-            control,
-            cancellation_parent,
-            parent,
-            name,
-            cancellable,
-            attributes,
-            context,
-            state: Metered {
-                meter: ActivityMeter {
-                    unit: None,
-                    total: None,
-                },
-                current: 0,
-            },
-        }
+    /// Declare a numeric meter with an expected total and unit.
+    pub fn meter(mut self, total: u64, unit: impl Into<String>) -> Self {
+        self.meter = Some(ActivityMeter {
+            unit: Some(unit.into()),
+            total: Some(total),
+        });
+        self
     }
 
-    /// Start this activity and return a guard for child activities and completion.
-    pub fn start(self) -> ActivityGuard<Unmetered> {
-        ActivityGuard {
-            inner: self.start_inner(None),
-            state: Unmetered,
-        }
+    /// Start this activity and return its lifecycle guard.
+    pub fn start(self) -> ActivityGuard {
+        self.start_inner()
     }
 
     /// Run a closure inside this activity and finish it according to the result.
-    pub fn run<T, E>(self, f: impl FnOnce(ActivityScope) -> Result<T, E>) -> Result<T, E>
+    pub fn run<T, E>(self, f: impl FnOnce(Activity) -> Result<T, E>) -> Result<T, E>
     where
         E: std::fmt::Display,
     {
         run_activity(self.start(), f)
-    }
-}
-
-impl ActivityBuilder<Metered> {
-    /// Set the expected total for this activity's meter.
-    pub fn total(mut self, total: u64) -> Self {
-        self.state.meter.total = Some(total);
-        self
-    }
-
-    /// Set the unit used by this activity's meter.
-    pub fn unit(mut self, unit: impl Into<String>) -> Self {
-        self.state.meter.unit = Some(unit.into());
-        self
-    }
-
-    /// Start this activity and return a guard for sending metered updates.
-    pub fn start(self) -> ActivityGuard<Metered> {
-        let state = self.state.clone();
-
-        ActivityGuard {
-            inner: self.start_inner(Some(state.meter.clone())),
-            state,
-        }
-    }
-
-    /// Run a closure inside this activity and finish it according to the result.
-    pub fn run<T, E>(self, f: impl FnOnce(ActivityScope) -> Result<T, E>) -> Result<T, E>
-    where
-        E: std::fmt::Display,
-    {
-        run_activity(self.start(), f)
-    }
-}
-
-impl<State> ActivityBuilder<State> {
-    pub(crate) fn with_context(mut self, context: ExperimentRunHandle) -> Self {
-        self.context = Some(context);
-        self
     }
 
     pub(crate) fn with_parent(
@@ -363,52 +285,46 @@ impl<State> ActivityBuilder<State> {
         Ok(())
     }
 
-    fn start_inner(self, meter: Option<ActivityMeter>) -> ActiveActivity {
+    fn start_inner(self) -> ActivityGuard {
         let id = self.id_allocator.next_id();
         let cancel_token = self.cancellation_parent.linked(CancelToken::new());
-        let context = self
-            .context
-            .map(|context| context.for_activity(id, cancel_token.clone()));
+        let context = self.context.for_activity(id, cancel_token.clone());
 
-        let activity = Activity {
+        let spec = ActivitySpec {
             id,
             parent: self.parent,
             name: self.name,
             cancellable: self.cancellable,
-            meter,
+            meter: self.meter,
             attributes: self.attributes,
         };
+        let cancellable = spec.cancellable;
 
-        self.reporter.report(ActivityEvent::Started {
-            activity: activity.clone(),
-        });
+        self.reporter
+            .report(ActivityEvent::Started { activity: spec });
 
-        if activity.cancellable {
+        if cancellable {
             self.control
-                .register_activity_cancellation(activity.id, cancel_token.clone());
+                .register_activity_cancellation(id, cancel_token.clone());
         }
 
-        ActiveActivity::new(
-            self.reporter,
-            self.id_allocator,
-            self.control,
-            activity,
-            cancel_token,
-            context,
-        )
+        let activity = Activity::new(context, id, self.reporter.clone());
+        let active = ActiveActivity::new(self.reporter, self.control, id, cancellable);
+
+        ActivityGuard { activity, active }
     }
 }
 
-fn run_activity<State, T, E>(
-    guard: ActivityGuard<State>,
-    f: impl FnOnce(ActivityScope) -> Result<T, E>,
+fn run_activity<T, E>(
+    guard: ActivityGuard,
+    f: impl FnOnce(Activity) -> Result<T, E>,
 ) -> Result<T, E>
 where
     E: std::fmt::Display,
 {
-    let scope = guard.scope();
-    let ambient = scope.clone();
-    match ambient.in_scope(|| f(scope)) {
+    let activity = guard.share();
+    let ambient = activity.clone();
+    match ambient.in_scope(|| f(activity)) {
         Ok(value) => {
             guard.finish();
             Ok(value)
@@ -421,60 +337,30 @@ where
     }
 }
 
-/// Active activity state shared by builders and guards.
+/// Lifecycle state for a running activity.
 struct ActiveActivity {
     reporter: Arc<dyn ActivityEventReporter>,
-    id_allocator: Arc<dyn ActivityIdAllocator>,
     control: ExperimentRunControl,
-    activity: Activity,
-    cancel_token: CancelToken,
-    context: Option<ExperimentRunHandle>,
+    id: ActivityId,
+    cancellable: bool,
     finished: bool,
 }
 
 impl ActiveActivity {
-    /// Create a guard for an already-started activity.
+    /// Create lifecycle state for an already-started activity.
     fn new(
         reporter: Arc<dyn ActivityEventReporter>,
-        id_allocator: Arc<dyn ActivityIdAllocator>,
         control: ExperimentRunControl,
-        activity: Activity,
-        cancel_token: CancelToken,
-        context: Option<ExperimentRunHandle>,
+        id: ActivityId,
+        cancellable: bool,
     ) -> Self {
         Self {
             reporter,
-            id_allocator,
             control,
-            activity,
-            cancel_token,
-            context,
+            id,
+            cancellable,
             finished: false,
         }
-    }
-
-    /// Create a builder for a child activity.
-    fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
-        ActivityBuilder {
-            reporter: self.reporter.clone(),
-            id_allocator: self.id_allocator.clone(),
-            control: self.control.clone(),
-            cancellation_parent: self.cancel_token.clone(),
-            parent: Some(self.activity.id),
-            name: name.into(),
-            cancellable: false,
-            attributes: serde_json::Map::new(),
-            context: self.context.clone(),
-            state: Unmetered,
-        }
-    }
-
-    /// Emit a message for this activity.
-    fn message(&self, message: impl Into<String>) {
-        self.reporter.report(ActivityEvent::Message {
-            id: self.activity.id,
-            message: message.into(),
-        });
     }
 
     fn finish_inner(&mut self, status: ActivityStatus, message: Option<String>) {
@@ -484,13 +370,12 @@ impl ActiveActivity {
 
         self.finished = true;
         self.reporter.report(ActivityEvent::Finished {
-            id: self.activity.id,
+            id: self.id,
             status,
             message,
         });
-        if self.activity.cancellable {
-            self.control
-                .unregister_activity_cancellation(self.activity.id);
+        if self.cancellable {
+            self.control.unregister_activity_cancellation(self.id);
         }
     }
 }
@@ -501,82 +386,37 @@ impl Drop for ActiveActivity {
     }
 }
 
-/// Active activity that can own child activities and completion.
-pub struct ActivityGuard<State = Unmetered> {
-    inner: ActiveActivity,
-    state: State,
+/// Lifecycle guard for a running activity.
+pub struct ActivityGuard {
+    pub(crate) activity: Activity,
+    active: ActiveActivity,
 }
 
-impl<State> ActivityGuard<State> {
-    /// Return the activity identifier.
-    pub fn id(&self) -> ActivityId {
-        self.inner.activity.id
-    }
-
-    /// Return the activity cancellation token.
-    pub fn cancel_token(&self) -> CancelToken {
-        self.inner.cancel_token.clone()
-    }
-
-    /// Return whether cancellation has been requested for this activity.
-    ///
-    /// This is a cooperative signal inherited from the run or parent activity. It does not force
-    /// the activity's terminal status; abandon or finish the activity when it actually stops
-    /// because of the request.
-    pub fn is_cancel_requested(&self) -> bool {
-        self.inner.cancel_token.is_cancelled()
-    }
-
-    /// Return a cloneable telemetry view for this activity.
-    pub fn scope(&self) -> ActivityScope {
-        ActivityScope::new(
-            self.inner
-                .context
-                .clone()
-                .expect("activity guards created by an experiment always carry a context"),
-            self.id(),
-        )
-    }
-
-    /// Enter this activity as the ambient telemetry context on the current thread.
-    pub fn enter(&self) -> CurrentExperimentGuard {
-        self.scope().enter()
-    }
-
-    /// Run a closure with this activity installed as the ambient telemetry context.
-    pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
-        self.scope().in_scope(f)
-    }
-
-    /// Create a builder for a child activity without a numeric meter.
-    pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
-        self.inner.activity(name)
-    }
-
-    /// Emit a message for this activity.
-    pub fn message(&self, message: impl Into<String>) {
-        self.inner.message(message);
+impl ActivityGuard {
+    /// Clone the activity reference without transferring lifecycle ownership.
+    pub fn share(&self) -> Activity {
+        self.activity.clone()
     }
 
     /// Mark the activity as successful.
     pub fn finish(mut self) {
-        self.inner.finish_inner(ActivityStatus::Success, None);
+        self.active.finish_inner(ActivityStatus::Success, None);
     }
 
     /// Mark the activity as successful with a message.
     pub fn finish_with_message(mut self, message: impl Into<String>) {
-        self.inner
+        self.active
             .finish_inner(ActivityStatus::Success, Some(message.into()));
     }
 
     /// Mark the activity as abandoned.
     pub fn abandon(mut self) {
-        self.inner.finish_inner(ActivityStatus::Abandoned, None);
+        self.active.finish_inner(ActivityStatus::Abandoned, None);
     }
 
     /// Mark the activity as abandoned with a message.
     pub fn abandon_with_message(mut self, message: impl Into<String>) {
-        self.inner
+        self.active
             .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
     }
 
@@ -585,29 +425,16 @@ impl<State> ActivityGuard<State> {
     /// Failed activities use the abandoned status until a distinct activity failure status is
     /// available on the wire.
     pub fn fail(mut self, message: impl Into<String>) {
-        self.inner
+        self.active
             .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
     }
 }
 
-impl ActivityGuard<Metered> {
-    /// Increase the current progress value by `delta`.
-    pub fn inc(&mut self, delta: u64) {
-        self.state.current = self.state.current.saturating_add(delta);
-        self.report_update();
-    }
+impl std::ops::Deref for ActivityGuard {
+    type Target = Activity;
 
-    /// Set the current progress value.
-    pub fn set(&mut self, current: u64) {
-        self.state.current = current;
-        self.report_update();
-    }
-
-    fn report_update(&self) {
-        self.inner.reporter.report(ActivityEvent::Updated {
-            id: self.inner.activity.id,
-            current: self.state.current,
-        });
+    fn deref(&self) -> &Self::Target {
+        &self.activity
     }
 }
 
@@ -616,6 +443,8 @@ mod tests {
     use std::sync::Mutex;
 
     use serde_json::json;
+
+    use crate::ExperimentContext as _;
 
     use super::*;
 
@@ -636,14 +465,29 @@ mod tests {
         }
     }
 
-    fn builder(reporter: Arc<MockReporter>, name: &str) -> ActivityBuilder<Metered> {
+    fn test_context(control: ExperimentRunControl) -> ExperimentRunHandle {
+        let context_cancel_token = control.cancel_token();
+        ExperimentRunHandle {
+            metadata: crate::ExperimentMetadata {
+                id: crate::ExperimentId::new("test/experiment/1"),
+            },
+            inner: std::sync::Weak::new(),
+            control,
+            activity: None,
+            context_cancel_token,
+            scope: Arc::new(serde_json::Map::new()),
+        }
+    }
+
+    fn builder(reporter: Arc<MockReporter>, name: &str) -> ActivityBuilder {
+        let control = ExperimentRunControl::default();
         ActivityBuilder::new(
             reporter,
             Arc::new(AtomicActivityIdAllocator::new()),
-            ExperimentRunControl::default(),
+            control.clone(),
             name.to_string(),
+            test_context(control),
         )
-        .progress()
     }
 
     #[test]
@@ -651,8 +495,7 @@ mod tests {
         let reporter = Arc::new(MockReporter::default());
 
         let _guard = builder(reporter.clone(), "load")
-            .total(12)
-            .unit("items")
+            .meter(12, "items")
             .attr("split", "train")
             .unwrap()
             .start();
@@ -672,13 +515,7 @@ mod tests {
     fn activity_start_reports_no_meter() {
         let reporter = Arc::new(MockReporter::default());
 
-        let _guard = ActivityBuilder::new(
-            reporter.clone(),
-            Arc::new(AtomicActivityIdAllocator::new()),
-            ExperimentRunControl::default(),
-            "epoch",
-        )
-        .start();
+        let _guard = builder(reporter.clone(), "epoch").start();
 
         let events = reporter.events();
         let ActivityEvent::Started { activity } = &events[0] else {
@@ -689,26 +526,9 @@ mod tests {
     }
 
     #[test]
-    fn child_activity_start_reports_parent_id() {
-        let reporter = Arc::new(MockReporter::default());
-        let parent = builder(reporter.clone(), "parent").start();
-
-        let _child = parent.activity("child").start();
-
-        let events = reporter.events();
-        let ActivityEvent::Started { activity: parent } = events[0].clone() else {
-            panic!("unexpected event: {:?}", events[0]);
-        };
-        let ActivityEvent::Started { activity: child } = events[1].clone() else {
-            panic!("unexpected event: {:?}", events[1]);
-        };
-        assert_eq!(child.parent, Some(parent.id));
-    }
-
-    #[test]
     fn inc_reports_updated_progress() {
         let reporter = Arc::new(MockReporter::default());
-        let mut guard = builder(reporter.clone(), "items").total(8).start();
+        let guard = builder(reporter.clone(), "items").meter(8, "items").start();
 
         guard.inc(3);
 
@@ -717,6 +537,48 @@ mod tests {
             panic!("unexpected event: {:?}", events[1]);
         };
         assert_eq!(*current, 3);
+    }
+
+    #[test]
+    fn cloned_activity_reports_accumulated_progress_from_another_thread() {
+        let reporter = Arc::new(MockReporter::default());
+        let guard = builder(reporter.clone(), "items").meter(8, "items").start();
+        let activity = guard.share();
+
+        activity.inc(2);
+        let worker_activity = activity.clone();
+        std::thread::spawn(move || worker_activity.inc(3))
+            .join()
+            .unwrap();
+
+        let updates = reporter
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActivityEvent::Updated { current, .. } => Some(current),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(updates, vec![2, 5]);
+    }
+
+    #[test]
+    fn meterless_activity_reports_updates_as_open_ended_counts() {
+        let reporter = Arc::new(MockReporter::default());
+        let guard = builder(reporter.clone(), "items").start();
+        let activity = guard.share();
+
+        activity.inc(4);
+
+        let events = reporter.events();
+        assert!(matches!(
+            &events[0],
+            ActivityEvent::Started { activity } if activity.meter.is_none()
+        ));
+        assert!(matches!(
+            &events[1],
+            ActivityEvent::Updated { current: 4, .. }
+        ));
     }
 
     #[test]
@@ -774,6 +636,7 @@ mod tests {
             Arc::new(AtomicActivityIdAllocator::new()),
             control.clone(),
             "node",
+            test_context(control.clone()),
         )
         .cancellable()
         .start();

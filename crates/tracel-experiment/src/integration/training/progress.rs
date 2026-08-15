@@ -1,9 +1,6 @@
 use burn::train::logger::{EvaluationProgressLogger, TrainingProgressLogger};
 
-use crate::{
-    ExperimentContext, ExperimentRunHandle,
-    activity::{ActivityGuard, Metered},
-};
+use crate::{ActivityGuard, ExperimentContext, ExperimentRunHandle};
 
 /// Experiment-backed implementation of Burn's [`TrainingProgressLogger`] trait.
 ///
@@ -11,9 +8,9 @@ use crate::{
 /// you already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 pub struct ExperimentTrainingProgressLogger {
     experiment: ExperimentRunHandle,
-    training_guard: Option<ActivityGuard<Metered>>,
+    training_guard: Option<ActivityGuard>,
     epoch_guard: Option<ActivityGuard>,
-    split_guard: Option<ActivityGuard<Metered>>,
+    split_guard: Option<ActivityGuard>,
     completed_epochs: usize,
     total_epochs: Option<usize>,
 }
@@ -73,9 +70,7 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         self.training_guard = Some(
             self.experiment
                 .activity("Training")
-                .progress()
-                .total(total_epochs as u64)
-                .unit("epochs")
+                .meter(total_epochs as u64, "epochs")
                 .start(),
         );
     }
@@ -84,17 +79,17 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         self.ensure_epoch_scope();
 
         let builder = if let Some(epoch_guard) = &self.epoch_guard {
-            epoch_guard.activity(name).progress()
+            epoch_guard.activity(name)
         } else if let Some(guard) = &self.training_guard {
-            guard.activity(name).progress()
+            guard.activity(name)
         } else {
-            self.experiment.activity(name).progress()
+            self.experiment.activity(name)
         };
-        self.split_guard = Some(builder.total(total_items as u64).unit("steps").start());
+        self.split_guard = Some(builder.meter(total_items as u64, "steps").start());
     }
 
     fn update_split(&mut self, items_processed: usize) {
-        if let Some(guard) = &mut self.split_guard {
+        if let Some(guard) = &self.split_guard {
             guard.set(items_processed as u64);
         }
     }
@@ -108,7 +103,7 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
     fn update_epoch(&mut self, epoch: usize) {
         self.completed_epochs = epoch;
 
-        if let Some(guard) = &mut self.training_guard {
+        if let Some(guard) = &self.training_guard {
             guard.set(epoch as u64);
         }
 
@@ -135,8 +130,8 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
 /// you already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 pub struct ExperimentEvaluationProgressLogger {
     experiment: ExperimentRunHandle,
-    eval_guard: Option<ActivityGuard<Metered>>,
-    test_guard: Option<ActivityGuard<Metered>>,
+    eval_guard: Option<ActivityGuard>,
+    test_guard: Option<ActivityGuard>,
 }
 
 impl ExperimentEvaluationProgressLogger {
@@ -159,24 +154,22 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         self.eval_guard = Some(
             self.experiment
                 .activity("Evaluation")
-                .progress()
-                .total(total_tests as u64)
-                .unit("tests")
+                .meter(total_tests as u64, "tests")
                 .start(),
         );
     }
 
     fn start_test(&mut self, name: &str, total_items: usize) {
         let builder = if let Some(guard) = &self.eval_guard {
-            guard.activity(name).progress()
+            guard.activity(name)
         } else {
-            self.experiment.activity(name).progress()
+            self.experiment.activity(name)
         };
-        self.test_guard = Some(builder.total(total_items as u64).unit("steps").start());
+        self.test_guard = Some(builder.meter(total_items as u64, "steps").start());
     }
 
     fn update_test_progress(&mut self, items_processed: usize) {
-        if let Some(guard) = &mut self.test_guard {
+        if let Some(guard) = &self.test_guard {
             guard.set(items_processed as u64);
         }
     }
