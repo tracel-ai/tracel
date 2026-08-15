@@ -3,9 +3,7 @@
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
-use crate::activity::{
-    ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, AtomicActivityIdAllocator,
-};
+use crate::activity::{ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId};
 use crate::context::CurrentExperimentGuard;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::session::Event;
@@ -14,22 +12,15 @@ use crate::{
     MetricSpec, MetricValue, RunActivityReporter,
 };
 
-pub(crate) fn context_handle<C: ExperimentContext + ?Sized>(context: &C) -> ExperimentRunHandle {
-    context.experiment_context_handle()
-}
-
 /// A telemetry surface shared by experiment runs and activity scopes.
 ///
 /// Operations emitted through an activity guard or scope are attributed to that activity.
 /// Operations emitted through a run or root handle remain at the run root.
 pub trait ExperimentContext {
-    /// Context returned after extending inherited log attributes.
-    type WithAttrs: ExperimentContext;
-
     /// Return an owned weak handle that preserves this context's scope.
     ///
     /// Custom context implementations should delegate this to an existing SDK context.
-    fn experiment_context_handle(&self) -> ExperimentRunHandle;
+    fn scope_handle(&self) -> ExperimentRunHandle;
 
     /// Log a `trace`-level message.
     fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
@@ -58,23 +49,8 @@ pub trait ExperimentContext {
 
     /// Record a structured log entry.
     fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
-        self.experiment_context_handle().context_log(record)
+        self.scope_handle().emit_log(record)
     }
-
-    /// Return a context whose logs inherit an additional attribute.
-    #[must_use]
-    fn with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self::WithAttrs;
-
-    /// Return a context whose logs inherit additional attributes.
-    #[must_use]
-    fn with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self::WithAttrs;
 
     /// Log a named configuration object.
     fn log_config<C: Serialize>(
@@ -82,8 +58,7 @@ pub trait ExperimentContext {
         name: impl Into<String>,
         config: &C,
     ) -> Result<(), ExperimentError> {
-        self.experiment_context_handle()
-            .context_log_config(name, config)
+        self.scope_handle().emit_config(name, config)
     }
 
     /// Log metric values for an epoch, split, and iteration.
@@ -94,14 +69,13 @@ pub trait ExperimentContext {
         iteration: usize,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.experiment_context_handle()
-            .context_log_metric(epoch, split, iteration, items)
+        self.scope_handle()
+            .emit_metric(epoch, split, iteration, items)
     }
 
     /// Log a metric definition.
     fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.experiment_context_handle()
-            .context_log_metric_definition(spec)
+        self.scope_handle().emit_metric_definition(spec)
     }
 
     /// Log aggregated metric values for an epoch and split.
@@ -111,13 +85,12 @@ pub trait ExperimentContext {
         split: impl Into<String>,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.experiment_context_handle()
-            .context_log_epoch_summary(epoch, split, items)
+        self.scope_handle().emit_epoch_summary(epoch, split, items)
     }
 
     /// Log scalar summary values without an epoch axis.
     fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
-        self.experiment_context_handle().context_log_summary(items)
+        self.scope_handle().emit_summary(items)
     }
 
     /// Encode and persist an artifact.
@@ -128,8 +101,8 @@ pub trait ExperimentContext {
         artifact: E,
         settings: &E::Settings,
     ) -> Result<(), ExperimentError> {
-        self.experiment_context_handle()
-            .context_save_artifact(name, kind, artifact, settings)
+        self.scope_handle()
+            .emit_save_artifact(name, kind, artifact, settings)
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
@@ -139,13 +112,13 @@ pub trait ExperimentContext {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentError> {
-        self.experiment_context_handle()
-            .context_use_artifact(experiment_id, name, settings)
+        self.scope_handle()
+            .emit_use_artifact(experiment_id, name, settings)
     }
 
     /// Create a child activity builder.
     fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
-        self.experiment_context_handle().context_activity(name)
+        self.scope_handle().emit_activity(name)
     }
 }
 
@@ -156,19 +129,29 @@ pub trait ExperimentContext {
 #[derive(Clone)]
 pub struct ActivityScope {
     pub(crate) handle: ExperimentRunHandle,
+    id: ActivityId,
 }
 
 impl ActivityScope {
-    pub(crate) fn new(handle: ExperimentRunHandle) -> Self {
-        debug_assert!(handle.activity.is_some());
-        Self { handle }
+    pub(crate) fn new(handle: ExperimentRunHandle, id: ActivityId) -> Self {
+        Self { handle, id }
     }
 
     /// Return the activity identifier.
     pub fn id(&self) -> ActivityId {
-        self.handle
-            .activity
-            .expect("activity scopes always carry an activity identifier")
+        self.id
+    }
+
+    /// Return a scope whose logs inherit an additional attribute.
+    #[must_use]
+    pub fn with_attr(&self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        Self::new(self.handle.with_attr(key, value), self.id)
+    }
+
+    /// Return a scope whose logs inherit additional attributes.
+    #[must_use]
+    pub fn with_attrs(&self, attrs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
+        Self::new(self.handle.with_attrs(attrs), self.id)
     }
 
     /// Return the activity cancellation token.
@@ -211,111 +194,26 @@ impl std::fmt::Debug for ActivityScope {
 }
 
 impl ExperimentContext for ExperimentRun {
-    type WithAttrs = ExperimentRunHandle;
-
-    fn experiment_context_handle(&self) -> ExperimentRunHandle {
+    fn scope_handle(&self) -> ExperimentRunHandle {
         self.handle.clone()
-    }
-
-    fn with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self::WithAttrs {
-        self.handle.context_with_attr(key, value)
-    }
-
-    fn with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self::WithAttrs {
-        self.handle.context_with_attrs(attrs)
     }
 }
 
 impl ExperimentContext for ExperimentRunHandle {
-    type WithAttrs = ExperimentRunHandle;
-
-    fn experiment_context_handle(&self) -> ExperimentRunHandle {
+    fn scope_handle(&self) -> ExperimentRunHandle {
         self.clone()
-    }
-
-    fn with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self::WithAttrs {
-        self.context_with_attr(key, value)
-    }
-
-    fn with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self::WithAttrs {
-        self.context_with_attrs(attrs)
     }
 }
 
 impl<State> ExperimentContext for ActivityGuard<State> {
-    type WithAttrs = ActivityScope;
-
-    fn experiment_context_handle(&self) -> ExperimentRunHandle {
+    fn scope_handle(&self) -> ExperimentRunHandle {
         self.scope().handle
-    }
-
-    fn with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self::WithAttrs {
-        self.scope().context_with_attr(key, value)
-    }
-
-    fn with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self::WithAttrs {
-        self.scope().context_with_attrs(attrs)
     }
 }
 
 impl ExperimentContext for ActivityScope {
-    type WithAttrs = ActivityScope;
-
-    fn experiment_context_handle(&self) -> ExperimentRunHandle {
+    fn scope_handle(&self) -> ExperimentRunHandle {
         self.handle.clone()
-    }
-
-    fn with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self::WithAttrs {
-        self.context_with_attr(key, value)
-    }
-
-    fn with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self::WithAttrs {
-        self.context_with_attrs(attrs)
-    }
-}
-
-impl ActivityScope {
-    fn context_with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self {
-        Self::new(self.handle.context_with_attr(key, value))
-    }
-
-    fn context_with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self {
-        Self::new(self.handle.context_with_attrs(attrs))
     }
 }
 
@@ -328,32 +226,7 @@ impl ExperimentRunHandle {
         }
     }
 
-    pub(crate) fn context_with_attr(
-        &self,
-        key: impl Into<String>,
-        value: impl Into<serde_json::Value>,
-    ) -> Self {
-        let mut scope = (*self.scope).clone();
-        scope.insert(key.into(), value.into());
-        Self {
-            scope: std::sync::Arc::new(scope),
-            ..self.clone()
-        }
-    }
-
-    pub(crate) fn context_with_attrs(
-        &self,
-        attrs: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> Self {
-        let mut scope = (*self.scope).clone();
-        scope.extend(attrs);
-        Self {
-            scope: std::sync::Arc::new(scope),
-            ..self.clone()
-        }
-    }
-
-    fn context_log(&self, mut record: LogRecord) -> Result<(), ExperimentError> {
+    fn emit_log(&self, mut record: LogRecord) -> Result<(), ExperimentError> {
         if !self.scope.is_empty() {
             record.inherit_attrs(&self.scope);
         }
@@ -363,7 +236,7 @@ impl ExperimentRunHandle {
         })
     }
 
-    fn context_log_config<C: Serialize>(
+    fn emit_config<C: Serialize>(
         &self,
         name: impl Into<String>,
         config: &C,
@@ -382,7 +255,7 @@ impl ExperimentRunHandle {
         })
     }
 
-    fn context_log_metric(
+    fn emit_metric(
         &self,
         epoch: usize,
         split: impl Into<String>,
@@ -398,11 +271,11 @@ impl ExperimentRunHandle {
         })
     }
 
-    fn context_log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
+    fn emit_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
         self.record_event(Event::MetricDefinition(spec))
     }
 
-    fn context_log_epoch_summary(
+    fn emit_epoch_summary(
         &self,
         epoch: usize,
         split: impl Into<String>,
@@ -416,14 +289,14 @@ impl ExperimentRunHandle {
         })
     }
 
-    fn context_log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
+    fn emit_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
         self.record_event(Event::Summary {
             items,
             activity: self.activity,
         })
     }
 
-    fn context_save_artifact<E: BundleEncode>(
+    fn emit_save_artifact<E: BundleEncode>(
         &self,
         name: impl AsRef<str>,
         kind: ArtifactKind,
@@ -448,7 +321,7 @@ impl ExperimentRunHandle {
             .save_artifact(name.as_ref(), kind, self.activity, Box::new(artifact_fn))
     }
 
-    fn context_use_artifact<D: BundleDecode>(
+    fn emit_use_artifact<D: BundleDecode>(
         &self,
         experiment_id: impl Into<ExperimentId>,
         name: impl AsRef<str>,
@@ -477,18 +350,16 @@ impl ExperimentRunHandle {
         })
     }
 
-    fn context_activity(&self, name: impl Into<String>) -> ActivityBuilder {
+    fn emit_activity(&self, name: impl Into<String>) -> ActivityBuilder {
         let inner = match self.upgrade() {
             Ok(inner) => inner,
             Err(_) => {
-                return ActivityBuilder::new(
-                    std::sync::Arc::new(|_| {}),
-                    std::sync::Arc::new(AtomicActivityIdAllocator::new()),
-                    crate::ExperimentRunControl::default(),
-                    name.into(),
-                )
-                .with_parent(self.activity, self.context_cancel_token.clone())
-                .with_context(self.clone());
+                return ActivityBuilder::detached(
+                    name,
+                    self.activity,
+                    self.context_cancel_token.clone(),
+                    self.clone(),
+                );
             }
         };
 

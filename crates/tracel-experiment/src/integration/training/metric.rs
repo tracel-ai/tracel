@@ -4,7 +4,7 @@ use burn::train::logger::MetricLogger;
 use burn::train::metric::store::{EpochSummary, MetricsUpdate, NumericMetricUpdate, Split};
 use burn::train::metric::{MetricAttributes, MetricDefinition, MetricId, NumericEntry};
 
-use crate::{ExperimentRunHandle, MetricSpec, MetricValue};
+use crate::{ExperimentContext, ExperimentRunHandle, MetricSpec, MetricValue};
 
 /// Experiment-backed implementation of Burn's [`MetricLogger`] trait.
 ///

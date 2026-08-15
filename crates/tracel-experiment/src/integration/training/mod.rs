@@ -32,7 +32,6 @@ pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
 pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
-use crate::scope::context_handle;
 use crate::{ExperimentContext, ExperimentId};
 
 use self::interrupter::experiment_interrupter_from_handle;
@@ -41,7 +40,7 @@ use self::interrupter::experiment_interrupter_from_handle;
 pub trait ExperimentTrainingExt: ExperimentContext {
     /// Create a new [`ExperimentMetricLogger`] for this context.
     fn metric_logger(&self) -> ExperimentMetricLogger {
-        ExperimentMetricLogger::from_handle(context_handle(self))
+        ExperimentMetricLogger::from_handle(self.scope_handle())
     }
 
     /// Create the three checkpointers (model, optimizer, lr scheduler) for supervised training.
@@ -52,7 +51,7 @@ pub trait ExperimentTrainingExt: ExperimentContext {
         ExperimentCheckpointer,
         ExperimentCheckpointer,
     ) {
-        let handle = context_handle(self);
+        let handle = self.scope_handle();
         (
             ExperimentCheckpointer::from_handle(handle.clone(), "model".to_string()),
             ExperimentCheckpointer::from_handle(handle.clone(), "optim".to_string()),
@@ -71,7 +70,7 @@ pub trait ExperimentTrainingExt: ExperimentContext {
         ExperimentCheckpointer,
         ExperimentCheckpointer,
     ) {
-        let handle = context_handle(self);
+        let handle = self.scope_handle();
         let id = source_id.into();
         (
             ExperimentCheckpointer::from_handle(handle.clone(), "model".to_string())
@@ -85,17 +84,17 @@ pub trait ExperimentTrainingExt: ExperimentContext {
 
     /// Create a new [`burn::train::Interrupter`] linked to this context's cancellation token.
     fn interrupter(&self) -> burn::train::Interrupter {
-        experiment_interrupter_from_handle(context_handle(self))
+        experiment_interrupter_from_handle(self.scope_handle())
     }
 
     /// Create a new [`ExperimentTrainingProgressLogger`] for this context.
     fn training_progress_logger(&self) -> ExperimentTrainingProgressLogger {
-        ExperimentTrainingProgressLogger::from_handle(context_handle(self))
+        ExperimentTrainingProgressLogger::from_handle(self.scope_handle())
     }
 
     /// Create a new [`ExperimentEvaluationProgressLogger`] for this context.
     fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger {
-        ExperimentEvaluationProgressLogger::from_handle(context_handle(self))
+        ExperimentEvaluationProgressLogger::from_handle(self.scope_handle())
     }
 }
 

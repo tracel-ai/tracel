@@ -40,7 +40,7 @@ Wrap your training function into a job with `ExperimentModule::create`, then reg
 ```rust
 use tracel::app::cli::Cli;
 use tracel::app::mapper::JsonMapper;
-use tracel::experiment::ExperimentRun;
+use tracel::experiment::{ExperimentContext, ExperimentRun};
 use tracel::{Connection, Context};
 
 fn training(

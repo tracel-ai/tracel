@@ -1,7 +1,7 @@
 use burn::train::logger::{EvaluationProgressLogger, TrainingProgressLogger};
 
 use crate::{
-    ExperimentRunHandle,
+    ExperimentContext, ExperimentRunHandle,
     activity::{ActivityGuard, Metered},
 };
 

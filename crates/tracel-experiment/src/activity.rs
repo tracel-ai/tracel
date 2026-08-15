@@ -206,6 +206,25 @@ impl ActivityBuilder<Unmetered> {
         }
     }
 
+    /// Create a detached builder when its run has already finished.
+    ///
+    /// Events from a builder on a finished run go nowhere so the API remains infallible.
+    pub(crate) fn detached(
+        name: impl Into<String>,
+        parent: Option<ActivityId>,
+        cancel_token: CancelToken,
+        context_handle: ExperimentRunHandle,
+    ) -> Self {
+        Self::new(
+            Arc::new(|_| {}),
+            Arc::new(AtomicActivityIdAllocator::new()),
+            ExperimentRunControl::default(),
+            name,
+        )
+        .with_parent(parent, cancel_token)
+        .with_context(context_handle)
+    }
+
     /// Configure this activity with a numeric meter.
     pub fn progress(self) -> ActivityBuilder<Metered> {
         let ActivityBuilder {
@@ -515,6 +534,7 @@ impl<State> ActivityGuard<State> {
                 .context
                 .clone()
                 .expect("activity guards created by an experiment always carry a context"),
+            self.id(),
         )
     }
 

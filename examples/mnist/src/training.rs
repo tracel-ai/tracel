@@ -32,7 +32,8 @@ use burn::{
     },
 };
 use tracel::experiment::{
-    ArtifactKind, ExperimentId, ExperimentRun, integration::training::ExperimentTrainingExt,
+    ArtifactKind, ExperimentContext, ExperimentId, ExperimentRun,
+    integration::training::ExperimentTrainingExt,
 };
 static ARTIFACT_DIR: &str = "/tmp/burn-example-mnist";
 

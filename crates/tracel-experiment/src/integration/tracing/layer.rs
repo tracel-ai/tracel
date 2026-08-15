@@ -3,7 +3,7 @@ use tracing::field::{Field, Visit};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    ExperimentRun, LogLevel, LogRecord,
+    ExperimentContext, ExperimentRun, LogLevel, LogRecord,
     context::ExperimentGlobalExt,
     integration::tracing::{registry::TracingRegistry, visitor::SpanFields},
 };

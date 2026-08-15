@@ -130,7 +130,7 @@ mod tests {
     use crate::error::ExperimentError;
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
     use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+    use crate::{ArtifactKind, CancelToken, ExperimentContext, ExperimentId, ExperimentRun};
 
     use super::*;
 
