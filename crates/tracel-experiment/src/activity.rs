@@ -14,6 +14,7 @@ use std::{
 
 use crate::cancellation::CancelToken;
 use crate::control::ExperimentRunControl;
+use crate::session::Event;
 use crate::{Activity, ExperimentRunHandle};
 
 /// Opaque non-zero identifier for an activity.
@@ -104,21 +105,6 @@ pub enum ActivityEvent {
     },
 }
 
-/// Sink for activity events.
-pub trait ActivityEventReporter: Send + Sync {
-    /// Report one activity event.
-    fn report(&self, event: ActivityEvent);
-}
-
-impl<F> ActivityEventReporter for F
-where
-    F: Fn(ActivityEvent) + Send + Sync,
-{
-    fn report(&self, event: ActivityEvent) {
-        self(event);
-    }
-}
-
 /// Allocates unique activity identifiers.
 pub trait ActivityIdAllocator: Send + Sync {
     /// Return the next identifier.
@@ -159,7 +145,6 @@ impl ActivityIdAllocator for AtomicActivityIdAllocator {
 
 /// Builder used to configure and start an activity.
 pub struct ActivityBuilder {
-    reporter: Arc<dyn ActivityEventReporter>,
     id_allocator: Arc<dyn ActivityIdAllocator>,
     control: ExperimentRunControl,
     cancellation_parent: CancelToken,
@@ -174,7 +159,6 @@ pub struct ActivityBuilder {
 impl ActivityBuilder {
     /// Create a root activity builder.
     pub(crate) fn new(
-        reporter: Arc<dyn ActivityEventReporter>,
         id_allocator: Arc<dyn ActivityIdAllocator>,
         control: ExperimentRunControl,
         name: impl Into<String>,
@@ -183,7 +167,6 @@ impl ActivityBuilder {
         let cancellation_parent = control.cancel_token();
 
         Self {
-            reporter,
             id_allocator,
             control,
             cancellation_parent,
@@ -206,7 +189,6 @@ impl ActivityBuilder {
         context_handle: ExperimentRunHandle,
     ) -> Self {
         Self::new(
-            Arc::new(|_| {}),
             Arc::new(AtomicActivityIdAllocator::new()),
             ExperimentRunControl::default(),
             name,
@@ -300,16 +282,17 @@ impl ActivityBuilder {
         };
         let cancellable = spec.cancellable;
 
-        self.reporter
-            .report(ActivityEvent::Started { activity: spec });
+        self.context
+            .record_event(Event::Activity(ActivityEvent::Started { activity: spec }))
+            .ok();
 
         if cancellable {
             self.control
                 .register_activity_cancellation(id, cancel_token.clone());
         }
 
-        let activity = Activity::new(context, id, self.reporter.clone());
-        let active = ActiveActivity::new(self.reporter, self.control, id, cancellable);
+        let activity = Activity::new(context.clone(), id);
+        let active = ActiveActivity::new(context, self.control, id, cancellable);
 
         ActivityGuard { activity, active }
     }
@@ -337,9 +320,9 @@ where
     }
 }
 
-/// Lifecycle state for a running activity.
+/// Enforces one terminal event across consuming finish methods and drop.
 struct ActiveActivity {
-    reporter: Arc<dyn ActivityEventReporter>,
+    handle: ExperimentRunHandle,
     control: ExperimentRunControl,
     id: ActivityId,
     cancellable: bool,
@@ -349,13 +332,13 @@ struct ActiveActivity {
 impl ActiveActivity {
     /// Create lifecycle state for an already-started activity.
     fn new(
-        reporter: Arc<dyn ActivityEventReporter>,
+        handle: ExperimentRunHandle,
         control: ExperimentRunControl,
         id: ActivityId,
         cancellable: bool,
     ) -> Self {
         Self {
-            reporter,
+            handle,
             control,
             id,
             cancellable,
@@ -369,11 +352,13 @@ impl ActiveActivity {
         }
 
         self.finished = true;
-        self.reporter.report(ActivityEvent::Finished {
-            id: self.id,
-            status,
-            message,
-        });
+        self.handle
+            .record_event(Event::Activity(ActivityEvent::Finished {
+                id: self.id,
+                status,
+                message,
+            }))
+            .ok();
         if self.cancellable {
             self.control.unregister_activity_cancellation(self.id);
         }
@@ -440,67 +425,33 @@ impl std::ops::Deref for ActivityGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::Arc;
 
     use serde_json::json;
 
     use crate::ExperimentContext as _;
+    use crate::test_support::{MockSession, create_run, create_run_with_control};
 
     use super::*;
 
-    #[derive(Default)]
-    struct MockReporter {
-        events: Mutex<Vec<ActivityEvent>>,
-    }
-
-    impl MockReporter {
-        fn events(&self) -> Vec<ActivityEvent> {
-            self.events.lock().unwrap().clone()
-        }
-    }
-
-    impl ActivityEventReporter for MockReporter {
-        fn report(&self, event: ActivityEvent) {
-            self.events.lock().unwrap().push(event);
-        }
-    }
-
-    fn test_context(control: ExperimentRunControl) -> ExperimentRunHandle {
-        let context_cancel_token = control.cancel_token();
-        ExperimentRunHandle {
-            metadata: crate::ExperimentMetadata {
-                id: crate::ExperimentId::new("test/experiment/1"),
-            },
-            inner: std::sync::Weak::new(),
-            control,
-            activity: None,
-            context_cancel_token,
-            scope: Arc::new(serde_json::Map::new()),
-        }
-    }
-
-    fn builder(reporter: Arc<MockReporter>, name: &str) -> ActivityBuilder {
-        let control = ExperimentRunControl::default();
-        ActivityBuilder::new(
-            reporter,
-            Arc::new(AtomicActivityIdAllocator::new()),
-            control.clone(),
-            name.to_string(),
-            test_context(control),
-        )
+    fn setup_run() -> (Arc<MockSession>, crate::ExperimentRun) {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        (session, run)
     }
 
     #[test]
     fn start_reports_configured_activity() {
-        let reporter = Arc::new(MockReporter::default());
+        let (session, run) = setup_run();
 
-        let _guard = builder(reporter.clone(), "load")
+        let _guard = run
+            .activity("load")
             .meter(12, "items")
             .attr("split", "train")
             .unwrap()
             .start();
 
-        let events = reporter.events();
+        let events = session.activity_events();
         let ActivityEvent::Started { activity } = &events[0] else {
             panic!("unexpected event: {:?}", events[0]);
         };
@@ -513,11 +464,11 @@ mod tests {
 
     #[test]
     fn activity_start_reports_no_meter() {
-        let reporter = Arc::new(MockReporter::default());
+        let (session, run) = setup_run();
 
-        let _guard = builder(reporter.clone(), "epoch").start();
+        let _guard = run.activity("epoch").start();
 
-        let events = reporter.events();
+        let events = session.activity_events();
         let ActivityEvent::Started { activity } = &events[0] else {
             panic!("unexpected event: {:?}", events[0]);
         };
@@ -527,12 +478,12 @@ mod tests {
 
     #[test]
     fn inc_reports_updated_progress() {
-        let reporter = Arc::new(MockReporter::default());
-        let guard = builder(reporter.clone(), "items").meter(8, "items").start();
+        let (session, run) = setup_run();
+        let guard = run.activity("items").meter(8, "items").start();
 
         guard.inc(3);
 
-        let events = reporter.events();
+        let events = session.activity_events();
         let ActivityEvent::Updated { current, .. } = &events[1] else {
             panic!("unexpected event: {:?}", events[1]);
         };
@@ -541,8 +492,8 @@ mod tests {
 
     #[test]
     fn cloned_activity_reports_accumulated_progress_from_another_thread() {
-        let reporter = Arc::new(MockReporter::default());
-        let guard = builder(reporter.clone(), "items").meter(8, "items").start();
+        let (session, run) = setup_run();
+        let guard = run.activity("items").meter(8, "items").start();
         let activity = guard.share();
 
         activity.inc(2);
@@ -551,8 +502,8 @@ mod tests {
             .join()
             .unwrap();
 
-        let updates = reporter
-            .events()
+        let updates = session
+            .activity_events()
             .into_iter()
             .filter_map(|event| match event {
                 ActivityEvent::Updated { current, .. } => Some(current),
@@ -564,13 +515,13 @@ mod tests {
 
     #[test]
     fn meterless_activity_reports_updates_as_open_ended_counts() {
-        let reporter = Arc::new(MockReporter::default());
-        let guard = builder(reporter.clone(), "items").start();
+        let (session, run) = setup_run();
+        let guard = run.activity("items").start();
         let activity = guard.share();
 
         activity.inc(4);
 
-        let events = reporter.events();
+        let events = session.activity_events();
         assert!(matches!(
             &events[0],
             ActivityEvent::Started { activity } if activity.meter.is_none()
@@ -582,12 +533,27 @@ mod tests {
     }
 
     #[test]
+    fn message_reports_activity_message() {
+        let (session, run) = setup_run();
+        let guard = run.activity("items").start();
+
+        guard.message("halfway").unwrap();
+
+        let events = session.activity_events();
+        assert!(matches!(
+            &events[1],
+            ActivityEvent::Message { id, message }
+                if *id == guard.id() && message == "halfway"
+        ));
+    }
+
+    #[test]
     fn finish_reports_one_success_completion() {
-        let reporter = Arc::new(MockReporter::default());
+        let (session, run) = setup_run();
 
-        builder(reporter.clone(), "node").start().finish();
+        run.activity("node").start().finish();
 
-        let events = reporter.events();
+        let events = session.activity_events();
         let finished: Vec<_> = events
             .iter()
             .filter_map(|event| match event {
@@ -600,11 +566,11 @@ mod tests {
 
     #[test]
     fn drop_reports_abandoned_completion() {
-        let reporter = Arc::new(MockReporter::default());
+        let (session, run) = setup_run();
 
-        drop(builder(reporter.clone(), "node").start());
+        drop(run.activity("node").start());
 
-        let events = reporter.events();
+        let events = session.activity_events();
         assert!(matches!(
             events.last(),
             Some(ActivityEvent::Finished {
@@ -616,11 +582,11 @@ mod tests {
 
     #[test]
     fn cancellable_activity_reports_control_metadata() {
-        let reporter = Arc::new(MockReporter::default());
+        let (session, run) = setup_run();
 
-        let _guard = builder(reporter.clone(), "node").cancellable().start();
+        let _guard = run.activity("node").cancellable().start();
 
-        let events = reporter.events();
+        let events = session.activity_events();
         let ActivityEvent::Started { activity } = &events[0] else {
             panic!("unexpected event: {:?}", events[0]);
         };
@@ -629,17 +595,10 @@ mod tests {
 
     #[test]
     fn cancellable_activity_registers_with_control() {
-        let reporter = Arc::new(MockReporter::default());
+        let session = Arc::new(MockSession::default());
         let control = ExperimentRunControl::default();
-        let guard = ActivityBuilder::new(
-            reporter,
-            Arc::new(AtomicActivityIdAllocator::new()),
-            control.clone(),
-            "node",
-            test_context(control.clone()),
-        )
-        .cancellable()
-        .start();
+        let run = create_run_with_control(session, control.clone());
+        let guard = run.activity("node").cancellable().start();
 
         assert!(control.cancel_activity(guard.id()));
         assert!(guard.is_cancel_requested());
@@ -647,8 +606,8 @@ mod tests {
 
     #[test]
     fn child_activity_cancel_request_is_linked_to_parent_activity_token() {
-        let reporter = Arc::new(MockReporter::default());
-        let parent = builder(reporter, "parent").start();
+        let (_session, run) = setup_run();
+        let parent = run.activity("parent").start();
         let child = parent.activity("child").start();
 
         parent.cancel_token().cancel();
@@ -659,13 +618,13 @@ mod tests {
 
     #[test]
     fn drop_reports_abandoned_even_when_cancel_was_requested() {
-        let reporter = Arc::new(MockReporter::default());
-        let guard = builder(reporter.clone(), "node").start();
+        let (session, run) = setup_run();
+        let guard = run.activity("node").start();
 
         guard.cancel_token().cancel();
         drop(guard);
 
-        let events = reporter.events();
+        let events = session.activity_events();
         assert!(matches!(
             events.last(),
             Some(ActivityEvent::Finished {

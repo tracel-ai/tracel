@@ -32,6 +32,8 @@ mod provider;
 pub mod reader;
 mod scope;
 pub mod session;
+#[cfg(test)]
+mod test_support;
 
 pub mod error;
 pub mod integration;
@@ -49,7 +51,7 @@ pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 pub use scope::{Activity, ExperimentContext};
 
-use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
+use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
@@ -392,16 +394,6 @@ impl ExperimentRunHandle {
     }
 }
 
-struct RunActivityReporter {
-    handle: ExperimentRunHandle,
-}
-
-impl ActivityEventReporter for RunActivityReporter {
-    fn report(&self, event: ActivityEvent) {
-        self.handle.record_event(Event::Activity(event)).ok();
-    }
-}
-
 impl ExperimentRunHandle {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         let inner = self.upgrade()?;
@@ -461,63 +453,10 @@ impl Drop for ExperimentRun {
 #[cfg(test)]
 mod tests {
     use crate::activity::ActivityEvent;
-    use crate::reader::{ExperimentReaderError, LoadedArtifact};
-    use crate::session::BundleFn;
+    use crate::test_support::{MockSession, create_run};
     use tracel_artifact::bundle::{BundleEncode, BundleSink};
 
     use super::*;
-
-    #[derive(Default)]
-    struct MockSession {
-        events: Mutex<Vec<Event>>,
-        completions: Mutex<Vec<ExperimentCompletion>>,
-        artifact_activities: Mutex<Vec<Option<ActivityId>>>,
-    }
-
-    impl ExperimentSession for MockSession {
-        fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-            self.events.lock().unwrap().push(event);
-            Ok(())
-        }
-
-        fn save_artifact(
-            &self,
-            _name: &str,
-            _kind: ArtifactKind,
-            activity: Option<ActivityId>,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            self.artifact_activities.lock().unwrap().push(activity);
-            Ok(())
-        }
-
-        fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            self.completions.lock().unwrap().push(completion);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct NoopExperimentDataReader;
-
-    impl ExperimentArtifactReader for NoopExperimentDataReader {
-        fn load_artifact_raw(
-            &self,
-            _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
-        }
-    }
-
-    fn create_run(session: Arc<MockSession>) -> ExperimentRun {
-        ExperimentRun::new(
-            "test/experiment/1",
-            session,
-            NoopExperimentDataReader,
-            CancelToken::default(),
-        )
-    }
 
     #[test]
     fn run_context_records_events() {

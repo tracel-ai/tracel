@@ -8,15 +8,13 @@ use std::sync::{
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
-use crate::activity::{
-    ActivityBuilder, ActivityEvent, ActivityEventReporter, ActivityGuard, ActivityId,
-};
+use crate::activity::{ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId};
 use crate::context::CurrentExperimentGuard;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::session::Event;
 use crate::{
     ArtifactKind, CancelToken, ExperimentId, ExperimentRun, ExperimentRunHandle, LogRecord,
-    MetricSpec, MetricValue, RunActivityReporter,
+    MetricSpec, MetricValue,
 };
 
 /// A telemetry surface shared by experiment runs and activities.
@@ -137,27 +135,15 @@ pub trait ExperimentContext {
 pub struct Activity {
     pub(crate) handle: ExperimentRunHandle,
     id: ActivityId,
-    core: Arc<ActivityCore>,
-}
-
-struct ActivityCore {
-    reporter: Arc<dyn ActivityEventReporter>,
-    current: AtomicU64,
+    current: Arc<AtomicU64>,
 }
 
 impl Activity {
-    pub(crate) fn new(
-        handle: ExperimentRunHandle,
-        id: ActivityId,
-        reporter: Arc<dyn ActivityEventReporter>,
-    ) -> Self {
+    pub(crate) fn new(handle: ExperimentRunHandle, id: ActivityId) -> Self {
         Self {
             handle,
             id,
-            core: Arc::new(ActivityCore {
-                reporter,
-                current: AtomicU64::new(0),
-            }),
+            current: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -201,10 +187,10 @@ impl Activity {
     ///
     /// Activities without a declared meter accept updates as open-ended counts.
     pub fn inc(&self, delta: u64) {
-        let mut current = self.core.current.load(Ordering::Relaxed);
+        let mut current = self.current.load(Ordering::Relaxed);
         let current = loop {
             let updated = current.saturating_add(delta);
-            match self.core.current.compare_exchange_weak(
+            match self.current.compare_exchange_weak(
                 current,
                 updated,
                 Ordering::Relaxed,
@@ -222,7 +208,7 @@ impl Activity {
     ///
     /// Activities without a declared meter accept updates as open-ended counts.
     pub fn set(&self, current: u64) {
-        self.core.current.store(current, Ordering::Relaxed);
+        self.current.store(current, Ordering::Relaxed);
         self.report_update(current);
     }
 
@@ -246,10 +232,12 @@ impl Activity {
     }
 
     fn report_update(&self, current: u64) {
-        self.core.reporter.report(ActivityEvent::Updated {
-            id: self.id,
-            current,
-        });
+        self.handle
+            .record_event(Event::Activity(ActivityEvent::Updated {
+                id: self.id,
+                current,
+            }))
+            .ok();
     }
 }
 
@@ -433,9 +421,6 @@ impl ExperimentRunHandle {
         };
 
         ActivityBuilder::new(
-            std::sync::Arc::new(RunActivityReporter {
-                handle: self.clone(),
-            }),
             inner.activity_id_allocator.clone(),
             self.control.clone(),
             name.into(),
