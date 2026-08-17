@@ -74,6 +74,8 @@ pub enum ActivityStatus {
     Success,
     /// The activity stopped before successful completion.
     Abandoned,
+    /// The activity ended in an error.
+    Failed,
 }
 
 /// Event emitted by an activity.
@@ -613,11 +615,10 @@ impl ActivityGuard {
 
     /// Mark the activity as failed with a message.
     ///
-    /// Failed activities use the abandoned status until a distinct activity failure status is
-    /// available on the wire.
+    /// Distinct from [`ActivityGuard::abandon`], which reports work that stopped without an error.
     pub fn fail(self, message: impl Into<String>) {
         self.activity
-            .complete(ActivityStatus::Abandoned, Some(message.into()));
+            .complete(ActivityStatus::Failed, Some(message.into()));
     }
 }
 
@@ -782,6 +783,39 @@ mod tests {
             })
             .collect();
         assert!(matches!(finished.as_slice(), [ActivityStatus::Success]));
+    }
+
+    #[test]
+    fn fail_reports_failed_completion_with_its_message() {
+        let (session, run) = setup_run();
+
+        run.activity("node").start().fail("kernel panicked");
+
+        let events = session.activity_events();
+        assert!(matches!(
+            events.last(),
+            Some(ActivityEvent::Finished {
+                status: ActivityStatus::Failed,
+                message: Some(message),
+                ..
+            }) if message == "kernel panicked"
+        ));
+    }
+
+    #[test]
+    fn abandon_reports_abandoned_completion() {
+        let (session, run) = setup_run();
+
+        run.activity("node").start().abandon();
+
+        let events = session.activity_events();
+        assert!(matches!(
+            events.last(),
+            Some(ActivityEvent::Finished {
+                status: ActivityStatus::Abandoned,
+                ..
+            })
+        ));
     }
 
     #[test]

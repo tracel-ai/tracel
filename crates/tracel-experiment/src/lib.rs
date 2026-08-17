@@ -823,6 +823,55 @@ mod tests {
     }
 
     #[test]
+    fn logs_record_the_emitting_activity_scope() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("train").start();
+
+        activity.log_info("in scope");
+        run.log_info("out of scope");
+
+        let events = session.events.lock().unwrap();
+        assert!(matches!(
+            &events[1],
+            Event::Log {
+                activity: Some(id),
+                ..
+            } if *id == activity.id()
+        ));
+        assert!(matches!(&events[2], Event::Log { activity: None, .. }));
+    }
+
+    #[test]
+    fn epoch_summaries_record_the_emitting_activity_scope() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("train").start();
+        let items = || {
+            vec![MetricValue {
+                name: "loss".to_string(),
+                value: 0.1,
+            }]
+        };
+
+        activity.log_epoch_summary(1, "train", items());
+        run.log_epoch_summary(1, "valid", items());
+
+        let events = session.events.lock().unwrap();
+        assert!(matches!(
+            &events[1],
+            Event::EpochSummary {
+                activity: Some(id),
+                ..
+            } if *id == activity.id()
+        ));
+        assert!(matches!(
+            &events[2],
+            Event::EpochSummary { activity: None, .. }
+        ));
+    }
+
+    #[test]
     fn summaries_record_the_emitting_activity_scope() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
@@ -884,7 +933,7 @@ mod tests {
             completions.as_slice(),
             [
                 (ActivityStatus::Success, None),
-                (ActivityStatus::Abandoned, Some("fold failed")),
+                (ActivityStatus::Failed, Some("fold failed")),
                 (ActivityStatus::Abandoned, None),
             ]
         ));

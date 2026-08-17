@@ -82,27 +82,25 @@ impl RemoteExperimentSession {
 }
 
 impl ExperimentSession for RemoteExperimentSession {
-    /// Activity attribution is omitted because current wire messages cannot represent it.
-    /// Summaries use epoch zero and the `summary` split as a provisional encoding.
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         let message = match event {
             Event::Args(value) => ExperimentMessage::Arguments(value),
             Event::Config { name, value } => ExperimentMessage::Config { name, value },
-            Event::Log {
-                record,
-                activity: _,
-            } => ExperimentMessage::LogEntries(vec![to_log_entry(record)]),
+            Event::Log { record, activity } => {
+                ExperimentMessage::LogEntries(vec![to_log_entry(record, activity)])
+            }
             Event::Metrics {
                 epoch,
                 split,
                 iteration,
                 items,
-                activity: _,
+                activity,
             } => ExperimentMessage::MetricsLog {
                 epoch,
                 split,
                 iteration,
                 items: to_remote_metric_logs(items),
+                activity: to_remote_activity_id(activity),
             },
             Event::MetricDefinition(MetricSpec {
                 name,
@@ -119,16 +117,16 @@ impl ExperimentSession for RemoteExperimentSession {
                 epoch,
                 split,
                 items,
-                activity: _,
+                activity,
             } => ExperimentMessage::EpochSummaryLog {
                 epoch,
                 split,
                 best_metric_values: to_remote_metric_logs(items),
+                activity: to_remote_activity_id(activity),
             },
-            Event::Summary { items, activity: _ } => ExperimentMessage::EpochSummaryLog {
-                epoch: 0,
-                split: "summary".to_owned(),
-                best_metric_values: to_remote_metric_logs(items),
+            Event::Summary { items, activity } => ExperimentMessage::SummaryLog {
+                items: to_remote_metric_logs(items),
+                activity: to_remote_activity_id(activity),
             },
             Event::ArtifactUsed {
                 experiment_id: _,
@@ -144,7 +142,7 @@ impl ExperimentSession for RemoteExperimentSession {
         self.send(message)
     }
 
-    /// Activity attribution is omitted because artifact uploads cannot represent it.
+    /// Activity attribution is omitted because the uploader does not yet accept an activity scope.
     fn save_artifact(
         &self,
         name: &str,
@@ -212,13 +210,18 @@ impl ExperimentSession for RemoteExperimentSession {
     }
 }
 
-fn to_log_entry(record: LogRecord) -> LogEntry {
+fn to_log_entry(record: LogRecord, activity: Option<ActivityId>) -> LogEntry {
     LogEntry {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: to_wire_log_level(record.level),
         message: record.message,
         metadata: record.attributes,
+        activity: to_remote_activity_id(activity),
     }
+}
+
+fn to_remote_activity_id(activity: Option<ActivityId>) -> Option<u64> {
+    activity.map(ActivityId::as_u64)
 }
 
 fn to_wire_log_level(level: LogLevel) -> LogEntryLevel {
@@ -273,6 +276,7 @@ fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
             status: match status {
                 ActivityStatus::Success => ActivityStatusRequest::Success,
                 ActivityStatus::Abandoned => ActivityStatusRequest::Abandoned,
+                ActivityStatus::Failed => ActivityStatusRequest::Failed,
             },
             message,
         },

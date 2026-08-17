@@ -94,6 +94,7 @@ impl ExperimentArtifactClient {
                 name: name.clone(),
                 kind: artifact_kind_name(kind).to_string(),
                 files: specs,
+                activity: None,
             },
         )?;
 

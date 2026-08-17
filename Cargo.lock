@@ -461,7 +461,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.20.11",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -6665,8 +6665,6 @@ dependencies = [
 [[package]]
 name = "tracel-client"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e73381f5a151ff607e9eff1c9620ae2e70dd2b0364818d018855c482f1f36a95"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",
