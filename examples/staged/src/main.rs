@@ -38,7 +38,7 @@ fn study(run: &ExperimentRun) -> Result<(), Box<dyn std::error::Error + Send + S
         .meter(fold_count as u64, "folds")
         .run(|preparation| -> anyhow::Result<()> {
             for fold in 0..fold_count {
-                preparation.message(format!("Prepared fold {}", fold + 1))?;
+                preparation.message(format!("Prepared fold {}", fold + 1));
                 preparation.inc(1);
             }
             Ok(())
@@ -53,7 +53,7 @@ fn study(run: &ExperimentRun) -> Result<(), Box<dyn std::error::Error + Send + S
                     .activity(format!("Fold {}", fold_index + 1))
                     .cancellable()
                     .start();
-                fold.log_info("Launching toy learner")?;
+                fold.log_info("Launching toy learner");
 
                 let device = Device::flex().autodiff();
                 let model = ToyModel::new(&device);
@@ -85,7 +85,7 @@ fn study(run: &ExperimentRun) -> Result<(), Box<dyn std::error::Error + Send + S
             folds.log_summary(vec![MetricValue {
                 name: "mean_fold_score".to_string(),
                 value: mean_score,
-            }])?;
+            }]);
 
             Ok(())
         })?;

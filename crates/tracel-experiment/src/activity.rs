@@ -269,8 +269,7 @@ impl ActivityBuilder {
         let cancellable = spec.cancellable;
 
         self.context
-            .record_event(Event::Activity(ActivityEvent::Started { activity: spec }))
-            .ok();
+            .emit(Event::Activity(ActivityEvent::Started { activity: spec }));
 
         if cancellable {
             self.control
@@ -368,33 +367,33 @@ impl Activity {
     }
 
     /// Log a `trace`-level message.
-    pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::trace(message))
+    pub fn log_trace(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::trace(message));
     }
 
     /// Log a `debug`-level message.
-    pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::debug(message))
+    pub fn log_debug(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::debug(message));
     }
 
     /// Log an `info`-level message.
-    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::info(message))
+    pub fn log_info(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::info(message));
     }
 
     /// Log a `warn`-level message.
-    pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::warn(message))
+    pub fn log_warn(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::warn(message));
     }
 
     /// Log an `error`-level message.
-    pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::error(message))
+    pub fn log_error(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::error(message));
     }
 
     /// Record a structured log entry.
-    pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
-        self.handle.log(record)
+    pub fn log(&self, record: LogRecord) {
+        self.handle.log(record);
     }
 
     /// Log a named configuration object.
@@ -413,13 +412,13 @@ impl Activity {
         split: impl Into<String>,
         iteration: usize,
         items: Vec<MetricValue>,
-    ) -> Result<(), ExperimentError> {
-        self.handle.log_metric(epoch, split, iteration, items)
+    ) {
+        self.handle.log_metric(epoch, split, iteration, items);
     }
 
     /// Log a metric definition.
-    pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.handle.log_metric_definition(spec)
+    pub fn log_metric_definition(&self, spec: MetricSpec) {
+        self.handle.log_metric_definition(spec);
     }
 
     /// Log aggregated metric values for an epoch and split.
@@ -428,13 +427,13 @@ impl Activity {
         epoch: usize,
         split: impl Into<String>,
         items: Vec<MetricValue>,
-    ) -> Result<(), ExperimentError> {
-        self.handle.log_epoch_summary(epoch, split, items)
+    ) {
+        self.handle.log_epoch_summary(epoch, split, items);
     }
 
     /// Log scalar summary values without an epoch axis.
-    pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
-        self.handle.log_summary(items)
+    pub fn log_summary(&self, items: Vec<MetricValue>) {
+        self.handle.log_summary(items);
     }
 
     /// Encode and persist an artifact.
@@ -476,6 +475,14 @@ impl Activity {
         self.handle.cancel_token().is_cancelled()
     }
 
+    /// Return whether the underlying run is still accepting telemetry.
+    ///
+    /// Telemetry emitted against an inactive run is discarded rather than reported as an error, so
+    /// use this when you need to branch on liveness.
+    pub fn is_active(&self) -> bool {
+        self.handle.is_active()
+    }
+
     /// Increase the current progress value by `delta` and emit the absolute result.
     ///
     /// Activities without a declared meter accept updates as open-ended counts.
@@ -506,12 +513,11 @@ impl Activity {
     }
 
     /// Emit a human-readable message for this activity.
-    pub fn message(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle
-            .record_event(Event::Activity(ActivityEvent::Message {
-                id: self.id(),
-                message: message.into(),
-            }))
+    pub fn message(&self, message: impl Into<String>) {
+        self.handle.emit(Event::Activity(ActivityEvent::Message {
+            id: self.id(),
+            message: message.into(),
+        }));
     }
 
     /// Enter this activity as the ambient telemetry context on the current thread.
@@ -525,12 +531,10 @@ impl Activity {
     }
 
     fn report_update(&self, current: u64) {
-        self.handle
-            .record_event(Event::Activity(ActivityEvent::Updated {
-                id: self.state.id,
-                current,
-            }))
-            .ok();
+        self.handle.emit(Event::Activity(ActivityEvent::Updated {
+            id: self.state.id,
+            current,
+        }));
     }
 
     /// Emit the terminal event exactly once and release any cancellation registration.
@@ -539,13 +543,11 @@ impl Activity {
             return;
         }
 
-        self.handle
-            .record_event(Event::Activity(ActivityEvent::Finished {
-                id: self.state.id,
-                status,
-                message,
-            }))
-            .ok();
+        self.handle.emit(Event::Activity(ActivityEvent::Finished {
+            id: self.state.id,
+            status,
+            message,
+        }));
         if self.state.cancellable {
             self.state
                 .control
@@ -703,7 +705,7 @@ mod tests {
         let (_session, run) = setup_run();
         let guard = run.activity("parent").start();
 
-        guard.log_info("working").unwrap();
+        guard.log_info("working");
         guard.inc(1);
         let _child = guard.activity("child").start();
     }
@@ -755,7 +757,7 @@ mod tests {
         let (session, run) = setup_run();
         let guard = run.activity("items").start();
 
-        guard.message("halfway").unwrap();
+        guard.message("halfway");
 
         let events = session.activity_events();
         assert!(matches!(

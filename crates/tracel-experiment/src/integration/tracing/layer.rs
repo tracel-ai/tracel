@@ -106,7 +106,7 @@ where
         // The event's own fields take precedence over inherited span scope.
         attributes.extend(visitor.attributes);
 
-        let _ = handle.log(LogRecord {
+        handle.log(LogRecord {
             level: log_level(metadata.level()),
             message: visitor.message.unwrap_or_default(),
             attributes,

@@ -8,6 +8,12 @@
 //! Borrowed runs, handles, activities, and guards convert into scope-carrying handles through
 //! `Into<ExperimentRunHandle>`.
 //!
+//! Telemetry is fire-and-forget: logs, metrics, summaries, and activity progress return `()` and
+//! are discarded when the run they target has finished or been dropped. A `Result` therefore means
+//! the caller's own data or the artifact store had a problem worth acting on — a value that failed
+//! to serialize, or an artifact that could not be encoded, stored, or loaded — never that the
+//! telemetry sink was unavailable. Use [`ExperimentRunHandle::is_active`] to branch on liveness.
+//!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
@@ -178,8 +184,8 @@ pub struct ExperimentRun {
 /// lifecycle. This makes it the right type to move into async tasks, worker threads, or adapter
 /// objects.
 ///
-/// If the originating [`ExperimentRun`] is finished or dropped, existing handles become inactive
-/// and will reject further operations.
+/// If the originating [`ExperimentRun`] is finished or dropped, existing handles become inactive:
+/// telemetry raised through them is discarded, and artifact operations report an error.
 #[derive(Clone)]
 pub struct ExperimentRunHandle {
     metadata: ExperimentMetadata,
@@ -324,6 +330,8 @@ impl ExperimentRun {
     }
 
     /// Log the serialized input arguments for the run.
+    ///
+    /// Fails only if `args` cannot be serialized.
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|error| {
             ExperimentError::with_source(
@@ -333,37 +341,38 @@ impl ExperimentRun {
             )
         })?;
 
-        self.handle.record_event(Event::Args(value))
+        self.handle.emit(Event::Args(value));
+        Ok(())
     }
 
     /// Log a `trace`-level message.
-    pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::trace(message))
+    pub fn log_trace(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::trace(message));
     }
 
     /// Log a `debug`-level message.
-    pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::debug(message))
+    pub fn log_debug(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::debug(message));
     }
 
     /// Log an `info`-level message.
-    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::info(message))
+    pub fn log_info(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::info(message));
     }
 
     /// Log a `warn`-level message.
-    pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::warn(message))
+    pub fn log_warn(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::warn(message));
     }
 
     /// Log an `error`-level message.
-    pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.log(LogRecord::error(message))
+    pub fn log_error(&self, message: impl Into<String>) {
+        self.handle.log(LogRecord::error(message));
     }
 
     /// Record a structured log entry.
-    pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
-        self.handle.log(record)
+    pub fn log(&self, record: LogRecord) {
+        self.handle.log(record);
     }
 
     /// Log a named configuration object.
@@ -382,13 +391,13 @@ impl ExperimentRun {
         split: impl Into<String>,
         iteration: usize,
         items: Vec<MetricValue>,
-    ) -> Result<(), ExperimentError> {
-        self.handle.log_metric(epoch, split, iteration, items)
+    ) {
+        self.handle.log_metric(epoch, split, iteration, items);
     }
 
     /// Log a metric definition.
-    pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.handle.log_metric_definition(spec)
+    pub fn log_metric_definition(&self, spec: MetricSpec) {
+        self.handle.log_metric_definition(spec);
     }
 
     /// Log aggregated metric values for an epoch and split.
@@ -397,13 +406,13 @@ impl ExperimentRun {
         epoch: usize,
         split: impl Into<String>,
         items: Vec<MetricValue>,
-    ) -> Result<(), ExperimentError> {
-        self.handle.log_epoch_summary(epoch, split, items)
+    ) {
+        self.handle.log_epoch_summary(epoch, split, items);
     }
 
     /// Log scalar summary values without an epoch axis.
-    pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
-        self.handle.log_summary(items)
+    pub fn log_summary(&self, items: Vec<MetricValue>) {
+        self.handle.log_summary(items);
     }
 
     /// Encode and persist an artifact.
@@ -478,29 +487,38 @@ impl ExperimentRunHandle {
         }
     }
 
+    /// Return whether the underlying run is still accepting telemetry.
+    ///
+    /// Telemetry emitted against an inactive run is discarded rather than reported as an error, so
+    /// use this when you need to branch on liveness.
+    pub fn is_active(&self) -> bool {
+        self.upgrade()
+            .is_ok_and(|inner| inner.ensure_active().is_ok())
+    }
+
     /// Log a `trace`-level message.
-    pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::trace(message))
+    pub fn log_trace(&self, message: impl Into<String>) {
+        self.log(LogRecord::trace(message));
     }
 
     /// Log a `debug`-level message.
-    pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::debug(message))
+    pub fn log_debug(&self, message: impl Into<String>) {
+        self.log(LogRecord::debug(message));
     }
 
     /// Log an `info`-level message.
-    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::info(message))
+    pub fn log_info(&self, message: impl Into<String>) {
+        self.log(LogRecord::info(message));
     }
 
     /// Log a `warn`-level message.
-    pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::warn(message))
+    pub fn log_warn(&self, message: impl Into<String>) {
+        self.log(LogRecord::warn(message));
     }
 
     /// Log an `error`-level message.
-    pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.log(LogRecord::error(message))
+    pub fn log_error(&self, message: impl Into<String>) {
+        self.log(LogRecord::error(message));
     }
 
     pub(crate) fn for_activity(&self, activity: ActivityId, cancel_token: CancelToken) -> Self {
@@ -512,17 +530,19 @@ impl ExperimentRunHandle {
     }
 
     /// Record a structured log entry.
-    pub fn log(&self, mut record: LogRecord) -> Result<(), ExperimentError> {
+    pub fn log(&self, mut record: LogRecord) {
         if !self.scope.is_empty() {
             record.inherit_attrs(&self.scope);
         }
-        self.record_event(Event::Log {
+        self.emit(Event::Log {
             record,
             activity: self.activity,
-        })
+        });
     }
 
     /// Log a named configuration object.
+    ///
+    /// Fails only if `config` cannot be serialized.
     pub fn log_config<C: Serialize>(
         &self,
         name: impl Into<String>,
@@ -536,10 +556,11 @@ impl ExperimentRunHandle {
             )
         })?;
 
-        self.record_event(Event::Config {
+        self.emit(Event::Config {
             name: name.into(),
             value,
-        })
+        });
+        Ok(())
     }
 
     /// Log metric values for an epoch, split, and iteration.
@@ -549,19 +570,19 @@ impl ExperimentRunHandle {
         split: impl Into<String>,
         iteration: usize,
         items: Vec<MetricValue>,
-    ) -> Result<(), ExperimentError> {
-        self.record_event(Event::Metrics {
+    ) {
+        self.emit(Event::Metrics {
             epoch,
             split: split.into(),
             iteration,
             items,
             activity: self.activity,
-        })
+        });
     }
 
     /// Log a metric definition.
-    pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.record_event(Event::MetricDefinition(spec))
+    pub fn log_metric_definition(&self, spec: MetricSpec) {
+        self.emit(Event::MetricDefinition(spec));
     }
 
     /// Log aggregated metric values for an epoch and split.
@@ -570,21 +591,21 @@ impl ExperimentRunHandle {
         epoch: usize,
         split: impl Into<String>,
         items: Vec<MetricValue>,
-    ) -> Result<(), ExperimentError> {
-        self.record_event(Event::EpochSummary {
+    ) {
+        self.emit(Event::EpochSummary {
             epoch,
             split: split.into(),
             items,
             activity: self.activity,
-        })
+        });
     }
 
     /// Log scalar summary values without an epoch axis.
-    pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
-        self.record_event(Event::Summary {
+    pub fn log_summary(&self, items: Vec<MetricValue>) {
+        self.emit(Event::Summary {
             items,
             activity: self.activity,
-        })
+        });
     }
 
     /// Encode and persist an artifact.
@@ -643,12 +664,10 @@ impl ExperimentRunHandle {
             )
         })?;
 
-        // Lineage is best effort; a recording failure must not fail the load itself.
-        self.record_event(Event::ArtifactUsed {
+        self.emit(Event::ArtifactUsed {
             experiment_id,
             reference: artifact.reference,
-        })
-        .ok();
+        });
 
         Ok(decoded)
     }
@@ -676,10 +695,21 @@ impl ExperimentRunHandle {
         .with_parent(self.activity, self.context_cancel_token.clone())
     }
 
-    fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.ensure_active()?;
-        inner.session.record_event(event)
+    /// Hand a telemetry event to the backend session.
+    ///
+    /// Telemetry is fire-and-forget: an event raised against a dropped or finished run is
+    /// discarded. Operations whose failure the caller can act on — artifact encoding, artifact
+    /// storage, argument and config serialization — report errors through their own return types
+    /// instead.
+    fn emit(&self, event: Event) {
+        let Ok(inner) = self.upgrade() else {
+            return;
+        };
+        if inner.ensure_active().is_err() {
+            return;
+        }
+
+        inner.session.record_event(event).ok();
     }
 
     fn upgrade(&self) -> Result<Arc<RunInner>, ExperimentError> {
@@ -744,7 +774,7 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 
-        run.log_info("hello").unwrap();
+        run.log_info("hello");
 
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
@@ -760,17 +790,15 @@ mod tests {
         let run = create_run(session.clone());
         let activity = run.activity("train").start();
 
-        activity
-            .log_metric(
-                1,
-                "train",
-                1,
-                vec![MetricValue {
-                    name: "loss".to_string(),
-                    value: 0.25,
-                }],
-            )
-            .unwrap();
+        activity.log_metric(
+            1,
+            "train",
+            1,
+            vec![MetricValue {
+                name: "loss".to_string(),
+                value: 0.25,
+            }],
+        );
         run.log_metric(
             1,
             "valid",
@@ -779,8 +807,7 @@ mod tests {
                 name: "loss".to_string(),
                 value: 0.2,
             }],
-        )
-        .unwrap();
+        );
 
         let events = session.events.lock().unwrap();
         assert!(matches!(
@@ -805,8 +832,8 @@ mod tests {
             }]
         };
 
-        activity.log_summary(items()).unwrap();
-        run.log_summary(items()).unwrap();
+        activity.log_summary(items());
+        run.log_summary(items());
 
         let events = session.events.lock().unwrap();
         assert!(matches!(
@@ -888,9 +915,7 @@ mod tests {
             .start();
         let activity = guard.share().with_attr("fold", 1i64);
 
-        activity
-            .log(LogRecord::info("started").with("fold", 2i64))
-            .unwrap();
+        activity.log(LogRecord::info("started").with("fold", 2i64));
 
         let events = session.events.lock().unwrap();
         let Event::Log {
@@ -909,18 +934,21 @@ mod tests {
     }
 
     #[test]
-    fn activity_reference_becomes_inactive_after_the_run_is_dropped() {
+    fn activity_reference_discards_telemetry_after_the_run_is_dropped() {
         let session = Arc::new(MockSession::default());
         let activity = {
-            let run = create_run(session);
+            let run = create_run(session.clone());
             let guard = run.activity("fold").start();
             let activity = guard.share();
             guard.finish();
             activity
         };
+        let recorded = session.events.lock().unwrap().len();
 
-        let error = activity.log_info("late").unwrap_err();
-        assert_eq!(error.kind, ExperimentErrorKind::InactiveRun);
+        assert!(!activity.is_active());
+        activity.log_info("late");
+
+        assert_eq!(session.events.lock().unwrap().len(), recorded);
     }
 
     #[test]
@@ -965,11 +993,11 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 
-        run.log_trace("t").unwrap();
-        run.log_debug("d").unwrap();
-        run.log_info("i").unwrap();
-        run.log_warn("w").unwrap();
-        run.log_error("e").unwrap();
+        run.log_trace("t");
+        run.log_debug("d");
+        run.log_info("i");
+        run.log_warn("w");
+        run.log_error("e");
 
         let events = session.events.lock().unwrap();
         let levels: Vec<_> = events
@@ -1000,13 +1028,11 @@ mod tests {
             .handle()
             .with_attr("phase", "train")
             .with_attr("shard", 1i64);
-        scoped
-            .log(
-                LogRecord::warn("slow step")
-                    .with("shard", 2i64)
-                    .with("elapsed_ms", 900i64),
-            )
-            .unwrap();
+        scoped.log(
+            LogRecord::warn("slow step")
+                .with("shard", 2i64)
+                .with("elapsed_ms", 900i64),
+        );
 
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
@@ -1034,15 +1060,16 @@ mod tests {
     }
 
     #[test]
-    fn finish_marks_handle_inactive() {
+    fn finish_marks_handle_inactive_and_discards_later_telemetry() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
         let handle = run.handle();
 
         run.finish().unwrap();
 
-        let err = handle.log_info("after-finish").unwrap_err();
-        assert_eq!(err.kind, ExperimentErrorKind::InactiveRun);
+        assert!(!handle.is_active());
+        handle.log_info("after-finish");
+        assert!(session.events.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1076,7 +1103,7 @@ mod tests {
         let run = create_run(session.clone());
 
         run.cancel().unwrap();
-        run.log_info("still-logging").unwrap();
+        run.log_info("still-logging");
 
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
