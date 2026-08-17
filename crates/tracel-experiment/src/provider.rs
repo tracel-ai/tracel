@@ -5,9 +5,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::ExperimentRun;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
-use crate::{ExperimentRun, ExperimentRunHandleExt};
 
 pub trait ExperimentProvider: Send + Sync + 'static {
     fn create_experiment(

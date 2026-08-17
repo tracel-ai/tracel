@@ -110,12 +110,6 @@ pub enum ActivityEvent {
     },
 }
 
-/// Allocates unique activity identifiers.
-pub trait ActivityIdAllocator: Send + Sync {
-    /// Return the next identifier.
-    fn next_id(&self) -> ActivityId;
-}
-
 /// Lock-free activity identifier allocator.
 #[derive(Debug)]
 pub struct AtomicActivityIdAllocator {
@@ -129,16 +123,9 @@ impl AtomicActivityIdAllocator {
             next: AtomicU64::new(1),
         }
     }
-}
 
-impl Default for AtomicActivityIdAllocator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ActivityIdAllocator for AtomicActivityIdAllocator {
-    fn next_id(&self) -> ActivityId {
+    /// Return the next identifier.
+    pub fn next_id(&self) -> ActivityId {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
 
         // Starts at 1, so this should only fail after overflow or wraparound.
@@ -148,9 +135,15 @@ impl ActivityIdAllocator for AtomicActivityIdAllocator {
     }
 }
 
+impl Default for AtomicActivityIdAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Builder used to configure and start an activity.
 pub struct ActivityBuilder {
-    id_allocator: Arc<dyn ActivityIdAllocator>,
+    id_allocator: Arc<AtomicActivityIdAllocator>,
     control: ExperimentRunControl,
     cancellation_parent: CancelToken,
     parent: Option<ActivityId>,
@@ -164,7 +157,7 @@ pub struct ActivityBuilder {
 impl ActivityBuilder {
     /// Create a root activity builder.
     pub(crate) fn new(
-        id_allocator: Arc<dyn ActivityIdAllocator>,
+        id_allocator: Arc<AtomicActivityIdAllocator>,
         control: ExperimentRunControl,
         name: impl Into<String>,
         context: ExperimentRunHandle,
@@ -243,33 +236,21 @@ impl ActivityBuilder {
         self
     }
 
-    /// Add one serializable attribute.
-    pub fn attr<T>(mut self, key: impl Into<String>, value: T) -> Result<Self, serde_json::Error>
-    where
-        T: serde::Serialize,
-    {
-        self.insert_attr(key, value)?;
-        Ok(self)
+    /// Add one attribute.
+    pub fn attr(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
     }
 
     /// Add pre-serialized attributes.
-    pub fn attrs<T>(mut self, attributes: T) -> Result<Self, serde_json::Error>
-    where
-        T: IntoIterator<Item = (String, serde_json::Value)>,
-    {
+    pub fn attrs(
+        mut self,
+        attributes: impl IntoIterator<Item = (String, serde_json::Value)>,
+    ) -> Self {
         for (key, value) in attributes {
             self.attributes.insert(key, value);
         }
-        Ok(self)
-    }
-
-    fn insert_attr<T>(&mut self, key: impl Into<String>, value: T) -> Result<(), serde_json::Error>
-    where
-        T: serde::Serialize,
-    {
-        self.attributes
-            .insert(key.into(), serde_json::to_value(value)?);
-        Ok(())
+        self
     }
 
     fn start_inner(self) -> ActivityGuard {
@@ -677,7 +658,6 @@ mod tests {
             .activity("load")
             .meter(12, "items")
             .attr("split", "train")
-            .unwrap()
             .start();
 
         let events = session.activity_events();

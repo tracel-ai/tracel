@@ -131,7 +131,7 @@ pub mod training {
                 .activity(format!("epoch {epoch}"))
                 .meter(config.batches_per_epoch as u64, "batch")
                 .cancellable()
-                .attr("epoch", epoch)?
+                .attr("epoch", epoch)
                 .start();
 
             let mut loss_sum = 0.0;

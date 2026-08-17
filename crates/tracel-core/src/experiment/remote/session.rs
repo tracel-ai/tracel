@@ -283,6 +283,10 @@ fn to_remote_completion(completion: ExperimentCompletion) -> RemoteExperimentCom
     match completion {
         ExperimentCompletion::Success => RemoteExperimentCompletion::Success,
         ExperimentCompletion::Failed(reason) => RemoteExperimentCompletion::Fail { reason },
-        ExperimentCompletion::Cancelled => RemoteExperimentCompletion::Success,
+        // The wire has no cancelled completion yet; report a failure with a
+        // recognizable reason rather than claiming success.
+        ExperimentCompletion::Cancelled => RemoteExperimentCompletion::Fail {
+            reason: "cancelled".to_string(),
+        },
     }
 }

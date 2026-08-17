@@ -54,7 +54,7 @@ pub struct WithCurrentExperiment<F> {
 /// # Example
 ///
 /// ```ignore
-/// use tracel_experiment::{ExperimentInstrument, ExperimentRun, ExperimentRunHandleExt};
+/// use tracel_experiment::{ExperimentInstrument, ExperimentRun};
 ///
 /// let run = ExperimentRun::local("./runs").unwrap();
 ///
@@ -214,7 +214,7 @@ mod tests {
     use crate::error::ExperimentError;
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
     use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun, ExperimentRunHandleExt};
+    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
 
     use super::ExperimentInstrument;
 

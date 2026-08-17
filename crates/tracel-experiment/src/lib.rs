@@ -9,7 +9,6 @@
 //! `Into<ExperimentRunHandle>`.
 //!
 //! Optional capabilities are exposed through extension traits:
-//! - [`ExperimentRunHandleExt`] for cloning a shareable handle.
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
 //! - [`integration::training::SupervisedTrainingExperimentExt`] for one-line Burn builder wiring.
@@ -161,7 +160,7 @@ struct ExperimentMetadata {
 /// `ExperimentRun` owns finalization. As long as the run remains active, it can log structured
 /// events, persist artifacts, and expose a cancellation token to child work.
 ///
-/// Use [`ExperimentRunHandleExt::handle`] when you need to share logging and artifact access without
+/// Use [`ExperimentRun::handle`] when you need to share logging and artifact access without
 /// transferring lifecycle ownership. If the run is dropped without an explicit completion, it is
 /// finalized automatically.
 ///
@@ -437,30 +436,10 @@ impl ExperimentRun {
     }
 }
 
-/// Extension trait for cloning shareable handles from an [`ExperimentRun`].
-///
-/// Import this trait when you want a lightweight [`ExperimentRunHandle`] for async tasks, worker
-/// threads, or adapter objects that should not own run finalization.
-///
-/// # Example
-///
-/// ```ignore
-/// use tracel_experiment::{ExperimentRun, ExperimentRunHandleExt};
-///
-/// let run = ExperimentRun::local("./runs").unwrap();
-/// let handle = run.handle();
-///
-/// std::thread::spawn(move || {
-///     let _ = handle.log_info("worker started");
-/// });
-/// ```
-pub trait ExperimentRunHandleExt {
-    /// Clone a handle that can be shared across tasks and threads.
-    fn handle(&self) -> ExperimentRunHandle;
-}
-
-impl ExperimentRunHandleExt for ExperimentRun {
-    fn handle(&self) -> ExperimentRunHandle {
+impl ExperimentRun {
+    /// Clone a lightweight [`ExperimentRunHandle`] for async tasks, worker threads, or adapter
+    /// objects that should not own run finalization.
+    pub fn handle(&self) -> ExperimentRunHandle {
         self.handle.clone()
     }
 }
@@ -714,9 +693,10 @@ impl ExperimentRunHandle {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
         let name = name.as_ref();
+        let experiment_id = experiment_id.into();
         let artifact = inner
             .reader
-            .load_artifact_raw(experiment_id.into(), name)
+            .load_artifact_raw(experiment_id.clone(), name)
             .map_err(|error| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Artifact,
@@ -725,13 +705,22 @@ impl ExperimentRunHandle {
                 )
             })?;
 
-        D::decode(&artifact.bundle, settings).map_err(|error| {
+        let decoded = D::decode(&artifact.bundle, settings).map_err(|error| {
             ExperimentError::with_source(
                 ExperimentErrorKind::Artifact,
                 format!("Failed to decode artifact: {name}"),
                 error,
             )
+        })?;
+
+        // Lineage is best effort; a recording failure must not fail the load itself.
+        self.record_event(Event::ArtifactUsed {
+            experiment_id,
+            reference: artifact.reference,
         })
+        .ok();
+
+        Ok(decoded)
     }
 
     pub(crate) fn emit_activity(&self, name: impl Into<String>) -> ActivityBuilder {

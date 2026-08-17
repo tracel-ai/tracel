@@ -45,16 +45,10 @@ impl ExperimentTrainingProgressLogger {
             self.experiment.activity(name)
         };
 
-        let mut builder = builder
-            .attr("activity_type", "epoch")
-            .expect("epoch activity_type attribute should serialize")
-            .attr("epoch", epoch)
-            .expect("epoch attribute should serialize");
+        let mut builder = builder.attr("activity_type", "epoch").attr("epoch", epoch);
 
         if let Some(total_epochs) = self.total_epochs {
-            builder = builder
-                .attr("total_epochs", total_epochs)
-                .expect("total_epochs attribute should serialize");
+            builder = builder.attr("total_epochs", total_epochs);
         }
 
         self.epoch_guard = Some(builder.start());
