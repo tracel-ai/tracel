@@ -57,7 +57,8 @@ impl ExperimentTrainingProgressLogger {
 
 impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
     fn start(&mut self, total_epochs: usize, starting_epoch: usize, _total_items: Option<usize>) {
-        self.completed_epochs = starting_epoch;
+        // Burn's starting epoch is 1-based; the counter holds completed epochs.
+        self.completed_epochs = starting_epoch.saturating_sub(1);
         self.total_epochs = Some(total_epochs);
         self.epoch_guard = None;
         self.split_guard = None;
