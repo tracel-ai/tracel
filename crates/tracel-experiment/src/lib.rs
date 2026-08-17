@@ -317,9 +317,7 @@ impl ExperimentRun {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
     }
-}
 
-impl ExperimentRun {
     /// Borrow the identifier for the underlying run.
     pub fn id(&self) -> &ExperimentId {
         self.handle.id()
@@ -433,9 +431,7 @@ impl ExperimentRun {
     pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
         self.handle.activity(name)
     }
-}
 
-impl ExperimentRun {
     /// Clone a lightweight [`ExperimentRunHandle`] for async tasks, worker threads, or adapter
     /// objects that should not own run finalization.
     pub fn handle(&self) -> ExperimentRunHandle {
@@ -506,9 +502,7 @@ impl ExperimentRunHandle {
     pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
         self.log(LogRecord::error(message))
     }
-}
 
-impl ExperimentRunHandle {
     pub(crate) fn for_activity(&self, activity: ActivityId, cancel_token: CancelToken) -> Self {
         Self {
             activity: Some(activity),
@@ -681,9 +675,7 @@ impl ExperimentRunHandle {
         )
         .with_parent(self.activity, self.context_cancel_token.clone())
     }
-}
 
-impl ExperimentRunHandle {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
