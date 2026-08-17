@@ -751,8 +751,6 @@ impl RunInner {
 /// Finalize the run on drop if it has not already been completed.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
-        // A drop during unwinding means the run crashed; reporting success
-        // would hide a run that never reached its explicit completion.
         let completion = if std::thread::panicking() {
             ExperimentCompletion::Failed("the run panicked".to_string())
         } else if self.inner.control.is_run_cancelled() {
