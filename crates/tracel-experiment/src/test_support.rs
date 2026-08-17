@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use crate::activity::{ActivityEvent, ActivityId};
+use crate::activity::ActivityEvent;
 use crate::error::ExperimentError;
 use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
@@ -10,7 +10,6 @@ use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl};
 pub(crate) struct MockSession {
     pub(crate) events: Mutex<Vec<Event>>,
     pub(crate) completions: Mutex<Vec<ExperimentCompletion>>,
-    pub(crate) artifact_activities: Mutex<Vec<Option<ActivityId>>>,
 }
 
 impl MockSession {
@@ -37,10 +36,8 @@ impl ExperimentSession for MockSession {
         &self,
         _name: &str,
         _kind: ArtifactKind,
-        activity: Option<ActivityId>,
         _artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
-        self.artifact_activities.lock().unwrap().push(activity);
         Ok(())
     }
 

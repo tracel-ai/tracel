@@ -18,7 +18,7 @@ use tracel_experiment::reader::{
     ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact,
 };
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use tracel_experiment::{ActivityId, ArtifactKind, ExperimentId};
+use tracel_experiment::{ArtifactKind, ExperimentId};
 
 use crate::backend::local::LocalBackend;
 
@@ -150,7 +150,6 @@ impl ExperimentSession for LocalExperimentSession {
         &self,
         name: &str,
         _kind: ArtifactKind,
-        _activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
         let artifact_root = self.root.join("artifacts").join(name);

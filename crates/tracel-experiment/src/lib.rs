@@ -609,6 +609,10 @@ impl ExperimentRunHandle {
     }
 
     /// Encode and persist an artifact.
+    ///
+    /// Artifacts are run-scoped: they are addressed by name within the experiment and the
+    /// emitting stage is not recorded, so saving through an activity is equivalent to saving
+    /// at the run root.
     pub fn save_artifact<E: BundleEncode>(
         &self,
         name: impl AsRef<str>,
@@ -631,7 +635,7 @@ impl ExperimentRunHandle {
 
         inner
             .session
-            .save_artifact(name.as_ref(), kind, self.activity, Box::new(artifact_fn))
+            .save_artifact(name.as_ref(), kind, Box::new(artifact_fn))
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
@@ -1002,8 +1006,10 @@ mod tests {
         assert_eq!(session.events.lock().unwrap().len(), recorded);
     }
 
+    /// Artifacts are run-global, so saving from inside an activity is accepted and simply
+    /// stores at the run root.
     #[test]
-    fn artifacts_record_the_emitting_activity_scope() {
+    fn artifacts_can_be_saved_from_an_activity() {
         struct EmptyArtifact;
 
         impl BundleEncode for EmptyArtifact {
@@ -1028,9 +1034,6 @@ mod tests {
             .unwrap();
         run.save_artifact("model", ArtifactKind::Model, EmptyArtifact, &())
             .unwrap();
-
-        let activities = session.artifact_activities.lock().unwrap();
-        assert_eq!(activities.as_slice(), &[Some(activity.id()), None]);
     }
 
     #[test]

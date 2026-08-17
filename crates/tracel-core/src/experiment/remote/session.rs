@@ -142,12 +142,10 @@ impl ExperimentSession for RemoteExperimentSession {
         self.send(message)
     }
 
-    /// Activity attribution is omitted because the uploader does not yet accept an activity scope.
     fn save_artifact(
         &self,
         name: &str,
         kind: ArtifactKind,
-        _activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
         let mut bundle = FsBundle::temp().map_err(|err| {

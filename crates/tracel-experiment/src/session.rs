@@ -68,7 +68,6 @@ pub trait ExperimentSession: Send + Sync {
         &self,
         name: &str,
         kind: ArtifactKind,
-        activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError>;
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError>;
@@ -86,10 +85,9 @@ where
         &self,
         name: &str,
         kind: ArtifactKind,
-        activity: Option<ActivityId>,
         artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
-        self.as_ref().save_artifact(name, kind, activity, artifact)
+        self.as_ref().save_artifact(name, kind, artifact)
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
