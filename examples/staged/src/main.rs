@@ -18,8 +18,7 @@ use burn::{
     },
 };
 use tracel::experiment::{
-    ExperimentContext, ExperimentRun, MetricValue,
-    integration::training::SupervisedTrainingExperimentExt,
+    ExperimentRun, MetricValue, integration::training::SupervisedTrainingExperimentExt,
 };
 
 fn main() -> anyhow::Result<()> {

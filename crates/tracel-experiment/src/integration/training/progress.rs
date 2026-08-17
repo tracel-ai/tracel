@@ -1,6 +1,6 @@
 use burn::train::logger::{EvaluationProgressLogger, TrainingProgressLogger};
 
-use crate::{ActivityGuard, ExperimentContext, ExperimentRunHandle};
+use crate::{ActivityGuard, ExperimentRunHandle};
 
 /// Experiment-backed implementation of Burn's [`TrainingProgressLogger`] trait.
 ///

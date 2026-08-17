@@ -84,7 +84,7 @@ impl Inference for WordTokenizer {
 /// tracking, per-batch metrics, progress logs, and cancellation. Only the per-step math is fake.
 pub mod training {
     use serde::{Deserialize, Serialize};
-    use tracel::experiment::{ExperimentContext, ExperimentRun, MetricSpec, MetricValue};
+    use tracel::experiment::{ExperimentRun, MetricSpec, MetricValue};
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

@@ -4,7 +4,6 @@ use burn::train::checkpoint::CheckpointerError;
 use std::fmt;
 
 use crate::ArtifactKind;
-use crate::ExperimentContext;
 use crate::ExperimentId;
 use crate::ExperimentRunHandle;
 use burn::tensor::Bytes;

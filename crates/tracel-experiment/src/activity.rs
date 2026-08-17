@@ -12,12 +12,15 @@ use std::{
     },
 };
 
-use crate::ExperimentRunHandle;
+use serde::Serialize;
+use tracel_artifact::bundle::{BundleDecode, BundleEncode};
+
 use crate::cancellation::CancelToken;
 use crate::context::CurrentExperimentGuard;
 use crate::control::ExperimentRunControl;
 use crate::error::ExperimentError;
 use crate::session::Event;
+use crate::{ArtifactKind, ExperimentId, ExperimentRunHandle, LogRecord, MetricSpec, MetricValue};
 
 /// Opaque non-zero identifier for an activity.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -373,6 +376,103 @@ impl Activity {
         }
     }
 
+    /// Log a `trace`-level message.
+    pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.emit_log(LogRecord::trace(message))
+    }
+
+    /// Log a `debug`-level message.
+    pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.emit_log(LogRecord::debug(message))
+    }
+
+    /// Log an `info`-level message.
+    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.emit_log(LogRecord::info(message))
+    }
+
+    /// Log a `warn`-level message.
+    pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.emit_log(LogRecord::warn(message))
+    }
+
+    /// Log an `error`-level message.
+    pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.emit_log(LogRecord::error(message))
+    }
+
+    /// Record a structured log entry.
+    pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
+        self.handle.emit_log(record)
+    }
+
+    /// Log a named configuration object.
+    pub fn log_config<C: Serialize>(
+        &self,
+        name: impl Into<String>,
+        config: &C,
+    ) -> Result<(), ExperimentError> {
+        self.handle.emit_config(name, config)
+    }
+
+    /// Log metric values for an epoch, split, and iteration.
+    pub fn log_metric(
+        &self,
+        epoch: usize,
+        split: impl Into<String>,
+        iteration: usize,
+        items: Vec<MetricValue>,
+    ) -> Result<(), ExperimentError> {
+        self.handle.emit_metric(epoch, split, iteration, items)
+    }
+
+    /// Log a metric definition.
+    pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
+        self.handle.emit_metric_definition(spec)
+    }
+
+    /// Log aggregated metric values for an epoch and split.
+    pub fn log_epoch_summary(
+        &self,
+        epoch: usize,
+        split: impl Into<String>,
+        items: Vec<MetricValue>,
+    ) -> Result<(), ExperimentError> {
+        self.handle.emit_epoch_summary(epoch, split, items)
+    }
+
+    /// Log scalar summary values without an epoch axis.
+    pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
+        self.handle.emit_summary(items)
+    }
+
+    /// Encode and persist an artifact.
+    pub fn save_artifact<E: BundleEncode>(
+        &self,
+        name: impl AsRef<str>,
+        kind: ArtifactKind,
+        artifact: E,
+        settings: &E::Settings,
+    ) -> Result<(), ExperimentError> {
+        self.handle
+            .emit_save_artifact(name, kind, artifact, settings)
+    }
+
+    /// Load and decode an artifact from a compatible experiment identifier.
+    pub fn use_artifact<D: BundleDecode>(
+        &self,
+        experiment_id: impl Into<ExperimentId>,
+        name: impl AsRef<str>,
+        settings: &D::Settings,
+    ) -> Result<D, ExperimentError> {
+        self.handle.emit_use_artifact(experiment_id, name, settings)
+    }
+
+    /// Create a child activity builder.
+    pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
+        self.handle.emit_activity(name)
+    }
+
     /// Return the activity cancellation token.
     pub fn cancel_token(&self) -> CancelToken {
         self.handle.cancel_token()
@@ -539,7 +639,6 @@ mod tests {
 
     use serde_json::json;
 
-    use crate::ExperimentContext as _;
     use crate::test_support::{MockSession, create_run, create_run_with_control};
 
     use super::*;
@@ -598,6 +697,16 @@ mod tests {
             panic!("unexpected event: {:?}", events[1]);
         };
         assert_eq!(*current, 3);
+    }
+
+    #[test]
+    fn activity_guard_telemetry_needs_no_context_trait_import() {
+        let (_session, run) = setup_run();
+        let guard = run.activity("parent").start();
+
+        guard.log_info("working").unwrap();
+        guard.inc(1);
+        let _child = guard.activity("child").start();
     }
 
     #[test]
