@@ -369,32 +369,32 @@ impl Activity {
 
     /// Log a `trace`-level message.
     pub fn log_trace(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.emit_log(LogRecord::trace(message))
+        self.handle.log(LogRecord::trace(message))
     }
 
     /// Log a `debug`-level message.
     pub fn log_debug(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.emit_log(LogRecord::debug(message))
+        self.handle.log(LogRecord::debug(message))
     }
 
     /// Log an `info`-level message.
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.emit_log(LogRecord::info(message))
+        self.handle.log(LogRecord::info(message))
     }
 
     /// Log a `warn`-level message.
     pub fn log_warn(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.emit_log(LogRecord::warn(message))
+        self.handle.log(LogRecord::warn(message))
     }
 
     /// Log an `error`-level message.
     pub fn log_error(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
-        self.handle.emit_log(LogRecord::error(message))
+        self.handle.log(LogRecord::error(message))
     }
 
     /// Record a structured log entry.
     pub fn log(&self, record: LogRecord) -> Result<(), ExperimentError> {
-        self.handle.emit_log(record)
+        self.handle.log(record)
     }
 
     /// Log a named configuration object.
@@ -403,7 +403,7 @@ impl Activity {
         name: impl Into<String>,
         config: &C,
     ) -> Result<(), ExperimentError> {
-        self.handle.emit_config(name, config)
+        self.handle.log_config(name, config)
     }
 
     /// Log metric values for an epoch, split, and iteration.
@@ -414,12 +414,12 @@ impl Activity {
         iteration: usize,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.handle.emit_metric(epoch, split, iteration, items)
+        self.handle.log_metric(epoch, split, iteration, items)
     }
 
     /// Log a metric definition.
     pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
-        self.handle.emit_metric_definition(spec)
+        self.handle.log_metric_definition(spec)
     }
 
     /// Log aggregated metric values for an epoch and split.
@@ -429,12 +429,12 @@ impl Activity {
         split: impl Into<String>,
         items: Vec<MetricValue>,
     ) -> Result<(), ExperimentError> {
-        self.handle.emit_epoch_summary(epoch, split, items)
+        self.handle.log_epoch_summary(epoch, split, items)
     }
 
     /// Log scalar summary values without an epoch axis.
     pub fn log_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
-        self.handle.emit_summary(items)
+        self.handle.log_summary(items)
     }
 
     /// Encode and persist an artifact.
@@ -445,8 +445,7 @@ impl Activity {
         artifact: E,
         settings: &E::Settings,
     ) -> Result<(), ExperimentError> {
-        self.handle
-            .emit_save_artifact(name, kind, artifact, settings)
+        self.handle.save_artifact(name, kind, artifact, settings)
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
@@ -456,12 +455,12 @@ impl Activity {
         name: impl AsRef<str>,
         settings: &D::Settings,
     ) -> Result<D, ExperimentError> {
-        self.handle.emit_use_artifact(experiment_id, name, settings)
+        self.handle.use_artifact(experiment_id, name, settings)
     }
 
     /// Create a child activity builder.
     pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
-        self.handle.emit_activity(name)
+        self.handle.activity(name)
     }
 
     /// Return the activity cancellation token.
