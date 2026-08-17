@@ -328,7 +328,7 @@ struct ActivityState {
 /// originating run finishes, while retaining the activity's cancellation token.
 #[derive(Clone)]
 pub struct Activity {
-    pub(crate) handle: ExperimentRunHandle,
+    handle: ExperimentRunHandle,
     state: Arc<ActivityState>,
 }
 
