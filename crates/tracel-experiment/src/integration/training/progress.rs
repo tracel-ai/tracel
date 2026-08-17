@@ -253,6 +253,18 @@ mod tests {
     }
 
     #[test]
+    fn adapter_constructor_accepts_borrowed_run_activity_and_guard() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session);
+        let guard = run.activity("Fold").start();
+        let activity = guard.share();
+
+        let _run_logger = ExperimentTrainingProgressLogger::new(&run);
+        let _activity_logger = ExperimentTrainingProgressLogger::new(&activity);
+        let _guard_logger = ExperimentTrainingProgressLogger::new(&guard);
+    }
+
+    #[test]
     fn training_progress_groups_splits_under_supplied_scope() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());

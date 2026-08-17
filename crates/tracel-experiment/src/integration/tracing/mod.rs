@@ -86,7 +86,7 @@ impl ExperimentTracingExt for ExperimentRun {
 
 impl ExperimentTracingExt for ExperimentRunHandle {
     fn tracing_span(&self) -> tracing::Span {
-        experiment_span(self.clone())
+        experiment_span(self)
     }
 }
 

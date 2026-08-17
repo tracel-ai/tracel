@@ -352,6 +352,16 @@ pub struct Activity {
     state: Arc<ActivityState>,
 }
 
+/// Converting this borrow clones the activity's scope-carrying handle, so telemetry emitted
+/// through the resulting handle is attributed to that scope.
+///
+/// Custom context types integrate by implementing `From<&TheirType>` for [`ExperimentRunHandle`].
+impl From<&Activity> for ExperimentRunHandle {
+    fn from(value: &Activity) -> Self {
+        value.handle.clone()
+    }
+}
+
 impl Activity {
     /// Return the activity identifier.
     pub fn id(&self) -> ActivityId {
@@ -579,6 +589,16 @@ impl std::fmt::Debug for Activity {
 /// followed by drop reports exactly once.
 pub struct ActivityGuard {
     pub(crate) activity: Activity,
+}
+
+/// Converting this borrow clones the activity's scope-carrying handle, so telemetry emitted
+/// through the resulting handle is attributed to that scope.
+///
+/// Custom context types integrate by implementing `From<&TheirType>` for [`ExperimentRunHandle`].
+impl From<&ActivityGuard> for ExperimentRunHandle {
+    fn from(value: &ActivityGuard) -> Self {
+        Self::from(&value.activity)
+    }
 }
 
 impl ActivityGuard {

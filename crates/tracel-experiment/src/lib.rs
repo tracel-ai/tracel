@@ -4,8 +4,9 @@
 //! - [`ExperimentRun`], which owns the lifecycle of an active experiment.
 //! - [`ExperimentRunHandle`], which is a lightweight cloneable view for logging and artifact access
 //!   from background tasks or other threads.
-//! - [`ExperimentContext`], the telemetry surface shared by runs, handles, activity guards, and
-//!   [`Activity`] references.
+//!
+//! Borrowed runs, handles, activities, and guards convert into scope-carrying handles through
+//! `Into<ExperimentRunHandle>`.
 //!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentRunHandleExt`] for cloning a shareable handle.
@@ -22,7 +23,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
-use tracel_artifact::bundle::{BundleDecode, BundleEncode};
+use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
 mod activity;
 mod cancellation;
@@ -31,7 +32,6 @@ mod control;
 mod log;
 mod provider;
 pub mod reader;
-mod scope;
 pub mod session;
 #[cfg(test)]
 mod test_support;
@@ -50,7 +50,6 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
-pub use scope::ExperimentContext;
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -194,6 +193,26 @@ pub struct ExperimentRunHandle {
     scope: Arc<serde_json::Map<String, serde_json::Value>>,
 }
 
+/// Converting this borrow clones the run's scope-carrying handle, so telemetry emitted through the
+/// resulting handle is attributed to that scope.
+///
+/// Custom context types integrate by implementing `From<&TheirType>` for [`ExperimentRunHandle`].
+impl From<&ExperimentRun> for ExperimentRunHandle {
+    fn from(value: &ExperimentRun) -> Self {
+        value.handle.clone()
+    }
+}
+
+/// Converting this borrow clones the scope-carrying handle, so telemetry emitted through the
+/// resulting handle is attributed to that scope.
+///
+/// Custom context types integrate by implementing `From<&TheirType>` for [`ExperimentRunHandle`].
+impl From<&ExperimentRunHandle> for ExperimentRunHandle {
+    fn from(value: &ExperimentRunHandle) -> Self {
+        value.clone()
+    }
+}
+
 struct RunInner {
     control: ExperimentRunControl,
     state: Mutex<RunState>,
@@ -298,12 +317,6 @@ impl ExperimentRun {
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
-    }
-}
-
-impl From<&ExperimentRun> for ExperimentRunHandle {
-    fn from(value: &ExperimentRun) -> Self {
-        value.handle()
     }
 }
 
@@ -585,6 +598,162 @@ impl ExperimentRunHandle {
     /// Create a child activity builder.
     pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
         self.emit_activity(name)
+    }
+}
+
+impl ExperimentRunHandle {
+    pub(crate) fn for_activity(&self, activity: ActivityId, cancel_token: CancelToken) -> Self {
+        Self {
+            activity: Some(activity),
+            context_cancel_token: cancel_token,
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn emit_log(&self, mut record: LogRecord) -> Result<(), ExperimentError> {
+        if !self.scope.is_empty() {
+            record.inherit_attrs(&self.scope);
+        }
+        self.record_event(Event::Log {
+            record,
+            activity: self.activity,
+        })
+    }
+
+    pub(crate) fn emit_config<C: Serialize>(
+        &self,
+        name: impl Into<String>,
+        config: &C,
+    ) -> Result<(), ExperimentError> {
+        let value = serde_json::to_value(config).map_err(|error| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to serialize experiment config",
+                error,
+            )
+        })?;
+
+        self.record_event(Event::Config {
+            name: name.into(),
+            value,
+        })
+    }
+
+    pub(crate) fn emit_metric(
+        &self,
+        epoch: usize,
+        split: impl Into<String>,
+        iteration: usize,
+        items: Vec<MetricValue>,
+    ) -> Result<(), ExperimentError> {
+        self.record_event(Event::Metrics {
+            epoch,
+            split: split.into(),
+            iteration,
+            items,
+            activity: self.activity,
+        })
+    }
+
+    pub(crate) fn emit_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
+        self.record_event(Event::MetricDefinition(spec))
+    }
+
+    pub(crate) fn emit_epoch_summary(
+        &self,
+        epoch: usize,
+        split: impl Into<String>,
+        items: Vec<MetricValue>,
+    ) -> Result<(), ExperimentError> {
+        self.record_event(Event::EpochSummary {
+            epoch,
+            split: split.into(),
+            items,
+            activity: self.activity,
+        })
+    }
+
+    pub(crate) fn emit_summary(&self, items: Vec<MetricValue>) -> Result<(), ExperimentError> {
+        self.record_event(Event::Summary {
+            items,
+            activity: self.activity,
+        })
+    }
+
+    pub(crate) fn emit_save_artifact<E: BundleEncode>(
+        &self,
+        name: impl AsRef<str>,
+        kind: ArtifactKind,
+        artifact: E,
+        settings: &E::Settings,
+    ) -> Result<(), ExperimentError> {
+        let inner = self.upgrade()?;
+        inner.ensure_active()?;
+
+        let artifact_fn = |bundle: &mut FsBundle| {
+            artifact.encode(bundle, settings).map_err(|error| {
+                ExperimentError::with_source(
+                    ExperimentErrorKind::Artifact,
+                    "Failed to encode artifact into bundle",
+                    error,
+                )
+            })
+        };
+
+        inner
+            .session
+            .save_artifact(name.as_ref(), kind, self.activity, Box::new(artifact_fn))
+    }
+
+    pub(crate) fn emit_use_artifact<D: BundleDecode>(
+        &self,
+        experiment_id: impl Into<ExperimentId>,
+        name: impl AsRef<str>,
+        settings: &D::Settings,
+    ) -> Result<D, ExperimentError> {
+        let inner = self.upgrade()?;
+        inner.ensure_active()?;
+        let name = name.as_ref();
+        let artifact = inner
+            .reader
+            .load_artifact_raw(experiment_id.into(), name)
+            .map_err(|error| {
+                ExperimentError::with_source(
+                    ExperimentErrorKind::Artifact,
+                    format!("Failed to load artifact bundle for {name}"),
+                    error,
+                )
+            })?;
+
+        D::decode(&artifact.bundle, settings).map_err(|error| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                format!("Failed to decode artifact: {name}"),
+                error,
+            )
+        })
+    }
+
+    pub(crate) fn emit_activity(&self, name: impl Into<String>) -> ActivityBuilder {
+        let inner = match self.upgrade() {
+            Ok(inner) => inner,
+            Err(_) => {
+                return ActivityBuilder::detached(
+                    name,
+                    self.activity,
+                    self.context_cancel_token.clone(),
+                    self.clone(),
+                );
+            }
+        };
+
+        ActivityBuilder::new(
+            inner.activity_id_allocator.clone(),
+            self.control.clone(),
+            name.into(),
+            self.clone(),
+        )
+        .with_parent(self.activity, self.context_cancel_token.clone())
     }
 }
 

@@ -36,7 +36,7 @@ impl LogLevel {
 /// ```
 ///
 /// Attributes carry structured metadata independently from any activity attribution attached by
-/// the emitting [`crate::ExperimentContext`].
+/// the emitting experiment scope.
 #[derive(Debug, Clone)]
 pub struct LogRecord {
     pub level: LogLevel,
