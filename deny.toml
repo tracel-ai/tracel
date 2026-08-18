@@ -68,7 +68,6 @@ unknown-registry = "deny"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
 unknown-git = "deny"
-allow-git = ["https://github.com/tracel-ai/burn-central-client"]
 
 [licenses]
 # The lint level for crates which do not have a detectable license

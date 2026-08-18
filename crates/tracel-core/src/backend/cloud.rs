@@ -72,7 +72,7 @@ impl CloudBackend {
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
 
-        let client = Client::new(env, &credentials).map_err(|err| {
+        let client = Client::connect(env, &credentials).map_err(|err| {
             if err.is_login_error() {
                 CloudError::InvalidCredentials
             } else {
@@ -101,7 +101,7 @@ fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
         let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
         let creds: CliCredentials =
             serde_json::from_str(&contents).map_err(|_| CloudError::NoCredentials)?;
-        return Ok(TracelCredentials::new(creds.api_key));
+        return Ok(TracelCredentials::api_key(creds.api_key));
     }
 
     Err(CloudError::NoCredentials)
