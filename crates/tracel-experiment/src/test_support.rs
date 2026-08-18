@@ -61,7 +61,19 @@ impl ExperimentArtifactReader for NoopExperimentDataReader {
 }
 
 pub(crate) fn create_run(session: Arc<MockSession>) -> ExperimentRun {
-    create_run_with_control(session, ExperimentRunControl::default())
+    create_run_with_id("test/experiment/1", session)
+}
+
+pub(crate) fn create_run_with_id(
+    id: impl Into<ExperimentId>,
+    session: Arc<MockSession>,
+) -> ExperimentRun {
+    ExperimentRun::new(
+        id,
+        session,
+        NoopExperimentDataReader,
+        crate::CancelToken::default(),
+    )
 }
 
 pub(crate) fn create_run_with_control(

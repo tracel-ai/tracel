@@ -208,58 +208,14 @@ impl Drop for CurrentExperimentGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use crate::ExperimentRun;
     use crate::context::ExperimentGlobalExt as _;
-    use crate::error::ExperimentError;
-    use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-    use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+    use crate::test_support::create_run_with_id;
 
     use super::ExperimentInstrument;
 
-    #[derive(Default)]
-    struct MockSession;
-
-    impl ExperimentSession for MockSession {
-        fn record_event(&self, _event: crate::session::Event) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn save_artifact(
-            &self,
-            _name: &str,
-            _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn finish(&self, _completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct NoopExperimentDataReader;
-
-    impl ExperimentArtifactReader for NoopExperimentDataReader {
-        fn load_artifact_raw(
-            &self,
-            _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
-        }
-    }
-
     fn create_run(id: &str) -> ExperimentRun {
-        ExperimentRun::new(
-            id,
-            Arc::new(MockSession),
-            NoopExperimentDataReader,
-            CancelToken::default(),
-        )
+        create_run_with_id(id, Default::default())
     }
 
     #[test]

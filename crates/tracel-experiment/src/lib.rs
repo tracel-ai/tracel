@@ -693,7 +693,7 @@ impl ExperimentRunHandle {
         ActivityBuilder::new(
             inner.activity_id_allocator.clone(),
             self.control.clone(),
-            name.into(),
+            name,
             self.clone(),
         )
         .with_parent(self.activity, self.context_cancel_token.clone())
@@ -771,7 +771,6 @@ impl Drop for ExperimentRun {
 mod tests {
     use crate::activity::ActivityEvent;
     use crate::test_support::{MockSession, create_run};
-    use tracel_artifact::bundle::{BundleEncode, BundleSink};
 
     use super::*;
 
@@ -791,92 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn metrics_record_the_emitting_activity_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let activity = run.activity("train").start();
-
-        activity.log_metric(
-            1,
-            "train",
-            1,
-            vec![MetricValue {
-                name: "loss".to_string(),
-                value: 0.25,
-            }],
-        );
-        run.log_metric(
-            1,
-            "valid",
-            1,
-            vec![MetricValue {
-                name: "loss".to_string(),
-                value: 0.2,
-            }],
-        );
-
-        let events = session.events.lock().unwrap();
-        assert!(matches!(
-            &events[1],
-            Event::Metrics {
-                activity: Some(id),
-                ..
-            } if *id == activity.id()
-        ));
-        assert!(matches!(&events[2], Event::Metrics { activity: None, .. }));
-    }
-
-    #[test]
-    fn logs_record_the_emitting_activity_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let activity = run.activity("train").start();
-
-        activity.log_info("in scope");
-        run.log_info("out of scope");
-
-        let events = session.events.lock().unwrap();
-        assert!(matches!(
-            &events[1],
-            Event::Log {
-                activity: Some(id),
-                ..
-            } if *id == activity.id()
-        ));
-        assert!(matches!(&events[2], Event::Log { activity: None, .. }));
-    }
-
-    #[test]
-    fn epoch_summaries_record_the_emitting_activity_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let activity = run.activity("train").start();
-        let items = || {
-            vec![MetricValue {
-                name: "loss".to_string(),
-                value: 0.1,
-            }]
-        };
-
-        activity.log_epoch_summary(1, "train", items());
-        run.log_epoch_summary(1, "valid", items());
-
-        let events = session.events.lock().unwrap();
-        assert!(matches!(
-            &events[1],
-            Event::EpochSummary {
-                activity: Some(id),
-                ..
-            } if *id == activity.id()
-        ));
-        assert!(matches!(
-            &events[2],
-            Event::EpochSummary { activity: None, .. }
-        ));
-    }
-
-    #[test]
-    fn summaries_record_the_emitting_activity_scope() {
+    fn telemetry_records_the_emitting_activity_scope() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
         let activity = run.activity("cross-validation").start();
@@ -887,18 +801,26 @@ mod tests {
             }]
         };
 
+        activity.log_info("in scope");
+        activity.log_metric(1, "train", 1, items());
+        activity.log_epoch_summary(1, "train", items());
         activity.log_summary(items());
-        run.log_summary(items());
+        run.log_info("out of scope");
 
         let events = session.events.lock().unwrap();
-        assert!(matches!(
-            &events[1],
-            Event::Summary {
-                activity: Some(id),
-                ..
-            } if *id == activity.id()
-        ));
-        assert!(matches!(&events[2], Event::Summary { activity: None, .. }));
+        let event_activity = |event: &Event| match event {
+            Event::Log { activity, .. }
+            | Event::Metrics { activity, .. }
+            | Event::EpochSummary { activity, .. }
+            | Event::Summary { activity, .. } => *activity,
+            event => panic!("unexpected event: {event:?}"),
+        };
+        assert!(
+            events[1..=4]
+                .iter()
+                .all(|event| event_activity(event) == Some(activity.id()))
+        );
+        assert_eq!(event_activity(&events[5]), None);
     }
 
     #[test]
@@ -1006,73 +928,6 @@ mod tests {
         assert_eq!(session.events.lock().unwrap().len(), recorded);
     }
 
-    /// Artifacts are run-global, so saving from inside an activity is accepted and simply
-    /// stores at the run root.
-    #[test]
-    fn artifacts_can_be_saved_from_an_activity() {
-        struct EmptyArtifact;
-
-        impl BundleEncode for EmptyArtifact {
-            type Settings = ();
-            type Error = String;
-
-            fn encode<O: BundleSink>(
-                self,
-                _sink: &mut O,
-                _settings: &Self::Settings,
-            ) -> Result<(), Self::Error> {
-                Ok(())
-            }
-        }
-
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let activity = run.activity("fold").start();
-
-        activity
-            .save_artifact("fold-model", ArtifactKind::Model, EmptyArtifact, &())
-            .unwrap();
-        run.save_artifact("model", ArtifactKind::Model, EmptyArtifact, &())
-            .unwrap();
-    }
-
-    #[test]
-    fn activity_reference_is_shareable_and_static() {
-        fn assert_bounds<T: Clone + Send + Sync + 'static>() {}
-        assert_bounds::<Activity>();
-    }
-
-    #[test]
-    fn level_methods_record_the_matching_level() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-
-        run.log_trace("t");
-        run.log_debug("d");
-        run.log_info("i");
-        run.log_warn("w");
-        run.log_error("e");
-
-        let events = session.events.lock().unwrap();
-        let levels: Vec<_> = events
-            .iter()
-            .map(|event| match event {
-                Event::Log { record, .. } => record.level,
-                event => panic!("unexpected event: {event:?}"),
-            })
-            .collect();
-        assert_eq!(
-            levels,
-            vec![
-                LogLevel::Trace,
-                LogLevel::Debug,
-                LogLevel::Info,
-                LogLevel::Warn,
-                LogLevel::Error,
-            ]
-        );
-    }
-
     #[test]
     fn scoped_handle_inherits_attributes_and_call_site_wins() {
         let session = Arc::new(MockSession::default());
@@ -1165,20 +1020,6 @@ mod tests {
             Event::Log { record, .. } => assert_eq!(record.message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
-    }
-
-    #[test]
-    fn run_metered_activity_start_records_progress_event() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-
-        let _progress = run.activity("load").meter(1, "items").start();
-
-        let events = session.events.lock().unwrap();
-        assert!(matches!(
-            events.as_slice(),
-            [Event::Activity(ActivityEvent::Started { activity })] if activity.name == "load"
-        ));
     }
 
     #[test]

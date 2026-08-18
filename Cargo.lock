@@ -6665,6 +6665,7 @@ dependencies = [
 [[package]]
 name = "tracel-client"
 version = "0.12.0"
+source = "git+https://github.com/tracel-ai/burn-central-client.git?rev=7a9816c65295bc9a2469d7d30f5b536ed90d31eb#7a9816c65295bc9a2469d7d30f5b536ed90d31eb"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",

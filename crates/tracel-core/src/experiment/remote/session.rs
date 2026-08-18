@@ -83,63 +83,7 @@ impl RemoteExperimentSession {
 
 impl ExperimentSession for RemoteExperimentSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-        let message = match event {
-            Event::Args(value) => ExperimentMessage::Arguments(value),
-            Event::Config { name, value } => ExperimentMessage::Config { name, value },
-            Event::Log { record, activity } => {
-                ExperimentMessage::LogEntries(vec![to_log_entry(record, activity)])
-            }
-            Event::Metrics {
-                epoch,
-                split,
-                iteration,
-                items,
-                activity,
-            } => ExperimentMessage::MetricsLog {
-                epoch,
-                split,
-                iteration,
-                items: to_remote_metric_logs(items),
-                activity: to_remote_activity_id(activity),
-            },
-            Event::MetricDefinition(MetricSpec {
-                name,
-                description,
-                unit,
-                higher_is_better,
-            }) => ExperimentMessage::MetricDefinitionLog {
-                name,
-                description,
-                unit,
-                higher_is_better,
-            },
-            Event::EpochSummary {
-                epoch,
-                split,
-                items,
-                activity,
-            } => ExperimentMessage::EpochSummaryLog {
-                epoch,
-                split,
-                best_metric_values: to_remote_metric_logs(items),
-                activity: to_remote_activity_id(activity),
-            },
-            Event::Summary { items, activity } => ExperimentMessage::SummaryLog {
-                items: to_remote_metric_logs(items),
-                activity: to_remote_activity_id(activity),
-            },
-            Event::ArtifactUsed {
-                experiment_id: _,
-                reference,
-            } => ExperimentMessage::InputUsed(InputUsed::Artifact {
-                artifact_id: reference.id,
-            }),
-            Event::Activity(activity_event) => {
-                ExperimentMessage::Activity(to_remote_activity_event(activity_event))
-            }
-        };
-
-        self.send(message)
+        self.send(to_remote_message(event))
     }
 
     fn save_artifact(
@@ -204,6 +148,64 @@ impl ExperimentSession for RemoteExperimentSession {
                 ExperimentErrorKind::Internal,
                 "Experiment background thread panicked",
             )),
+        }
+    }
+}
+
+fn to_remote_message(event: Event) -> ExperimentMessage {
+    match event {
+        Event::Args(value) => ExperimentMessage::Arguments(value),
+        Event::Config { name, value } => ExperimentMessage::Config { name, value },
+        Event::Log { record, activity } => {
+            ExperimentMessage::LogEntries(vec![to_log_entry(record, activity)])
+        }
+        Event::Metrics {
+            epoch,
+            split,
+            iteration,
+            items,
+            activity,
+        } => ExperimentMessage::MetricsLog {
+            epoch,
+            split,
+            iteration,
+            items: to_remote_metric_logs(items),
+            activity: to_remote_activity_id(activity),
+        },
+        Event::MetricDefinition(MetricSpec {
+            name,
+            description,
+            unit,
+            higher_is_better,
+        }) => ExperimentMessage::MetricDefinitionLog {
+            name,
+            description,
+            unit,
+            higher_is_better,
+        },
+        Event::EpochSummary {
+            epoch,
+            split,
+            items,
+            activity,
+        } => ExperimentMessage::EpochSummaryLog {
+            epoch,
+            split,
+            best_metric_values: to_remote_metric_logs(items),
+            activity: to_remote_activity_id(activity),
+        },
+        Event::Summary { items, activity } => ExperimentMessage::SummaryLog {
+            items: to_remote_metric_logs(items),
+            activity: to_remote_activity_id(activity),
+        },
+        Event::ArtifactUsed {
+            experiment_id: _,
+            reference,
+        } => ExperimentMessage::InputUsed(InputUsed::Artifact {
+            artifact_id: reference.id,
+        }),
+        Event::Activity(activity_event) => {
+            ExperimentMessage::Activity(to_remote_activity_event(activity_event))
         }
     }
 }
@@ -286,5 +288,79 @@ fn to_remote_completion(completion: ExperimentCompletion) -> RemoteExperimentCom
         ExperimentCompletion::Success => RemoteExperimentCompletion::Success,
         ExperimentCompletion::Failed(reason) => RemoteExperimentCompletion::Fail { reason },
         ExperimentCompletion::Cancelled => RemoteExperimentCompletion::Success,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+
+    use super::*;
+
+    fn activity_id() -> ActivityId {
+        ActivityId::new(NonZeroU64::new(42).unwrap())
+    }
+
+    fn metrics() -> Vec<MetricValue> {
+        vec![MetricValue {
+            name: "loss".to_string(),
+            value: 0.25,
+        }]
+    }
+
+    #[test]
+    fn wire_messages_preserve_activity_attribution() {
+        let activity = Some(activity_id());
+        let messages = [
+            to_remote_message(Event::Log {
+                record: LogRecord::info("training"),
+                activity,
+            }),
+            to_remote_message(Event::Metrics {
+                epoch: 1,
+                split: "train".to_string(),
+                iteration: 2,
+                items: metrics(),
+                activity,
+            }),
+            to_remote_message(Event::EpochSummary {
+                epoch: 1,
+                split: "train".to_string(),
+                items: metrics(),
+                activity,
+            }),
+            to_remote_message(Event::Summary {
+                items: metrics(),
+                activity,
+            }),
+        ];
+
+        let activities = messages.map(|message| match message {
+            ExperimentMessage::LogEntries(entries) => entries[0].activity,
+            ExperimentMessage::MetricsLog { activity, .. }
+            | ExperimentMessage::EpochSummaryLog { activity, .. }
+            | ExperimentMessage::SummaryLog { activity, .. } => activity,
+            message => panic!("unexpected message: {message:?}"),
+        });
+
+        assert!(activities.into_iter().all(|activity| activity == Some(42)));
+    }
+
+    #[test]
+    fn failed_activity_maps_to_failed_wire_status() {
+        let message = to_remote_message(Event::Activity(ActivityEvent::Finished {
+            id: activity_id(),
+            status: ActivityStatus::Failed,
+            message: Some("training failed".to_string()),
+        }));
+
+        assert!(matches!(
+            message,
+            ExperimentMessage::Activity(ActivityEventRequest::Finished {
+                id: 42,
+                status: ActivityStatusRequest::Failed,
+                message: Some(message),
+            }) if message == "training failed"
+        ));
     }
 }

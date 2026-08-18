@@ -18,12 +18,8 @@ pub struct ExperimentTrainingProgressLogger {
 impl ExperimentTrainingProgressLogger {
     /// Create a training progress logger backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
-        Self::from_handle(experiment.into())
-    }
-
-    pub(crate) fn from_handle(experiment: ExperimentRunHandle) -> Self {
         Self {
-            experiment,
+            experiment: experiment.into(),
             training_guard: None,
             epoch_guard: None,
             split_guard: None,
@@ -131,12 +127,8 @@ pub struct ExperimentEvaluationProgressLogger {
 impl ExperimentEvaluationProgressLogger {
     /// Create an evaluation progress logger backed by the provided experiment run.
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
-        Self::from_handle(experiment.into())
-    }
-
-    pub(crate) fn from_handle(experiment: ExperimentRunHandle) -> Self {
         Self {
-            experiment,
+            experiment: experiment.into(),
             eval_guard: None,
             test_guard: None,
         }
@@ -185,77 +177,16 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use crate::{
-        ArtifactKind, CancelToken, ExperimentId, ExperimentRun,
         activity::ActivityEvent,
-        error::ExperimentError,
         integration::training::ExperimentTrainingExt,
-        reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact},
-        session::{BundleFn, Event, ExperimentCompletion, ExperimentSession},
+        session::Event,
+        test_support::{MockSession, create_run},
     };
 
     use super::*;
-
-    #[derive(Default)]
-    struct MockSession {
-        events: Mutex<Vec<Event>>,
-    }
-
-    impl ExperimentSession for MockSession {
-        fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-            self.events.lock().unwrap().push(event);
-            Ok(())
-        }
-
-        fn save_artifact(
-            &self,
-            _name: &str,
-            _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn finish(&self, _completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct NoopExperimentDataReader;
-
-    impl ExperimentArtifactReader for NoopExperimentDataReader {
-        fn load_artifact_raw(
-            &self,
-            _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
-        }
-    }
-
-    fn create_run(session: Arc<MockSession>) -> ExperimentRun {
-        ExperimentRun::new(
-            "test/experiment/1",
-            session,
-            NoopExperimentDataReader,
-            CancelToken::default(),
-        )
-    }
-
-    #[test]
-    fn adapter_constructor_accepts_borrowed_run_activity_and_guard() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session);
-        let guard = run.activity("Fold").start();
-        let activity = guard.share();
-
-        let _run_logger = ExperimentTrainingProgressLogger::new(&run);
-        let _activity_logger = ExperimentTrainingProgressLogger::new(&activity);
-        let _guard_logger = ExperimentTrainingProgressLogger::new(&guard);
-    }
 
     #[test]
     fn training_progress_groups_splits_under_supplied_scope() {
@@ -265,7 +196,7 @@ mod tests {
         let parent_id = parent.id();
         let mut logger = parent.training_progress_logger();
 
-        logger.start(2, 0, None);
+        logger.start(2, 1, None);
         logger.start_split("train", 10);
         logger.update_split(4);
         logger.end_split();
@@ -315,5 +246,36 @@ mod tests {
         assert_eq!(valid.parent, Some(epoch.id));
         assert_eq!(valid.meter.as_ref().unwrap().unit.as_deref(), Some("steps"));
         assert_eq!(valid.meter.as_ref().unwrap().total, Some(5));
+    }
+
+    #[test]
+    fn evaluation_progress_groups_tests_under_supplied_scope() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let parent = run.activity("Fold 1").start();
+        let mut logger = parent.evaluation_progress_logger();
+
+        logger.start_global_progress(2);
+        logger.start_test("test", 4);
+        logger.update_test_progress(2);
+        logger.end_test();
+        logger.end_global_progress();
+
+        let events = session.events.lock().unwrap();
+        let started = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Activity(ActivityEvent::Started { activity }) => Some(activity),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(started.len(), 3);
+        let evaluation = started[1];
+        let test = started[2];
+        assert_eq!(evaluation.parent, Some(parent.id()));
+        assert_eq!(evaluation.meter.as_ref().unwrap().total, Some(2));
+        assert_eq!(test.parent, Some(evaluation.id));
+        assert_eq!(test.meter.as_ref().unwrap().total, Some(4));
     }
 }

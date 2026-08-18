@@ -22,13 +22,7 @@ impl Cancellable for LinkedInterrupter {
 /// Prefer [`crate::integration::training::ExperimentTrainingExt::interrupter`] when you already
 /// have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 pub fn experiment_interrupter(experiment: impl Into<ExperimentRunHandle>) -> Interrupter {
-    experiment_interrupter_from_handle(experiment.into())
-}
-
-pub(crate) fn experiment_interrupter_from_handle(
-    experiment_handle: ExperimentRunHandle,
-) -> Interrupter {
-    let cancel_token = experiment_handle.cancel_token();
+    let cancel_token = experiment.into().cancel_token();
     let interrupter = Interrupter::new();
     cancel_token.link(LinkedInterrupter(interrupter.clone()));
     interrupter

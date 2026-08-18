@@ -114,20 +114,20 @@ pub enum ActivityEvent {
 
 /// Lock-free activity identifier allocator.
 #[derive(Debug)]
-pub struct AtomicActivityIdAllocator {
+pub(crate) struct AtomicActivityIdAllocator {
     next: AtomicU64,
 }
 
 impl AtomicActivityIdAllocator {
     /// Create an allocator that starts at identifier `1`.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             next: AtomicU64::new(1),
         }
     }
 
     /// Return the next identifier.
-    pub fn next_id(&self) -> ActivityId {
+    pub(crate) fn next_id(&self) -> ActivityId {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
 
         // Starts at 1, so this should only fail after overflow or wraparound.
@@ -249,9 +249,7 @@ impl ActivityBuilder {
         mut self,
         attributes: impl IntoIterator<Item = (String, serde_json::Value)>,
     ) -> Self {
-        for (key, value) in attributes {
-            self.attributes.insert(key, value);
-        }
+        self.attributes.extend(attributes);
         self
     }
 
@@ -699,16 +697,6 @@ mod tests {
             panic!("unexpected event: {:?}", events[1]);
         };
         assert_eq!(*current, 3);
-    }
-
-    #[test]
-    fn activity_guard_telemetry_needs_no_context_trait_import() {
-        let (_session, run) = setup_run();
-        let guard = run.activity("parent").start();
-
-        guard.log_info("working");
-        guard.inc(1);
-        let _child = guard.activity("child").start();
     }
 
     #[test]

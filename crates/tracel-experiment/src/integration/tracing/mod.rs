@@ -17,7 +17,6 @@ use crate::{Activity, ActivityGuard, ExperimentRun, ExperimentRunHandle};
 
 mod layer;
 pub(crate) mod registry;
-mod visitor;
 
 pub use layer::ExperimentTracingLogLayer;
 
@@ -122,69 +121,20 @@ impl ActivityTracingExt for Activity {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use tracing_subscriber::layer::SubscriberExt;
 
     use crate::context::ExperimentGlobalExt;
-    use crate::error::ExperimentError;
-    use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-    use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+    use crate::session::Event;
+    use crate::test_support::{MockSession, create_run_with_id};
 
     use super::*;
-
-    #[derive(Default)]
-    struct MockSession {
-        events: Mutex<Vec<Event>>,
-    }
-
-    impl ExperimentSession for MockSession {
-        fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-            self.events.lock().unwrap().push(event);
-            Ok(())
-        }
-
-        fn save_artifact(
-            &self,
-            _name: &str,
-            _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn finish(&self, _completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct NoopExperimentDataReader;
-
-    impl ExperimentArtifactReader for NoopExperimentDataReader {
-        fn load_artifact_raw(
-            &self,
-            _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
-        }
-    }
-
-    fn create_run(id: &str, session: Arc<MockSession>) -> ExperimentRun {
-        ExperimentRun::new(
-            id,
-            session,
-            NoopExperimentDataReader,
-            CancelToken::default(),
-        )
-    }
 
     #[test]
     fn tracing_layer_forwards_events_to_current_experiment() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-1", session.clone());
+        let run = create_run_with_id("trace-test-1", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -210,7 +160,7 @@ mod tests {
     #[test]
     fn activity_run_installs_its_scope_for_tracing_events() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-activity", session.clone());
+        let run = create_run_with_id("trace-test-activity", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         let activity_id = tracing::subscriber::with_default(subscriber, || {
@@ -236,7 +186,7 @@ mod tests {
     #[test]
     fn activity_span_routes_logs_to_its_activity() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-activity-span", session.clone());
+        let run = create_run_with_id("trace-test-activity-span", session.clone());
         let activity = run.activity("fold").start();
         let activity_id = activity.id();
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
@@ -260,7 +210,7 @@ mod tests {
     #[test]
     fn tracing_layer_routes_from_span_experiment_id_without_ambient_scope() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-span", session.clone());
+        let run = create_run_with_id("trace-test-span", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -286,7 +236,7 @@ mod tests {
     #[test]
     fn tracing_layer_routes_from_experiment_span_helper_without_ambient_scope() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-helper-span", session.clone());
+        let run = create_run_with_id("trace-test-helper-span", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -308,7 +258,7 @@ mod tests {
     #[test]
     fn tracing_layer_skips_events_without_experiment_scope() {
         let session = Arc::new(MockSession::default());
-        let _run = create_run("trace-test-2", session.clone());
+        let _run = create_run_with_id("trace-test-2", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -322,7 +272,7 @@ mod tests {
     #[test]
     fn tracing_layer_inherits_span_field_attributes() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-scope", session.clone());
+        let run = create_run_with_id("trace-test-scope", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
