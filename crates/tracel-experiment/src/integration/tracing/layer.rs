@@ -9,7 +9,6 @@ use crate::{
     integration::tracing::registry::TracingRegistry,
 };
 
-/// Field names that control routing rather than describe a log record.
 const EXPERIMENT_ID_FIELD: &str = "experiment_id";
 const ACTIVITY_ID_FIELD: &str = "activity_id";
 const MESSAGE_FIELD: &str = "message";
