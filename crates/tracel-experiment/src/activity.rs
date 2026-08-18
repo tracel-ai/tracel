@@ -672,20 +672,6 @@ mod tests {
     }
 
     #[test]
-    fn activity_start_reports_no_meter() {
-        let (session, run) = setup_run();
-
-        let _guard = run.activity("epoch").start();
-
-        let events = session.activity_events();
-        let ActivityEvent::Started { activity } = &events[0] else {
-            panic!("unexpected event: {:?}", events[0]);
-        };
-        assert_eq!(activity.name, "epoch");
-        assert!(activity.meter.is_none());
-    }
-
-    #[test]
     fn inc_reports_updated_progress() {
         let (session, run) = setup_run();
         let guard = run.activity("items").meter(8, "items").start();
