@@ -620,9 +620,18 @@ impl ActivityGuard {
     }
 }
 
+/// A guard dropped by an unwind reports the panic as the activity's failure;
+/// dropped any other way without an explicit ending, the activity was
+/// abandoned. An already-ended activity reports nothing either way.
 impl Drop for ActivityGuard {
     fn drop(&mut self) {
-        self.activity.complete(ActivityStatus::Abandoned, None);
+        if std::thread::panicking() {
+            let reason =
+                crate::panic_watch::thread_panic().unwrap_or_else(|| "panicked".to_string());
+            self.activity.complete(ActivityStatus::Failed, Some(reason));
+        } else {
+            self.activity.complete(ActivityStatus::Abandoned, None);
+        }
     }
 }
 

@@ -24,7 +24,7 @@ thread_local! {
 
 /// Install the chained hook. Idempotent, and cheap enough to call from every
 /// run construction so the failure-reason slot works without any opt-in.
-pub(crate) fn install() {
+pub fn install() {
     INSTALL.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -35,13 +35,20 @@ pub(crate) fn install() {
 }
 
 /// What the panicking thread recorded, taken so an unwinding run reports it once.
-pub(crate) fn take_thread_panic() -> Option<String> {
+pub fn take_thread_panic() -> Option<String> {
     LAST_PANIC.with(|slot| slot.borrow_mut().take())
+}
+
+/// What the panicking thread recorded, left in place. Activity guards unwind
+/// before the run they belong to, so they read without consuming what the run
+/// still needs for its failure reason.
+pub fn thread_panic() -> Option<String> {
+    LAST_PANIC.with(|slot| slot.borrow().clone())
 }
 
 /// Stream every panic on any thread to `handle` as an error log line until the
 /// returned guard drops.
-pub(crate) fn watch(handle: ExperimentRunHandle) -> PanicWatch {
+pub fn watch(handle: ExperimentRunHandle) -> PanicWatch {
     install();
     let id = WATCHER_IDS.fetch_add(1, Ordering::Relaxed);
     if let Ok(mut watchers) = WATCHERS.lock() {

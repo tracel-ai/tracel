@@ -790,6 +790,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn panic_unwinding_a_guard_fails_the_activity_with_the_panic() {
+        let session = Arc::new(MockSession::default());
+        let run_session = session.clone();
+
+        let outcome = std::thread::Builder::new()
+            .name("stage-runner".into())
+            .spawn(move || {
+                let run = create_run(run_session);
+                let _stage = run.activity("Train fold 3 of 6").cancellable().start();
+                panic!("fusion stream out of order");
+            })
+            .unwrap()
+            .join();
+        assert!(outcome.is_err());
+
+        let finished = session
+            .activity_events()
+            .into_iter()
+            .find_map(|event| match event {
+                ActivityEvent::Finished {
+                    status, message, ..
+                } => Some((status, message)),
+                _ => None,
+            })
+            .expect("the stage reported an ending");
+        assert!(matches!(finished.0, ActivityStatus::Failed));
+        let message = finished.1.expect("the ending carried the panic");
+        assert!(message.contains("fusion stream out of order"), "{message}");
+
+        let completions = session.completions.lock().unwrap();
+        match completions.as_slice() {
+            [ExperimentCompletion::Failed(reason)] => {
+                assert!(reason.contains("fusion stream out of order"), "{reason}");
+            }
+            other => panic!("unexpected completions: {other:?}"),
+        }
+    }
+
+    #[test]
     fn panicking_run_reports_the_panic_as_its_failure_reason() {
         let session = Arc::new(MockSession::default());
         let run_session = session.clone();
@@ -921,14 +960,14 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(matches!(
-            completions.as_slice(),
+        match completions.as_slice() {
             [
                 (ActivityStatus::Success, None),
                 (ActivityStatus::Failed, Some("fold failed")),
-                (ActivityStatus::Abandoned, None),
-            ]
-        ));
+                (ActivityStatus::Failed, Some(panicked)),
+            ] => assert!(panicked.contains("boom"), "{panicked}"),
+            other => panic!("unexpected completions: {other:?}"),
+        }
     }
 
     #[test]
