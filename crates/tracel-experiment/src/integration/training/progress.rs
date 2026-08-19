@@ -13,6 +13,8 @@ pub struct ExperimentTrainingProgressLogger {
     split_guard: Option<ActivityGuard>,
     completed_epochs: usize,
     total_epochs: Option<usize>,
+    split_seen: usize,
+    split_total: usize,
 }
 
 impl ExperimentTrainingProgressLogger {
@@ -25,6 +27,8 @@ impl ExperimentTrainingProgressLogger {
             split_guard: None,
             completed_epochs: 0,
             total_epochs: None,
+            split_seen: 0,
+            split_total: 0,
         }
     }
 
@@ -75,10 +79,13 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         } else {
             self.experiment.activity(name)
         };
+        self.split_seen = 0;
+        self.split_total = total_items;
         self.split_guard = Some(builder.meter(total_items as u64, "steps").start());
     }
 
     fn update_split(&mut self, items_processed: usize) {
+        self.split_seen = items_processed;
         if let Some(guard) = &self.split_guard {
             guard.set(items_processed as u64);
         }
@@ -86,7 +93,12 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
 
     fn end_split(&mut self) {
         if let Some(guard) = self.split_guard.take() {
-            guard.finish();
+            // Burn ends a split whether its loader ran dry or died under it;
+            // only the meter says which.
+            match self.split_seen >= self.split_total {
+                true => guard.finish(),
+                false => guard.abandon(),
+            }
         }
     }
 
@@ -107,7 +119,13 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         self.epoch_guard.take();
 
         if let Some(guard) = self.training_guard.take() {
-            guard.finish();
+            let done = self
+                .total_epochs
+                .is_some_and(|total| self.completed_epochs >= total);
+            match done {
+                true => guard.finish(),
+                false => guard.abandon(),
+            }
         }
     }
 
@@ -122,6 +140,10 @@ pub struct ExperimentEvaluationProgressLogger {
     experiment: ExperimentRunHandle,
     eval_guard: Option<ActivityGuard>,
     test_guard: Option<ActivityGuard>,
+    tests_total: usize,
+    tests_done: usize,
+    test_seen: usize,
+    test_total: usize,
 }
 
 impl ExperimentEvaluationProgressLogger {
@@ -131,12 +153,18 @@ impl ExperimentEvaluationProgressLogger {
             experiment: experiment.into(),
             eval_guard: None,
             test_guard: None,
+            tests_total: 0,
+            tests_done: 0,
+            test_seen: 0,
+            test_total: 0,
         }
     }
 }
 
 impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
     fn start_global_progress(&mut self, total_tests: usize) {
+        self.tests_total = total_tests;
+        self.tests_done = 0;
         self.eval_guard = Some(
             self.experiment
                 .activity("Evaluation")
@@ -151,10 +179,13 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         } else {
             self.experiment.activity(name)
         };
+        self.test_seen = 0;
+        self.test_total = total_items;
         self.test_guard = Some(builder.meter(total_items as u64, "steps").start());
     }
 
     fn update_test_progress(&mut self, items_processed: usize) {
+        self.test_seen = items_processed;
         if let Some(guard) = &self.test_guard {
             guard.set(items_processed as u64);
         }
@@ -162,13 +193,26 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
 
     fn end_test(&mut self) {
         if let Some(guard) = self.test_guard.take() {
-            guard.finish();
+            match self.test_seen >= self.test_total {
+                true => {
+                    self.tests_done += 1;
+                    if let Some(eval) = &self.eval_guard {
+                        eval.set(self.tests_done as u64);
+                    }
+                    guard.finish();
+                }
+                false => guard.abandon(),
+            }
         }
     }
 
     fn end_global_progress(&mut self) {
+        self.test_guard.take();
         if let Some(guard) = self.eval_guard.take() {
-            guard.finish();
+            match self.tests_done >= self.tests_total {
+                true => guard.finish(),
+                false => guard.abandon(),
+            }
         }
     }
 
@@ -246,6 +290,46 @@ mod tests {
         assert_eq!(valid.parent, Some(epoch.id));
         assert_eq!(valid.meter.as_ref().unwrap().unit.as_deref(), Some("steps"));
         assert_eq!(valid.meter.as_ref().unwrap().total, Some(5));
+    }
+
+    #[test]
+    fn endings_follow_the_meter() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let parent = run.activity("Fold 6").start();
+        let mut logger = parent.training_progress_logger();
+
+        logger.start(2, 1, None);
+        logger.start_split("train", 10);
+        logger.update_split(10);
+        logger.end_split();
+        logger.start_split("valid", 10);
+        logger.update_split(3);
+        logger.end_split();
+        logger.end();
+
+        let completions = session
+            .activity_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActivityEvent::Finished { id, status, .. } => Some((id, status)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let statuses: Vec<_> = completions.iter().map(|(_, s)| s.clone()).collect();
+        assert!(
+            matches!(
+                statuses.as_slice(),
+                [
+                    crate::ActivityStatus::Success,   // the train split ran dry
+                    crate::ActivityStatus::Abandoned, // the valid split stopped at 3 of 10
+                    crate::ActivityStatus::Abandoned, // the epoch never completed
+                    crate::ActivityStatus::Abandoned, // 0 of 2 epochs is not a finished training
+                ]
+            ),
+            "unexpected endings: {statuses:?}"
+        );
     }
 
     #[test]
