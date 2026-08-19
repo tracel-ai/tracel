@@ -1,10 +1,5 @@
-//! Panic capture for experiment runs.
-//!
-//! A process-wide hook, chained onto whatever was installed before it, formats
-//! every panic and keeps it in two places: a thread-local slot the panicking
-//! thread's run reads back as its failure reason while it unwinds, and an
-//! error log line on every run that opted into watching, so a panic on a
-//! worker thread that never unwinds the run still leaves a trace on it.
+//! Panic capture for experiment runs: a chained process-wide hook records
+//! every panic for failure reasons and watched-run error logs.
 
 use std::cell::RefCell;
 use std::panic::PanicHookInfo;
@@ -22,8 +17,7 @@ thread_local! {
     static IN_HOOK: RefCell<bool> = const { RefCell::new(false) };
 }
 
-/// Install the chained hook. Idempotent, and cheap enough to call from every
-/// run construction so the failure-reason slot works without any opt-in.
+/// Install the chained hook. Idempotent.
 pub fn install() {
     INSTALL.call_once(|| {
         let previous = std::panic::take_hook();
@@ -39,15 +33,13 @@ pub fn take_thread_panic() -> Option<String> {
     LAST_PANIC.with(|slot| slot.borrow_mut().take())
 }
 
-/// What the panicking thread recorded, left in place. Activity guards unwind
-/// before the run they belong to, so they read without consuming what the run
-/// still needs for its failure reason.
+/// What the panicking thread recorded, left in place for the guards that
+/// unwind before their run does.
 pub fn thread_panic() -> Option<String> {
     LAST_PANIC.with(|slot| slot.borrow().clone())
 }
 
-/// Stream every panic on any thread to `handle` as an error log line until the
-/// returned guard drops.
+/// Stream every panic on any thread to `handle` until the guard drops.
 pub fn watch(handle: ExperimentRunHandle) -> PanicWatch {
     install();
     let id = WATCHER_IDS.fetch_add(1, Ordering::Relaxed);
@@ -93,8 +85,12 @@ fn record(info: &PanicHookInfo<'_>) {
         .lock()
         .map(|entries| entries.iter().map(|(_, handle)| handle.clone()).collect())
         .unwrap_or_default();
-    for handle in watchers {
+    for handle in &watchers {
         handle.log_error(line.clone());
+    }
+    // An aborting teardown never reaches the finishing drain.
+    for handle in &watchers {
+        handle.flush();
     }
 }
 

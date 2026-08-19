@@ -620,9 +620,8 @@ impl ActivityGuard {
     }
 }
 
-/// A guard dropped by an unwind reports the panic as the activity's failure;
-/// dropped any other way without an explicit ending, the activity was
-/// abandoned. An already-ended activity reports nothing either way.
+/// Unwound by a panic the activity failed with it; dropped without an ending
+/// it was abandoned.
 impl Drop for ActivityGuard {
     fn drop(&mut self) {
         if std::thread::panicking() {

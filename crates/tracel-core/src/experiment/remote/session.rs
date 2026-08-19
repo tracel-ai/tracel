@@ -17,10 +17,10 @@ use tracel_client::websocket::{
 };
 
 use super::socket::ExperimentSocket;
-use super::socket::ThreadError;
+use super::socket::{SocketCommand, ThreadError};
 
 struct ActiveSession {
-    sender: Sender<ExperimentMessage>,
+    sender: Sender<SocketCommand>,
     socket: ExperimentSocket,
 }
 
@@ -72,18 +72,48 @@ impl RemoteExperimentSession {
             )
         })?;
 
-        active.sender.send(message).map_err(|_| {
-            ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "Failed to send message to experiment session",
-            )
-        })
+        active
+            .sender
+            .send(SocketCommand::Message(message))
+            .map_err(|_| {
+                ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "Failed to send message to experiment session",
+                )
+            })
     }
 }
+
+/// Only a dead connection waits this out; the writes themselves are synchronous.
+const FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl ExperimentSession for RemoteExperimentSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         self.send(to_remote_message(event))
+    }
+
+    fn flush(&self) -> Result<(), ExperimentError> {
+        let (ack, acked) = crossbeam::channel::bounded(1);
+        {
+            let guard = self.active.lock().unwrap();
+            let Some(active) = guard.as_ref() else {
+                // A finished session already drained on the way out.
+                return Ok(());
+            };
+            active.sender.send(SocketCommand::Flush(ack)).map_err(|_| {
+                ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "The experiment socket is no longer accepting events",
+                )
+            })?;
+        }
+
+        acked.recv_timeout(FLUSH_TIMEOUT).map_err(|_| {
+            ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "The experiment socket did not confirm delivery in time",
+            )
+        })
     }
 
     fn save_artifact(
@@ -121,12 +151,9 @@ impl ExperimentSession for RemoteExperimentSession {
             )
         })?;
 
-        let send_result =
-            active
-                .sender
-                .send(ExperimentMessage::ExperimentComplete(to_remote_completion(
-                    completion,
-                )));
+        let send_result = active.sender.send(SocketCommand::Message(
+            ExperimentMessage::ExperimentComplete(to_remote_completion(completion)),
+        ));
         drop(active.sender);
 
         let join_result = active.socket.join();

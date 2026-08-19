@@ -294,11 +294,9 @@ impl ExperimentRun {
         }
     }
 
-    /// Stream every panic on any thread into this run's log as an error line
-    /// until the returned guard drops.
-    ///
-    /// The panicking thread's payload also becomes the run's failure reason
-    /// when that panic unwinds the run itself; that part needs no guard.
+    /// Stream every panic on any thread into this run's log until the guard
+    /// drops. The failure reason needs no guard: an unwinding run reads the
+    /// panicking thread's record on its own.
     pub fn capture_panics(&self) -> PanicWatch {
         panic_watch::watch(self.handle())
     }
@@ -532,6 +530,14 @@ impl ExperimentRunHandle {
     /// Log an `error`-level message.
     pub fn log_error(&self, message: impl Into<String>) {
         self.log(LogRecord::error(message));
+    }
+
+    /// Block, briefly and best effort, until everything recorded has left the
+    /// process.
+    pub fn flush(&self) {
+        if let Some(inner) = self.inner.upgrade() {
+            let _ = inner.session.flush();
+        }
     }
 
     pub(crate) fn for_activity(&self, activity: ActivityId, cancel_token: CancelToken) -> Self {
@@ -877,6 +883,14 @@ mod tests {
             _ => false,
         });
         assert!(logged, "no error log carried the panic: {events:?}");
+        drop(events);
+
+        // The hook pushes what it just recorded out of the process while it
+        // still can; an aborting teardown must not be able to eat it.
+        assert!(
+            *session.flushes.lock().unwrap() > 0,
+            "the hook never flushed"
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl};
 pub(crate) struct MockSession {
     pub(crate) events: Mutex<Vec<Event>>,
     pub(crate) completions: Mutex<Vec<ExperimentCompletion>>,
+    pub(crate) flushes: Mutex<usize>,
 }
 
 impl MockSession {
@@ -29,6 +30,11 @@ impl MockSession {
 impl ExperimentSession for MockSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         self.events.lock().unwrap().push(event);
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), ExperimentError> {
+        *self.flushes.lock().unwrap() += 1;
         Ok(())
     }
 
