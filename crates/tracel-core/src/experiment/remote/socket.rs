@@ -1,4 +1,4 @@
-use crossbeam::channel::{Receiver, RecvTimeoutError};
+use crossbeam::channel::{Receiver, RecvTimeoutError, Sender};
 use std::num::NonZeroU64;
 use std::{thread::JoinHandle, time::Duration};
 use tracel_client::{
@@ -17,19 +17,26 @@ pub enum ThreadError {
 
 const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
 
+/// Sends are written in order, so an acked flush probe proves everything
+/// queued before it was written.
+pub enum SocketCommand {
+    Message(ExperimentMessage),
+    Flush(Sender<()>),
+}
+
 #[derive(Debug)]
 pub struct ThreadResult {}
 
 struct ExperimentThread {
     ws_client: WebSocketClient,
-    message_receiver: Receiver<ExperimentMessage>,
+    message_receiver: Receiver<SocketCommand>,
     control: ExperimentRunControl,
 }
 
 impl ExperimentThread {
     fn new(
         ws_client: WebSocketClient,
-        message_receiver: Receiver<ExperimentMessage>,
+        message_receiver: Receiver<SocketCommand>,
         control: ExperimentRunControl,
     ) -> Self {
         Self {
@@ -64,8 +71,14 @@ impl ExperimentThread {
             .map_err(|e| ThreadError::WebSocket(e.to_string()))
     }
 
-    fn process_message(&mut self, message: ExperimentMessage) -> Result<(), ThreadError> {
-        self.handle_websocket_send(message)
+    fn process_message(&mut self, command: SocketCommand) -> Result<(), ThreadError> {
+        match command {
+            SocketCommand::Message(message) => self.handle_websocket_send(message),
+            SocketCommand::Flush(ack) => {
+                let _ = ack.send(());
+                Ok(())
+            }
+        }
     }
 
     fn thread_loop(&mut self) -> Result<(), ThreadError> {
@@ -117,7 +130,7 @@ pub struct ExperimentSocket {
 impl ExperimentSocket {
     pub fn new(
         ws_client: WebSocketClient,
-        message_receiver: Receiver<ExperimentMessage>,
+        message_receiver: Receiver<SocketCommand>,
         control: ExperimentRunControl,
     ) -> Self {
         let thread = ExperimentThread::new(ws_client, message_receiver, control);

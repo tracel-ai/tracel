@@ -3161,9 +3161,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.15"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
+checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -6653,9 +6653,9 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.12.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e73381f5a151ff607e9eff1c9620ae2e70dd2b0364818d018855c482f1f36a95"
+checksum = "4cbcb923afe23c868355c2b855dfae0aba9eaa5fde3489c296d801e67f5d845a"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",

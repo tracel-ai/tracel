@@ -35,8 +35,8 @@ impl LogLevel {
 /// let record = LogRecord::warn("slow step").with("elapsed_ms", 900).with("split", "train");
 /// ```
 ///
-/// Attributes carry the structured metadata surfaced by the log viewer. Records may also be scoped
-/// to an activity, in which case the activity id is folded into the attributes on the wire.
+/// Attributes carry structured metadata independently from any activity attribution attached by
+/// the emitting experiment scope.
 #[derive(Debug, Clone)]
 pub struct LogRecord {
     pub level: LogLevel,

@@ -5,9 +5,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::ExperimentRun;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
-use crate::{ExperimentRun, ExperimentRunHandleExt};
 
 pub trait ExperimentProvider: Send + Sync + 'static {
     fn create_experiment(
@@ -114,6 +114,9 @@ impl<I, O> ExperimentJob<I, O> {
             .provider
             .create_experiment(self.name.clone(), self.attributes.clone())?;
         let handle = experiment.handle();
+        // Worker-thread panics (a kernel compiler, a data loader) land in the
+        // run's log even when they never unwind the run itself.
+        let _panic_watch = experiment.capture_panics();
         let result = handle.in_scope(|| self.f.call(&experiment, input));
 
         match result {

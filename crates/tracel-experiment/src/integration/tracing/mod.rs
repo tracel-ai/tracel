@@ -13,11 +13,10 @@
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{ActivityGuard, ActivityId, ExperimentRun, ExperimentRunHandle};
+use crate::{Activity, ActivityGuard, ExperimentRun, ExperimentRunHandle};
 
 mod layer;
 pub(crate) mod registry;
-mod visitor;
 
 pub use layer::ExperimentTracingLogLayer;
 
@@ -86,13 +85,17 @@ impl ExperimentTracingExt for ExperimentRun {
 
 impl ExperimentTracingExt for ExperimentRunHandle {
     fn tracing_span(&self) -> tracing::Span {
-        experiment_span(self.clone())
+        experiment_span(self)
     }
 }
 
 /// Build a tracing span scoped to a specific activity.
-fn activity_span(id: ActivityId) -> tracing::Span {
-    tracing::info_span!("activity", activity_id = id.as_u64())
+fn activity_span(activity: Activity) -> tracing::Span {
+    tracing::info_span!(
+        "activity",
+        experiment_id = %activity.handle.id(),
+        activity_id = activity.id().as_u64(),
+    )
 }
 
 /// Extension trait for creating activity-scoped tracing spans.
@@ -104,77 +107,34 @@ pub trait ActivityTracingExt {
     fn tracing_span(&self) -> tracing::Span;
 }
 
-impl<State> ActivityTracingExt for ActivityGuard<State> {
+impl ActivityTracingExt for ActivityGuard {
     fn tracing_span(&self) -> tracing::Span {
-        activity_span(self.id())
+        activity_span(self.share())
+    }
+}
+
+impl ActivityTracingExt for Activity {
+    fn tracing_span(&self) -> tracing::Span {
+        activity_span(self.clone())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use tracing_subscriber::layer::SubscriberExt;
 
     use crate::context::ExperimentGlobalExt;
-    use crate::error::ExperimentError;
-    use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-    use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+    use crate::session::Event;
+    use crate::test_support::{MockSession, create_run_with_id};
 
     use super::*;
-
-    #[derive(Default)]
-    struct MockSession {
-        events: Mutex<Vec<Event>>,
-    }
-
-    impl ExperimentSession for MockSession {
-        fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-            self.events.lock().unwrap().push(event);
-            Ok(())
-        }
-
-        fn save_artifact(
-            &self,
-            _name: &str,
-            _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn finish(&self, _completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct NoopExperimentDataReader;
-
-    impl ExperimentArtifactReader for NoopExperimentDataReader {
-        fn load_artifact_raw(
-            &self,
-            _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
-        }
-    }
-
-    fn create_run(id: &str, session: Arc<MockSession>) -> ExperimentRun {
-        ExperimentRun::new(
-            id,
-            session,
-            NoopExperimentDataReader,
-            CancelToken::default(),
-        )
-    }
 
     #[test]
     fn tracing_layer_forwards_events_to_current_experiment() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-1", session.clone());
+        let run = create_run_with_id("trace-test-1", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -186,7 +146,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert!(record.message.contains("epoch completed"));
                 assert_eq!(
                     record.attributes.get("step").and_then(|v| v.as_u64()),
@@ -198,9 +158,59 @@ mod tests {
     }
 
     #[test]
+    fn activity_run_installs_its_scope_for_tracing_events() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run_with_id("trace-test-activity", session.clone());
+        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+
+        let activity_id = tracing::subscriber::with_default(subscriber, || {
+            run.activity("fold")
+                .run(|activity| {
+                    tracing::info!(fold = 1u64, "training fold");
+                    Ok::<_, std::convert::Infallible>(activity.id())
+                })
+                .unwrap()
+        });
+
+        let events = session.events.lock().unwrap();
+        let activity = events
+            .iter()
+            .find_map(|event| match event {
+                Event::Log { activity, .. } => *activity,
+                _ => None,
+            })
+            .expect("tracing log should carry an activity scope");
+        assert_eq!(activity, activity_id);
+    }
+
+    #[test]
+    fn activity_span_routes_logs_to_its_activity() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run_with_id("trace-test-activity-span", session.clone());
+        let activity = run.activity("fold").start();
+        let activity_id = activity.id();
+        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+
+        tracing::subscriber::with_default(subscriber, || {
+            activity
+                .tracing_span()
+                .in_scope(|| tracing::info!("training fold"));
+        });
+
+        let events = session.events.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Log {
+                activity: Some(id),
+                ..
+            } if *id == activity_id
+        )));
+    }
+
+    #[test]
     fn tracing_layer_routes_from_span_experiment_id_without_ambient_scope() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-span", session.clone());
+        let run = create_run_with_id("trace-test-span", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -212,7 +222,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert!(record.message.contains("span-routed event"));
                 assert_eq!(
                     record.attributes.get("step").and_then(|v| v.as_u64()),
@@ -226,7 +236,7 @@ mod tests {
     #[test]
     fn tracing_layer_routes_from_experiment_span_helper_without_ambient_scope() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-helper-span", session.clone());
+        let run = create_run_with_id("trace-test-helper-span", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -238,7 +248,7 @@ mod tests {
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::Log(record) => {
+            Event::Log { record, .. } => {
                 assert!(record.message.contains("helper-span-routed event"));
             }
             event => panic!("unexpected event: {event:?}"),
@@ -248,7 +258,7 @@ mod tests {
     #[test]
     fn tracing_layer_skips_events_without_experiment_scope() {
         let session = Arc::new(MockSession::default());
-        let _run = create_run("trace-test-2", session.clone());
+        let _run = create_run_with_id("trace-test-2", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -262,7 +272,7 @@ mod tests {
     #[test]
     fn tracing_layer_inherits_span_field_attributes() {
         let session = Arc::new(MockSession::default());
-        let run = create_run("trace-test-scope", session.clone());
+        let run = create_run_with_id("trace-test-scope", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -279,7 +289,7 @@ mod tests {
         let log = events
             .iter()
             .find_map(|event| match event {
-                Event::Log(record) => Some(record),
+                Event::Log { record, .. } => Some(record),
                 _ => None,
             })
             .expect("a log event should have been recorded");

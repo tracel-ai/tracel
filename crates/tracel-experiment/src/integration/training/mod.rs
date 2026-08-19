@@ -21,21 +21,22 @@
 //! ```
 
 mod checkpoint;
+mod ext;
 mod interrupter;
 mod metric;
 mod progress;
 
 pub use checkpoint::ExperimentCheckpointer;
+pub use ext::SupervisedTrainingExperimentExt;
 pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
 pub use progress::{ExperimentEvaluationProgressLogger, ExperimentTrainingProgressLogger};
 
-use crate::ExperimentId;
-use crate::ExperimentRun;
+use crate::{ExperimentId, ExperimentRunHandle};
 
-/// Extension trait adding Burn `train` adapter constructors to [`ExperimentRun`].
+/// Extension trait adding Burn `train` adapters to experiment scopes.
 pub trait ExperimentTrainingExt {
-    /// Create a new [`ExperimentMetricLogger`] for this run.
+    /// Create a new [`ExperimentMetricLogger`] for this context.
     fn metric_logger(&self) -> ExperimentMetricLogger;
 
     /// Create the three checkpointers (model, optimizer, lr scheduler) for supervised training.
@@ -59,17 +60,20 @@ pub trait ExperimentTrainingExt {
         ExperimentCheckpointer,
     );
 
-    /// Create a new [`burn::train::Interrupter`] linked to this run's cancellation token.
+    /// Create a new [`burn::train::Interrupter`] linked to this context's cancellation token.
     fn interrupter(&self) -> burn::train::Interrupter;
 
-    /// Create a new [`ExperimentTrainingProgressLogger`] for this run.
+    /// Create a new [`ExperimentTrainingProgressLogger`] for this context.
     fn training_progress_logger(&self) -> ExperimentTrainingProgressLogger;
 
-    /// Create a new [`ExperimentEvaluationProgressLogger`] for this run.
+    /// Create a new [`ExperimentEvaluationProgressLogger`] for this context.
     fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger;
 }
 
-impl ExperimentTrainingExt for ExperimentRun {
+impl<T> ExperimentTrainingExt for T
+where
+    for<'a> &'a T: Into<ExperimentRunHandle>,
+{
     fn metric_logger(&self) -> ExperimentMetricLogger {
         ExperimentMetricLogger::new(self)
     }
@@ -81,10 +85,11 @@ impl ExperimentTrainingExt for ExperimentRun {
         ExperimentCheckpointer,
         ExperimentCheckpointer,
     ) {
+        let handle: ExperimentRunHandle = self.into();
         (
-            ExperimentCheckpointer::new(self, "model".to_string()),
-            ExperimentCheckpointer::new(self, "optim".to_string()),
-            ExperimentCheckpointer::new(self, "scheduler".to_string()),
+            ExperimentCheckpointer::new(handle.clone(), "model".to_string()),
+            ExperimentCheckpointer::new(handle.clone(), "optim".to_string()),
+            ExperimentCheckpointer::new(handle, "scheduler".to_string()),
         )
     }
 
@@ -96,11 +101,14 @@ impl ExperimentTrainingExt for ExperimentRun {
         ExperimentCheckpointer,
         ExperimentCheckpointer,
     ) {
+        let handle: ExperimentRunHandle = self.into();
         let id = source_id.into();
         (
-            ExperimentCheckpointer::new(self, "model".to_string()).with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self, "optim".to_string()).with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self, "scheduler".to_string()).with_restore_from(id),
+            ExperimentCheckpointer::new(handle.clone(), "model".to_string())
+                .with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(handle.clone(), "optim".to_string())
+                .with_restore_from(id.clone()),
+            ExperimentCheckpointer::new(handle, "scheduler".to_string()).with_restore_from(id),
         )
     }
 
@@ -114,56 +122,5 @@ impl ExperimentTrainingExt for ExperimentRun {
 
     fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger {
         ExperimentEvaluationProgressLogger::new(self)
-    }
-}
-
-impl ExperimentTrainingExt for crate::ExperimentRunHandle {
-    fn metric_logger(&self) -> ExperimentMetricLogger {
-        ExperimentMetricLogger::new(self.clone())
-    }
-
-    fn checkpointers(
-        &self,
-    ) -> (
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-    ) {
-        (
-            ExperimentCheckpointer::new(self.clone(), "model".to_string()),
-            ExperimentCheckpointer::new(self.clone(), "optim".to_string()),
-            ExperimentCheckpointer::new(self.clone(), "scheduler".to_string()),
-        )
-    }
-
-    fn checkpointers_from(
-        &self,
-        source_id: impl Into<ExperimentId>,
-    ) -> (
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-        ExperimentCheckpointer,
-    ) {
-        let id = source_id.into();
-        (
-            ExperimentCheckpointer::new(self.clone(), "model".to_string())
-                .with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self.clone(), "optim".to_string())
-                .with_restore_from(id.clone()),
-            ExperimentCheckpointer::new(self.clone(), "scheduler".to_string())
-                .with_restore_from(id),
-        )
-    }
-
-    fn interrupter(&self) -> burn::train::Interrupter {
-        experiment_interrupter(self.clone())
-    }
-
-    fn training_progress_logger(&self) -> ExperimentTrainingProgressLogger {
-        ExperimentTrainingProgressLogger::new(self.clone())
-    }
-
-    fn evaluation_progress_logger(&self) -> ExperimentEvaluationProgressLogger {
-        ExperimentEvaluationProgressLogger::new(self.clone())
     }
 }
