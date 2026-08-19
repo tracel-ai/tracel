@@ -35,6 +35,7 @@ mod cancellation;
 mod context;
 mod control;
 mod log;
+mod panic_watch;
 mod provider;
 pub mod reader;
 pub mod session;
@@ -54,6 +55,7 @@ pub use context::{
 };
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
+pub use panic_watch::PanicWatch;
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 
 use crate::activity::AtomicActivityIdAllocator;
@@ -264,6 +266,8 @@ impl ExperimentRun {
         S: ExperimentSession + 'static,
         R: ExperimentArtifactReader + 'static,
     {
+        panic_watch::install();
+
         let metadata = ExperimentMetadata { id: id.into() };
         let inner = Arc::new(RunInner {
             control: control.clone(),
@@ -288,6 +292,15 @@ impl ExperimentRun {
             handle,
             _tracing_registration: tracing_registration,
         }
+    }
+
+    /// Stream every panic on any thread into this run's log as an error line
+    /// until the returned guard drops.
+    ///
+    /// The panicking thread's payload also becomes the run's failure reason
+    /// when that panic unwinds the run itself; that part needs no guard.
+    pub fn capture_panics(&self) -> PanicWatch {
+        panic_watch::watch(self.handle())
     }
 
     /// Return a cancellation token that can be linked to child work.
@@ -756,7 +769,9 @@ impl RunInner {
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
         let completion = if std::thread::panicking() {
-            ExperimentCompletion::Failed("the run panicked".to_string())
+            let reason =
+                panic_watch::take_thread_panic().unwrap_or_else(|| "the run panicked".to_string());
+            ExperimentCompletion::Failed(reason)
         } else if self.inner.control.is_run_cancelled() {
             ExperimentCompletion::Cancelled
         } else {
@@ -773,6 +788,57 @@ mod tests {
     use crate::test_support::{MockSession, create_run};
 
     use super::*;
+
+    #[test]
+    fn panicking_run_reports_the_panic_as_its_failure_reason() {
+        let session = Arc::new(MockSession::default());
+        let run_session = session.clone();
+
+        let outcome = std::thread::Builder::new()
+            .name("fold-runner".into())
+            .spawn(move || {
+                let _run = create_run(run_session);
+                panic!("kernel exploded mid-batch");
+            })
+            .unwrap()
+            .join();
+        assert!(outcome.is_err());
+
+        let completions = session.completions.lock().unwrap();
+        match completions.as_slice() {
+            [ExperimentCompletion::Failed(reason)] => {
+                assert!(reason.contains("kernel exploded mid-batch"), "{reason}");
+                assert!(reason.contains("panicked at"), "{reason}");
+                assert!(reason.contains("fold-runner"), "{reason}");
+            }
+            other => panic!("unexpected completions: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn watched_run_logs_panics_from_other_threads() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let _watch = run.capture_panics();
+
+        let outcome = std::thread::Builder::new()
+            .name("device-runner".into())
+            .spawn(|| panic!("unsupported op: plane.elect"))
+            .unwrap()
+            .join();
+        assert!(outcome.is_err());
+
+        let events = session.events.lock().unwrap();
+        let logged = events.iter().any(|event| match event {
+            Event::Log { record, .. } => {
+                record.level == LogLevel::Error
+                    && record.message.contains("unsupported op: plane.elect")
+                    && record.message.contains("device-runner")
+            }
+            _ => false,
+        });
+        assert!(logged, "no error log carried the panic: {events:?}");
+    }
 
     #[test]
     fn run_context_records_events() {
