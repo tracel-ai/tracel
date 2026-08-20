@@ -4,7 +4,7 @@ extern crate log;
 use std::time::Instant;
 use tracel_xtask::prelude::*;
 
-#[macros::base_commands(Build, Bump, Check, Compile, Doc, Fix, Publish, Test, Validate)]
+#[macros::base_commands]
 enum Command {}
 
 fn main() -> anyhow::Result<()> {
