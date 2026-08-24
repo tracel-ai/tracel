@@ -52,8 +52,7 @@
 //! The job's name (`"my_training_procedure"` above) is what callers use to select it, whether
 //! from the CLI or from an HTTP request path.
 
-pub use tracel_client::Env;
-pub use tracel_client::TracelCredentials;
+pub use tracel_client::console::{Env, TracelCredentials};
 
 /// Experiment tracking and management.
 pub mod experiment {
@@ -74,11 +73,6 @@ pub mod dataset {
 #[doc(hidden)]
 #[doc(inline)]
 pub use tracel_inference as inference;
-
-/// On-device fleet synchronization helpers.
-#[doc(hidden)]
-#[doc(inline)]
-pub use tracel_fleet as fleet;
 
 /// Artifact bundle utilities and adapters.
 #[doc(inline)]

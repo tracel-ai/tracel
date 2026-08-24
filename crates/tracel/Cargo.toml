@@ -23,6 +23,5 @@ tracel-app.workspace = true
 tracel-runner = { workspace = true, optional = true }
 tracel-experiment.workspace = true
 tracel-inference.workspace = true
-tracel-fleet.workspace = true
 tracel-artifact.workspace = true
 tracel-client.workspace = true

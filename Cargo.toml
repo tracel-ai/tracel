@@ -70,8 +70,8 @@ opentelemetry = { version = "0.31.0", features = ["metrics"] }
 serde_with = { version = "3.20.0", features = ["base64", "macros"] }
 
 ## External Crate
-tracel-client = { version = "0.14.0", default-features = false, features = [
-    "tracel",
+tracel-client = { version = "0.15.0", default-features = false, features = [
+    "console",
     "station",
 ] }
 
@@ -79,7 +79,6 @@ tracel-client = { version = "0.14.0", default-features = false, features = [
 tracel-runner = { path = "crates/tracel-runner", version = "0.8.1" }
 tracel-app = { path = "crates/tracel-app", version = "0.8.1" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.8.1" }
-tracel-fleet = { path = "crates/tracel-fleet", version = "0.8.1" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.8.1" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.8.1" }
 tracel-core = { path = "crates/tracel-core", version = "0.8.1" }

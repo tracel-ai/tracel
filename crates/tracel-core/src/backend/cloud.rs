@@ -2,7 +2,10 @@ use std::path::Path;
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::{Client, ClientError, Env, TracelCredentials};
+use tracel_client::{
+    ClientError,
+    console::{Client, Env, TracelCredentials},
+};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";

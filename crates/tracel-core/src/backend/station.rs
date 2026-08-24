@@ -1,5 +1,5 @@
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::StationClient;
+use tracel_client::station::StationClient;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
