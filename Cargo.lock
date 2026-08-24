@@ -356,7 +356,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "basics"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "common",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "tracel",
@@ -3986,7 +3986,7 @@ dependencies = [
 
 [[package]]
 name = "mnist"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "burn",
@@ -6283,7 +6283,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tracel"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "tracel-app",
  "tracel-artifact",
@@ -6296,7 +6296,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-app"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "axum",
  "clap",
@@ -6314,7 +6314,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-artifact"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "reqwest 0.13.4",
  "serde",
@@ -6344,7 +6344,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-core"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "burn",
  "chrono",
@@ -6367,7 +6367,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-experiment"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "burn",
  "serde",
@@ -6381,7 +6381,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-inference"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "crossbeam",
  "serde",
@@ -6459,7 +6459,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-runner"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "json-patch",
  "reqwest 0.13.4",
@@ -7489,7 +7489,7 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xtask"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "log",
  "strum 0.27.2",
