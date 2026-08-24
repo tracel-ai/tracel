@@ -33,17 +33,6 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
-  tracel-fleet:
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
-    with:
-      crate: tracel-fleet
-      tag-validation: false
-    needs:
-      - tracel-artifact
-      - tracel-inference
-    secrets:
-      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-  # --------------------------------------------------------------------------------
   tracel-core:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
@@ -76,7 +65,6 @@ jobs:
       - tracel-artifact
       - tracel-core
       - tracel-experiment
-      - tracel-fleet
       - tracel-inference
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
@@ -90,7 +78,6 @@ jobs:
       - tracel-artifact
       - tracel-core
       - tracel-experiment
-      - tracel-fleet
       - tracel-inference
       - tracel-app
       - tracel-runner

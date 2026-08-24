@@ -161,6 +161,7 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct MockClient {
+        #[allow(clippy::type_complexity)]
         puts: Arc<Mutex<Vec<(String, u64, Vec<u8>)>>>,
     }
 
