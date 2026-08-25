@@ -59,7 +59,7 @@ where
         JobDefinition {
             name: self.job.name().to_string(),
             description: None,
-            input_schema: None,
+            input_schema: self.mapper.schema(),
             input_example: self.mapper.example(),
         }
     }

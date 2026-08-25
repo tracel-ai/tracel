@@ -18,6 +18,11 @@ pub trait InputMapper<I>: Send + Sync {
     fn example(&self) -> Option<Value> {
         None
     }
+
+    /// JSON Schema of the input advertised to the station in the job manifest (`input_schema`).
+    fn schema(&self) -> Option<Value> {
+        None
+    }
 }
 
 /// A JSON input mapper.
@@ -61,7 +66,7 @@ impl<I> Default for JsonInput<I> {
 
 impl<I> InputMapper<I> for JsonInput<I>
 where
-    I: DeserializeOwned,
+    I: DeserializeOwned + schemars::JsonSchema,
 {
     fn map(&self, input: &Value) -> Result<I, BoxError> {
         match &self.default {
@@ -80,6 +85,10 @@ where
     fn example(&self) -> Option<Value> {
         self.default.clone()
     }
+
+    fn schema(&self) -> Option<Value> {
+        Some(serde_json::to_value(schemars::schema_for!(I)).expect("schema must serialize to JSON"))
+    }
 }
 
 #[cfg(test)]
@@ -89,7 +98,7 @@ mod tests {
 
     use super::*;
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     struct Config {
         epochs: u32,
         lr: f64,
@@ -141,6 +150,15 @@ mod tests {
 
         assert_eq!(mapper.example(), Some(json!({"epochs": 10, "lr": 0.01})));
         assert_eq!(JsonInput::<Config>::new().example(), None);
+    }
+
+    #[test]
+    fn given_any_mapper_when_asked_for_schema_then_describes_the_type() {
+        let with_default = JsonInput::with_default(default_config()).schema().unwrap();
+        let without_default = JsonInput::<Config>::new().schema().unwrap();
+
+        assert!(with_default["properties"]["epochs"].is_object());
+        assert!(without_default["properties"]["lr"].is_object());
     }
 
     #[test]
