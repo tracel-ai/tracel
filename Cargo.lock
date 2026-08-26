@@ -370,7 +370,6 @@ dependencies = [
  "common",
  "eventsource-stream",
  "reqwest 0.13.4",
- "schemars 1.2.2",
  "serde",
  "serde_json",
  "tokio",
@@ -6436,6 +6435,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.9.0"
 dependencies = [
+ "schemars 1.2.2",
  "tracel-app",
  "tracel-artifact",
  "tracel-client",
@@ -6526,30 +6526,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracel-artifact",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "tracel-fleet"
-version = "0.8.1"
-dependencies = [
- "arc-swap",
- "chrono",
- "crossbeam",
- "directories",
- "fastrand",
- "metrics",
- "metrics-tracing-context",
- "metrics-util",
- "once_cell",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "tracel-artifact",
- "tracel-client",
- "tracel-inference",
  "tracing",
  "tracing-subscriber",
 ]

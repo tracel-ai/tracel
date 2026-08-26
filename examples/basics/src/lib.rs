@@ -88,7 +88,8 @@ pub mod training {
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-    #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+    #[derive(Debug, Clone, Serialize, Deserialize, tracel::schemars::JsonSchema)]
+    #[schemars(crate = "tracel::schemars")]
     pub struct TrainingConfig {
         pub epochs: usize,
         pub batches_per_epoch: usize,
