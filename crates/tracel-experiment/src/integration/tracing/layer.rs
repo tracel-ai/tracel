@@ -1,12 +1,17 @@
+use std::num::NonZeroU64;
+
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    ExperimentRun, LogLevel, LogRecord,
-    context::ExperimentGlobalExt,
-    integration::tracing::{registry::TracingRegistry, visitor::SpanFields},
+    ActivityId, ExperimentId, ExperimentRun, LogLevel, LogRecord, context::ExperimentGlobalExt,
+    integration::tracing::registry::TracingRegistry,
 };
+
+const EXPERIMENT_ID_FIELD: &str = "experiment_id";
+const ACTIVITY_ID_FIELD: &str = "activity_id";
+const MESSAGE_FIELD: &str = "message";
 
 /// `tracing_subscriber` layer that forwards events into experiment logs as structured records.
 ///
@@ -65,6 +70,7 @@ where
         }
 
         let mut experiment_id = None;
+        let mut activity_id = None;
         // Attributes inherited from enclosing spans, accumulated outermost-first so inner spans
         // override outer ones.
         let mut attributes = Map::new();
@@ -73,6 +79,9 @@ where
                 if let Some(fields) = span.extensions().get::<SpanFields>() {
                     if fields.experiment_id.is_some() {
                         experiment_id = fields.experiment_id.clone();
+                    }
+                    if fields.activity_id.is_some() {
+                        activity_id = fields.activity_id;
                     }
                     attributes.extend(fields.attributes.clone());
                 }
@@ -89,15 +98,30 @@ where
                 None => return,
             },
         };
+        let handle = match activity_id {
+            Some(activity_id) => {
+                let cancel_token = handle.cancel_token();
+                handle.for_activity(activity_id, cancel_token)
+            }
+            None => handle,
+        };
 
-        let mut visitor = LogFieldVisitor::default();
+        let mut visitor = JsonFieldVisitor::default();
         event.record(&mut visitor);
+        let message = visitor
+            .fields
+            .remove(MESSAGE_FIELD)
+            .map(|value| match value {
+                Value::String(text) => text,
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
         // The event's own fields take precedence over inherited span scope.
-        attributes.extend(visitor.attributes);
+        attributes.extend(visitor.fields);
 
-        let _ = handle.log(LogRecord {
+        handle.log(LogRecord {
             level: log_level(metadata.level()),
-            message: visitor.message.unwrap_or_default(),
+            message,
             attributes,
         });
     }
@@ -113,48 +137,90 @@ fn log_level(level: &tracing::Level) -> LogLevel {
     }
 }
 
-/// Splits a tracing event's `message` field from its other fields, which become attributes.
-#[derive(Default)]
-struct LogFieldVisitor {
-    message: Option<String>,
+/// Routing identifiers and inherited attributes stored in a span's extensions.
+struct SpanFields {
+    experiment_id: Option<ExperimentId>,
+    activity_id: Option<ActivityId>,
     attributes: Map<String, Value>,
 }
 
-impl LogFieldVisitor {
-    fn set(&mut self, field: &Field, value: Value) {
-        if field.name() == "message" {
-            self.message = Some(match value {
-                Value::String(text) => text,
-                other => other.to_string(),
-            });
-        } else {
-            self.attributes.insert(field.name().to_string(), value);
+impl SpanFields {
+    fn merge(&mut self, other: Self) {
+        if other.experiment_id.is_some() {
+            self.experiment_id = other.experiment_id;
+        }
+        if other.activity_id.is_some() {
+            self.activity_id = other.activity_id;
+        }
+        self.attributes.extend(other.attributes);
+    }
+
+    fn from_attributes(attrs: &tracing::span::Attributes<'_>) -> Self {
+        let mut visitor = JsonFieldVisitor::default();
+        attrs.record(&mut visitor);
+        Self::from_fields(visitor.fields)
+    }
+
+    fn from_record(record: &tracing::span::Record<'_>) -> Self {
+        let mut visitor = JsonFieldVisitor::default();
+        record.record(&mut visitor);
+        Self::from_fields(visitor.fields)
+    }
+
+    fn from_fields(mut fields: Map<String, Value>) -> Self {
+        let experiment_id = match fields.remove(EXPERIMENT_ID_FIELD) {
+            Some(Value::String(id)) => Some(ExperimentId::new(id)),
+            _ => None,
+        };
+        let activity_id = fields
+            .remove(ACTIVITY_ID_FIELD)
+            .and_then(|value| value.as_u64())
+            .and_then(NonZeroU64::new)
+            .map(ActivityId::new);
+
+        Self {
+            experiment_id,
+            activity_id,
+            attributes: fields,
         }
     }
 }
 
-impl Visit for LogFieldVisitor {
+/// Converts tracing field values into the JSON representation used by experiment log records.
+/// Interpretation of reserved fields stays with the layer that owns the routing policy.
+#[derive(Default)]
+struct JsonFieldVisitor {
+    fields: Map<String, Value>,
+}
+
+impl JsonFieldVisitor {
+    fn record(&mut self, field: &Field, value: Value) {
+        self.fields.insert(field.name().to_string(), value);
+    }
+}
+
+impl Visit for JsonFieldVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.set(field, Value::String(value.to_string()));
+        self.record(field, Value::String(value.to_string()));
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.set(field, Value::from(value));
+        self.record(field, Value::from(value));
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.set(field, Value::from(value));
+        self.record(field, Value::from(value));
     }
 
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.set(field, Value::from(value));
+        self.record(field, Value::from(value));
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.set(field, Value::from(value));
+        self.record(field, Value::from(value));
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.set(field, Value::String(format!("{value:?}")));
+        self.record(field, Value::String(format!("{value:?}")));
     }
 }

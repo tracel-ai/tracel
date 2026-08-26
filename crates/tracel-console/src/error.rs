@@ -1,4 +1,4 @@
-use tracel_client::ClientError;
+use tracel_client::error::ClientError;
 
 /// Errors produced while authenticating with or calling a Tracel console.
 #[derive(Debug, thiserror::Error)]

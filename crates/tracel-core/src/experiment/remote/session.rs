@@ -3,8 +3,8 @@ use std::sync::Mutex;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{
-    ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, LogLevel, LogRecord,
-    MetricSpec, MetricValue,
+    ActivityEvent, ActivityId, ActivityStatus, ArtifactKind, ExperimentRunControl, LogLevel,
+    LogRecord, MetricSpec, MetricValue,
 };
 
 use crossbeam::channel::Sender;
@@ -17,10 +17,10 @@ use tracel_client::websocket::{
 };
 
 use super::socket::ExperimentSocket;
-use super::socket::ThreadError;
+use super::socket::{SocketCommand, ThreadError};
 
 struct ActiveSession {
-    sender: Sender<ExperimentMessage>,
+    sender: Sender<SocketCommand>,
     socket: ExperimentSocket,
 }
 
@@ -72,64 +72,48 @@ impl RemoteExperimentSession {
             )
         })?;
 
-        active.sender.send(message).map_err(|_| {
-            ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "Failed to send message to experiment session",
-            )
-        })
+        active
+            .sender
+            .send(SocketCommand::Message(message))
+            .map_err(|_| {
+                ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "Failed to send message to experiment session",
+                )
+            })
     }
 }
 
+/// Only a dead connection waits this out; the writes themselves are synchronous.
+const FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl ExperimentSession for RemoteExperimentSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-        let message = match event {
-            Event::Args(value) => ExperimentMessage::Arguments(value),
-            Event::Config { name, value } => ExperimentMessage::Config { name, value },
-            Event::Log(record) => ExperimentMessage::LogEntries(vec![to_log_entry(record)]),
-            Event::Metrics {
-                epoch,
-                split,
-                iteration,
-                items,
-            } => ExperimentMessage::MetricsLog {
-                epoch,
-                split,
-                iteration,
-                items: to_remote_metric_logs(items),
-            },
-            Event::MetricDefinition(MetricSpec {
-                name,
-                description,
-                unit,
-                higher_is_better,
-            }) => ExperimentMessage::MetricDefinitionLog {
-                name,
-                description,
-                unit,
-                higher_is_better,
-            },
-            Event::EpochSummary {
-                epoch,
-                split,
-                items,
-            } => ExperimentMessage::EpochSummaryLog {
-                epoch,
-                split,
-                best_metric_values: to_remote_metric_logs(items),
-            },
-            Event::ArtifactUsed {
-                experiment_id: _,
-                reference,
-            } => ExperimentMessage::InputUsed(InputUsed::Artifact {
-                artifact_id: reference.id,
-            }),
-            Event::Activity(activity_event) => {
-                ExperimentMessage::Activity(to_remote_activity_event(activity_event))
-            }
-        };
+        self.send(to_remote_message(event))
+    }
 
-        self.send(message)
+    fn flush(&self) -> Result<(), ExperimentError> {
+        let (ack, acked) = crossbeam::channel::bounded(1);
+        {
+            let guard = self.active.lock().unwrap();
+            let Some(active) = guard.as_ref() else {
+                // A finished session already drained on the way out.
+                return Ok(());
+            };
+            active.sender.send(SocketCommand::Flush(ack)).map_err(|_| {
+                ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "The experiment socket is no longer accepting events",
+                )
+            })?;
+        }
+
+        acked.recv_timeout(FLUSH_TIMEOUT).map_err(|_| {
+            ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "The experiment socket did not confirm delivery in time",
+            )
+        })
     }
 
     fn save_artifact(
@@ -167,12 +151,9 @@ impl ExperimentSession for RemoteExperimentSession {
             )
         })?;
 
-        let send_result =
-            active
-                .sender
-                .send(ExperimentMessage::ExperimentComplete(to_remote_completion(
-                    completion,
-                )));
+        let send_result = active.sender.send(SocketCommand::Message(
+            ExperimentMessage::ExperimentComplete(to_remote_completion(completion)),
+        ));
         drop(active.sender);
 
         let join_result = active.socket.join();
@@ -198,13 +179,76 @@ impl ExperimentSession for RemoteExperimentSession {
     }
 }
 
-fn to_log_entry(record: LogRecord) -> LogEntry {
+fn to_remote_message(event: Event) -> ExperimentMessage {
+    match event {
+        Event::Args(value) => ExperimentMessage::Arguments(value),
+        Event::Config { name, value } => ExperimentMessage::Config { name, value },
+        Event::Log { record, activity } => {
+            ExperimentMessage::LogEntries(vec![to_log_entry(record, activity)])
+        }
+        Event::Metrics {
+            epoch,
+            split,
+            iteration,
+            items,
+            activity,
+        } => ExperimentMessage::MetricsLog {
+            epoch,
+            split,
+            iteration,
+            items: to_remote_metric_logs(items),
+            activity: to_remote_activity_id(activity),
+        },
+        Event::MetricDefinition(MetricSpec {
+            name,
+            description,
+            unit,
+            higher_is_better,
+        }) => ExperimentMessage::MetricDefinitionLog {
+            name,
+            description,
+            unit,
+            higher_is_better,
+        },
+        Event::EpochSummary {
+            epoch,
+            split,
+            items,
+            activity,
+        } => ExperimentMessage::EpochSummaryLog {
+            epoch,
+            split,
+            best_metric_values: to_remote_metric_logs(items),
+            activity: to_remote_activity_id(activity),
+        },
+        Event::Summary { items, activity } => ExperimentMessage::SummaryLog {
+            items: to_remote_metric_logs(items),
+            activity: to_remote_activity_id(activity),
+        },
+        Event::ArtifactUsed {
+            experiment_id: _,
+            reference,
+        } => ExperimentMessage::InputUsed(InputUsed::Artifact {
+            artifact_id: reference.id,
+        }),
+        Event::Activity(activity_event) => {
+            ExperimentMessage::Activity(to_remote_activity_event(activity_event))
+        }
+    }
+}
+
+fn to_log_entry(record: LogRecord, activity: Option<ActivityId>) -> LogEntry {
     LogEntry {
         timestamp: chrono::Utc::now().to_rfc3339(),
         level: to_wire_log_level(record.level),
         message: record.message,
         metadata: record.attributes,
+        activity: to_remote_activity_id(activity),
     }
+}
+
+fn to_remote_activity_id(activity: Option<ActivityId>) -> Option<u64> {
+    activity.map(ActivityId::as_u64)
 }
 
 fn to_wire_log_level(level: LogLevel) -> LogEntryLevel {
@@ -229,17 +273,17 @@ fn to_remote_metric_logs(items: Vec<MetricValue>) -> Vec<MetricLog> {
 
 fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
     match event {
-        ActivityEvent::Started { activity } => ActivityEventRequest::Started {
+        ActivityEvent::Started { activity: spec } => ActivityEventRequest::Started {
             activity: ActivityRequest {
-                id: activity.id.as_u64(),
-                parent: activity.parent.map(|parent| parent.as_u64()),
-                name: activity.name,
-                cancellable: activity.cancellable,
-                meter: activity.meter.map(|meter| ActivityMeterRequest {
+                id: spec.id.as_u64(),
+                parent: spec.parent.map(|parent| parent.as_u64()),
+                name: spec.name,
+                cancellable: spec.cancellable,
+                meter: spec.meter.map(|meter| ActivityMeterRequest {
                     unit: meter.unit,
                     total: meter.total,
                 }),
-                attributes: activity.attributes,
+                attributes: spec.attributes,
             },
         },
         ActivityEvent::Updated { id, current } => ActivityEventRequest::Updated {
@@ -259,6 +303,7 @@ fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
             status: match status {
                 ActivityStatus::Success => ActivityStatusRequest::Success,
                 ActivityStatus::Abandoned => ActivityStatusRequest::Abandoned,
+                ActivityStatus::Failed => ActivityStatusRequest::Failed,
             },
             message,
         },

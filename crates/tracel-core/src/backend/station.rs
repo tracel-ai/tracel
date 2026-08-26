@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::{ClientError, StationClient};
+use tracel_client::ClientError;
+use tracel_client::station::StationClient;
 use tracel_models::{
     Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile, VersionFileSource,
     VersionId, VersionManifest,

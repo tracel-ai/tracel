@@ -110,32 +110,28 @@ pub mod training {
             description: Some("training loss".to_string()),
             unit: None,
             higher_is_better: false,
-        })?;
+        });
         experiment.log_metric_definition(MetricSpec {
             name: "accuracy".to_string(),
             description: Some("training accuracy".to_string()),
             unit: Some("ratio".to_string()),
             higher_is_better: true,
-        })?;
+        });
 
         let total_steps = (config.epochs * config.batches_per_epoch) as f64;
 
-        let mut run = experiment
+        let run = experiment
             .activity("training")
-            .progress()
-            .total(config.epochs as u64)
-            .unit("epoch")
+            .meter(config.epochs as u64, "epoch")
             .cancellable()
             .start();
 
         for epoch in 1..=config.epochs {
-            let mut epoch_activity = run
+            let epoch_activity = run
                 .activity(format!("epoch {epoch}"))
-                .progress()
-                .total(config.batches_per_epoch as u64)
-                .unit("batch")
+                .meter(config.batches_per_epoch as u64, "batch")
                 .cancellable()
-                .attr("epoch", epoch)?
+                .attr("epoch", epoch)
                 .start();
 
             let mut loss_sum = 0.0;
@@ -169,7 +165,7 @@ pub mod training {
                             value: accuracy,
                         },
                     ],
-                )?;
+                );
 
                 loss_sum += loss;
                 accuracy_sum += accuracy;
@@ -199,7 +195,7 @@ pub mod training {
                         value: mean_accuracy,
                     },
                 ],
-            )?;
+            );
             epoch_activity
                 .finish_with_message(format!("loss={mean_loss:.3} acc={mean_accuracy:.3}"));
             run.inc(1);

@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+use tracel_client::console::{
+    model::response::CreatedByUserResponse,
+    project::{request::Visibility as ClientVisibility, response::ProjectResponse},
+};
 
 use crate::ConsoleError;
 
@@ -104,10 +108,10 @@ pub struct UserSummary {
     pub namespace: String,
 }
 
-impl TryFrom<tracel_client::response::ProjectResponse> for Project {
+impl TryFrom<ProjectResponse> for Project {
     type Error = ConsoleError;
 
-    fn try_from(value: tracel_client::response::ProjectResponse) -> Result<Self, Self::Error> {
+    fn try_from(value: ProjectResponse) -> Result<Self, Self::Error> {
         let kind = match value.namespace_type.as_str() {
             "user" => NamespaceKind::User,
             "organization" => NamespaceKind::Organization,
@@ -127,15 +131,15 @@ impl TryFrom<tracel_client::response::ProjectResponse> for Project {
             description: value.description,
             created_by: value.created_by,
             visibility: match value.visibility {
-                tracel_client::request::Visibility::Private => Visibility::Private,
-                tracel_client::request::Visibility::Public => Visibility::Public,
+                ClientVisibility::Private => Visibility::Private,
+                ClientVisibility::Public => Visibility::Public,
             },
         })
     }
 }
 
-impl From<tracel_client::response::CreatedByUserResponse> for UserSummary {
-    fn from(value: tracel_client::response::CreatedByUserResponse) -> Self {
+impl From<CreatedByUserResponse> for UserSummary {
+    fn from(value: CreatedByUserResponse) -> Self {
         Self {
             id: value.id,
             username: value.username,
@@ -150,7 +154,7 @@ mod tests {
 
     #[test]
     fn legacy_project_fixture_defaults_to_private_visibility() {
-        let wire: tracel_client::response::ProjectResponse = serde_json::from_str(
+        let wire: ProjectResponse = serde_json::from_str(
             r#"{
                 "project_name": "vision",
                 "namespace_name": "ada",

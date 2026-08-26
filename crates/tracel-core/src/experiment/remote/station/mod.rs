@@ -9,7 +9,7 @@ use tracel_client::station::experiment::{
     ListArtifactsQuery,
 };
 use tracel_client::websocket::WebSocketError;
-use tracel_client::{ClientError, StationClient};
+use tracel_client::{ClientError, station::StationClient};
 
 mod artifacts;
 

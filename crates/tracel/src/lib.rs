@@ -5,8 +5,8 @@
 //!
 //! High-level Tracel SDK.
 //!
-//! This crate re-exports the main crates used to build training, experiment tracking, inference,
-//! and fleet workflows on top of Tracel.
+//! This crate re-exports the main crates used to build training, experiment tracking, and inference
+//! workflows on top of Tracel.
 //!
 //! Features:
 //! - Artifact creation and management
@@ -66,9 +66,7 @@
 //! from the CLI or from an HTTP request path.
 
 #[cfg(feature = "client")]
-pub use tracel_client::Env;
-#[cfg(feature = "client")]
-pub use tracel_client::TracelCredentials;
+pub use tracel_client::console::{Env, TracelCredentials};
 
 /// HTTP client for the Tracel console.
 #[cfg(feature = "client")]
@@ -107,12 +105,6 @@ pub mod dataset {
 #[doc(hidden)]
 #[doc(inline)]
 pub use tracel_inference as inference;
-
-/// On-device fleet synchronization helpers.
-#[cfg(feature = "sdk")]
-#[doc(hidden)]
-#[doc(inline)]
-pub use tracel_fleet as fleet;
 
 /// Artifact bundle utilities and adapters.
 #[cfg(feature = "client")]

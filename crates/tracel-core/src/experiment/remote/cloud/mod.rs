@@ -1,26 +1,33 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
-use tracel_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
-use tracel_client::response::ArtifactResponse;
-use tracel_client::websocket::WebSocketError;
-use tracel_client::{Client, ClientError};
+use tracel_client::{
+    ClientError,
+    console::{
+        Client,
+        artifact::{
+            request::{ArtifactFileSpecRequest, CreateArtifactRequest},
+            response::ArtifactResponse,
+        },
+    },
+    websocket::WebSocketError,
+};
 
-use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
-use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
+use tracel_artifact::{
+    bundle::FsBundle,
+    download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink},
+    upload::{MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart},
 };
 
 mod artifacts;
 
 pub use artifacts::{CloudArtifactReader, CloudArtifactUploader};
 
-use tracel_experiment::ArtifactKind;
-use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
+use tracel_experiment::{
+    ArtifactKind, CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl,
+    error::{ExperimentError, ExperimentErrorKind},
+};
 
-use crate::backend::cloud::CloudBackend;
-use crate::experiment::remote::session::RemoteExperimentSession;
+use crate::{backend::cloud::CloudBackend, experiment::remote::session::RemoteExperimentSession};
 
 #[derive(Debug, Clone)]
 pub struct ExperimentPath {

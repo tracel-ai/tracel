@@ -4,7 +4,16 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
-use tracel_client::ClientError;
+use tracel_client::{
+    console::{
+        Client,
+        model::response::{
+            ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
+            ModelVersionResponse,
+        },
+    },
+    error::ClientError,
+};
 use tracel_models::{
     Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile, VersionFileReader,
     VersionFileSource, VersionId, VersionManifest,
@@ -61,7 +70,7 @@ pub struct Console {
 }
 
 struct ConsoleInner {
-    client: tracel_client::Client,
+    client: Client,
     model_version_routes: Mutex<HashMap<ModelVersionRouteKey, u32>>,
 }
 
@@ -98,7 +107,7 @@ impl ConsoleInner {
         owner: &str,
         project: &str,
         model: &str,
-        versions: &[tracel_client::response::ModelVersionResponse],
+        versions: &[ModelVersionResponse],
     ) -> Result<(), ModelsError> {
         let mut routes = self
             .model_version_routes
@@ -127,10 +136,8 @@ impl Console {
     pub fn new(url: impl AsRef<str>, auth: Auth) -> Result<Self, ConsoleError> {
         let url = normalize_base_url(url.as_ref())?;
         let client = match auth {
-            Auth::Anonymous => tracel_client::Client::anonymous(url),
-            Auth::Session(token) => {
-                tracel_client::Client::from_url_with_session_token(url, token.expose_secret())
-            }
+            Auth::Anonymous => Client::anonymous(url),
+            Auth::Session(token) => Client::from_url_with_session_token(url, token.expose_secret()),
         };
 
         Ok(Self {
@@ -167,7 +174,7 @@ impl Console {
 
     /// Destroys the current session on the console.
     pub fn logout(&self) -> Result<(), ConsoleError> {
-        self.inner.client.logout().map_err(Into::into)
+        self.inner.client.clone().logout().map_err(Into::into)
     }
 
     /// Lists organizations available to the current session.
@@ -369,14 +376,14 @@ impl ModelOps for ConsoleModelOps {
     }
 }
 
-fn model_page_from_wire(response: tracel_client::response::ModelListResponse) -> Page<Model> {
+fn model_page_from_wire(response: ModelListResponse) -> Page<Model> {
     Page {
         items: response.items.into_iter().map(model_from_wire).collect(),
         total: response.total,
     }
 }
 
-fn model_from_wire(value: tracel_client::response::ModelResponse) -> Model {
+fn model_from_wire(value: ModelResponse) -> Model {
     Model {
         id: value.id,
         name: value.name,
@@ -389,7 +396,7 @@ fn model_from_wire(value: tracel_client::response::ModelResponse) -> Model {
 }
 
 fn model_version_page_from_wire(
-    response: tracel_client::response::ModelVersionListResponse,
+    response: ModelVersionListResponse,
 ) -> Result<Page<ModelVersion>, ModelsError> {
     let items = response
         .items
@@ -402,9 +409,7 @@ fn model_version_page_from_wire(
     })
 }
 
-fn model_version_from_wire(
-    value: tracel_client::response::ModelVersionResponse,
-) -> Result<ModelVersion, ModelsError> {
+fn model_version_from_wire(value: ModelVersionResponse) -> Result<ModelVersion, ModelsError> {
     let manifest: VersionManifest = serde_json::from_value(value.manifest)
         .map_err(|error| ModelsError::InvalidResponse(error.to_string()))?;
 
@@ -423,7 +428,7 @@ fn model_version_from_wire(
 fn find_route_version(
     model: &str,
     id: &VersionId,
-    versions: &[tracel_client::response::ModelVersionResponse],
+    versions: &[ModelVersionResponse],
 ) -> Result<u32, ModelsError> {
     versions
         .iter()
@@ -436,7 +441,7 @@ fn find_route_version(
 
 fn file_sources_from_wire(
     transfer_client: &ReqwestTransferClient,
-    response: tracel_client::response::ModelDownloadResponse,
+    response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
         .files
@@ -556,7 +561,7 @@ mod tests {
 
     #[test]
     fn model_list_fixture_maps_to_tenancy_free_domain() {
-        let wire: tracel_client::response::ModelListResponse = serde_json::from_str(
+        let wire: ModelListResponse = serde_json::from_str(
             r#"{
                 "items": [{
                     "id": "0198f0a1-0000-7000-8000-000000000000",
@@ -583,7 +588,7 @@ mod tests {
 
     #[test]
     fn version_fixture_maps_manifest_metadata_and_opaque_id() {
-        let wire: tracel_client::response::ModelVersionResponse = serde_json::from_str(
+        let wire: ModelVersionResponse = serde_json::from_str(
             r#"{
                 "id": "0198f0a1-0000-7000-8000-000000000001",
                 "experiment": {"id": 12, "experiment_num": 4},
@@ -612,7 +617,7 @@ mod tests {
 
     #[test]
     fn legacy_version_fixture_defaults_metadata_to_null() {
-        let wire: tracel_client::response::ModelVersionResponse = serde_json::from_str(
+        let wire: ModelVersionResponse = serde_json::from_str(
             r#"{
                 "id": "opaque-id",
                 "experiment": null,
@@ -631,7 +636,7 @@ mod tests {
 
     #[test]
     fn route_version_resolution_uses_only_the_opaque_identity() {
-        let wire: tracel_client::response::ModelVersionListResponse = serde_json::from_str(
+        let wire: ModelVersionListResponse = serde_json::from_str(
             r#"{
                 "items": [{
                     "id": "opaque-id",
@@ -700,7 +705,7 @@ mod tests {
 
     #[test]
     fn download_plan_fixture_maps_verified_file_descriptors() {
-        let wire: tracel_client::response::ModelDownloadResponse = serde_json::from_str(
+        let wire: ModelDownloadResponse = serde_json::from_str(
             r#"{
                 "files": [{
                     "rel_path": "model.bpk",

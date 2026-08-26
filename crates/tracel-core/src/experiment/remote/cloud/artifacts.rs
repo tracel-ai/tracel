@@ -1,5 +1,5 @@
 use tracel_artifact::bundle::FsBundle;
-use tracel_client::Client;
+use tracel_client::console::Client;
 
 use tracel_experiment::{
     ArtifactKind, ExperimentId,

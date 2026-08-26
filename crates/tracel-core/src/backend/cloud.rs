@@ -3,7 +3,13 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::{Client, ClientError, Env, TracelCredentials};
+use tracel_client::{
+    ClientError,
+    console::{
+        Client, Env, TracelCredentials,
+        model::response::{ModelResponse, ModelVersionResponse, PresignedModelFileUrlResponse},
+    },
+};
 use tracel_models::{
     Model, ModelOps, ModelVersion, Models, ModelsError, Page, VersionFile, VersionFileSource,
     VersionId, VersionManifest,
@@ -96,7 +102,7 @@ impl CloudBackend {
         let credentials = discover_credentials(&env)?;
         let (namespace, project) = discover_namespace_project()?;
 
-        let client = Client::new(env, &credentials).map_err(|err| {
+        let client = Client::connect(env, &credentials).map_err(|err| {
             if err.is_login_error() {
                 CloudError::InvalidCredentials
             } else {
@@ -155,7 +161,7 @@ impl CloudBackend {
         &self,
         model: &str,
         id: &VersionId,
-        response: tracel_client::response::PresignedModelFileUrlResponse,
+        response: PresignedModelFileUrlResponse,
     ) -> Box<dyn VersionFileSource> {
         let file = VersionFile {
             rel_path: response.rel_path,
@@ -241,7 +247,7 @@ impl ModelOps for CloudBackend {
     }
 }
 
-fn map_model(response: tracel_client::response::ModelResponse) -> Model {
+fn map_model(response: ModelResponse) -> Model {
     Model {
         id: response.id,
         name: response.name,
@@ -253,9 +259,7 @@ fn map_model(response: tracel_client::response::ModelResponse) -> Model {
     }
 }
 
-fn map_version(
-    response: tracel_client::response::ModelVersionResponse,
-) -> Result<ModelVersion, ModelsError> {
+fn map_version(response: ModelVersionResponse) -> Result<ModelVersion, ModelsError> {
     let manifest = serde_json::from_value::<VersionManifest>(response.manifest)
         .map_err(|error| ModelsError::InvalidResponse(error.to_string()))?;
 
@@ -341,7 +345,7 @@ fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
         let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
         let creds: CliCredentials =
             serde_json::from_str(&contents).map_err(|_| CloudError::NoCredentials)?;
-        return Ok(TracelCredentials::new(creds.api_key));
+        return Ok(TracelCredentials::api_key(creds.api_key));
     }
 
     Err(CloudError::NoCredentials)

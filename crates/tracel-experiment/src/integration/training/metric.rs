@@ -79,8 +79,7 @@ impl MetricLogger for ExperimentMetricLogger {
             }
         }
         self.experiment_handle
-            .log_metric(epoch, split.to_string(), self.iteration_count, logs)
-            .expect("Failed to log metric, experiment may have been closed or inactive");
+            .log_metric(epoch, split.to_string(), self.iteration_count, logs);
         self.last_summaries = Some(summaries);
     }
 
@@ -103,20 +102,17 @@ impl MetricLogger for ExperimentMetricLogger {
             MetricAttributes::None => return,
         };
 
-        match self.experiment_handle.log_metric_definition(MetricSpec {
+        self.experiment_handle.log_metric_definition(MetricSpec {
             name: definition.name.to_string(),
             description: definition.description,
             unit,
             higher_is_better,
-        }) {
-            Ok(_) => (),
-            Err(e) => panic!("{e}"),
-        }
+        });
     }
 
     fn log_epoch_summary(&mut self, summary: EpochSummary) {
         if let Some(summaries) = self.last_summaries.take() {
-            _ = self.experiment_handle.log_epoch_summary(
+            self.experiment_handle.log_epoch_summary(
                 summary.epoch_number,
                 summary.split.to_string(),
                 summaries,

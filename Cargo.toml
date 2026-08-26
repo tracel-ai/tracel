@@ -8,7 +8,7 @@ members = ["crates/*", "examples/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.8.1"
+version = "0.9.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -71,24 +71,23 @@ serde_with = { version = "3.20.0", features = ["base64", "macros"] }
 
 ## External Crate
 tracel-client = { git = "https://github.com/tracel-ai/tracel-client", branch = "feat/platform-client", default-features = false, features = [
-    "tracel",
-    "station",
+    "console",
 ] }
 
 ## Crate
-tracel-runner = { path = "crates/tracel-runner", version = "0.8.1" }
-tracel-app = { path = "crates/tracel-app", version = "0.8.1" }
-tracel-inference = { path = "crates/tracel-inference", version = "0.8.1" }
-tracel-fleet = { path = "crates/tracel-fleet", version = "0.8.1" }
-tracel-artifact = { path = "crates/tracel-artifact", version = "0.8.1" }
-tracel-console = { path = "crates/tracel-console", version = "0.8.1" }
-tracel-models = { path = "crates/tracel-models", version = "0.8.1" }
-tracel-experiment = { path = "crates/tracel-experiment", version = "0.8.1" }
-tracel-core = { path = "crates/tracel-core", version = "0.8.1" }
-tracel = { path = "crates/tracel", version = "0.8.1" }
+tracel-runner = { path = "crates/tracel-runner", version = "0.9.0" }
+tracel-app = { path = "crates/tracel-app", version = "0.9.0" }
+tracel-inference = { path = "crates/tracel-inference", version = "0.9.0" }
+tracel-artifact = { path = "crates/tracel-artifact", version = "0.9.0" }
+tracel-console = { path = "crates/tracel-console", version = "0.9.0" }
+tracel-models = { path = "crates/tracel-models", version = "0.9.0" }
+tracel-experiment = { path = "crates/tracel-experiment", version = "0.9.0" }
+tracel-core = { path = "crates/tracel-core", version = "0.9.0" }
+tracel = { path = "crates/tracel", version = "0.9.0" }
 
 ### For xtask crate ###
-tracel-xtask = "4.19.0"
+tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
+

@@ -1,25 +1,36 @@
 //! Ships inference session telemetry to the backend inference-group endpoint. One long-lived
 //! worker per group batches events from all its requests and flushes them over the client.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
 
 use chrono::SecondsFormat;
 use crossbeam::channel::{self, Receiver, RecvTimeoutError, Sender};
 
-use tracel_client::inference::request::{
-    IngestTelemetryRequest, LogIngestionEvent, LogLevel as WireLogLevel,
-    MetricData as WireMetricData, MetricDescriptorEvent, MetricIngestionEvent,
-    MetricKind as WireMetricKind,
+use tracel_client::{
+    ClientError,
+    console::{
+        Client,
+        inference::request::{
+            IngestTelemetryRequest, LogIngestionEvent, LogLevel as WireLogLevel,
+            MetricData as WireMetricData, MetricDescriptorEvent, MetricIngestionEvent,
+            MetricKind as WireMetricKind,
+        },
+    },
 };
-use tracel_client::{Client, ClientError};
-use tracel_inference::sink::{
-    InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
+use tracel_inference::{
+    InferenceError, InferenceSession,
+    sink::{
+        InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
+    },
 };
-use tracel_inference::{InferenceError, InferenceSession};
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_BATCH: usize = 512;

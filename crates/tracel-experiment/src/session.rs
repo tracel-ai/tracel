@@ -3,8 +3,11 @@ use std::sync::Arc;
 use tracel_artifact::bundle::FsBundle;
 
 use crate::{
-    ArtifactKind, ExperimentId, MetricSpec, MetricValue, activity::ActivityEvent,
-    error::ExperimentError, log::LogRecord, reader::ArtifactRef,
+    ArtifactKind, ExperimentId, MetricSpec, MetricValue,
+    activity::{ActivityEvent, ActivityId},
+    error::ExperimentError,
+    log::LogRecord,
+    reader::ArtifactRef,
 };
 
 #[derive(Debug, Clone)]
@@ -14,18 +17,27 @@ pub enum Event {
         name: String,
         value: serde_json::Value,
     },
-    Log(LogRecord),
+    Log {
+        record: LogRecord,
+        activity: Option<ActivityId>,
+    },
     Metrics {
         epoch: usize,
         split: String,
         iteration: usize,
         items: Vec<MetricValue>,
+        activity: Option<ActivityId>,
     },
     MetricDefinition(MetricSpec),
     EpochSummary {
         epoch: usize,
         split: String,
         items: Vec<MetricValue>,
+        activity: Option<ActivityId>,
+    },
+    Summary {
+        items: Vec<MetricValue>,
+        activity: Option<ActivityId>,
     },
     ArtifactUsed {
         experiment_id: ExperimentId,
@@ -52,6 +64,12 @@ pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError>
 /// Session-level implementation for the active experiment run.
 pub trait ExperimentSession: Send + Sync {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
+
+    /// Block until every event recorded so far has left the process.
+    fn flush(&self) -> Result<(), ExperimentError> {
+        Ok(())
+    }
+
     fn save_artifact(
         &self,
         name: &str,
@@ -67,6 +85,10 @@ where
 {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         self.as_ref().record_event(event)
+    }
+
+    fn flush(&self) -> Result<(), ExperimentError> {
+        self.as_ref().flush()
     }
 
     fn save_artifact(
