@@ -2,7 +2,7 @@
 //!
 //! The upload process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
-use crate::transfer::TransferError;
+use crate::transfer::{TransferError, TransferObserver};
 use crate::{FileTransferClient, ReqwestTransferClient};
 use std::collections::HashSet;
 use std::io::Read;
@@ -10,6 +10,9 @@ use std::io::Read;
 /// Errors that can occur during artifact file uploads.
 #[derive(Debug, thiserror::Error)]
 pub enum UploadError {
+    /// The caller cancelled while a file was being uploaded.
+    #[error("upload cancelled while transferring {rel_path}")]
+    Cancelled { rel_path: String },
     /// Errors from the transfer client (e.g. network errors, HTTP errors).
     #[error("transfer error for part {part_index} of {total_parts} for {rel_path}: {source}")]
     Transfer {
@@ -60,6 +63,22 @@ pub trait MultipartUploadSource {
     ) -> Result<Box<dyn Read + Send>, UploadError>;
 }
 
+/// So a borrowed source can be handed to code that wants to own one.
+impl<S: MultipartUploadSource + ?Sized> MultipartUploadSource for &S {
+    fn file_len(&self, rel_path: &str) -> Result<u64, UploadError> {
+        (**self).file_len(rel_path)
+    }
+
+    fn open_part(
+        &self,
+        rel_path: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<Box<dyn Read + Send>, UploadError> {
+        (**self).open_part(rel_path, offset, size)
+    }
+}
+
 /// Upload multiple files from a multipart source using presigned URLs.
 pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     source: &S,
@@ -75,6 +94,20 @@ pub fn upload_bundle_multipart_with_client<FTC: FileTransferClient, S: Multipart
     source: &S,
     files: &[MultipartUploadFile],
 ) -> Result<(), UploadError> {
+    upload_bundle_multipart_with_client_and_observer(client, source, files, &mut ())
+}
+
+/// Upload multiple files, reporting progress and honouring cancellation through `observer`.
+pub fn upload_bundle_multipart_with_client_and_observer<
+    FTC: FileTransferClient,
+    S: MultipartUploadSource,
+    O: TransferObserver,
+>(
+    client: &FTC,
+    source: &S,
+    files: &[MultipartUploadFile],
+    observer: &mut O,
+) -> Result<(), UploadError> {
     let mut seen = HashSet::new();
 
     for file in files {
@@ -85,19 +118,37 @@ pub fn upload_bundle_multipart_with_client<FTC: FileTransferClient, S: Multipart
             )));
         }
 
-        upload_source_file_multipart_streaming(client, source, &file.rel_path, &file.parts)?;
+        if observer.is_cancelled() {
+            return Err(UploadError::Cancelled {
+                rel_path: file.rel_path.clone(),
+            });
+        }
+
+        upload_source_file_multipart_streaming(
+            client,
+            source,
+            &file.rel_path,
+            &file.parts,
+            observer,
+        )?;
     }
 
     Ok(())
 }
 
-fn upload_source_file_multipart_streaming<FTC: FileTransferClient, S: MultipartUploadSource>(
+fn upload_source_file_multipart_streaming<
+    FTC: FileTransferClient,
+    S: MultipartUploadSource,
+    O: TransferObserver,
+>(
     client: &FTC,
     source: &S,
     rel_path: &str,
     parts: &[MultipartUploadPart],
+    observer: &mut O,
 ) -> Result<(), UploadError> {
     let file_len = source.file_len(rel_path)?;
+    observer.file_started(rel_path, Some(file_len));
 
     let mut part_indices: Vec<usize> = (0..parts.len()).collect();
     part_indices.sort_by_key(|&i| parts[i].part);
@@ -128,6 +179,12 @@ fn upload_source_file_multipart_streaming<FTC: FileTransferClient, S: MultipartU
             )));
         }
 
+        if observer.is_cancelled() {
+            return Err(UploadError::Cancelled {
+                rel_path: rel_path.to_string(),
+            });
+        }
+
         let reader = source.open_part(rel_path, offset, size)?;
         client
             .put_reader(&part.url, reader, size)
@@ -139,6 +196,7 @@ fn upload_source_file_multipart_streaming<FTC: FileTransferClient, S: MultipartU
             })?;
 
         offset += size;
+        observer.file_progress(rel_path, offset);
     }
 
     if offset != file_len {
@@ -148,6 +206,7 @@ fn upload_source_file_multipart_streaming<FTC: FileTransferClient, S: MultipartU
         )));
     }
 
+    observer.file_completed(rel_path, offset);
     Ok(())
 }
 

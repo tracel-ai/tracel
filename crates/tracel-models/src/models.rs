@@ -3,15 +3,19 @@ use std::fmt;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
+use tracel_artifact::TransferObserver;
 use tracel_artifact::bundle::{BundleDecode, BundleSink, BundleSource, FsBundle};
 use tracel_artifact::download::{
-    ArtifactDownloadFile, DownloadError, DownloadObserver,
-    download_artifacts_to_sink_with_client_and_observer,
+    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink_with_client_and_observer,
 };
 use tracel_artifact::{FileTransferClient, TransferError, normalize_checksum};
 
+use sha2::{Digest, Sha256};
+use tracel_artifact::upload::MultipartUploadSource;
+
 use crate::{
-    Model, ModelOps, ModelVersion, ModelsError, VersionFileReader, VersionFileSource, VersionId,
+    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
+    VersionId,
 };
 
 /// Backend-independent model operations and verified transfer orchestration.
@@ -49,7 +53,7 @@ impl Models {
     /// Downloads and verifies a version before copying it into a caller-owned bundle sink.
     ///
     /// Progress callbacks run synchronously while backend bytes are staged and may cancel the
-    /// active transfer through [`DownloadObserver::is_cancelled`]. The destination is untouched
+    /// active transfer through [`TransferObserver::is_cancelled`]. The destination is untouched
     /// unless every file passes path, size, and checksum verification.
     pub fn download<S, O>(
         &self,
@@ -60,7 +64,7 @@ impl Models {
     ) -> Result<(), ModelsError>
     where
         S: BundleSink,
-        O: DownloadObserver,
+        O: TransferObserver,
     {
         let staged = self.stage(model, id, observer)?;
         staged.copy_to(destination, observer)
@@ -83,7 +87,36 @@ impl Models {
         })
     }
 
-    fn stage<O: DownloadObserver>(
+    /// Creates a model that versions can be published under.
+    pub fn create(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
+        self.ops.create_model(name, description)
+    }
+
+    /// Publishes every file in `source` as a new version of `model`.
+    ///
+    /// Each file is measured and checksummed here, so what the backend records is what was
+    /// actually read, and the same path rules that guard a download apply before anything is
+    /// written. The version only becomes visible once every file has been uploaded.
+    pub fn publish<S, O>(
+        &self,
+        model: &str,
+        source: &S,
+        metadata: Option<serde_json::Value>,
+        observer: &mut O,
+    ) -> Result<ModelVersion, ModelsError>
+    where
+        S: BundleSource + MultipartUploadSource,
+        O: TransferObserver,
+    {
+        let files = measured_files(source, observer)?;
+        if observer.is_cancelled() {
+            return Err(ModelsError::Cancelled);
+        }
+        self.ops
+            .publish_version(model, &files, source, metadata.as_ref(), observer)
+    }
+
+    fn stage<O: TransferObserver>(
         &self,
         model: &str,
         id: &VersionId,
@@ -121,7 +154,7 @@ struct StagedVersion {
 }
 
 impl StagedVersion {
-    fn copy_to<S: BundleSink, O: DownloadObserver>(
+    fn copy_to<S: BundleSink, O: TransferObserver>(
         &self,
         destination: &mut S,
         observer: &mut O,
@@ -155,7 +188,7 @@ impl BundleSource for StagedVersion {
     }
 }
 
-fn stage_source<O: DownloadObserver>(
+fn stage_source<O: TransferObserver>(
     source: &dyn VersionFileSource,
     path: String,
     observer: &mut O,
@@ -165,7 +198,7 @@ fn stage_source<O: DownloadObserver>(
     Ok(StagedFile { bundle, path })
 }
 
-fn stage_reader<O: DownloadObserver>(
+fn stage_reader<O: TransferObserver>(
     source: &dyn VersionFileSource,
     path: &str,
     reader: VersionFileReader,
@@ -229,6 +262,59 @@ fn map_download_error(error: DownloadError) -> ModelsError {
         DownloadError::InvalidChecksum(message) => ModelsError::InvalidChecksum(message),
         DownloadError::InvalidPath(message) => ModelsError::InvalidPath(message),
     }
+}
+
+/// Measures every file a caller wants published, rejecting a listing the capability would
+/// refuse to download.
+fn measured_files<S: BundleSource, O: TransferObserver>(
+    source: &S,
+    observer: &mut O,
+) -> Result<Vec<VersionFile>, ModelsError> {
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+
+    for path in source.list().map_err(ModelsError::Output)? {
+        let canonical = canonical_version_path(&path)?;
+        if !seen.insert(canonical.to_lowercase()) {
+            return Err(invalid_path(format!(
+                "duplicate relative model path: {canonical}"
+            )));
+        }
+        if files
+            .iter()
+            .any(|file: &VersionFile| paths_conflict(&file.rel_path, &canonical))
+        {
+            return Err(invalid_path(format!(
+                "model path conflicts with another file or directory: {canonical}"
+            )));
+        }
+
+        let mut reader = source.open(&path).map_err(ModelsError::Output)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+        let mut size_bytes = 0u64;
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| ModelsError::Output(error.to_string()))?;
+            if read == 0 {
+                break;
+            }
+            if observer.is_cancelled() {
+                return Err(ModelsError::Cancelled);
+            }
+            hasher.update(&buffer[..read]);
+            size_bytes += read as u64;
+        }
+
+        files.push(VersionFile {
+            rel_path: canonical,
+            size_bytes,
+            checksum: format!("{:x}", hasher.finalize()),
+        });
+    }
+
+    Ok(files)
 }
 
 fn validated_source_paths(
@@ -397,7 +483,7 @@ mod tests {
     use tracel_artifact::bundle::InMemoryBundleSources;
 
     use super::*;
-    use crate::test_support::{SourceSpec, models_with_sources};
+    use crate::test_support::{FakeOps, SourceSpec, checksum, models_with_sources};
 
     #[derive(Default)]
     struct RecordingObserver {
@@ -407,7 +493,7 @@ mod tests {
         completed_paths: Vec<String>,
     }
 
-    impl DownloadObserver for RecordingObserver {
+    impl TransferObserver for RecordingObserver {
         fn file_started(&mut self, rel_path: &str, _expected_bytes: Option<u64>) {
             self.started.push(rel_path.to_string());
         }
@@ -436,6 +522,58 @@ mod tests {
             self.files.push((path.to_string(), bytes));
             Ok(())
         }
+    }
+
+    #[test]
+    fn publish_measures_the_bytes_it_sends() {
+        let ops = FakeOps::new(Vec::new());
+        let record = ops.publish_record();
+        let models = Models::new(Arc::new(ops));
+        let mut bundle = FsBundle::temp().unwrap();
+        bundle
+            .put_file("weights.bin", &mut &b"payload"[..])
+            .unwrap();
+
+        models
+            .publish(
+                "alpha",
+                &bundle,
+                Some(serde_json::json!({"format": "burnpack"})),
+                &mut (),
+            )
+            .unwrap();
+
+        let record = record.lock().unwrap();
+        assert_eq!(record.files.len(), 1);
+        assert_eq!(record.files[0].rel_path, "weights.bin");
+        assert_eq!(record.files[0].size_bytes, b"payload".len() as u64);
+        assert_eq!(record.files[0].checksum, checksum(b"payload"));
+        assert_eq!(record.uploaded, vec!["weights.bin".to_string()]);
+    }
+
+    #[test]
+    fn a_cancelled_publish_sends_nothing() {
+        let ops = FakeOps::new(Vec::new());
+        let record = ops.publish_record();
+        let models = Models::new(Arc::new(ops));
+        let mut bundle = FsBundle::temp().unwrap();
+        bundle
+            .put_file("weights.bin", &mut &b"payload"[..])
+            .unwrap();
+
+        struct Cancelled;
+        impl TransferObserver for Cancelled {
+            fn is_cancelled(&self) -> bool {
+                true
+            }
+        }
+
+        let error = models
+            .publish("alpha", &bundle, None, &mut Cancelled)
+            .unwrap_err();
+
+        assert!(error.is_cancelled());
+        assert!(record.lock().unwrap().files.is_empty());
     }
 
     #[test]
@@ -685,7 +823,7 @@ mod tests {
         completed: bool,
     }
 
-    impl DownloadObserver for CancellingObserver {
+    impl TransferObserver for CancellingObserver {
         fn is_cancelled(&self) -> bool {
             self.cancelled
         }

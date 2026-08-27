@@ -1,5 +1,8 @@
 use std::io::Read;
 
+use tracel_artifact::TransferObserver;
+use tracel_artifact::upload::MultipartUploadSource;
+
 use crate::{Model, ModelVersion, ModelsError, VersionFile, VersionId};
 
 /// A readable stream for one model-version file.
@@ -47,4 +50,21 @@ pub trait ModelOps: Send + Sync + 'static {
         model: &str,
         id: &VersionId,
     ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError>;
+
+    /// Creates a model that can hold versions.
+    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError>;
+
+    /// Publishes a version of `model` containing the files the capability measured.
+    ///
+    /// The bytes are read from `contents` by each file's relative path. Whether they travel in
+    /// one request or a hundred, and whether the version appears atomically or is assembled
+    /// first, is the implementation's business: a version either becomes visible or it does not.
+    fn publish_version(
+        &self,
+        model: &str,
+        files: &[VersionFile],
+        contents: &dyn MultipartUploadSource,
+        metadata: Option<&serde_json::Value>,
+        observer: &mut dyn TransferObserver,
+    ) -> Result<ModelVersion, ModelsError>;
 }

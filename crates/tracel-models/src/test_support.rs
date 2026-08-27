@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use sha2::Digest;
 
+use tracel_artifact::TransferObserver;
+use tracel_artifact::upload::MultipartUploadSource;
+
 use crate::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
     VersionFileSource, VersionId,
@@ -104,10 +107,19 @@ impl Read for TestReader {
     }
 }
 
+/// What a publish handed the backend, so a test can see what was measured and written.
+#[derive(Default)]
+pub struct PublishRecord {
+    pub files: Vec<VersionFile>,
+    pub metadata: Option<serde_json::Value>,
+    pub uploaded: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct FakeOps {
     models: Vec<Model>,
     sources: Vec<SourceSpec>,
+    published: Arc<Mutex<PublishRecord>>,
 }
 
 impl FakeOps {
@@ -115,11 +127,55 @@ impl FakeOps {
         Self {
             models: vec![model("alpha"), model("beta")],
             sources,
+            published: Arc::new(Mutex::new(PublishRecord::default())),
         }
+    }
+
+    pub fn publish_record(&self) -> Arc<Mutex<PublishRecord>> {
+        Arc::clone(&self.published)
     }
 }
 
 impl ModelOps for FakeOps {
+    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
+        let mut created = model(name);
+        created.description = description.map(str::to_string);
+        Ok(created)
+    }
+
+    fn publish_version(
+        &self,
+        model: &str,
+        files: &[VersionFile],
+        contents: &dyn MultipartUploadSource,
+        metadata: Option<&serde_json::Value>,
+        observer: &mut dyn TransferObserver,
+    ) -> Result<ModelVersion, ModelsError> {
+        self.get_model(model)?;
+        for file in files {
+            let len = contents
+                .file_len(&file.rel_path)
+                .map_err(ModelsError::other)?;
+            if len != file.size_bytes {
+                return Err(ModelsError::other(
+                    "the measured size does not match the source",
+                ));
+            }
+        }
+
+        for file in files {
+            observer.file_started(&file.rel_path, Some(file.size_bytes));
+            observer.file_completed(&file.rel_path, file.size_bytes);
+        }
+
+        let mut record = self.published.lock().unwrap();
+        record.files = files.to_vec();
+        record.metadata = metadata.cloned();
+        record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
+
+        Ok(version(VersionId::new("published-id")))
+    }
+
     fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
         Ok(self.models.clone())
     }
@@ -164,6 +220,19 @@ impl ModelOps for FakeOps {
     }
 }
 
+fn version(id: VersionId) -> ModelVersion {
+    ModelVersion {
+        id,
+        version: 1,
+        size_bytes: 0,
+        checksum: String::new(),
+        published_by: Some("publisher".to_string()),
+        created_at: None,
+        manifest: crate::VersionManifest { files: Vec::new() },
+        metadata: serde_json::Value::Null,
+    }
+}
+
 fn model(name: &str) -> Model {
     Model {
         id: format!("{name}-id"),
@@ -180,7 +249,7 @@ pub fn models_with_sources(sources: Vec<SourceSpec>) -> Models {
     Models::new(Arc::new(FakeOps::new(sources)))
 }
 
-fn checksum(bytes: &[u8]) -> String {
+pub fn checksum(bytes: &[u8]) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())

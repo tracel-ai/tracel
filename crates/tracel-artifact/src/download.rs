@@ -10,7 +10,7 @@ use sha2::Digest;
 use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
-use crate::{FileTransferClient, ReqwestTransferClient};
+use crate::{FileTransferClient, ReqwestTransferClient, TransferObserver};
 
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
@@ -61,42 +61,6 @@ pub struct ArtifactDownloadFile {
     pub checksum: Option<String>,
 }
 
-/// Observes the progress of a download, one file at a time and in the order the files were
-/// given.
-///
-/// Every method defaults to doing nothing, so an implementation only has to define the events
-/// it cares about. Callbacks run on the downloading thread and block it, so an implementation
-/// that does real work should hand it off.
-pub trait DownloadObserver {
-    /// Returns whether the active download should stop.
-    ///
-    /// The transfer polls this at file and reader boundaries. Implementations should make this
-    /// query cheap and may update its result from another thread or from a progress callback.
-    fn is_cancelled(&self) -> bool {
-        false
-    }
-
-    /// A file is about to be transferred. `expected_bytes` is the size the caller announced,
-    /// which is unknown for artifacts published without a manifest.
-    fn file_started(&mut self, rel_path: &str, expected_bytes: Option<u64>) {
-        let _ = (rel_path, expected_bytes);
-    }
-
-    /// Bytes have arrived for the file currently being transferred. `downloaded_bytes` is the
-    /// running total for that file, not an increment.
-    fn file_progress(&mut self, rel_path: &str, downloaded_bytes: u64) {
-        let _ = (rel_path, downloaded_bytes);
-    }
-
-    /// A file has been written to the sink and passed verification.
-    fn file_completed(&mut self, rel_path: &str, downloaded_bytes: u64) {
-        let _ = (rel_path, downloaded_bytes);
-    }
-}
-
-/// Discards every progress event.
-impl DownloadObserver for () {}
-
 /// Download artifact files into any bundle sink implementation.
 pub fn download_artifacts_to_sink<S: BundleSink>(
     sink: &mut S,
@@ -120,7 +84,7 @@ pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: Bundle
 pub fn download_artifacts_to_sink_with_client_and_observer<
     FTC: FileTransferClient,
     S: BundleSink,
-    O: DownloadObserver,
+    O: TransferObserver,
 >(
     client: &FTC,
     sink: &mut S,
@@ -190,7 +154,7 @@ fn validated_download_files(
     Ok(out)
 }
 
-struct VerifyingReader<'a, R: Read, O: DownloadObserver> {
+struct VerifyingReader<'a, R: Read, O: TransferObserver> {
     inner: R,
     hasher: sha2::Sha256,
     total: u64,
@@ -199,7 +163,7 @@ struct VerifyingReader<'a, R: Read, O: DownloadObserver> {
     cancelled: bool,
 }
 
-impl<'a, R: Read, O: DownloadObserver> VerifyingReader<'a, R, O> {
+impl<'a, R: Read, O: TransferObserver> VerifyingReader<'a, R, O> {
     fn new(inner: R, rel_path: &'a str, observer: &'a mut O) -> Self {
         Self {
             inner,
@@ -220,7 +184,7 @@ impl<'a, R: Read, O: DownloadObserver> VerifyingReader<'a, R, O> {
     }
 }
 
-impl<R: Read, O: DownloadObserver> Read for VerifyingReader<'_, R, O> {
+impl<R: Read, O: TransferObserver> Read for VerifyingReader<'_, R, O> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.observer.is_cancelled() {
             self.cancelled = true;
@@ -439,7 +403,7 @@ mod tests {
         completed: Vec<(String, u64)>,
     }
 
-    impl DownloadObserver for RecordingObserver {
+    impl TransferObserver for RecordingObserver {
         fn file_started(&mut self, rel_path: &str, expected_bytes: Option<u64>) {
             self.started.push((rel_path.to_string(), expected_bytes));
         }
@@ -598,7 +562,7 @@ mod tests {
         completed: bool,
     }
 
-    impl DownloadObserver for CancellingObserver {
+    impl TransferObserver for CancellingObserver {
         fn is_cancelled(&self) -> bool {
             self.cancelled
         }

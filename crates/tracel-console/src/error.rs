@@ -17,15 +17,15 @@ pub enum ConsoleError {
     /// private, so the two cannot be told apart.
     #[error("the console has no such resource")]
     NotFound,
+    /// The user refused the sign-in.
+    #[error("the sign-in was denied")]
+    LoginDenied,
+    /// The user did not answer before the codes expired.
+    #[error("the sign-in expired before it was approved")]
+    LoginExpired,
     /// The console response did not match its documented contract.
     #[error("invalid console response: {0}")]
     InvalidResponse(String),
-    /// Authentication credentials were rejected.
-    #[error("authentication was rejected by the console")]
-    AuthenticationRejected,
-    /// The device authorization request was rejected before reaching a polling state.
-    #[error("device authorization failed: {0}")]
-    DeviceAuthorization(#[from] crate::auth::DeviceAuthorizationError),
     /// The console returned an unsuccessful status without a more specific SDK meaning.
     #[error("console returned HTTP {status}: {message}")]
     Server {

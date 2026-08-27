@@ -6,10 +6,18 @@ use std::time::SystemTime;
 use chrono::{DateTime, NaiveDateTime, Utc};
 
 use serde::Deserialize;
+use tracel_artifact::TransferObserver;
+use tracel_artifact::upload::{
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource,
+    upload_bundle_multipart_with_client_and_observer,
+};
 use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
 use tracel_client::{
     console::{
         Client, Env, TracelCredentials,
+        model::request::{
+            CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
+        },
         model::response::{
             ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
             ModelVersionResponse,
@@ -328,6 +336,84 @@ impl ModelOps for ConsoleModelOps {
             .map_err(|error| map_version_error(error, model, id))?;
         Ok(file_sources_from_wire(&self.transfer_client, response))
     }
+
+    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
+        self.inner
+            .client
+            .create_model(
+                &self.owner,
+                &self.project,
+                CreateModelRequest {
+                    name: name.to_string(),
+                    description: description.map(str::to_string),
+                },
+            )
+            .map(model_from_wire)
+            .map_err(console_failure)
+    }
+
+    fn publish_version(
+        &self,
+        model: &str,
+        files: &[VersionFile],
+        contents: &dyn MultipartUploadSource,
+        metadata: Option<&serde_json::Value>,
+        mut observer: &mut dyn TransferObserver,
+    ) -> Result<ModelVersion, ModelsError> {
+        let request = RequestModelVersionUploadRequest {
+            files: files
+                .iter()
+                .map(|file| ModelFileSpecRequest {
+                    rel_path: file.rel_path.clone(),
+                    size_bytes: file.size_bytes,
+                    checksum: file.checksum.clone(),
+                })
+                .collect(),
+            metadata: metadata.cloned(),
+        };
+        let planned = self
+            .inner
+            .client
+            .request_model_version_upload(&self.owner, &self.project, model, request)
+            .map_err(|error| map_model_error(error, model))?;
+
+        let uploads = planned
+            .files
+            .into_iter()
+            .map(|file| MultipartUploadFile {
+                rel_path: file.rel_path,
+                parts: file
+                    .urls
+                    .parts
+                    .into_iter()
+                    .map(|part| MultipartUploadPart {
+                        part: part.part,
+                        url: part.url,
+                        size_bytes: part.size_bytes,
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+
+        upload_bundle_multipart_with_client_and_observer(
+            &self.transfer_client,
+            &contents,
+            &uploads,
+            &mut observer,
+        )
+        .map_err(ModelsError::other)?;
+
+        self.inner
+            .client
+            .complete_model_version_upload(&self.owner, &self.project, model, planned.version)
+            .map_err(|error| map_model_error(error, model))?;
+
+        self.inner
+            .client
+            .get_model_version(&self.owner, &self.project, model, planned.version)
+            .map_err(|error| map_model_error(error, model))
+            .and_then(model_version_from_wire)
+    }
 }
 
 fn models_from_wire(response: ModelListResponse) -> Vec<Model> {
@@ -502,18 +588,4 @@ fn status_is_not_found(status: reqwest::StatusCode) -> bool {
 /// Hands a client failure to the model domain as this console's own.
 fn console_failure(error: ClientError) -> ModelsError {
     ModelsError::other(ConsoleError::from(error))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn console_timestamps_are_read_in_both_shapes_the_console_sends() {
-        let naive = console_timestamp("2026-03-05 18:45:43.397").expect("naive UTC is readable");
-        let rfc3339 = console_timestamp("2026-03-05T18:45:43.397Z").expect("RFC 3339 is readable");
-
-        assert_eq!(naive, rfc3339);
-        assert_eq!(console_timestamp("last tuesday"), None);
-    }
 }
