@@ -49,6 +49,7 @@ crossbeam = { version = "0.8.4", default-features = false, features = [
     "std",
 ] }
 json-patch = { version = "4.1.0", default-features = false }
+schemars = "1.2.2"
 reqwest = { version = "0.13.4", features = ["blocking", "json"] }
 uuid = { version = "1.23.4", features = ["serde"] }
 axum = "0.8"

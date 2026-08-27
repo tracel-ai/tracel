@@ -15,6 +15,7 @@ tracel = { workspace = true }
 anyhow.workspace = true
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json.workspace = true
+schemars.workspace = true
 tracing.workspace = true
 
 # For the streaming HTTP client example.
