@@ -6730,9 +6730,11 @@ dependencies = [
  "tracel-app",
  "tracel-artifact",
  "tracel-client",
+ "tracel-console",
  "tracel-core",
  "tracel-experiment",
  "tracel-inference",
+ "tracel-models",
  "tracel-runner",
 ]
 
@@ -6769,8 +6771,7 @@ dependencies = [
 [[package]]
 name = "tracel-client"
 version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10f8e162ce78495d83a39d9473c529580e0d9590dda370d0085640381c027187"
+source = "git+https://github.com/tracel-ai/tracel-client?branch=feat%2Fplatform-client#af3f3ddbf0817a1e9caf3ca003271cf3aa306a4e"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",
@@ -6782,6 +6783,21 @@ dependencies = [
  "tracing",
  "tungstenite",
  "uuid",
+]
+
+[[package]]
+name = "tracel-console"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracel-artifact",
+ "tracel-client",
+ "tracel-models",
+ "url",
 ]
 
 [[package]]
@@ -6852,6 +6868,16 @@ dependencies = [
  "sha2",
  "tar",
  "walkdir",
+]
+
+[[package]]
+name = "tracel-models"
+version = "0.10.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "tracel-artifact",
 ]
 
 [[package]]

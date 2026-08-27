@@ -89,11 +89,8 @@ tracel-experiment = { path = "crates/tracel-experiment", version = "0.10.0" }
 tracel-core = { path = "crates/tracel-core", version = "0.10.0" }
 tracel = { path = "crates/tracel", version = "0.10.0" }
 
-tracel-console = { path = "crates/tracel-console", version = "0.9.0" }
-tracel-models = { path = "crates/tracel-models", version = "0.9.0" }
 ### For xtask crate ###
 tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
-
