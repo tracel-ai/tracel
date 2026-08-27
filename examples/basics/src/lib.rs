@@ -88,7 +88,7 @@ pub mod training {
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct TrainingConfig {
         pub epochs: usize,
         pub batches_per_epoch: usize,
