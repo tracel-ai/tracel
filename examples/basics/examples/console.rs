@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let models = console
-        .project((namespace.as_str(), project.as_str()))
+        .project(namespace.as_str(), project.as_str())
         .models();
 
     for model in models.list()? {

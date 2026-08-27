@@ -169,7 +169,7 @@ impl Console {
     }
 
     /// Creates a project handle without performing I/O.
-    pub fn project<O, P>(&self, (owner, project): (O, P)) -> ProjectHandle
+    pub fn project<O, P>(&self, owner: O, project: P) -> ProjectHandle
     where
         O: Into<String>,
         P: Into<String>,
