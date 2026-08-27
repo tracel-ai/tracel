@@ -133,11 +133,6 @@ impl Console {
             .map_err(Into::into)
     }
 
-    /// Destroys the current session on the console.
-    pub fn logout(&self) -> Result<(), ConsoleError> {
-        self.inner.client.clone().logout().map_err(Into::into)
-    }
-
     /// Lists organizations available to the current session.
     pub fn organizations(&self) -> Result<Vec<Organization>, ConsoleError> {
         self.inner
