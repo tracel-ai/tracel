@@ -54,11 +54,6 @@
 
 pub use tracel_client::console::{Env, TracelCredentials};
 
-/// Derive [`JsonSchema`](schemars::JsonSchema) for job input configs without adding `schemars` as
-/// a direct dependency.
-#[doc(inline)]
-pub use schemars;
-
 /// Experiment tracking and management.
 pub mod experiment {
     pub use tracel_core::experiment::*;

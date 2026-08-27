@@ -25,4 +25,3 @@ tracel-experiment.workspace = true
 tracel-inference.workspace = true
 tracel-artifact.workspace = true
 tracel-client.workspace = true
-schemars.workspace = true
