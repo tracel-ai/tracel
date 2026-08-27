@@ -33,6 +33,27 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
+  tracel-models:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
+    with:
+      crate: tracel-models
+      tag-validation: false
+    needs:
+      - tracel-artifact
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  tracel-console:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
+    with:
+      crate: tracel-console
+      tag-validation: false
+    needs:
+      - tracel-artifact
+      - tracel-models
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
   tracel-core:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
@@ -42,6 +63,7 @@ jobs:
       - tracel-artifact
       - tracel-experiment
       - tracel-inference
+      - tracel-models
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 

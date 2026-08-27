@@ -69,6 +69,14 @@ pub mod dataset {
     };
 }
 
+/// The Tracel console: connect to one, and reach the projects it hosts.
+#[doc(inline)]
+pub use tracel_console as console;
+
+/// The model domain a console or a Station serves, and the operations over it.
+#[doc(inline)]
+pub use tracel_models as models;
+
 /// Inference contracts and adapters.
 #[doc(hidden)]
 #[doc(inline)]

@@ -15,6 +15,9 @@ use crate::{FileTransferClient, ReqwestTransferClient};
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
+    /// The caller cancelled while a file was being transferred.
+    #[error("download cancelled while transferring {rel_path}")]
+    Cancelled { rel_path: String },
     /// Errors from the transfer client (e.g. network errors, HTTP errors).
     #[error("transfer error for {rel_path}: {source}")]
     Transfer {
@@ -58,6 +61,42 @@ pub struct ArtifactDownloadFile {
     pub checksum: Option<String>,
 }
 
+/// Observes the progress of a download, one file at a time and in the order the files were
+/// given.
+///
+/// Every method defaults to doing nothing, so an implementation only has to define the events
+/// it cares about. Callbacks run on the downloading thread and block it, so an implementation
+/// that does real work should hand it off.
+pub trait DownloadObserver {
+    /// Returns whether the active download should stop.
+    ///
+    /// The transfer polls this at file and reader boundaries. Implementations should make this
+    /// query cheap and may update its result from another thread or from a progress callback.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    /// A file is about to be transferred. `expected_bytes` is the size the caller announced,
+    /// which is unknown for artifacts published without a manifest.
+    fn file_started(&mut self, rel_path: &str, expected_bytes: Option<u64>) {
+        let _ = (rel_path, expected_bytes);
+    }
+
+    /// Bytes have arrived for the file currently being transferred. `downloaded_bytes` is the
+    /// running total for that file, not an increment.
+    fn file_progress(&mut self, rel_path: &str, downloaded_bytes: u64) {
+        let _ = (rel_path, downloaded_bytes);
+    }
+
+    /// A file has been written to the sink and passed verification.
+    fn file_completed(&mut self, rel_path: &str, downloaded_bytes: u64) {
+        let _ = (rel_path, downloaded_bytes);
+    }
+}
+
+/// Discards every progress event.
+impl DownloadObserver for () {}
+
 /// Download artifact files into any bundle sink implementation.
 pub fn download_artifacts_to_sink<S: BundleSink>(
     sink: &mut S,
@@ -73,18 +112,45 @@ pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: Bundle
     sink: &mut S,
     files: &[ArtifactDownloadFile],
 ) -> Result<(), DownloadError> {
+    download_artifacts_to_sink_with_client_and_observer(client, sink, files, &mut ())
+}
+
+/// Download artifact files into any bundle sink implementation using a custom transfer client,
+/// reporting progress to an observer.
+pub fn download_artifacts_to_sink_with_client_and_observer<
+    FTC: FileTransferClient,
+    S: BundleSink,
+    O: DownloadObserver,
+>(
+    client: &FTC,
+    sink: &mut S,
+    files: &[ArtifactDownloadFile],
+    observer: &mut O,
+) -> Result<(), DownloadError> {
     let files = validated_download_files(files)?;
     for (rel_path, file) in files {
+        if observer.is_cancelled() {
+            return Err(DownloadError::Cancelled { rel_path });
+        }
+
         let reader = client
             .get_reader(&file.url)
             .map_err(|e| DownloadError::Transfer {
                 rel_path: rel_path.clone(),
                 source: e,
             })?;
-        let mut verifying_reader = VerifyingReader::new(reader);
+        if observer.is_cancelled() {
+            return Err(DownloadError::Cancelled { rel_path });
+        }
 
-        sink.put_file(&rel_path, &mut verifying_reader)
-            .map_err(DownloadError::TargetError)?;
+        observer.file_started(&rel_path, file.size_bytes);
+        let mut verifying_reader = VerifyingReader::new(reader, &rel_path, observer);
+
+        let sink_result = sink.put_file(&rel_path, &mut verifying_reader);
+        if verifying_reader.cancelled() {
+            return Err(DownloadError::Cancelled { rel_path });
+        }
+        sink_result.map_err(DownloadError::TargetError)?;
 
         let (total, digest) = verifying_reader.finish();
         validate_download(
@@ -94,6 +160,7 @@ pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: Bundle
             file.size_bytes,
             file.checksum.as_deref(),
         )?;
+        observer.file_completed(&rel_path, total);
     }
 
     Ok(())
@@ -123,19 +190,29 @@ fn validated_download_files(
     Ok(out)
 }
 
-struct VerifyingReader<R: Read> {
+struct VerifyingReader<'a, R: Read, O: DownloadObserver> {
     inner: R,
     hasher: sha2::Sha256,
     total: u64,
+    rel_path: &'a str,
+    observer: &'a mut O,
+    cancelled: bool,
 }
 
-impl<R: Read> VerifyingReader<R> {
-    fn new(inner: R) -> Self {
+impl<'a, R: Read, O: DownloadObserver> VerifyingReader<'a, R, O> {
+    fn new(inner: R, rel_path: &'a str, observer: &'a mut O) -> Self {
         Self {
             inner,
             hasher: sha2::Sha256::new(),
             total: 0,
+            rel_path,
+            observer,
+            cancelled: false,
         }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled
     }
 
     fn finish(self) -> (u64, String) {
@@ -143,13 +220,41 @@ impl<R: Read> VerifyingReader<R> {
     }
 }
 
-impl<R: Read> Read for VerifyingReader<R> {
+impl<R: Read, O: DownloadObserver> Read for VerifyingReader<'_, R, O> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.inner.read(buf)?;
+        if self.observer.is_cancelled() {
+            self.cancelled = true;
+            return Err(cancelled_io_error());
+        }
+
+        let read = match self.inner.read(buf) {
+            Ok(read) => read,
+            Err(_) if self.observer.is_cancelled() => {
+                self.cancelled = true;
+                return Err(cancelled_io_error());
+            }
+            Err(error) => return Err(error),
+        };
+        if self.observer.is_cancelled() {
+            self.cancelled = true;
+            return Err(cancelled_io_error());
+        }
+
         self.hasher.update(&buf[..read]);
         self.total += read as u64;
+        if read > 0 {
+            self.observer.file_progress(self.rel_path, self.total);
+            if self.observer.is_cancelled() {
+                self.cancelled = true;
+                return Err(cancelled_io_error());
+            }
+        }
         Ok(read)
     }
+}
+
+fn cancelled_io_error() -> std::io::Error {
+    std::io::Error::other("artifact download cancelled")
 }
 
 fn validate_download(
@@ -192,6 +297,7 @@ mod tests {
     use std::collections::HashMap;
     use std::io::{Cursor, Read};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone)]
     struct MockClient {
@@ -324,5 +430,220 @@ mod tests {
             DownloadError::SizeMismatch { path, .. } => assert_eq!(path, "params.bin"),
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        started: Vec<(String, Option<u64>)>,
+        progress: Vec<(String, u64)>,
+        completed: Vec<(String, u64)>,
+    }
+
+    impl DownloadObserver for RecordingObserver {
+        fn file_started(&mut self, rel_path: &str, expected_bytes: Option<u64>) {
+            self.started.push((rel_path.to_string(), expected_bytes));
+        }
+
+        fn file_progress(&mut self, rel_path: &str, downloaded_bytes: u64) {
+            self.progress.push((rel_path.to_string(), downloaded_bytes));
+        }
+
+        fn file_completed(&mut self, rel_path: &str, downloaded_bytes: u64) {
+            self.completed
+                .push((rel_path.to_string(), downloaded_bytes));
+        }
+    }
+
+    #[test]
+    fn reports_progress_for_every_file() {
+        let first = b"hello world".to_vec();
+        let second = b"a slightly longer payload".to_vec();
+        let mut sink = InMemoryBundleSources::new();
+        let client = MockClient::new(HashMap::from([
+            ("mock://f1".to_string(), first.clone()),
+            ("mock://f2".to_string(), second.clone()),
+        ]));
+        let files = vec![
+            ArtifactDownloadFile {
+                rel_path: "a.bin".to_string(),
+                url: "mock://f1".to_string(),
+                size_bytes: Some(first.len() as u64),
+                checksum: None,
+            },
+            ArtifactDownloadFile {
+                rel_path: "b.bin".to_string(),
+                url: "mock://f2".to_string(),
+                size_bytes: None,
+                checksum: None,
+            },
+        ];
+        let mut observer = RecordingObserver::default();
+
+        download_artifacts_to_sink_with_client_and_observer(
+            &client,
+            &mut sink,
+            &files,
+            &mut observer,
+        )
+        .expect("download should succeed");
+
+        assert_eq!(
+            observer.started,
+            vec![
+                ("a.bin".to_string(), Some(first.len() as u64)),
+                ("b.bin".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            observer.completed,
+            vec![
+                ("a.bin".to_string(), first.len() as u64),
+                ("b.bin".to_string(), second.len() as u64),
+            ]
+        );
+
+        // Each file counts from zero, so the totals only ever grow within a file and land on
+        // the number of bytes that file actually delivered.
+        for (rel_path, size) in [
+            ("a.bin", first.len() as u64),
+            ("b.bin", second.len() as u64),
+        ] {
+            let totals: Vec<u64> = observer
+                .progress
+                .iter()
+                .filter(|(path, _)| path == rel_path)
+                .map(|(_, total)| *total)
+                .collect();
+
+            assert!(!totals.is_empty(), "{rel_path} reported no progress");
+            assert!(totals.is_sorted(), "{rel_path} progress went backwards");
+            assert_eq!(totals.last().copied(), Some(size));
+        }
+    }
+
+    /// A file that fails verification was never delivered, so it must not be announced as done.
+    #[test]
+    fn does_not_complete_a_file_that_fails_verification() {
+        let data = b"payload".to_vec();
+        let mut sink = InMemoryBundleSources::new();
+        let client = MockClient::new(HashMap::from([("mock://f4".to_string(), data.clone())]));
+        let files = vec![ArtifactDownloadFile {
+            rel_path: "params.bin".to_string(),
+            url: "mock://f4".to_string(),
+            size_bytes: Some((data.len() as u64) + 1),
+            checksum: None,
+        }];
+        let mut observer = RecordingObserver::default();
+
+        download_artifacts_to_sink_with_client_and_observer(
+            &client,
+            &mut sink,
+            &files,
+            &mut observer,
+        )
+        .expect_err("size mismatch should fail");
+
+        assert_eq!(observer.started.len(), 1);
+        assert!(observer.completed.is_empty());
+    }
+
+    #[derive(Clone)]
+    struct ChunkedClient {
+        bytes: Arc<Vec<u8>>,
+        consumed: Arc<AtomicUsize>,
+    }
+
+    impl FileTransferClient for ChunkedClient {
+        fn put_reader<R: Read + Send + 'static>(
+            &self,
+            _url: &str,
+            _reader: R,
+            _size_bytes: u64,
+        ) -> Result<(), TransferError> {
+            unreachable!("the cancellation test only downloads")
+        }
+
+        fn get_reader(&self, _url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+            Ok(Box::new(ChunkedReader {
+                bytes: Arc::clone(&self.bytes),
+                consumed: Arc::clone(&self.consumed),
+                offset: 0,
+            }))
+        }
+    }
+
+    struct ChunkedReader {
+        bytes: Arc<Vec<u8>>,
+        consumed: Arc<AtomicUsize>,
+        offset: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.offset == self.bytes.len() {
+                return Ok(0);
+            }
+
+            let read = 4.min(buffer.len()).min(self.bytes.len() - self.offset);
+            buffer[..read].copy_from_slice(&self.bytes[self.offset..self.offset + read]);
+            self.offset += read;
+            self.consumed.fetch_add(read, Ordering::SeqCst);
+            Ok(read)
+        }
+    }
+
+    #[derive(Default)]
+    struct CancellingObserver {
+        cancelled: bool,
+        completed: bool,
+    }
+
+    impl DownloadObserver for CancellingObserver {
+        fn is_cancelled(&self) -> bool {
+            self.cancelled
+        }
+
+        fn file_progress(&mut self, _rel_path: &str, _downloaded_bytes: u64) {
+            self.cancelled = true;
+        }
+
+        fn file_completed(&mut self, _rel_path: &str, _downloaded_bytes: u64) {
+            self.completed = true;
+        }
+    }
+
+    #[test]
+    fn cancellation_stops_an_active_transfer_before_eof() {
+        let bytes = Arc::new(b"a payload spanning several reads".to_vec());
+        let consumed = Arc::new(AtomicUsize::new(0));
+        let client = ChunkedClient {
+            bytes: Arc::clone(&bytes),
+            consumed: Arc::clone(&consumed),
+        };
+        let files = [ArtifactDownloadFile {
+            rel_path: "weights.bin".to_string(),
+            url: "mock://weights".to_string(),
+            size_bytes: Some(bytes.len() as u64),
+            checksum: None,
+        }];
+        let mut sink = InMemoryBundleSources::new();
+        let mut observer = CancellingObserver::default();
+
+        let error = download_artifacts_to_sink_with_client_and_observer(
+            &client,
+            &mut sink,
+            &files,
+            &mut observer,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DownloadError::Cancelled { rel_path } if rel_path == "weights.bin"
+        ));
+        assert_eq!(consumed.load(Ordering::SeqCst), 4);
+        assert!(consumed.load(Ordering::SeqCst) < bytes.len());
+        assert!(!observer.completed);
+        assert!(sink.is_empty());
     }
 }
