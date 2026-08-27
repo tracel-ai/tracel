@@ -1,21 +1,20 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tracel_artifact::TransferObserver;
 use tracel_artifact::bundle::{BundleDecode, BundleSink, BundleSource, FsBundle};
 use tracel_artifact::download::{
-    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink_with_client_and_observer,
+    ArtifactFile, DownloadError, transfer_reader_to_sink_with_observer,
 };
-use tracel_artifact::{FileTransferClient, TransferError, normalize_checksum};
+use tracel_artifact::normalize_checksum;
 
 use sha2::{Digest, Sha256};
 use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
-    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId,
+    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
 };
 
 /// Backend-independent model operations and verified transfer orchestration.
@@ -128,13 +127,13 @@ impl Models {
 
         let sources = self.ops.fetch_version_files(model, id)?;
         let paths = validated_source_paths(&sources)?;
-        let mut files = Vec::with_capacity(sources.len());
+        let mut bundle = FsBundle::temp().map_err(ModelsError::other)?;
 
         for (source, path) in sources.iter().zip(paths) {
-            files.push(stage_source(source.as_ref(), path, observer)?);
+            stage_source(source.as_ref(), path, &mut bundle, observer)?;
         }
 
-        Ok(StagedVersion { files })
+        Ok(StagedVersion { bundle })
     }
 }
 
@@ -144,13 +143,8 @@ impl fmt::Debug for Models {
     }
 }
 
-struct StagedFile {
-    bundle: FsBundle,
-    path: String,
-}
-
 struct StagedVersion {
-    files: Vec<StagedFile>,
+    bundle: FsBundle,
 }
 
 impl StagedVersion {
@@ -159,13 +153,13 @@ impl StagedVersion {
         destination: &mut S,
         observer: &mut O,
     ) -> Result<(), ModelsError> {
-        for file in &self.files {
+        for path in self.bundle.file_paths() {
             if observer.is_cancelled() {
                 return Err(ModelsError::Cancelled);
             }
-            let mut reader = file.bundle.open(&file.path).map_err(ModelsError::Output)?;
+            let mut reader = self.bundle.open(&path).map_err(ModelsError::Output)?;
             destination
-                .put_file(&file.path, &mut reader)
+                .put_file(&path, &mut reader)
                 .map_err(ModelsError::Output)?;
         }
         Ok(())
@@ -175,66 +169,29 @@ impl StagedVersion {
 impl BundleSource for StagedVersion {
     fn open(&self, path: &str) -> Result<Box<dyn Read + Send>, String> {
         let canonical = canonical_version_path(path).map_err(|error| error.to_string())?;
-        let file = self
-            .files
-            .iter()
-            .find(|file| file.path == canonical)
-            .ok_or_else(|| format!("Bundle path not found: {canonical}"))?;
-        file.bundle.open(&file.path)
+        self.bundle.open(&canonical)
     }
 
     fn list(&self) -> Result<Vec<String>, String> {
-        Ok(self.files.iter().map(|file| file.path.clone()).collect())
+        self.bundle.list()
     }
 }
 
 fn stage_source<O: TransferObserver>(
     source: &dyn VersionFileSource,
     path: String,
+    bundle: &mut FsBundle,
     observer: &mut O,
-) -> Result<StagedFile, ModelsError> {
+) -> Result<(), ModelsError> {
     let reader = source.open(&path)?;
-    let bundle = stage_reader(source, &path, reader, observer)?;
-    Ok(StagedFile { bundle, path })
-}
-
-fn stage_reader<O: TransferObserver>(
-    source: &dyn VersionFileSource,
-    path: &str,
-    reader: VersionFileReader,
-    observer: &mut O,
-) -> Result<FsBundle, ModelsError> {
-    let mut bundle = FsBundle::temp().map_err(ModelsError::other)?;
-    let read_failure = Arc::new(Mutex::new(None));
-    let client = ReaderTransferClient::new(TrackingReader {
-        inner: reader,
-        failure: Arc::clone(&read_failure),
-    });
-    let file = ArtifactDownloadFile {
-        rel_path: path.to_string(),
-        url: "model-source".to_string(),
+    let file = ArtifactFile {
+        rel_path: path,
         size_bytes: Some(source.file().size_bytes),
         checksum: Some(source.file().checksum.clone()),
     };
 
-    let result = download_artifacts_to_sink_with_client_and_observer(
-        &client,
-        &mut bundle,
-        &[file],
-        observer,
-    );
-
-    match result {
-        Ok(()) => Ok(bundle),
-        Err(DownloadError::Cancelled { .. }) => Err(ModelsError::Cancelled),
-        Err(error) => {
-            let read_failure = read_failure
-                .lock()
-                .map_err(|_| ModelsError::other("model reader state was lost"))?
-                .take();
-            Err(read_failure.unwrap_or_else(|| map_download_error(error)))
-        }
-    }
+    transfer_reader_to_sink_with_observer(reader, bundle, &file, observer)
+        .map_err(map_download_error)
 }
 
 /// Reads a transfer failure as the model problem it stands for.
@@ -420,62 +377,6 @@ fn invalid_path(message: String) -> ModelsError {
     ModelsError::InvalidPath(message)
 }
 
-struct TrackingReader {
-    inner: VersionFileReader,
-    failure: Arc<Mutex<Option<ModelsError>>>,
-}
-
-impl Read for TrackingReader {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        match self.inner.read(buffer) {
-            Ok(read) => Ok(read),
-            Err(error) => {
-                // The transfer layer only reports that a read failed, so the reason a source
-                // gave is recorded here while it still exists.
-                if let Ok(mut recorded) = self.failure.lock() {
-                    *recorded = Some(ModelsError::other(error.to_string()));
-                }
-                Err(error)
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ReaderTransferClient {
-    reader: Arc<Mutex<Option<TrackingReader>>>,
-}
-
-impl ReaderTransferClient {
-    fn new(reader: TrackingReader) -> Self {
-        Self {
-            reader: Arc::new(Mutex::new(Some(reader))),
-        }
-    }
-}
-
-impl FileTransferClient for ReaderTransferClient {
-    fn put_reader<R: Read + Send + 'static>(
-        &self,
-        _url: &str,
-        _reader: R,
-        _size_bytes: u64,
-    ) -> Result<(), TransferError> {
-        Err(TransferError::Transport(
-            "model sources do not support uploads".to_string(),
-        ))
-    }
-
-    fn get_reader(&self, _url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
-        self.reader
-            .lock()
-            .map_err(|_| TransferError::Transport("model reader state failed".to_string()))?
-            .take()
-            .map(|reader| Box::new(reader) as Box<dyn Read + Send>)
-            .ok_or_else(|| TransferError::Transport("model reader was already opened".to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
@@ -652,17 +553,21 @@ mod tests {
     }
 
     #[test]
-    fn midstream_source_errors_remain_transport_errors() {
+    fn midstream_source_errors_remain_transport_errors_and_leave_destination_untouched() {
         let mut source = SourceSpec::new("weights.bin", b"complete payload");
         source.failure_at = Some(4);
         source.chunk_size = 4;
-        let models = models_with_sources(vec![source]);
+        let models = models_with_sources(vec![
+            SourceSpec::new("metadata.json", b"already staged"),
+            source,
+        ]);
+        let mut destination = InMemoryBundleSources::new();
 
         let error = models
             .download(
                 "alpha",
                 &VersionId::new("version-id"),
-                &mut InMemoryBundleSources::new(),
+                &mut destination,
                 &mut (),
             )
             .unwrap_err();
@@ -670,6 +575,7 @@ mod tests {
         assert!(
             matches!(&error, ModelsError::Other(source) if source.to_string().contains("mid-stream"))
         );
+        assert!(destination.is_empty());
     }
 
     #[test]

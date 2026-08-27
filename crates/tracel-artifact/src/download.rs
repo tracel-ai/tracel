@@ -3,7 +3,7 @@
 //! Downloaded files are validated against expected sizes and checksums when provided, and the download process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc).
 
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{self, Read};
 
 use sha2::Digest;
 
@@ -50,7 +50,17 @@ pub enum DownloadError {
     TargetError(String),
 }
 
-/// Generic download descriptor for any model artifact file.
+/// Transport-neutral metadata for one artifact file.
+#[derive(Debug, Clone)]
+pub struct ArtifactFile {
+    pub rel_path: String,
+    /// Optional expected file size in bytes.
+    pub size_bytes: Option<u64>,
+    /// Optional expected SHA-256 checksum.
+    pub checksum: Option<String>,
+}
+
+/// Download descriptor for one artifact file.
 #[derive(Debug, Clone)]
 pub struct ArtifactDownloadFile {
     pub rel_path: String,
@@ -84,7 +94,7 @@ pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: Bundle
 pub fn download_artifacts_to_sink_with_client_and_observer<
     FTC: FileTransferClient,
     S: BundleSink,
-    O: TransferObserver,
+    O: TransferObserver + ?Sized,
 >(
     client: &FTC,
     sink: &mut S,
@@ -107,27 +117,81 @@ pub fn download_artifacts_to_sink_with_client_and_observer<
             return Err(DownloadError::Cancelled { rel_path });
         }
 
-        observer.file_started(&rel_path, file.size_bytes);
-        let mut verifying_reader = VerifyingReader::new(reader, &rel_path, observer);
-
-        let sink_result = sink.put_file(&rel_path, &mut verifying_reader);
-        if verifying_reader.cancelled() {
-            return Err(DownloadError::Cancelled { rel_path });
-        }
-        sink_result.map_err(DownloadError::TargetError)?;
-
-        let (total, digest) = verifying_reader.finish();
-        validate_download(
-            &rel_path,
-            total,
-            digest,
-            file.size_bytes,
-            file.checksum.as_deref(),
-        )?;
-        observer.file_completed(&rel_path, total);
+        let artifact_file = ArtifactFile {
+            rel_path,
+            size_bytes: file.size_bytes,
+            checksum: file.checksum.clone(),
+        };
+        transfer_reader_to_sink_with_observer(reader, sink, &artifact_file, observer)?;
     }
 
     Ok(())
+}
+
+/// Transfer an already-open artifact reader into a bundle sink.
+pub fn transfer_reader_to_sink<R: Read, S: BundleSink>(
+    reader: R,
+    sink: &mut S,
+    file: &ArtifactFile,
+) -> Result<(), DownloadError> {
+    transfer_reader_to_sink_with_observer(reader, sink, file, &mut ())
+}
+
+/// Transfer an already-open artifact reader into a bundle sink, reporting progress to an
+/// observer.
+pub fn transfer_reader_to_sink_with_observer<
+    R: Read,
+    S: BundleSink,
+    O: TransferObserver + ?Sized,
+>(
+    reader: R,
+    sink: &mut S,
+    file: &ArtifactFile,
+    observer: &mut O,
+) -> Result<(), DownloadError> {
+    let rel_path = validated_artifact_path(&file.rel_path)?;
+    if observer.is_cancelled() {
+        return Err(DownloadError::Cancelled { rel_path });
+    }
+
+    observer.file_started(&rel_path, file.size_bytes);
+    let mut verifying_reader = VerifyingReader::new(reader, &rel_path, observer);
+    let sink_result = sink.put_file(&rel_path, &mut verifying_reader);
+
+    // BundleSink flattens read errors into a string. Inspect the reader before the sink result so
+    // cancellation and source failures keep their original classification.
+    if verifying_reader.cancelled() {
+        return Err(DownloadError::Cancelled { rel_path });
+    }
+    if let Some(source) = verifying_reader.take_source_error() {
+        return Err(DownloadError::Transfer {
+            rel_path,
+            source: crate::transfer::TransferError::Transport(source.to_string()),
+        });
+    }
+    sink_result.map_err(DownloadError::TargetError)?;
+
+    let (total, digest) = verifying_reader.finish();
+    validate_download(
+        &rel_path,
+        total,
+        digest,
+        file.size_bytes,
+        file.checksum.as_deref(),
+    )?;
+    observer.file_completed(&rel_path, total);
+
+    Ok(())
+}
+
+fn validated_artifact_path(path: &str) -> Result<String, DownloadError> {
+    let rel_path = normalize_bundle_path(path);
+    if rel_path.is_empty() {
+        return Err(DownloadError::InvalidPath(
+            "empty relative artifact path".to_string(),
+        ));
+    }
+    Ok(rel_path)
 }
 
 fn validated_download_files(
@@ -136,12 +200,7 @@ fn validated_download_files(
     let mut seen = HashSet::with_capacity(files.len());
     let mut out = Vec::with_capacity(files.len());
     for file in files {
-        let rel_path = normalize_bundle_path(&file.rel_path);
-        if rel_path.is_empty() {
-            return Err(DownloadError::InvalidPath(
-                "empty relative artifact path".to_string(),
-            ));
-        }
+        let rel_path = validated_artifact_path(&file.rel_path)?;
         if !seen.insert(rel_path.clone()) {
             return Err(DownloadError::InvalidPath(format!(
                 "duplicate relative artifact path: {rel_path}"
@@ -154,16 +213,17 @@ fn validated_download_files(
     Ok(out)
 }
 
-struct VerifyingReader<'a, R: Read, O: TransferObserver> {
+struct VerifyingReader<'a, R: Read, O: TransferObserver + ?Sized> {
     inner: R,
     hasher: sha2::Sha256,
     total: u64,
     rel_path: &'a str,
     observer: &'a mut O,
     cancelled: bool,
+    source_error: Option<io::Error>,
 }
 
-impl<'a, R: Read, O: TransferObserver> VerifyingReader<'a, R, O> {
+impl<'a, R: Read, O: TransferObserver + ?Sized> VerifyingReader<'a, R, O> {
     fn new(inner: R, rel_path: &'a str, observer: &'a mut O) -> Self {
         Self {
             inner,
@@ -172,11 +232,16 @@ impl<'a, R: Read, O: TransferObserver> VerifyingReader<'a, R, O> {
             rel_path,
             observer,
             cancelled: false,
+            source_error: None,
         }
     }
 
     fn cancelled(&self) -> bool {
-        self.cancelled
+        self.cancelled || self.observer.is_cancelled()
+    }
+
+    fn take_source_error(&mut self) -> Option<io::Error> {
+        self.source_error.take()
     }
 
     fn finish(self) -> (u64, String) {
@@ -184,20 +249,31 @@ impl<'a, R: Read, O: TransferObserver> VerifyingReader<'a, R, O> {
     }
 }
 
-impl<R: Read, O: TransferObserver> Read for VerifyingReader<'_, R, O> {
+impl<R: Read, O: TransferObserver + ?Sized> Read for VerifyingReader<'_, R, O> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.observer.is_cancelled() {
-            self.cancelled = true;
-            return Err(cancelled_io_error());
-        }
-
-        let read = match self.inner.read(buf) {
-            Ok(read) => read,
-            Err(_) if self.observer.is_cancelled() => {
+        let read = loop {
+            if self.observer.is_cancelled() {
                 self.cancelled = true;
                 return Err(cancelled_io_error());
             }
-            Err(error) => return Err(error),
+
+            match self.inner.read(buf) {
+                Ok(read) => break read,
+                Err(_) if self.observer.is_cancelled() => {
+                    self.cancelled = true;
+                    return Err(cancelled_io_error());
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    // Keep the source failure separate until the transfer layer can classify it.
+                    // The sink only needs a surrogate to stop its copy loop.
+                    let surrogate = surrogate_io_error(&error);
+                    if self.source_error.is_none() {
+                        self.source_error = Some(error);
+                    }
+                    return Err(surrogate);
+                }
+            }
         };
         if self.observer.is_cancelled() {
             self.cancelled = true;
@@ -219,6 +295,13 @@ impl<R: Read, O: TransferObserver> Read for VerifyingReader<'_, R, O> {
 
 fn cancelled_io_error() -> std::io::Error {
     std::io::Error::other("artifact download cancelled")
+}
+
+fn surrogate_io_error(error: &io::Error) -> io::Error {
+    error
+        .raw_os_error()
+        .map(io::Error::from_raw_os_error)
+        .unwrap_or_else(|| io::Error::new(error.kind(), error.to_string()))
 }
 
 fn validate_download(
@@ -256,12 +339,13 @@ fn validate_download(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::InMemoryBundleSources;
+    use crate::bundle::{BundleSink, InMemoryBundleSources};
     use crate::transfer::TransferError;
     use std::collections::HashMap;
+    use std::fmt;
     use std::io::{Cursor, Read};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[derive(Clone)]
     struct MockClient {
@@ -324,6 +408,183 @@ mod tests {
         assert_eq!(sink.len(), 1);
         assert_eq!(sink.files()[0].dest_path(), "weights.bin");
         assert_eq!(sink.files()[0].source(), data);
+    }
+
+    #[test]
+    fn transfers_an_already_open_reader() {
+        let data = b"reader-native artifact".to_vec();
+        let reader: Box<dyn Read + Send> = Box::new(Cursor::new(data.clone()));
+        let file = ArtifactFile {
+            rel_path: "weights.bin".to_string(),
+            size_bytes: Some(data.len() as u64),
+            checksum: Some(sha256_hex(&data)),
+        };
+        let mut sink = InMemoryBundleSources::new();
+
+        transfer_reader_to_sink(reader, &mut sink, &file)
+            .expect("an already-open reader should transfer");
+
+        assert_eq!(sink.len(), 1);
+        assert_eq!(sink.files()[0].dest_path(), "weights.bin");
+        assert_eq!(sink.files()[0].source(), data);
+    }
+
+    struct InterruptedOnceReader {
+        interrupted: bool,
+        inner: Cursor<Vec<u8>>,
+    }
+
+    impl Read for InterruptedOnceReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.inner.read(buffer)
+        }
+    }
+
+    #[test]
+    fn retries_an_interrupted_source_read() {
+        let data = b"eventually readable".to_vec();
+        let reader = InterruptedOnceReader {
+            interrupted: false,
+            inner: Cursor::new(data.clone()),
+        };
+        let mut sink = InMemoryBundleSources::new();
+
+        transfer_reader_to_sink(reader, &mut sink, &unverified_file())
+            .expect("an interrupted read should be retried");
+
+        assert_eq!(sink.files()[0].source(), data);
+    }
+
+    #[derive(Debug)]
+    struct OriginalSourceError;
+
+    impl fmt::Display for OriginalSourceError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("original source failure")
+        }
+    }
+
+    impl std::error::Error for OriginalSourceError {}
+
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other(OriginalSourceError))
+        }
+    }
+
+    struct SwallowingSink;
+
+    impl BundleSink for SwallowingSink {
+        fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
+            let mut byte = [0];
+            let _ = reader.read(&mut byte);
+            Ok(())
+        }
+    }
+
+    struct RejectingSink;
+
+    impl BundleSink for RejectingSink {
+        fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
+            let mut bytes = Vec::new();
+            reader
+                .read_to_end(&mut bytes)
+                .expect("the test source should be readable");
+            Err("target rejected the file".to_string())
+        }
+    }
+
+    fn unverified_file() -> ArtifactFile {
+        ArtifactFile {
+            rel_path: "weights.bin".to_string(),
+            size_bytes: None,
+            checksum: None,
+        }
+    }
+
+    #[test]
+    fn preserves_a_source_error_even_when_the_sink_swallows_it() {
+        let mut sink = SwallowingSink;
+
+        let error = transfer_reader_to_sink(FailingReader, &mut sink, &unverified_file())
+            .expect_err("the source failure must not be hidden by the sink");
+
+        let DownloadError::Transfer { rel_path, source } = error else {
+            panic!("unexpected error: {error:?}");
+        };
+        assert_eq!(rel_path, "weights.bin");
+        assert_eq!(
+            source.to_string(),
+            "Transport error: original source failure"
+        );
+    }
+
+    struct CancellingFailureReader {
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl Read for CancellingFailureReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            self.cancelled.store(true, Ordering::SeqCst);
+            Err(io::Error::other("source failed while cancellation arrived"))
+        }
+    }
+
+    struct SharedCancellationObserver {
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl TransferObserver for SharedCancellationObserver {
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    fn cancellation_takes_precedence_over_a_simultaneous_source_error() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let reader = CancellingFailureReader {
+            cancelled: Arc::clone(&cancelled),
+        };
+        let mut observer = SharedCancellationObserver { cancelled };
+        let mut sink = SwallowingSink;
+
+        let error = transfer_reader_to_sink_with_observer(
+            reader,
+            &mut sink,
+            &unverified_file(),
+            &mut observer,
+        )
+        .expect_err("cancellation should stop the transfer");
+
+        assert!(matches!(
+            error,
+            DownloadError::Cancelled { rel_path } if rel_path == "weights.bin"
+        ));
+    }
+
+    #[test]
+    fn target_error_takes_precedence_over_verification() {
+        let file = ArtifactFile {
+            rel_path: "weights.bin".to_string(),
+            size_bytes: Some(999),
+            checksum: Some("00".repeat(32)),
+        };
+        let mut sink = RejectingSink;
+
+        let error = transfer_reader_to_sink(Cursor::new(b"payload"), &mut sink, &file)
+            .expect_err("the target should reject the file before verification");
+
+        assert!(matches!(
+            error,
+            DownloadError::TargetError(message) if message == "target rejected the file"
+        ));
     }
 
     #[test]
