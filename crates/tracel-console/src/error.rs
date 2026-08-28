@@ -1,6 +1,6 @@
 use tracel_client::error::ClientError;
 
-/// Errors produced while authenticating with or calling a Tracel console.
+/// Errors produced while authenticating with or calling the console.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConsoleError {

@@ -1,4 +1,4 @@
-//! Users, namespaces, organizations, and projects, as one console describes them.
+//! Users, namespaces, organizations, and projects, as the console describes them.
 
 use serde::{Deserialize, Serialize};
 use tracel_client::console::project::{
