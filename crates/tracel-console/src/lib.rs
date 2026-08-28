@@ -17,6 +17,6 @@ pub use error::ConsoleError;
 pub use login::{DeviceApproval, DeviceLogin};
 pub use tracel_client::console::{Env, SessionToken, TracelCredentials};
 pub use tracel_models::{
-    BundleDecode, BundleSink, Model, ModelVersion, Models, ModelsError, TransferObserver,
-    VersionFile, VersionId, VersionManifest,
+    BundleDecode, BundleSink, FsBundle, Model, ModelVersion, Models, ModelsError,
+    TransferObserver, VersionFile, VersionId, VersionManifest,
 };

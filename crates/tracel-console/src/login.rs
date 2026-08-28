@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use tracel_client::console::auth::{DeviceAuthClient, DeviceFlowError, DevicePollOutcome};
+use tracel_client::console::auth::{
+    DeviceAuthClient, DeviceCodeResponse, DeviceFlowError, DevicePollOutcome,
+};
 use tracel_client::console::{Env, SessionToken};
 
 use crate::ConsoleError;
@@ -11,7 +13,7 @@ use crate::ConsoleError;
 #[derive(Debug, Clone)]
 pub struct DeviceLogin {
     client: DeviceAuthClient,
-    device_code: String,
+    authorization: DeviceCodeResponse,
     /// Code the user types on the verification page.
     pub user_code: String,
     /// Page the user opens to approve the sign-in.
@@ -32,20 +34,27 @@ impl DeviceLogin {
 
         Ok(Self {
             client,
-            device_code: started.device_code.clone(),
             user_code: started.user_code.clone(),
             verification_uri: started.verification_uri.clone(),
             verification_uri_complete: started.verification_uri_complete.clone(),
             expires_in: started.expires_in(),
             interval: started.interval(),
+            authorization: started,
         })
+    }
+
+    /// Waits until the user approves, denies, or lets this sign-in expire.
+    pub fn wait_for_approval(&self) -> Result<SessionToken, ConsoleError> {
+        self.client
+            .wait_for_approval(&self.authorization)
+            .map_err(login_failure)
     }
 
     /// Asks once whether the user has answered, without waiting.
     ///
     /// The caller owns the waiting, so a sign-in stays interruptible.
     pub fn poll(&self) -> Result<DeviceApproval, ConsoleError> {
-        match self.client.poll(&self.device_code) {
+        match self.client.poll(&self.authorization.device_code) {
             Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
             Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
             Ok(DevicePollOutcome::Approved(token)) => Ok(DeviceApproval::Approved(token)),
@@ -70,7 +79,7 @@ pub enum DeviceApproval {
 fn login_failure(error: DeviceFlowError) -> ConsoleError {
     match error {
         DeviceFlowError::AccessDenied => ConsoleError::LoginDenied,
-        DeviceFlowError::ExpiredToken => ConsoleError::LoginExpired,
+        DeviceFlowError::ExpiredToken | DeviceFlowError::TimedOut(_) => ConsoleError::LoginExpired,
         DeviceFlowError::Client(error) => ConsoleError::from(error),
         error => ConsoleError::InvalidResponse(error.to_string()),
     }

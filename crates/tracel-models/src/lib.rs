@@ -17,4 +17,4 @@ pub use error::ModelsError;
 pub use models::Models;
 pub use ops::{ModelOps, VersionFileReader, VersionFileSource};
 pub use tracel_artifact::TransferObserver;
-pub use tracel_artifact::bundle::{BundleDecode, BundleSink};
+pub use tracel_artifact::bundle::{BundleDecode, BundleSink, FsBundle};
