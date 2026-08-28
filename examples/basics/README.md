@@ -14,6 +14,7 @@ TRACEL_CONNECTION=cloud cargo run -p basics --example train  # ships to the cons
 ```
 
 The `mnist` example shows the same experiment tracking driven from the Burn `train` integration.
+Console authentication and model discovery live in the separate [`console`](../console) example.
 
 ## Examples
 
