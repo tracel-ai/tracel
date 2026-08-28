@@ -3,7 +3,8 @@
 
 use cliclack::select;
 use indicatif::HumanBytes;
-use tracel::console::{Console, Model, ModelVersion, Models, Namespace, Project};
+use tracel::console::{Console, Namespace, Project};
+use tracel::models::{Model, ModelVersion, Models};
 
 use crate::cli::ProjectScope;
 use crate::display::visibility_label;

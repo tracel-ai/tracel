@@ -1,6 +1,6 @@
 //! Downloads a model version with a live per-file progress bar.
 //!
-//! [`tracel::console::Models::download`] reports byte-level progress through a
+//! [`tracel::models::Models::download`] reports byte-level progress through a
 //! [`TransferObserver`], which is exactly what an interactive terminal wants for something as
 //! slow as a model download.
 
@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use cliclack::log;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use tracel::console::{FsBundle, ModelVersion, Models, ModelsError, TransferObserver};
+use tracel::artifact::TransferObserver;
+use tracel::artifact::bundle::FsBundle;
+use tracel::models::{ModelVersion, Models, ModelsError};
 
 /// Downloads `version` of `model` into `out`, rendering one progress bar per file.
 pub fn download(

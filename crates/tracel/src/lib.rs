@@ -19,6 +19,8 @@
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
 //! - [`app`]: job registration, plus CLI and HTTP server front-ends to run those jobs.
+//! - [`console`]: organizations, projects, and users on the Tracel console.
+//! - [`models`]: the model domain and the capability over it.
 //! - [`artifact`]: bundle and artifact utilities.
 //!
 //! ## Registering Routines
@@ -52,8 +54,6 @@
 //! The job's name (`"my_training_procedure"` above) is what callers use to select it, whether
 //! from the CLI or from an HTTP request path.
 
-pub use tracel_client::console::{Env, TracelCredentials};
-
 /// Experiment tracking and management.
 pub mod experiment {
     pub use tracel_core::experiment::*;
@@ -69,11 +69,11 @@ pub mod dataset {
     };
 }
 
-/// The Tracel console: connect to one, and reach the projects it hosts.
+/// The Tracel console: its organizations, projects, and users.
 #[doc(inline)]
 pub use tracel_console as console;
 
-/// The model domain a console or a Station serves, and the operations over it.
+/// The model domain the console or a Station serves, and the operations over it.
 #[doc(inline)]
 pub use tracel_models as models;
 

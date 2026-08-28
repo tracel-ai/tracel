@@ -414,7 +414,7 @@ mod tests {
         files: Vec<(String, Vec<u8>)>,
     }
 
-    impl crate::BundleSink for RecordingSink {
+    impl tracel_artifact::bundle::BundleSink for RecordingSink {
         fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String> {
             let mut bytes = Vec::new();
             reader

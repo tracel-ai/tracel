@@ -1,4 +1,4 @@
-//! Signing in to a console from a device that cannot host a browser session.
+//! Signing in from a device that cannot host a browser session.
 
 use std::time::Duration;
 

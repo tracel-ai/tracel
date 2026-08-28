@@ -4,7 +4,8 @@ use comfy_table::Table;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
 use indicatif::HumanBytes;
-use tracel::console::{Console, Model, Models, Namespace, Organization, Project, User, Visibility};
+use tracel::console::{Console, Namespace, Organization, Project, User, Visibility};
+use tracel::models::{Model, Models};
 
 pub fn current_user(console: &Console) -> anyhow::Result<()> {
     let Some(user) = console.me()? else {
