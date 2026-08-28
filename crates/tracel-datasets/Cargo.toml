@@ -1,0 +1,24 @@
+[package]
+name = "tracel-datasets"
+description = "Backend-agnostic dataset domain and capability for Tracel."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+# Burn `Dataset` adapters over the capability. Off by default so that backends composing
+# this crate stay burn-free.
+burn = ["dep:burn"]
+
+[dependencies]
+burn = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
