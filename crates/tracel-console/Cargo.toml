@@ -1,0 +1,23 @@
+[package]
+name = "tracel-console"
+description = "Burn-free SDK for the Tracel console domain."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+reqwest = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracel-artifact = { workspace = true }
+tracel-client = { workspace = true }
+tracel-models = { workspace = true }
+url = { workspace = true }

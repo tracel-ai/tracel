@@ -1,5 +1,59 @@
 use std::io::Read;
 
+/// Watches a transfer as it runs, and can stop it.
+///
+/// Every method defaults to doing nothing, so an implementation only has to define the events it
+/// cares about. Callbacks run on the transferring thread and block it, so an implementation that
+/// does real work should hand it off.
+pub trait TransferObserver {
+    /// Returns whether the active transfer should stop.
+    ///
+    /// Polled at file, part, and reader boundaries. Implementations should make this query cheap
+    /// and may update its result from another thread or from a progress callback.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    /// A file is about to be transferred. `total_bytes` is absent when nothing announced the
+    /// size, as for an artifact published without a manifest.
+    fn file_started(&mut self, rel_path: &str, total_bytes: Option<u64>) {
+        let _ = (rel_path, total_bytes);
+    }
+
+    /// Bytes have moved for the file being transferred. `transferred_bytes` is the running total
+    /// for that file, not an increment.
+    fn file_progress(&mut self, rel_path: &str, transferred_bytes: u64) {
+        let _ = (rel_path, transferred_bytes);
+    }
+
+    /// A file has been transferred in full.
+    fn file_completed(&mut self, rel_path: &str, transferred_bytes: u64) {
+        let _ = (rel_path, transferred_bytes);
+    }
+}
+
+/// Transfers no one is watching.
+impl TransferObserver for () {}
+
+/// So a borrowed observer can be handed to code that wants to own one.
+impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
+    fn is_cancelled(&self) -> bool {
+        (**self).is_cancelled()
+    }
+
+    fn file_started(&mut self, rel_path: &str, total_bytes: Option<u64>) {
+        (**self).file_started(rel_path, total_bytes);
+    }
+
+    fn file_progress(&mut self, rel_path: &str, transferred_bytes: u64) {
+        (**self).file_progress(rel_path, transferred_bytes);
+    }
+
+    fn file_completed(&mut self, rel_path: &str, transferred_bytes: u64) {
+        (**self).file_completed(rel_path, transferred_bytes);
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error("Transport error: {0}")]

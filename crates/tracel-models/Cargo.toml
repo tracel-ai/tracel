@@ -1,0 +1,19 @@
+[package]
+name = "tracel-models"
+description = "Backend-agnostic model domain and capability for Tracel."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sha2 = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracel-artifact = { workspace = true }
+
