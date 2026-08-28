@@ -96,7 +96,7 @@ impl ModelVersionRoutes {
 }
 
 impl Console {
-    /// Connects to a console and verifies the credentials.
+    /// Connects to the console and verifies the credentials.
     pub fn connect(env: Env, credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
         let client = Client::connect(env, credentials)?;
 
