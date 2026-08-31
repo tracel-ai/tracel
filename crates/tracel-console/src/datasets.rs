@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use tracel_client::console::dataset::request::{
@@ -132,13 +134,54 @@ impl DatasetOps for ConsoleDatasetOps {
 
     fn read_items(
         &self,
-        _dataset: &str,
-        _id: &VersionId,
-        _indexes: &[u64],
+        dataset: &str,
+        id: &VersionId,
+        indexes: &[u64],
     ) -> Result<Vec<Item>, DatasetsError> {
-        Err(DatasetsError::other(
-            "reading dataset items is not implemented for the console yet",
-        ))
+        let version = route_version(dataset, id)?;
+        let mut read = HashMap::with_capacity(indexes.len());
+
+        for run in contiguous_runs(indexes) {
+            let mut next = run.start;
+            while next < run.end {
+                let page = self
+                    .scope
+                    .console
+                    .client
+                    .stream_dataset_version_items(
+                        &self.scope.owner,
+                        &self.scope.project,
+                        dataset,
+                        version,
+                        Some(next),
+                        Some((run.end - next).min(u32::MAX as u64) as u32),
+                    )
+                    .map_err(console_failure)?;
+
+                if page.items.is_empty() {
+                    break;
+                }
+
+                for item in page.items {
+                    next = item.entry_idx + 1;
+                    if item.entry_idx < run.end {
+                        read.insert(item.entry_idx, item_from_wire(&item.payload)?);
+                    }
+                }
+            }
+        }
+
+        let found = read.len() as u64;
+        indexes
+            .iter()
+            .map(|index| read.remove(index))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(DatasetsError::Incomplete {
+                dataset: dataset.to_string(),
+                version: id.clone(),
+                expected: indexes.len() as u64,
+                actual: found,
+            })
     }
 }
 
@@ -229,6 +272,55 @@ impl Publication for ConsolePublication {
     }
 }
 
+/// The document a streamed item carries, shared by every backend the console serves.
+#[serde_with::serde_as]
+#[derive(serde::Deserialize)]
+struct WireItem {
+    source_item_id: Option<String>,
+    metadata: Option<serde_json::Value>,
+    #[serde_as(as = "serde_with::base64::Base64")]
+    example_payload: Vec<u8>,
+    annotation: Option<serde_json::Value>,
+}
+
+/// The ascending, contiguous stretches `indexes` covers, so each is one request.
+fn contiguous_runs(indexes: &[u64]) -> Vec<Range<u64>> {
+    let mut sorted: Vec<u64> = indexes.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    let mut runs: Vec<Range<u64>> = Vec::new();
+    for index in sorted {
+        match runs.last_mut() {
+            Some(run) if run.end == index => run.end = index + 1,
+            _ => runs.push(index..index + 1),
+        }
+    }
+
+    runs
+}
+
+fn item_from_wire(payload: &[u8]) -> Result<Item, DatasetsError> {
+    let wire: WireItem = serde_json::from_slice(payload)
+        .map_err(|error| DatasetsError::other(ConsoleError::InvalidResponse(error.to_string())))?;
+
+    Ok(Item {
+        example: wire.example_payload,
+        annotation: wire.annotation,
+        source_item_id: wire.source_item_id,
+        metadata: wire.metadata,
+    })
+}
+
+fn route_version(dataset: &str, id: &VersionId) -> Result<u32, DatasetsError> {
+    id.as_str()
+        .parse()
+        .map_err(|_| DatasetsError::VersionNotFound {
+            dataset: dataset.to_string(),
+            version: VersionSpec::Exact(id.clone()),
+        })
+}
+
 fn dataset_from_wire(response: DatasetResponse) -> Dataset {
     Dataset {
         name: response.name,
@@ -250,4 +342,24 @@ fn version_from_wire(dataset: &str, response: DatasetVersionResponse) -> Dataset
 
 fn console_failure(error: tracel_client::ClientError) -> DatasetsError {
     DatasetsError::other(ConsoleError::from(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_batch_of_neighbours_is_one_run() {
+        assert_eq!(contiguous_runs(&[4, 5, 6]), vec![4..7]);
+    }
+
+    #[test]
+    fn a_shuffled_batch_is_sorted_and_coalesced() {
+        assert_eq!(contiguous_runs(&[9, 1, 8, 0, 2]), vec![0..3, 8..10]);
+    }
+
+    #[test]
+    fn a_repeated_index_is_asked_for_once() {
+        assert_eq!(contiguous_runs(&[3, 3, 3]), vec![3..4]);
+    }
 }

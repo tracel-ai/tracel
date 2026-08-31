@@ -16,6 +16,7 @@ reqwest = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_with = { workspace = true }
 thiserror = { workspace = true }
 tracel-artifact = { workspace = true }
 tracel-client = { workspace = true }
