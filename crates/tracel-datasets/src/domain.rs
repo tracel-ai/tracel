@@ -91,12 +91,13 @@ impl From<VersionId> for VersionSpec {
 }
 
 /// One item offered for publication.
-///
-/// Unlike a published [`Item`], the source identity is required.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewItem {
     /// Identity of this item within the dataset.
-    pub source_item_id: String,
+    ///
+    /// Supplying one is what lets an interrupted publication resume without duplicating the
+    /// item; an item offered without one is published again if the draft is replayed.
+    pub source_item_id: Option<String>,
     /// The example payload, as raw bytes.
     pub example: Vec<u8>,
     /// The annotation, when the item carries one.

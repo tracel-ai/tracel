@@ -389,7 +389,7 @@ mod tests {
 
         fn item(id: &str) -> NewItem {
             NewItem {
-                source_item_id: id.to_string(),
+                source_item_id: Some(id.to_string()),
                 example: b"payload".to_vec(),
                 annotation: None,
                 metadata: None,
@@ -489,6 +489,26 @@ mod tests {
                 0,
                 "the version may already exist; discarding it is the caller's call"
             );
+        }
+
+        #[test]
+        fn items_without_an_identity_are_never_refused() {
+            let ops = Arc::new(FakeOps::new());
+            let datasets = Datasets::new(ops.clone());
+
+            let anonymous = || NewItem {
+                source_item_id: None,
+                example: b"payload".to_vec(),
+                annotation: None,
+                metadata: None,
+            };
+
+            let mut draft = datasets.draft("ds").unwrap();
+            draft.add(anonymous()).unwrap();
+            draft.add(anonymous()).unwrap();
+            draft.commit(None).unwrap();
+
+            assert_eq!(ops.received().len(), 2);
         }
 
         #[test]

@@ -101,11 +101,14 @@ impl Drop for VersionDraft {
 impl VersionDraft {
     /// Adds one item.
     ///
-    /// Fails if the draft already holds an item with the same source identity.
+    /// Fails if the draft already holds an item claiming the same source identity. Items
+    /// offered without one are never refused.
     pub fn add(&mut self, item: NewItem) -> Result<(), DatasetsError> {
-        if !self.offered.insert(item.source_item_id.clone()) {
+        if let Some(identity) = item.source_item_id.clone()
+            && !self.offered.insert(identity.clone())
+        {
             return Err(DatasetsError::DuplicateItem {
-                source_item_id: item.source_item_id,
+                source_item_id: identity,
             });
         }
 
