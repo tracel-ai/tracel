@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::models::client_error_is_not_found;
 use tracel_client::console::dataset::request::{
     AddDatasetVersionUploadItemsRequest, CompleteDatasetVersionUploadRequest, CreateDatasetRequest,
     DatasetVersionUploadItemRequest, QueryDatasetVersionsRequest, QueryDatasetsRequest,
@@ -36,7 +37,7 @@ impl ConsoleDatasetOps {
                 dataset,
                 QueryDatasetVersionsRequest::default(),
             )
-            .map_err(console_failure)?;
+            .map_err(|error| map_dataset_error(error, dataset))?;
 
         Ok(response
             .items
@@ -68,7 +69,7 @@ impl DatasetOps for ConsoleDatasetOps {
             .client
             .get_dataset(&self.scope.owner, &self.scope.project, name)
             .map(dataset_from_wire)
-            .map_err(console_failure)
+            .map_err(|error| map_dataset_error(error, name))
     }
 
     fn list_versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
@@ -122,7 +123,7 @@ impl DatasetOps for ConsoleDatasetOps {
             .console
             .client
             .start_dataset_version_upload(&self.scope.owner, &self.scope.project, dataset)
-            .map_err(console_failure)?;
+            .map_err(|error| map_dataset_error(error, dataset))?;
 
         Ok(Box::new(ConsolePublication {
             ops: self.clone(),
@@ -156,7 +157,7 @@ impl DatasetOps for ConsoleDatasetOps {
                         Some(next),
                         Some((run.end - next).min(u32::MAX as u64) as u32),
                     )
-                    .map_err(console_failure)?;
+                    .map_err(|error| map_version_error(error, dataset, id))?;
 
                 if page.items.is_empty() {
                     break;
@@ -342,6 +343,30 @@ fn version_from_wire(dataset: &str, response: DatasetVersionResponse) -> Dataset
 
 fn console_failure(error: tracel_client::ClientError) -> DatasetsError {
     DatasetsError::other(ConsoleError::from(error))
+}
+
+/// Reads a client failure as the dataset problem it stands for.
+fn map_dataset_error(error: tracel_client::ClientError, dataset: &str) -> DatasetsError {
+    if client_error_is_not_found(&error) {
+        return DatasetsError::DatasetNotFound {
+            name: dataset.to_string(),
+        };
+    }
+    console_failure(error)
+}
+
+fn map_version_error(
+    error: tracel_client::ClientError,
+    dataset: &str,
+    id: &VersionId,
+) -> DatasetsError {
+    if client_error_is_not_found(&error) {
+        return DatasetsError::VersionNotFound {
+            dataset: dataset.to_string(),
+            version: VersionSpec::Exact(id.clone()),
+        };
+    }
+    console_failure(error)
 }
 
 #[cfg(test)]

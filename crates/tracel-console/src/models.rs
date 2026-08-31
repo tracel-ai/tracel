@@ -336,7 +336,7 @@ fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsE
     console_failure(error)
 }
 
-fn client_error_is_not_found(error: &ClientError) -> bool {
+pub(crate) fn client_error_is_not_found(error: &ClientError) -> bool {
     error.is_not_found()
         || matches!(
             error,
