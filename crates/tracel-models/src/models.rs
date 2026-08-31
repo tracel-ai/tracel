@@ -15,6 +15,7 @@ use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
+    VersionSpec,
 };
 
 /// Backend-independent model operations and verified transfer orchestration.
@@ -45,8 +46,12 @@ impl Models {
     }
 
     /// Fetches one version using its opaque identity.
-    pub fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError> {
-        self.ops.get_version(model, id)
+    pub fn get_version(
+        &self,
+        model: &str,
+        spec: impl Into<VersionSpec>,
+    ) -> Result<ModelVersion, ModelsError> {
+        self.ops.get_version(model, spec.into())
     }
 
     /// Downloads and verifies a version before copying it into a caller-owned bundle sink.

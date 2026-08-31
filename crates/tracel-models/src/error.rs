@@ -1,4 +1,4 @@
-use crate::VersionId;
+use crate::VersionSpec;
 
 /// Errors produced by model operations.
 #[derive(Debug, thiserror::Error)]
@@ -11,12 +11,12 @@ pub enum ModelsError {
         name: String,
     },
     /// No such version of that model.
-    #[error("version '{id}' of model '{model}' was not found")]
+    #[error("model '{model}' has no {version}")]
     VersionNotFound {
         /// Requested model name.
         model: String,
-        /// Requested version identity.
-        id: VersionId,
+        /// Version that was asked for.
+        version: VersionSpec,
     },
     /// The transfer was cancelled.
     #[error("model transfer cancelled")]

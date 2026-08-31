@@ -25,6 +25,7 @@ use tracel_client::{
     error::ClientError,
 };
 use tracel_datasets::Datasets;
+use tracel_models::VersionSpec;
 use tracel_models::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
     VersionFileSource, VersionId, VersionManifest,
@@ -215,7 +216,7 @@ impl ConsoleModelOps {
             .parse()
             .map_err(|_| ModelsError::VersionNotFound {
                 model: model.to_string(),
-                id: id.clone(),
+                version: VersionSpec::Exact(id.clone()),
             })
     }
 }
@@ -247,12 +248,25 @@ impl ModelOps for ConsoleModelOps {
         model_versions_from_wire(response)
     }
 
-    fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError> {
-        let version = self.route_version(model, id)?;
+    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
+        let id = match &spec {
+            VersionSpec::Exact(id) => id.clone(),
+            VersionSpec::Latest => self
+                .list_versions(model)?
+                .into_iter()
+                .max_by_key(|version| version.version)
+                .map(|version| version.id)
+                .ok_or_else(|| ModelsError::VersionNotFound {
+                    model: model.to_string(),
+                    version: spec.clone(),
+                })?,
+        };
+
+        let route = self.route_version(model, &id)?;
         self.inner
             .client
-            .get_model_version(&self.owner, &self.project, model, version)
-            .map_err(|error| map_version_error(error, model, id))
+            .get_model_version(&self.owner, &self.project, model, route)
+            .map_err(|error| map_version_error(error, model, &id))
             .and_then(model_version_from_wire)
     }
 
@@ -381,7 +395,7 @@ fn model_version_from_wire(value: ModelVersionResponse) -> Result<ModelVersion, 
 
     Ok(ModelVersion {
         id: VersionId::new(value.version.to_string()),
-        version: value.version,
+        version: Some(value.version),
         size_bytes: value.size,
         checksum: value.checksum,
         published_by: Some(value.created_by.username),
@@ -486,7 +500,7 @@ fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsE
     if client_error_is_not_found(&error) {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
-            id: id.clone(),
+            version: VersionSpec::Exact(id.clone()),
         };
     }
     console_failure(error)
