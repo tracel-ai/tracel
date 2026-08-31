@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -44,57 +43,6 @@ pub struct Console {
 pub struct ConsoleInner {
     pub client: Client,
     transfer_client: ReqwestTransferClient,
-    model_version_routes: ModelVersionRoutes,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ModelVersionRouteKey {
-    owner: String,
-    project: String,
-    model: String,
-    id: VersionId,
-}
-
-/// Remembers which numeric route each opaque version identity resolves to, so a version is
-/// fetched with one request once its listing has been seen.
-#[derive(Default)]
-struct ModelVersionRoutes {
-    routes: Mutex<HashMap<ModelVersionRouteKey, u32>>,
-}
-
-impl ModelVersionRoutes {
-    /// Recovers a poisoned lock: the routes are independent, so the ones already learned
-    /// stay usable.
-    fn entries(&self) -> std::sync::MutexGuard<'_, HashMap<ModelVersionRouteKey, u32>> {
-        self.routes
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn get(&self, owner: &str, project: &str, model: &str, id: &VersionId) -> Option<u32> {
-        let key = ModelVersionRouteKey {
-            owner: owner.to_string(),
-            project: project.to_string(),
-            model: model.to_string(),
-            id: id.clone(),
-        };
-        self.entries().get(&key).copied()
-    }
-
-    fn remember(&self, owner: &str, project: &str, model: &str, versions: &[ModelVersionResponse]) {
-        let mut entries = self.entries();
-        for version in versions {
-            entries.insert(
-                ModelVersionRouteKey {
-                    owner: owner.to_string(),
-                    project: project.to_string(),
-                    model: model.to_string(),
-                    id: VersionId::new(&version.id),
-                },
-                version.version,
-            );
-        }
-    }
 }
 
 impl Console {
@@ -106,7 +54,6 @@ impl Console {
             inner: Arc::new(ConsoleInner {
                 client,
                 transfer_client: ReqwestTransferClient::new(),
-                model_version_routes: ModelVersionRoutes::default(),
             }),
         })
     }
@@ -263,27 +210,13 @@ struct ConsoleModelOps {
 }
 
 impl ConsoleModelOps {
-    fn resolve_route_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
-        if let Some(version) =
-            self.inner
-                .model_version_routes
-                .get(&self.owner, &self.project, model, id)
-        {
-            return Ok(version);
-        }
-
-        let response = self
-            .inner
-            .client
-            .list_model_versions(&self.owner, &self.project, model)
-            .map_err(|error| map_model_error(error, model))?;
-        self.inner.model_version_routes.remember(
-            &self.owner,
-            &self.project,
-            model,
-            &response.items,
-        );
-        find_route_version(model, id, &response.items)
+    fn route_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
+        id.as_str()
+            .parse()
+            .map_err(|_| ModelsError::VersionNotFound {
+                model: model.to_string(),
+                id: id.clone(),
+            })
     }
 }
 
@@ -311,17 +244,11 @@ impl ModelOps for ConsoleModelOps {
             .client
             .list_model_versions(&self.owner, &self.project, model)
             .map_err(|error| map_model_error(error, model))?;
-        self.inner.model_version_routes.remember(
-            &self.owner,
-            &self.project,
-            model,
-            &response.items,
-        );
         model_versions_from_wire(response)
     }
 
     fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError> {
-        let version = self.resolve_route_version(model, id)?;
+        let version = self.route_version(model, id)?;
         self.inner
             .client
             .get_model_version(&self.owner, &self.project, model, version)
@@ -334,7 +261,7 @@ impl ModelOps for ConsoleModelOps {
         model: &str,
         id: &VersionId,
     ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
-        let version = self.resolve_route_version(model, id)?;
+        let version = self.route_version(model, id)?;
         let response = self
             .inner
             .client
@@ -453,7 +380,7 @@ fn model_version_from_wire(value: ModelVersionResponse) -> Result<ModelVersion, 
         .map_err(|error| ModelsError::other(ConsoleError::InvalidResponse(error.to_string())))?;
 
     Ok(ModelVersion {
-        id: VersionId::new(value.id),
+        id: VersionId::new(value.version.to_string()),
         version: value.version,
         size_bytes: value.size,
         checksum: value.checksum,
@@ -505,20 +432,6 @@ pub(crate) fn console_timestamp(value: &str) -> Option<SystemTime> {
         })
         .ok()
         .map(SystemTime::from)
-}
-
-fn find_route_version(
-    model: &str,
-    id: &VersionId,
-    versions: &[ModelVersionResponse],
-) -> Result<u32, ModelsError> {
-    versions
-        .iter()
-        .find_map(|version| (version.id == id.as_str()).then_some(version.version))
-        .ok_or_else(|| ModelsError::VersionNotFound {
-            model: model.to_string(),
-            id: id.clone(),
-        })
 }
 
 fn file_sources_from_wire(

@@ -229,7 +229,7 @@ fn dataset_from_wire(response: DatasetResponse) -> Dataset {
 fn version_from_wire(dataset: &str, response: DatasetVersionResponse) -> DatasetVersion {
     DatasetVersion {
         dataset: dataset.to_string(),
-        id: VersionId::new(response.id),
+        id: VersionId::new(response.version.max(0).to_string()),
         version: response.version.max(0) as u32,
         item_count: response.item_count,
         metadata: response.metadata,
