@@ -11,26 +11,26 @@ use tracel_datasets::{
 };
 
 use crate::ConsoleError;
-use crate::console::{ConsoleInner, console_timestamp};
+use crate::console::ProjectScope;
+use crate::wire::console_timestamp;
 
 /// How many items an upload holds before sending a batch.
 const BATCH: usize = 256;
 
 #[derive(Clone)]
-pub(crate) struct ConsoleDatasetOps {
-    pub(crate) inner: Arc<ConsoleInner>,
-    pub(crate) owner: String,
-    pub(crate) project: String,
+pub struct ConsoleDatasetOps {
+    pub scope: Arc<ProjectScope>,
 }
 
 impl ConsoleDatasetOps {
     fn versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
         let response = self
-            .inner
+            .scope
+            .console
             .client
             .query_dataset_versions(
-                &self.owner,
-                &self.project,
+                &self.scope.owner,
+                &self.scope.project,
                 dataset,
                 QueryDatasetVersionsRequest::default(),
             )
@@ -47,18 +47,24 @@ impl ConsoleDatasetOps {
 impl DatasetOps for ConsoleDatasetOps {
     fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
         let response = self
-            .inner
+            .scope
+            .console
             .client
-            .query_datasets(&self.owner, &self.project, QueryDatasetsRequest::default())
+            .query_datasets(
+                &self.scope.owner,
+                &self.scope.project,
+                QueryDatasetsRequest::default(),
+            )
             .map_err(console_failure)?;
 
         Ok(response.items.into_iter().map(dataset_from_wire).collect())
     }
 
     fn get_dataset(&self, name: &str) -> Result<Dataset, DatasetsError> {
-        self.inner
+        self.scope
+            .console
             .client
-            .get_dataset(&self.owner, &self.project, name)
+            .get_dataset(&self.scope.owner, &self.scope.project, name)
             .map(dataset_from_wire)
             .map_err(console_failure)
     }
@@ -92,11 +98,12 @@ impl DatasetOps for ConsoleDatasetOps {
         description: Option<&str>,
         metadata: Option<&serde_json::Value>,
     ) -> Result<Dataset, DatasetsError> {
-        self.inner
+        self.scope
+            .console
             .client
             .create_dataset(
-                &self.owner,
-                &self.project,
+                &self.scope.owner,
+                &self.scope.project,
                 CreateDatasetRequest {
                     name: name.to_string(),
                     description: description.map(str::to_string),
@@ -109,9 +116,10 @@ impl DatasetOps for ConsoleDatasetOps {
 
     fn start_publication(&self, dataset: &str) -> Result<Box<dyn Publication>, DatasetsError> {
         let started = self
-            .inner
+            .scope
+            .console
             .client
-            .start_dataset_version_upload(&self.owner, &self.project, dataset)
+            .start_dataset_version_upload(&self.scope.owner, &self.scope.project, dataset)
             .map_err(console_failure)?;
 
         Ok(Box::new(ConsolePublication {
@@ -149,11 +157,12 @@ impl ConsolePublication {
         }
 
         self.ops
-            .inner
+            .scope
+            .console
             .client
             .add_dataset_version_upload_items(
-                &self.ops.owner,
-                &self.ops.project,
+                &self.ops.scope.owner,
+                &self.ops.scope.project,
                 &self.dataset,
                 &self.upload_id,
                 AddDatasetVersionUploadItemsRequest {
@@ -188,11 +197,12 @@ impl Publication for ConsolePublication {
         self.flush()?;
 
         self.ops
-            .inner
+            .scope
+            .console
             .client
             .complete_dataset_version_upload(
-                &self.ops.owner,
-                &self.ops.project,
+                &self.ops.scope.owner,
+                &self.ops.scope.project,
                 &self.dataset,
                 &self.upload_id,
                 CompleteDatasetVersionUploadRequest {
@@ -206,11 +216,12 @@ impl Publication for ConsolePublication {
     fn cancel(&mut self) -> Result<(), DatasetsError> {
         self.pending.clear();
         self.ops
-            .inner
+            .scope
+            .console
             .client
             .cancel_dataset_version_upload(
-                &self.ops.owner,
-                &self.ops.project,
+                &self.ops.scope.owner,
+                &self.ops.scope.project,
                 &self.dataset,
                 &self.upload_id,
             )
