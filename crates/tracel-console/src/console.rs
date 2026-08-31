@@ -25,12 +25,14 @@ use tracel_client::{
     },
     error::ClientError,
 };
+use tracel_datasets::Datasets;
 use tracel_models::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
     VersionFileSource, VersionId, VersionManifest,
 };
 use url::Url;
 
+use crate::datasets::ConsoleDatasetOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
 /// A blocking client rooted at one Tracel console URL.
@@ -39,8 +41,8 @@ pub struct Console {
     inner: Arc<ConsoleInner>,
 }
 
-struct ConsoleInner {
-    client: Client,
+pub struct ConsoleInner {
+    pub client: Client,
     transfer_client: ReqwestTransferClient,
     model_version_routes: ModelVersionRoutes,
 }
@@ -220,6 +222,15 @@ impl ProjectHandle {
             .get_project(&self.owner, &self.project)
             .map_err(ConsoleError::from)
             .and_then(Project::try_from)
+    }
+
+    /// Returns dataset operations already scoped to this project without performing I/O.
+    pub fn datasets(&self) -> Datasets {
+        Datasets::new(Arc::new(ConsoleDatasetOps {
+            inner: Arc::clone(&self.inner),
+            owner: self.owner.clone(),
+            project: self.project.clone(),
+        }))
     }
 
     /// Returns model operations already scoped to this project without performing I/O.
@@ -485,7 +496,7 @@ impl From<WireManifest> for VersionManifest {
 
 /// Reads the console's timestamps, which come either RFC 3339 or as naive UTC. An unreadable
 /// one is left absent rather than failing a read over a display field.
-fn console_timestamp(value: &str) -> Option<SystemTime> {
+pub(crate) fn console_timestamp(value: &str) -> Option<SystemTime> {
     DateTime::parse_from_rfc3339(value)
         .map(|parsed| parsed.with_timezone(&Utc))
         .or_else(|_| {

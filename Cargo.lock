@@ -4840,7 +4840,7 @@ dependencies = [
  "combine",
  "downcast-rs",
  "dyn-clone",
- "hashbrown 0.17.1",
+ "hashbrown 0.13.2",
  "hi_sparse_bitset",
  "indexmap 2.14.0",
  "inventory",
@@ -6732,6 +6732,7 @@ dependencies = [
  "tracel-client",
  "tracel-console",
  "tracel-core",
+ "tracel-datasets",
  "tracel-experiment",
  "tracel-inference",
  "tracel-models",
@@ -6770,8 +6771,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.15.1"
-source = "git+https://github.com/tracel-ai/tracel-client?branch=feat%2Fplatform-client#af3f3ddbf0817a1e9caf3ca003271cf3aa306a4e"
+version = "0.16.0"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",
@@ -6796,6 +6796,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tracel-artifact",
  "tracel-client",
+ "tracel-datasets",
  "tracel-models",
  "url",
 ]

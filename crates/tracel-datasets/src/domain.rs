@@ -10,10 +10,6 @@ pub struct Dataset {
     pub description: Option<String>,
     /// Application-defined metadata.
     pub metadata: Option<serde_json::Value>,
-    /// Number of published versions.
-    pub version_count: u64,
-    /// Highest version number, when the backend supplies one.
-    pub latest_version: Option<u32>,
 }
 
 /// Opaque identity of a dataset version.
@@ -49,6 +45,8 @@ pub struct DatasetVersion {
     pub version: u32,
     /// How many items the version holds.
     pub item_count: u64,
+    /// Application-defined metadata.
+    pub metadata: Option<serde_json::Value>,
     /// When the version was published, when the backend supplies it.
     pub created_at: Option<SystemTime>,
 }

@@ -150,8 +150,6 @@ impl DatasetOps for FakeOps {
             name: name.to_string(),
             description: description.map(str::to_string),
             metadata: metadata.cloned(),
-            version_count: 0,
-            latest_version: None,
         })
     }
 
@@ -217,5 +215,6 @@ pub fn version(item_count: u64) -> DatasetVersion {
         version: 1,
         item_count,
         created_at: None,
+        metadata: None,
     }
 }

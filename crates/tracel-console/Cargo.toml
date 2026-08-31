@@ -19,5 +19,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracel-artifact = { workspace = true }
 tracel-client = { workspace = true }
+tracel-datasets = { workspace = true }
 tracel-models = { workspace = true }
 url = { workspace = true }

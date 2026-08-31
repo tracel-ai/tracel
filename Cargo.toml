@@ -95,3 +95,6 @@ tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
+
+[patch."https://github.com/tracel-ai/tracel-client"]
+tracel-client = { path = "/home/jwric/Work/burn-central-client/tracel-client" }

@@ -7,6 +7,7 @@
 //! I/O when created.
 
 mod console;
+mod datasets;
 mod domain;
 mod error;
 mod login;
