@@ -104,15 +104,19 @@ impl VersionDraft {
     /// Fails if the draft already holds an item claiming the same source identity. Items
     /// offered without one are never refused.
     pub fn add(&mut self, item: NewItem) -> Result<(), DatasetsError> {
-        if let Some(identity) = item.source_item_id.clone()
-            && !self.offered.insert(identity.clone())
-        {
-            return Err(DatasetsError::DuplicateItem {
-                source_item_id: identity,
-            });
+        let identity = item.source_item_id.clone();
+        if let Some(identity) = &identity {
+            if self.offered.contains(identity) {
+                return Err(DatasetsError::DuplicateItem {
+                    source_item_id: identity.clone(),
+                });
+            }
         }
 
         self.publication.add_item(item)?;
+        if let Some(identity) = identity {
+            self.offered.insert(identity);
+        }
         self.added += 1;
         Ok(())
     }
@@ -156,5 +160,57 @@ impl VersionDraft {
     pub fn cancel(mut self) -> Result<(), DatasetsError> {
         self.settled = true;
         self.publication.cancel()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailOnce {
+        failed: bool,
+    }
+
+    impl Publication for FailOnce {
+        fn add_item(&mut self, _item: NewItem) -> Result<(), DatasetsError> {
+            if self.failed {
+                self.failed = false;
+                return Err(DatasetsError::other("temporary failure"));
+            }
+
+            Ok(())
+        }
+
+        fn commit(
+            &mut self,
+            _metadata: Option<&serde_json::Value>,
+        ) -> Result<DatasetVersion, DatasetsError> {
+            unreachable!("this test only exercises adding")
+        }
+
+        fn cancel(&mut self) -> Result<(), DatasetsError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_identity_is_not_reserved_when_adding_it_failed() {
+        let mut draft = VersionDraft {
+            publication: Box::new(FailOnce { failed: true }),
+            offered: HashSet::new(),
+            added: 0,
+            settled: false,
+        };
+        let item = NewItem {
+            source_item_id: Some("a".to_string()),
+            example: Vec::new(),
+            annotation: None,
+            metadata: None,
+        };
+
+        draft.add(item.clone()).expect_err("the first add fails");
+        draft.add(item).expect("the same item can be retried");
+
+        assert_eq!(draft.len(), 1);
     }
 }

@@ -19,6 +19,8 @@ use crate::wire::console_timestamp;
 
 /// How many items an upload holds before sending a batch.
 const BATCH: usize = 256;
+/// How many datasets or versions to fetch in one console query.
+const PAGE_SIZE: u32 = 100;
 
 #[derive(Clone)]
 pub struct ConsoleDatasetOps {
@@ -27,40 +29,49 @@ pub struct ConsoleDatasetOps {
 
 impl ConsoleDatasetOps {
     fn versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
-        let response = self
-            .scope
-            .console
-            .client
-            .query_dataset_versions(
-                &self.scope.owner,
-                &self.scope.project,
-                dataset,
-                QueryDatasetVersionsRequest::default(),
-            )
-            .map_err(|error| map_dataset_error(error, dataset))?;
-
-        Ok(response
-            .items
-            .into_iter()
-            .map(|version| version_from_wire(dataset, version))
-            .collect())
+        collect_pages(|page| {
+            self.scope
+                .console
+                .client
+                .query_dataset_versions(
+                    &self.scope.owner,
+                    &self.scope.project,
+                    dataset,
+                    QueryDatasetVersionsRequest {
+                        page: Some(page),
+                        per_page: Some(PAGE_SIZE),
+                    },
+                )
+                .map(|response| (response.items, response.total_count))
+                .map_err(|error| map_dataset_error(error, dataset))
+        })
+        .map(|versions| {
+            versions
+                .into_iter()
+                .map(|version| version_from_wire(dataset, version))
+                .collect()
+        })
     }
 }
 
 impl DatasetOps for ConsoleDatasetOps {
     fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
-        let response = self
-            .scope
-            .console
-            .client
-            .query_datasets(
-                &self.scope.owner,
-                &self.scope.project,
-                QueryDatasetsRequest::default(),
-            )
-            .map_err(console_failure)?;
-
-        Ok(response.items.into_iter().map(dataset_from_wire).collect())
+        collect_pages(|page| {
+            self.scope
+                .console
+                .client
+                .query_datasets(
+                    &self.scope.owner,
+                    &self.scope.project,
+                    QueryDatasetsRequest {
+                        page: Some(page),
+                        per_page: Some(PAGE_SIZE),
+                    },
+                )
+                .map(|response| (response.items, response.total_count))
+                .map_err(console_failure)
+        })
+        .map(|datasets| datasets.into_iter().map(dataset_from_wire).collect())
     }
 
     fn get_dataset(&self, name: &str) -> Result<Dataset, DatasetsError> {
@@ -173,16 +184,12 @@ impl DatasetOps for ConsoleDatasetOps {
         }
 
         let found = read.len() as u64;
-        indexes
-            .iter()
-            .map(|index| read.remove(index))
-            .collect::<Option<Vec<_>>>()
-            .ok_or(DatasetsError::Incomplete {
-                dataset: dataset.to_string(),
-                version: id.clone(),
-                expected: indexes.len() as u64,
-                actual: found,
-            })
+        ordered_items(indexes, &read).ok_or(DatasetsError::Incomplete {
+            dataset: dataset.to_string(),
+            version: id.clone(),
+            expected: indexes.len() as u64,
+            actual: found,
+        })
     }
 }
 
@@ -210,26 +217,27 @@ impl ConsolePublication {
                 &self.dataset,
                 &self.upload_id,
                 AddDatasetVersionUploadItemsRequest {
-                    items: std::mem::take(&mut self.pending),
+                    items: self.pending.clone(),
                 },
             )
-            .map(|_| ())
-            .map_err(console_failure)
+            .map_err(console_failure)?;
+        self.pending.clear();
+        Ok(())
     }
 }
 
 impl Publication for ConsolePublication {
     fn add_item(&mut self, item: NewItem) -> Result<(), DatasetsError> {
+        if self.pending.len() >= BATCH {
+            self.flush()?;
+        }
+
         self.pending.push(DatasetVersionUploadItemRequest {
             source_item_id: item.source_item_id,
             example_payload: item.example,
             annotation: item.annotation,
             metadata: item.metadata,
         });
-
-        if self.pending.len() >= BATCH {
-            self.flush()?;
-        }
 
         Ok(())
     }
@@ -299,6 +307,34 @@ fn contiguous_runs(indexes: &[u64]) -> Vec<Range<u64>> {
     }
 
     runs
+}
+
+/// Reorders unique items into the caller's requested order, retaining repetitions.
+fn ordered_items(indexes: &[u64], items: &HashMap<u64, Item>) -> Option<Vec<Item>> {
+    indexes
+        .iter()
+        .map(|index| items.get(index).cloned())
+        .collect()
+}
+
+/// Reads every page of one console query.
+fn collect_pages<T>(
+    mut fetch: impl FnMut(u32) -> Result<(Vec<T>, u64), DatasetsError>,
+) -> Result<Vec<T>, DatasetsError> {
+    let mut all = Vec::new();
+    let mut page = 0;
+
+    loop {
+        let (items, total) = fetch(page)?;
+        let count = items.len();
+        all.extend(items);
+
+        if all.len() as u64 >= total || count < PAGE_SIZE as usize || page == u32::MAX {
+            return Ok(all);
+        }
+
+        page += 1;
+    }
 }
 
 fn item_from_wire(payload: &[u8]) -> Result<Item, DatasetsError> {
@@ -386,5 +422,40 @@ mod tests {
     #[test]
     fn a_repeated_index_is_asked_for_once() {
         assert_eq!(contiguous_runs(&[3, 3, 3]), vec![3..4]);
+    }
+
+    #[test]
+    fn a_repeated_index_is_returned_each_time() {
+        let item = Item {
+            example: b"three".to_vec(),
+            annotation: None,
+            source_item_id: None,
+            metadata: None,
+        };
+        let items = HashMap::from([(3, item.clone())]);
+
+        assert_eq!(
+            ordered_items(&[3, 3], &items),
+            Some(vec![item.clone(), item])
+        );
+    }
+
+    #[test]
+    fn queries_every_page_needed_to_reach_the_total() {
+        let mut fetched = Vec::new();
+        let mut pages = vec![
+            ((0..PAGE_SIZE).collect::<Vec<_>>(), u64::from(PAGE_SIZE) + 1),
+            (vec![PAGE_SIZE], u64::from(PAGE_SIZE) + 1),
+        ]
+        .into_iter();
+
+        let values = collect_pages(|page| {
+            fetched.push(page);
+            Ok(pages.next().expect("the test provided this page"))
+        })
+        .unwrap();
+
+        assert_eq!(fetched, [0, 1]);
+        assert_eq!(values.len(), PAGE_SIZE as usize + 1);
     }
 }
