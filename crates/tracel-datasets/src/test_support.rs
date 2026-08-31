@@ -179,8 +179,8 @@ impl DatasetOps for FakeOps {
     ) -> Result<DatasetVersion, DatasetsError> {
         let mut resolved = version(self.item_count);
         resolved.dataset = dataset.to_string();
-        if let VersionSpec::Fixed(number) = spec {
-            resolved.version = number;
+        if let VersionSpec::Exact(id) = spec {
+            resolved.id = id;
         }
         Ok(resolved)
     }
@@ -212,7 +212,7 @@ pub fn version(item_count: u64) -> DatasetVersion {
     DatasetVersion {
         dataset: "ds".to_string(),
         id: VersionId::new("v1"),
-        version: 1,
+        version: Some(1),
         item_count,
         created_at: None,
         metadata: None,

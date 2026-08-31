@@ -77,7 +77,7 @@ where
             .next()
             .ok_or(DatasetsError::Incomplete {
                 dataset: self.version.dataset.clone(),
-                version: self.version.version,
+                version: self.version.id.clone(),
                 expected: 1,
                 actual: 0,
             })
@@ -93,7 +93,7 @@ where
         {
             return Err(DatasetsError::Item {
                 dataset: self.version.dataset.clone(),
-                version: self.version.version,
+                version: self.version.id.clone(),
                 index: *past_end,
                 problem: format!("the version holds {} items", self.version.item_count),
             });
@@ -105,7 +105,7 @@ where
         if items.len() != indexes.len() {
             return Err(DatasetsError::Incomplete {
                 dataset: self.version.dataset.clone(),
-                version: self.version.version,
+                version: self.version.id.clone(),
                 expected: indexes.len() as u64,
                 actual: items.len() as u64,
             });
@@ -141,7 +141,7 @@ where
                 Some(value) => Some(serde_json::from_value(value).map_err(|error| {
                     DatasetsError::Annotation {
                         dataset: self.version.dataset.clone(),
-                        version: self.version.version,
+                        version: self.version.id.clone(),
                         index,
                         problem: error.to_string(),
                     }
@@ -241,6 +241,7 @@ mod tests {
 
     use super::*;
     use crate::Datasets;
+    use crate::VersionId;
     use crate::test_support::{FakeOps, Label, version};
 
     fn handle(ops: Arc<FakeOps>, item_count: u64) -> DatasetHandle<Label> {
@@ -338,10 +339,10 @@ mod tests {
         let ops = Arc::new(FakeOps::new());
         let datasets = Datasets::new(ops.clone());
 
-        let data = datasets.open::<Label>("ds", 1).unwrap();
+        let data = datasets.open::<Label>("ds", VersionId::new("v1")).unwrap();
 
         assert_eq!(data.len(), 10);
-        assert_eq!(data.version().version, 1);
+        assert_eq!(data.version().id, VersionId::new("v1"));
     }
 
     #[cfg(feature = "burn")]

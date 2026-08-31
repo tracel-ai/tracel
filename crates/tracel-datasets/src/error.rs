@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use crate::VersionSpec;
+use crate::{VersionId, VersionSpec};
 
 /// Errors surfaced by the dataset capability.
 #[derive(Debug, thiserror::Error)]
@@ -28,7 +28,7 @@ pub enum DatasetsError {
         /// Dataset the item belongs to.
         dataset: String,
         /// Version the item belongs to.
-        version: u32,
+        version: VersionId,
         /// Position of the item in the version.
         index: u64,
         /// What made it unreadable.
@@ -44,7 +44,7 @@ pub enum DatasetsError {
         /// Dataset the item belongs to.
         dataset: String,
         /// Version the item belongs to.
-        version: u32,
+        version: VersionId,
         /// Position of the item in the version.
         index: u64,
         /// How the annotation differed.
@@ -57,7 +57,7 @@ pub enum DatasetsError {
         /// Dataset that was read.
         dataset: String,
         /// Version that was read.
-        version: u32,
+        version: VersionId,
         /// Item count the version reports.
         expected: u64,
         /// Item count actually received.
@@ -99,7 +99,7 @@ mod tests {
     fn a_missing_version_names_what_was_asked_for() {
         let by_number = DatasetsError::VersionNotFound {
             dataset: "mnist".to_string(),
-            version: VersionSpec::Fixed(7),
+            version: VersionSpec::Exact(VersionId::new("7")),
         };
         let latest = DatasetsError::VersionNotFound {
             dataset: "mnist".to_string(),

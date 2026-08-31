@@ -73,10 +73,10 @@ impl DatasetOps for ConsoleDatasetOps {
         spec: VersionSpec,
     ) -> Result<DatasetVersion, DatasetsError> {
         let versions = self.versions(dataset)?;
-        let found = match spec {
-            VersionSpec::Fixed(wanted) => versions
-                .into_iter()
-                .find(|version| version.version == wanted),
+        let found = match &spec {
+            VersionSpec::Exact(wanted) => {
+                versions.into_iter().find(|version| &version.id == wanted)
+            }
             VersionSpec::Latest => versions.into_iter().max_by_key(|version| version.version),
         };
 
@@ -230,7 +230,7 @@ fn version_from_wire(dataset: &str, response: DatasetVersionResponse) -> Dataset
     DatasetVersion {
         dataset: dataset.to_string(),
         id: VersionId::new(response.version.max(0).to_string()),
-        version: response.version.max(0) as u32,
+        version: Some(response.version.max(0) as u32),
         item_count: response.item_count,
         metadata: response.metadata,
         created_at: console_timestamp(&response.created_at),

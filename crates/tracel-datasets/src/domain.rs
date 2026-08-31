@@ -41,8 +41,8 @@ pub struct DatasetVersion {
     pub dataset: String,
     /// Opaque identity used to address the version.
     pub id: VersionId,
-    /// Version number for display and ordering.
-    pub version: u32,
+    /// Version number for display and ordering, when the backend numbers versions.
+    pub version: Option<u32>,
     /// How many items the version holds.
     pub item_count: u64,
     /// Application-defined metadata.
@@ -67,10 +67,10 @@ pub struct Item {
 }
 
 /// Selects which version of a dataset to read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionSpec {
-    /// This exact version number.
-    Fixed(u32),
+    /// This exact version.
+    Exact(VersionId),
     /// Whichever version is newest when the call is made.
     Latest,
 }
@@ -78,15 +78,15 @@ pub enum VersionSpec {
 impl fmt::Display for VersionSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Fixed(version) => write!(formatter, "version {version}"),
+            Self::Exact(id) => write!(formatter, "version {id}"),
             Self::Latest => formatter.write_str("latest version"),
         }
     }
 }
 
-impl From<u32> for VersionSpec {
-    fn from(version: u32) -> Self {
-        Self::Fixed(version)
+impl From<VersionId> for VersionSpec {
+    fn from(id: VersionId) -> Self {
+        Self::Exact(id)
     }
 }
 
