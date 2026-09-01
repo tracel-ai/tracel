@@ -4,10 +4,12 @@ use std::sync::Arc;
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::console::{Client, Env, TracelCredentials};
 use tracel_datasets::Datasets;
+use tracel_inference::InferenceModule;
 use tracel_models::Models;
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
+use crate::inference::ConsoleInferenceProvider;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
@@ -169,6 +171,17 @@ impl ProjectHandle {
         Models::new(Arc::new(ConsoleModelOps {
             scope: Arc::clone(&self.scope),
         }))
+    }
+
+    /// Builds an inference module scoped to this project.
+    ///
+    /// Unlike [`datasets`](Self::datasets)/[`models`](Self::models), the returned module owns a
+    /// background worker per inference group: build it once and reuse it, rather than calling
+    /// this again for every request.
+    pub fn inference(&self) -> InferenceModule {
+        InferenceModule::new(Arc::new(ConsoleInferenceProvider::new(Arc::clone(
+            &self.scope,
+        ))))
     }
 }
 
