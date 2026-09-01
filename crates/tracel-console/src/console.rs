@@ -4,11 +4,13 @@ use std::sync::Arc;
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::console::{Client, Env, TracelCredentials};
 use tracel_datasets::Datasets;
+use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
 use tracel_models::Models;
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
+use crate::experiment::ConsoleExperimentProvider;
 use crate::inference::ConsoleInferenceProvider;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
@@ -171,6 +173,13 @@ impl ProjectHandle {
         Models::new(Arc::new(ConsoleModelOps {
             scope: Arc::clone(&self.scope),
         }))
+    }
+
+    /// Builds an experiment provider scoped to this project.
+    pub fn experiments(&self) -> ExperimentModule {
+        ExperimentModule::new(Arc::new(ConsoleExperimentProvider::new(Arc::clone(
+            &self.scope,
+        ))))
     }
 
     /// Builds an inference module scoped to this project.

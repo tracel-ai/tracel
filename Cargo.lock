@@ -6801,6 +6801,8 @@ dependencies = [
  "tracel-artifact",
  "tracel-client",
  "tracel-datasets",
+ "tracel-experiment",
+ "tracel-experiment-remote",
  "tracel-inference",
  "tracel-models",
  "tracing",
@@ -6825,6 +6827,7 @@ dependencies = [
  "tracel-artifact",
  "tracel-client",
  "tracel-experiment",
+ "tracel-experiment-remote",
  "tracel-inference",
  "tracing",
  "url",
@@ -6852,6 +6855,20 @@ dependencies = [
  "tracel-artifact",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "tracel-experiment-remote"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "crossbeam",
+ "serde",
+ "thiserror 2.0.20",
+ "tracel-artifact",
+ "tracel-client",
+ "tracel-experiment",
+ "tracing",
 ]
 
 [[package]]

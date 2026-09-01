@@ -27,9 +27,9 @@ struct ActiveSession {
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to upload artifact: {message}")]
 pub struct ArtifactUploadError {
-    pub(crate) message: String,
+    pub message: String,
     #[source]
-    pub(crate) source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 pub trait ArtifactUploader {

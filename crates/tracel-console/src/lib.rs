@@ -10,6 +10,7 @@ mod console;
 mod datasets;
 mod domain;
 mod error;
+mod experiment;
 mod inference;
 mod login;
 mod models;

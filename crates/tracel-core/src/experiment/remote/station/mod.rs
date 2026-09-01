@@ -26,7 +26,7 @@ use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunC
 use tracel_experiment::ExperimentProvider;
 
 use crate::backend::station::StationBackend;
-use crate::experiment::remote::session::RemoteExperimentSession;
+use tracel_experiment_remote::RemoteExperimentSession;
 
 #[derive(Debug, thiserror::Error)]
 enum StationError {

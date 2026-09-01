@@ -28,7 +28,8 @@ use tracel_experiment::{
     error::{ExperimentError, ExperimentErrorKind},
 };
 
-use crate::{backend::cloud::CloudBackend, experiment::remote::session::RemoteExperimentSession};
+use crate::backend::cloud::CloudBackend;
+use tracel_experiment_remote::RemoteExperimentSession;
 
 #[derive(Debug, Clone)]
 pub struct ExperimentPath {
