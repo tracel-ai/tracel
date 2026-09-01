@@ -10,9 +10,7 @@ use tracel_inference::{InferenceModule, InferenceProvider};
 
 use crate::backend::local::LocalBackend;
 use crate::cloud::CloudError;
-use crate::dataset::DatasetModule;
 use crate::inference::DefaultInferenceProvider;
-use crate::model_registry::ModelRegistryModule;
 #[cfg(feature = "station")]
 use tracel_station::Station;
 
@@ -20,8 +18,6 @@ use tracel_station::Station;
 pub struct Capabilities {
     pub experiment: ExperimentModule,
     pub inference: InferenceModule,
-    pub model_registry: Option<ModelRegistryModule>,
-    pub dataset: Option<DatasetModule>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,8 +42,6 @@ impl Connection {
                 Ok(Capabilities {
                     experiment: project.experiments(),
                     inference: project.inference(),
-                    model_registry: None,
-                    dataset: None,
                 })
             }
             Connection::Offline(path) => {
@@ -55,8 +49,6 @@ impl Connection {
                 Ok(Capabilities {
                     experiment: ExperimentModule::new(backend),
                     inference: default_inference(),
-                    model_registry: None,
-                    dataset: None,
                 })
             }
             #[cfg(feature = "station")]
@@ -65,8 +57,6 @@ impl Connection {
                 Ok(Capabilities {
                     experiment: station.experiments(),
                     inference: default_inference(),
-                    model_registry: None,
-                    dataset: None,
                 })
             }
         }
