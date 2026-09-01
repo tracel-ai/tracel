@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::models::client_error_is_not_found;
+use crate::error::client_error_is_not_found;
 use tracel_client::console::dataset::request::{
     AddDatasetVersionUploadItemsRequest, CompleteDatasetVersionUploadRequest, CreateDatasetRequest,
     DatasetVersionUploadItemRequest, QueryDatasetVersionsRequest, QueryDatasetsRequest,

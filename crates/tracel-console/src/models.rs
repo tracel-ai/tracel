@@ -24,6 +24,7 @@ use tracel_models::{
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
+use crate::error::client_error_is_not_found;
 use crate::wire::console_timestamp;
 
 #[derive(Clone)]
@@ -334,18 +335,6 @@ fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsE
         };
     }
     console_failure(error)
-}
-
-pub(crate) fn client_error_is_not_found(error: &ClientError) -> bool {
-    error.is_not_found()
-        || matches!(
-            error,
-            ClientError::ApiError { status, .. } if status_is_not_found(*status)
-        )
-}
-
-fn status_is_not_found(status: reqwest::StatusCode) -> bool {
-    status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND
 }
 
 /// Hands a client failure to the model domain as this console's own.
