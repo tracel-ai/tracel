@@ -1,5 +1,4 @@
 mod cache;
-mod cloud;
 #[cfg(feature = "station")]
 mod station;
 

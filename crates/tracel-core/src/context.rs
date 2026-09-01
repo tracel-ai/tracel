@@ -1,46 +1,41 @@
-use std::sync::Arc;
-
 use crate::connection::{Connection, ContextError};
-use crate::dataset::{DatasetModule, DatasetProvider};
-use crate::model_registry::{ModelRegistryModule, ModelRegistryProvider};
+use crate::dataset::DatasetModule;
+use crate::model_registry::ModelRegistryModule;
 use tracel_experiment::ExperimentModule;
-use tracel_experiment::ExperimentProvider;
-use tracel_inference::{InferenceModule, InferenceProvider};
+use tracel_inference::InferenceModule;
 
 #[derive(Clone)]
 pub struct Context {
-    experiment_provider: Arc<dyn ExperimentProvider>,
-    inference_provider: Arc<dyn InferenceProvider>,
-    model_registry_provider: Option<Arc<dyn ModelRegistryProvider>>,
-    dataset_provider: Option<Arc<dyn DatasetProvider>>,
+    experiment: ExperimentModule,
+    inference: InferenceModule,
+    model_registry: Option<ModelRegistryModule>,
+    dataset: Option<DatasetModule>,
 }
 
 impl Context {
     pub fn new(connection: Connection) -> Result<Self, ContextError> {
-        let providers = connection.into_providers()?;
+        let capabilities = connection.into_capabilities()?;
         Ok(Self {
-            experiment_provider: providers.experiment,
-            inference_provider: providers.inference,
-            model_registry_provider: providers.model_registry,
-            dataset_provider: providers.dataset,
+            experiment: capabilities.experiment,
+            inference: capabilities.inference,
+            model_registry: capabilities.model_registry,
+            dataset: capabilities.dataset,
         })
     }
 
     pub fn experiment(&self) -> ExperimentModule {
-        ExperimentModule::new(self.experiment_provider.clone())
+        self.experiment.clone()
     }
 
     pub fn inference(&self) -> InferenceModule {
-        InferenceModule::new(self.inference_provider.clone())
+        self.inference.clone()
     }
 
     pub fn models(&self) -> Option<ModelRegistryModule> {
-        self.model_registry_provider
-            .clone()
-            .map(ModelRegistryModule::new)
+        self.model_registry.clone()
     }
 
     pub fn datasets(&self) -> Option<DatasetModule> {
-        self.dataset_provider.clone().map(DatasetModule::new)
+        self.dataset.clone()
     }
 }

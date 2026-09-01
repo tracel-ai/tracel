@@ -1,10 +1,11 @@
+//! Discovering how to reach the console: environment, credentials, and which project.
+
 use std::path::Path;
 
 use serde::Deserialize;
-use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{
     ClientError,
-    console::{Client, Env, TracelCredentials},
+    console::{Env, TracelCredentials},
 };
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
@@ -30,15 +31,6 @@ pub enum CloudError {
     Client(#[from] ClientError),
 }
 
-#[derive(Clone)]
-pub struct CloudBackend {
-    pub(crate) client: Client,
-    pub(crate) namespace: String,
-    pub(crate) project: String,
-    pub(crate) file_transfer_client: ReqwestTransferClient,
-    pub(crate) model_cache: crate::model_registry::ModelCache,
-}
-
 #[derive(Deserialize)]
 struct CliCredentials {
     api_key: String,
@@ -52,41 +44,7 @@ struct TracelTomlConfig {
     project: Option<String>,
 }
 
-impl CloudBackend {
-    fn new(client: Client, namespace: String, project: String) -> Result<Self, CloudError> {
-        let cache_root = crate::resolve_cache_dir()
-            .ok_or(CloudError::NoCacheDir)?
-            .join("cloud")
-            .join(&namespace)
-            .join(&project)
-            .join("models");
-
-        Ok(Self {
-            client,
-            namespace,
-            project,
-            file_transfer_client: ReqwestTransferClient::new(),
-            model_cache: crate::model_registry::ModelCache::new(cache_root),
-        })
-    }
-
-    pub fn create_context() -> Result<CloudBackend, CloudError> {
-        let env = discover_env()?;
-        let credentials = discover_credentials(&env)?;
-        let (namespace, project) = discover_namespace_project()?;
-
-        let client = Client::connect(env, &credentials).map_err(|err| {
-            if err.is_login_error() {
-                CloudError::InvalidCredentials
-            } else {
-                CloudError::Client(err)
-            }
-        })?;
-        CloudBackend::new(client, namespace, project)
-    }
-}
-
-fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
+pub(crate) fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
     if let Ok(creds) = TracelCredentials::from_env() {
         return Ok(creds);
     }
@@ -110,7 +68,7 @@ fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
     Err(CloudError::NoCredentials)
 }
 
-fn discover_namespace_project() -> Result<(String, String), CloudError> {
+pub(crate) fn discover_namespace_project() -> Result<(String, String), CloudError> {
     let namespace_env = std::env::var(TRACEL_NAMESPACE).ok();
     let project_env = std::env::var(TRACEL_PROJECT).ok();
 
@@ -131,7 +89,7 @@ fn discover_namespace_project() -> Result<(String, String), CloudError> {
     Ok((namespace, project))
 }
 
-fn discover_env() -> Result<Env, CloudError> {
+pub(crate) fn discover_env() -> Result<Env, CloudError> {
     let invalid_env = || CloudError::InvalidEnv {
         env_var: TRACEL_ENV.to_string(),
         message: "expected value to be one of: 'Production', 'Development', or 'Staging(N)'"

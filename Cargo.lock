@@ -6826,6 +6826,7 @@ dependencies = [
  "toml",
  "tracel-artifact",
  "tracel-client",
+ "tracel-console",
  "tracel-experiment",
  "tracel-experiment-remote",
  "tracel-inference",

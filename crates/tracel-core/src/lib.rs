@@ -1,4 +1,5 @@
 mod backend;
+mod cloud;
 mod connection;
 mod context;
 mod dataset;

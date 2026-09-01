@@ -30,6 +30,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct ExperimentModule {
     provider: Arc<dyn ExperimentProvider>,
 }
