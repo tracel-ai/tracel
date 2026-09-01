@@ -6736,6 +6736,7 @@ dependencies = [
  "tracel-inference",
  "tracel-models",
  "tracel-runner",
+ "tracel-station",
 ]
 
 [[package]]

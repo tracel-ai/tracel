@@ -143,5 +143,6 @@ jobs:
       - tracel-inference
       - tracel-models
       - tracel-runner
+      - tracel-station
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
