@@ -18,6 +18,8 @@ station = ["dep:tracel-station", "tracel-client/station"]
 [dependencies]
 tracel-client.workspace = true
 tracel-console.workspace = true
+tracel-datasets.workspace = true
+tracel-models.workspace = true
 tracel-station = { workspace = true, optional = true }
 tracel-experiment.workspace = true
 tracel-experiment-remote.workspace = true

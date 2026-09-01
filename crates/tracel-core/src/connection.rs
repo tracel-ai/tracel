@@ -5,20 +5,12 @@ use std::sync::Arc;
 use url::Url;
 
 use tracel_console::{Console, ConsoleError};
-use tracel_experiment::ExperimentModule;
-use tracel_inference::{InferenceModule, InferenceProvider};
 
+use crate::backend::Backend;
 use crate::backend::local::LocalBackend;
 use crate::cloud::CloudError;
-use crate::inference::DefaultInferenceProvider;
 #[cfg(feature = "station")]
 use tracel_station::Station;
-
-/// The capabilities a connection makes available.
-pub struct Capabilities {
-    pub experiment: ExperimentModule,
-    pub inference: InferenceModule,
-}
 
 #[derive(Debug, Clone)]
 pub enum Connection {
@@ -29,7 +21,7 @@ pub enum Connection {
 }
 
 impl Connection {
-    pub(crate) fn into_capabilities(self) -> Result<Capabilities, ContextError> {
+    pub(crate) fn into_backend(self) -> Result<Arc<dyn Backend>, ContextError> {
         match self {
             Connection::Cloud => {
                 let env = crate::cloud::discover_env()?;
@@ -39,34 +31,13 @@ impl Connection {
                 let console = Console::connect(env, &credentials)?;
                 let project = console.project(namespace, project);
 
-                Ok(Capabilities {
-                    experiment: project.experiments(),
-                    inference: project.inference(),
-                })
+                Ok(Arc::new(project))
             }
-            Connection::Offline(path) => {
-                let backend = Arc::new(LocalBackend::create_context(path));
-                Ok(Capabilities {
-                    experiment: ExperimentModule::new(backend),
-                    inference: default_inference(),
-                })
-            }
+            Connection::Offline(path) => Ok(Arc::new(LocalBackend::create_context(path))),
             #[cfg(feature = "station")]
-            Connection::Station(url) => {
-                let station = Station::connect(url);
-                Ok(Capabilities {
-                    experiment: station.experiments(),
-                    inference: default_inference(),
-                })
-            }
+            Connection::Station(url) => Ok(Arc::new(Station::connect(url))),
         }
     }
-}
-
-/// Inference that ships nothing, for connections without an inference backend.
-fn default_inference() -> InferenceModule {
-    let provider: Arc<dyn InferenceProvider> = Arc::new(DefaultInferenceProvider::new());
-    InferenceModule::new(provider)
 }
 
 #[derive(Debug, thiserror::Error)]
