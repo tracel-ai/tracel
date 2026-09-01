@@ -17,8 +17,9 @@ use crate::ConsoleError;
 use crate::console::ProjectScope;
 use crate::wire::console_timestamp;
 
-/// How many items an upload holds before sending a batch.
-const BATCH: usize = 256;
+/// What one item-upload request is allowed to reach. The console rejects a larger body, so a
+/// batch is sent before it can get there rather than after the console refuses it.
+const BATCH_BYTES: usize = 63 * 1024 * 1024;
 /// How many datasets or versions to fetch in one console query.
 const PAGE_SIZE: u32 = 100;
 
@@ -141,6 +142,7 @@ impl DatasetOps for ConsoleDatasetOps {
             dataset: dataset.to_string(),
             upload_id: started.upload_id,
             pending: Vec::new(),
+            pending_bytes: 0,
         }))
     }
 
@@ -205,6 +207,7 @@ struct ConsolePublication {
     dataset: String,
     upload_id: String,
     pending: Vec<DatasetVersionUploadItemRequest>,
+    pending_bytes: usize,
 }
 
 impl ConsolePublication {
@@ -212,6 +215,9 @@ impl ConsolePublication {
         if self.pending.is_empty() {
             return Ok(());
         }
+
+        let items = std::mem::take(&mut self.pending);
+        self.pending_bytes = 0;
 
         self.ops
             .scope
@@ -222,28 +228,35 @@ impl ConsolePublication {
                 &self.ops.scope.project,
                 &self.dataset,
                 &self.upload_id,
-                AddDatasetVersionUploadItemsRequest {
-                    items: self.pending.clone(),
-                },
+                AddDatasetVersionUploadItemsRequest { items },
             )
             .map_err(console_failure)?;
-        self.pending.clear();
         Ok(())
     }
 }
 
 impl Publication for ConsolePublication {
     fn add_item(&mut self, item: NewItem) -> Result<(), DatasetsError> {
-        if self.pending.len() >= BATCH {
-            self.flush()?;
-        }
-
-        self.pending.push(DatasetVersionUploadItemRequest {
+        let item = DatasetVersionUploadItemRequest {
             source_item_id: item.source_item_id,
             example_payload: item.example,
             annotation: item.annotation,
             metadata: item.metadata,
-        });
+        };
+        let size = encoded_size(&item);
+
+        if size > BATCH_BYTES {
+            return Err(DatasetsError::other(format!(
+                "one item encodes to {size} bytes, more than the {BATCH_BYTES} an upload holds"
+            )));
+        }
+
+        if !self.pending.is_empty() && self.pending_bytes + size > BATCH_BYTES {
+            self.flush()?;
+        }
+
+        self.pending_bytes += size;
+        self.pending.push(item);
 
         Ok(())
     }
@@ -273,6 +286,7 @@ impl Publication for ConsolePublication {
 
     fn cancel(&mut self) -> Result<(), DatasetsError> {
         self.pending.clear();
+        self.pending_bytes = 0;
         self.ops
             .scope
             .console
@@ -284,6 +298,48 @@ impl Publication for ConsolePublication {
                 &self.upload_id,
             )
             .map_err(console_failure)
+    }
+}
+
+/// The bytes `item` adds to a request body.
+///
+/// The payload travels base64-encoded, so it is a third larger on the wire than in memory.
+fn encoded_size(item: &DatasetVersionUploadItemRequest) -> usize {
+    /// Field names, quotes, braces and commas around one item.
+    const ENVELOPE: usize = 96;
+
+    // Everything but the payload is measured serialized rather than guessed at: JSON escaping
+    // makes a quote two bytes and a control character six, so the wire form of a string can be
+    // far longer than the Rust one.
+    ENVELOPE
+        + item.example_payload.len().div_ceil(3) * 4
+        + json_len(&item.source_item_id)
+        + json_len(&item.annotation)
+        + json_len(&item.metadata)
+}
+
+/// The bytes `value` serializes to, without keeping them.
+///
+/// A value that cannot be serialized is reported as too large for any batch, so it is refused
+/// rather than sent and rejected.
+fn json_len(value: &impl serde::Serialize) -> usize {
+    struct Counter(usize);
+
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter(0);
+    match serde_json::to_writer(&mut counter, value) {
+        Ok(()) => counter.0,
+        Err(_) => usize::MAX,
     }
 }
 
@@ -428,6 +484,128 @@ mod tests {
     #[test]
     fn a_repeated_index_is_asked_for_once() {
         assert_eq!(contiguous_runs(&[3, 3, 3]), vec![3..4]);
+    }
+
+    #[test]
+    fn the_estimate_never_undercounts_what_is_actually_sent() {
+        let payloads = [0usize, 1, 2, 3, 4, 5, 1_000, 1_001];
+        let ids = [
+            None,
+            Some(String::new()),
+            Some("plain".to_string()),
+            // JSON escapes make the wire form longer than the Rust string.
+            Some("\"quoted\"".to_string()),
+            Some("back\\slash".to_string()),
+            Some("tab\there\nand\nnewlines".to_string()),
+            Some("\u{1}\u{2}\u{3} control".to_string()),
+            Some("emoji \u{1F600} and accents \u{e9}\u{e8}".to_string()),
+            Some("\"".repeat(64)),
+        ];
+        let extras = [
+            None,
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!({"label": "cat", "nested": [1, 2, 3]})),
+            Some(serde_json::json!({"quote": "say \"hi\"", "uni": "\u{e9}"})),
+        ];
+
+        for payload in payloads {
+            for id in &ids {
+                for extra in &extras {
+                    let item = DatasetVersionUploadItemRequest {
+                        source_item_id: id.clone(),
+                        example_payload: vec![7; payload],
+                        annotation: extra.clone(),
+                        metadata: extra.clone(),
+                    };
+
+                    let actual = serde_json::to_vec(&item).expect("an item serializes").len();
+                    let estimate = encoded_size(&item);
+
+                    assert!(
+                        estimate >= actual,
+                        "undercounted by {}: payload={payload} id={id:?} extra={extra:?}",
+                        actual - estimate
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_budget_bounds_the_whole_request_body_not_just_the_items() {
+        let items: Vec<_> = (0..500)
+            .map(|n| DatasetVersionUploadItemRequest {
+                source_item_id: Some(format!("item-\"{n}\"")),
+                example_payload: vec![n as u8; n * 7 % 1_000],
+                annotation: Some(serde_json::json!({ "label": n })),
+                metadata: None,
+            })
+            .collect();
+
+        let budgeted: usize = items.iter().map(encoded_size).sum();
+        let request = AddDatasetVersionUploadItemsRequest {
+            items: items.clone(),
+        };
+        let actual = serde_json::to_vec(&request)
+            .expect("a batch serializes")
+            .len();
+
+        assert!(
+            budgeted >= actual,
+            "a batch of {} items budgeted {budgeted} but sends {actual}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn a_payload_is_measured_base64_encoded_not_raw() {
+        let item = DatasetVersionUploadItemRequest {
+            source_item_id: None,
+            example_payload: vec![0; 3_000],
+            annotation: None,
+            metadata: None,
+        };
+
+        // 3 raw bytes become 4 on the wire, so a batch budgeted on raw sizes overshoots.
+        assert_eq!(encoded_size(&item) - 96 - 4 - 4 - 4, 4_000);
+    }
+
+    #[test]
+    fn a_payload_that_alone_exceeds_the_budget_is_refused() {
+        let raw = BATCH_BYTES / 4 * 3 + 1;
+        let item = DatasetVersionUploadItemRequest {
+            source_item_id: None,
+            example_payload: vec![0; raw],
+            annotation: None,
+            metadata: None,
+        };
+
+        assert!(encoded_size(&item) > BATCH_BYTES);
+    }
+
+    #[test]
+    fn a_megabyte_item_fills_the_budget_long_before_a_large_count_does() {
+        let item = DatasetVersionUploadItemRequest {
+            source_item_id: None,
+            example_payload: vec![0; 1024 * 1024],
+            annotation: None,
+            metadata: None,
+        };
+
+        assert!(BATCH_BYTES / encoded_size(&item) < 64);
+    }
+
+    #[test]
+    fn small_items_are_not_held_back_by_a_count() {
+        let item = DatasetVersionUploadItemRequest {
+            source_item_id: None,
+            example_payload: vec![0; 1024],
+            annotation: None,
+            metadata: None,
+        };
+
+        // Bytes alone decide, so a batch holds far more than the 256 it used to.
+        assert!(BATCH_BYTES / encoded_size(&item) > 10_000);
     }
 
     #[test]
