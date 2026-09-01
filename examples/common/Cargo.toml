@@ -4,7 +4,11 @@ edition.workspace = true
 version.workspace = true
 publish = false
 
+[features]
+default = []
+station = ["tracel/station"]
+
 [dependencies]
-tracel = { workspace = true, features = ["station"] }
+tracel = { workspace = true }
 anyhow.workspace = true
 url.workspace = true

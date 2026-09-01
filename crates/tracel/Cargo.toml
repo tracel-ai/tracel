@@ -14,7 +14,7 @@ rust-version.workspace = true
 [features]
 default = []
 server = ["tracel-app/server"]
-station = ["tracel-core/station"]
+station = ["dep:tracel-station", "tracel-core/station"]
 runner = ["dep:tracel-runner"]
 burn = ["tracel-experiment/burn", "tracel-datasets/burn"]
 
@@ -26,6 +26,6 @@ tracel-experiment.workspace = true
 tracel-inference.workspace = true
 tracel-artifact.workspace = true
 tracel-console.workspace = true
-tracel-station.workspace = true
+tracel-station = { workspace = true, optional = true }
 tracel-datasets.workspace = true
 tracel-models.workspace = true

@@ -20,7 +20,6 @@
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
 //! - [`app`]: job registration, plus CLI and HTTP server front-ends to run those jobs.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
-//! - [`station`]: a Tracel Station, and the capabilities it serves.
 //! - [`datasets`]: the dataset domain and the capability over it.
 //! - [`models`]: the model domain and the capability over it.
 //! - [`artifact`]: bundle and artifact utilities.
@@ -67,7 +66,9 @@ pub mod experiment {
 #[doc(inline)]
 pub use tracel_console as console;
 
-/// A Tracel Station: experiments, models, and datasets served by one Station URL.
+/// A Tracel Station: experiments, models, and datasets served by one Station URL (requires the
+/// `station` feature).
+#[cfg(feature = "station")]
 #[doc(inline)]
 pub use tracel_station as station;
 
