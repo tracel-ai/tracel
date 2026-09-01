@@ -16,8 +16,10 @@
 //!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
-//! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
-//! - [`integration::training::SupervisedTrainingExperimentExt`] for one-line Burn builder wiring.
+//! - `integration::training::ExperimentTrainingExt` for Burn `train` adapters (behind the `burn`
+//!   feature).
+//! - `integration::training::SupervisedTrainingExperimentExt` for one-line Burn builder wiring
+//!   (behind the `burn` feature).
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
 //! Backends are connected through the [`ExperimentProvider`] port. [`ExperimentModule`] and

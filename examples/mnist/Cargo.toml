@@ -21,7 +21,7 @@ burn = { workspace = true, features = [
     "optim",
 ] }
 common = { path = "../common" }
-tracel = { workspace = true }
+tracel = { workspace = true, features = ["burn"] }
 anyhow.workspace = true
 clap.workspace = true
 ctrlc.workspace = true
