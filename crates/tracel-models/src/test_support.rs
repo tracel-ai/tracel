@@ -9,7 +9,7 @@ use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
-    VersionFileSource, VersionId,
+    VersionFileSource, VersionId, VersionSpec,
 };
 
 #[derive(Clone)]
@@ -195,11 +195,11 @@ impl ModelOps for FakeOps {
         Ok(Vec::new())
     }
 
-    fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError> {
+    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
         self.get_model(model)?;
         Err(ModelsError::VersionNotFound {
             model: model.to_string(),
-            id: id.clone(),
+            version: spec,
         })
     }
 
@@ -212,7 +212,7 @@ impl ModelOps for FakeOps {
         if id.as_str() != "version-id" {
             return Err(ModelsError::VersionNotFound {
                 model: model.to_string(),
-                id: id.clone(),
+                version: VersionSpec::Exact(id.clone()),
             });
         }
 
@@ -223,7 +223,7 @@ impl ModelOps for FakeOps {
 fn version(id: VersionId) -> ModelVersion {
     ModelVersion {
         id,
-        version: 1,
+        version: Some(1),
         size_bytes: 0,
         checksum: String::new(),
         published_by: Some("publisher".to_string()),

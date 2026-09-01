@@ -3,7 +3,7 @@ use std::io::Read;
 use tracel_artifact::TransferObserver;
 use tracel_artifact::upload::MultipartUploadSource;
 
-use crate::{Model, ModelVersion, ModelsError, VersionFile, VersionId};
+use crate::{Model, ModelVersion, ModelsError, VersionFile, VersionId, VersionSpec};
 
 /// A readable stream for one model-version file.
 pub type VersionFileReader = Box<dyn Read + Send>;
@@ -41,8 +41,8 @@ pub trait ModelOps: Send + Sync + 'static {
     /// Lists published versions of a model.
     fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError>;
 
-    /// Fetches one version using its opaque identity.
-    fn get_version(&self, model: &str, id: &VersionId) -> Result<ModelVersion, ModelsError>;
+    /// Resolves a version selector against a model.
+    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError>;
 
     /// Fetches the backend-owned file sources for one version.
     fn fetch_version_files(

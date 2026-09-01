@@ -4840,7 +4840,7 @@ dependencies = [
  "combine",
  "downcast-rs",
  "dyn-clone",
- "hashbrown 0.17.1",
+ "hashbrown 0.13.2",
  "hi_sparse_bitset",
  "indexmap 2.14.0",
  "inventory",
@@ -6732,6 +6732,7 @@ dependencies = [
  "tracel-client",
  "tracel-console",
  "tracel-core",
+ "tracel-datasets",
  "tracel-experiment",
  "tracel-inference",
  "tracel-models",
@@ -6770,8 +6771,9 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.15.1"
-source = "git+https://github.com/tracel-ai/tracel-client?branch=feat%2Fplatform-client#af3f3ddbf0817a1e9caf3ca003271cf3aa306a4e"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "379ac162bfcde1baff7efe2c3f810e5a073c6c8fee459ad617a0c478c31a3ce2"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",
@@ -6793,9 +6795,11 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "serde_with",
  "thiserror 2.0.20",
  "tracel-artifact",
  "tracel-client",
+ "tracel-datasets",
  "tracel-models",
  "url",
 ]
@@ -6821,6 +6825,16 @@ dependencies = [
  "tracel-inference",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "tracel-datasets"
+version = "0.10.0"
+dependencies = [
+ "burn",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

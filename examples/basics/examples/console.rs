@@ -23,9 +23,12 @@ fn main() -> anyhow::Result<()> {
         println!("\n{} — {latest}", model.name);
 
         for version in models.list_versions(&model.name)? {
+            let number = version
+                .version
+                .map(|version| format!("v{version}"))
+                .unwrap_or_else(|| version.id.to_string());
             println!(
-                "  v{:<4} {:>12} bytes  {}",
-                version.version,
+                "  {number:<5} {:>12} bytes  {}",
                 version.size_bytes,
                 version
                     .published_by

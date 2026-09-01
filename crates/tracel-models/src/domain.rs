@@ -71,8 +71,8 @@ pub struct VersionManifest {
 pub struct ModelVersion {
     /// Opaque version identity.
     pub id: VersionId,
-    /// Version number intended only for display and ordering.
-    pub version: u32,
+    /// Version number for display and ordering, when the backend numbers versions.
+    pub version: Option<u32>,
     /// Aggregate version size in bytes.
     pub size_bytes: u64,
     /// Aggregate version checksum.
@@ -85,4 +85,28 @@ pub struct ModelVersion {
     pub manifest: VersionManifest,
     /// Opaque application metadata, with absent metadata represented by JSON `null`.
     pub metadata: serde_json::Value,
+}
+
+/// Selects which version of a model to use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VersionSpec {
+    /// This exact version.
+    Exact(VersionId),
+    /// Whichever version is newest when the call is made.
+    Latest,
+}
+
+impl fmt::Display for VersionSpec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Exact(id) => write!(formatter, "version {id}"),
+            Self::Latest => formatter.write_str("latest version"),
+        }
+    }
+}
+
+impl From<VersionId> for VersionSpec {
+    fn from(id: VersionId) -> Self {
+        Self::Exact(id)
+    }
 }

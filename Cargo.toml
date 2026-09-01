@@ -70,10 +70,7 @@ tracing-subscriber = "0.3.23"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 serde_with = { version = "3.20.0", features = ["base64", "macros"] }
 
-## External Crate
-# The console endpoints the models capability reads only exist on the client's
-# platform branch; this returns to a published version once they ship.
-tracel-client = { git = "https://github.com/tracel-ai/tracel-client", branch = "feat/platform-client", default-features = false, features = [
+tracel-client = { version = "0.17.0", default-features = false, features = [
     "console",
     "station",
 ] }
@@ -82,6 +79,7 @@ tracel-client = { git = "https://github.com/tracel-ai/tracel-client", branch = "
 tracel-runner = { path = "crates/tracel-runner", version = "0.10.0" }
 tracel-console = { path = "crates/tracel-console", version = "0.10.0" }
 tracel-models = { path = "crates/tracel-models", version = "0.10.0" }
+tracel-datasets = { path = "crates/tracel-datasets", version = "0.10.0" }
 tracel-app = { path = "crates/tracel-app", version = "0.10.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.10.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.10.0" }
