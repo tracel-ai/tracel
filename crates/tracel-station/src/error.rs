@@ -32,13 +32,9 @@ impl StationError {
 
 impl From<ClientError> for StationError {
     fn from(error: ClientError) -> Self {
-        if client_error_is_not_found(&error) {
+        if error.is_not_found() {
             return Self::NotFound;
         }
         Self::other(error)
     }
-}
-
-pub fn client_error_is_not_found(error: &ClientError) -> bool {
-    error.is_not_found()
 }

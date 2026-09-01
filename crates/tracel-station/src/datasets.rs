@@ -12,7 +12,6 @@ use tracel_datasets::{
 };
 
 use crate::StationError;
-use crate::error::client_error_is_not_found;
 use crate::station::StationInner;
 use crate::wire::station_timestamp;
 
@@ -60,11 +59,11 @@ impl DatasetOps for StationDatasetOps {
             .versions(dataset, QueryDatasetVersionsRequest::default())
             .map_err(|error| map_dataset_error(error, dataset))?;
 
-        Ok(response
+        response
             .items
             .into_iter()
             .map(|version| version_from_wire(dataset, version))
-            .collect())
+            .collect()
     }
 
     fn get_version(
@@ -81,9 +80,8 @@ impl DatasetOps for StationDatasetOps {
         };
 
         response
-            .map(|version| version_from_wire(dataset, version))
             .map_err(|error| {
-                if client_error_is_not_found(&error) {
+                if error.is_not_found() {
                     DatasetsError::VersionNotFound {
                         dataset: dataset.to_string(),
                         version: spec.clone(),
@@ -92,6 +90,7 @@ impl DatasetOps for StationDatasetOps {
                     station_failure(error)
                 }
             })
+            .and_then(|version| version_from_wire(dataset, version))
     }
 
     fn create_dataset(
@@ -148,26 +147,28 @@ impl DatasetOps for StationDatasetOps {
                     break;
                 }
 
+                let asked_from = next;
                 for item in page.items {
                     next = item.entry_idx + 1;
                     if item.entry_idx < run.end {
                         read.insert(item.entry_idx, item_from_wire(&item.payload)?);
                     }
                 }
+
+                // A page that leaves the cursor where it was would be asked for forever.
+                if next <= asked_from {
+                    break;
+                }
             }
         }
 
         let found = read.len() as u64;
-        indexes
-            .iter()
-            .map(|index| read.remove(index))
-            .collect::<Option<Vec<_>>>()
-            .ok_or(DatasetsError::Incomplete {
-                dataset: dataset.to_string(),
-                version: id.clone(),
-                expected: indexes.len() as u64,
-                actual: found,
-            })
+        ordered_items(indexes, &read).ok_or(DatasetsError::Incomplete {
+            dataset: dataset.to_string(),
+            version: id.clone(),
+            expected: indexes.len() as u64,
+            actual: found,
+        })
     }
 }
 
@@ -198,6 +199,13 @@ fn contiguous_runs(indexes: &[u64]) -> Vec<Range<u64>> {
     runs
 }
 
+fn ordered_items(indexes: &[u64], items: &HashMap<u64, Item>) -> Option<Vec<Item>> {
+    indexes
+        .iter()
+        .map(|index| items.get(index).cloned())
+        .collect()
+}
+
 fn item_from_wire(payload: &[u8]) -> Result<Item, DatasetsError> {
     let wire: WireItem = serde_json::from_slice(payload)
         .map_err(|error| DatasetsError::other(StationError::InvalidResponse(error.to_string())))?;
@@ -218,15 +226,25 @@ fn dataset_from_wire(response: DatasetResponse) -> Dataset {
     }
 }
 
-fn version_from_wire(dataset: &str, response: DatasetVersionResponse) -> DatasetVersion {
-    DatasetVersion {
+fn version_from_wire(
+    dataset: &str,
+    response: DatasetVersionResponse,
+) -> Result<DatasetVersion, DatasetsError> {
+    let version = u32::try_from(response.version).map_err(|_| {
+        DatasetsError::other(StationError::InvalidResponse(format!(
+            "dataset '{dataset}' reported version {}",
+            response.version
+        )))
+    })?;
+
+    Ok(DatasetVersion {
         dataset: dataset.to_string(),
-        id: VersionId::new(response.version.max(0).to_string()),
-        version: Some(response.version.max(0) as u32),
+        id: VersionId::new(version.to_string()),
+        version: Some(version),
         item_count: response.item_count,
         metadata: response.metadata,
         created_at: station_timestamp(&response.created_at),
-    }
+    })
 }
 
 fn station_failure(error: tracel_client::ClientError) -> DatasetsError {
@@ -234,7 +252,7 @@ fn station_failure(error: tracel_client::ClientError) -> DatasetsError {
 }
 
 fn map_dataset_error(error: tracel_client::ClientError, dataset: &str) -> DatasetsError {
-    if client_error_is_not_found(&error) {
+    if error.is_not_found() {
         return DatasetsError::DatasetNotFound {
             name: dataset.to_string(),
         };
@@ -247,7 +265,7 @@ fn map_version_error(
     dataset: &str,
     id: &VersionId,
 ) -> DatasetsError {
-    if client_error_is_not_found(&error) {
+    if error.is_not_found() {
         return DatasetsError::VersionNotFound {
             dataset: dataset.to_string(),
             version: VersionSpec::Exact(id.clone()),
@@ -258,6 +276,8 @@ fn map_version_error(
 
 #[cfg(test)]
 mod tests {
+    use tracel_client::station::dataset::response::SourceKindResponse;
+
     use super::*;
 
     #[test]
@@ -273,5 +293,37 @@ mod tests {
     #[test]
     fn a_repeated_index_is_asked_for_once() {
         assert_eq!(contiguous_runs(&[3, 3, 3]), vec![3..4]);
+    }
+
+    #[test]
+    fn a_repeated_index_is_returned_each_time() {
+        let item = Item {
+            example: b"three".to_vec(),
+            annotation: None,
+            source_item_id: None,
+            metadata: None,
+        };
+        let items = HashMap::from([(3, item.clone())]);
+
+        assert_eq!(
+            ordered_items(&[3, 3], &items),
+            Some(vec![item.clone(), item])
+        );
+    }
+
+    #[test]
+    fn a_negative_version_is_a_broken_response() {
+        let response = DatasetVersionResponse {
+            id: "1".to_string(),
+            dataset_id: "1".to_string(),
+            version: -1,
+            metadata: None,
+            source_kind: SourceKindResponse::AnnotationSet,
+            created_at: "2026-09-01T00:00:00Z".to_string(),
+            item_count: 0,
+        };
+
+        let error = version_from_wire("mnist", response).expect_err("a version cannot be negative");
+        assert!(!error.is_not_found());
     }
 }

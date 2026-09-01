@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::console::{Client, Env, TracelCredentials};
+use tracel_client::console::{Client, TracelCredentials};
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
@@ -36,8 +36,8 @@ pub struct ProjectScope {
 
 impl Console {
     /// Connects to the console and verifies the credentials.
-    pub fn connect(env: Env, credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
-        let client = Client::connect(env, credentials)?;
+    pub fn connect(credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
+        let client = Client::connect(crate::env::from_environment(), credentials)?;
 
         Ok(Self {
             inner: Arc::new(ConsoleInner {

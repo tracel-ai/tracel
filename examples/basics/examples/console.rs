@@ -1,9 +1,9 @@
 //! TRACEL_NAMESPACE=<owner> TRACEL_PROJECT=<project> cargo run -p basics --example console
 
-use tracel::console::{Console, Env, TracelCredentials};
+use tracel::console::{Console, TracelCredentials};
 
 fn main() -> anyhow::Result<()> {
-    let console = Console::connect(env()?, &credentials()?)?;
+    let console = Console::connect(&credentials()?)?;
     let (namespace, project) = project()?;
 
     match console.me()? {
@@ -39,19 +39,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn env() -> anyhow::Result<Env> {
-    match std::env::var("TRACEL_ENV").as_deref() {
-        Err(_) | Ok("development") => Ok(Env::Development),
-        Ok("production") => Ok(Env::Production),
-        Ok(other) => match other.strip_prefix("staging:").map(str::parse::<u8>) {
-            Some(Ok(version)) => Ok(Env::Staging(version)),
-            _ => anyhow::bail!(
-                "unknown TRACEL_ENV={other:?}; expected `production`, `development`, or `staging:N`"
-            ),
-        },
-    }
 }
 
 fn credentials() -> anyhow::Result<TracelCredentials> {

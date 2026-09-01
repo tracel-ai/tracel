@@ -63,15 +63,17 @@ impl ModelOps for StationModelOps {
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
         let id = match &spec {
             VersionSpec::Exact(id) => id.clone(),
-            VersionSpec::Latest => self
-                .list_versions(model)?
-                .into_iter()
-                .max_by_key(|version| version.version)
-                .map(|version| version.id)
-                .ok_or_else(|| ModelsError::VersionNotFound {
-                    model: model.to_string(),
-                    version: spec.clone(),
-                })?,
+            // The Station has no latest-version route, so the listing answers it.
+            VersionSpec::Latest => {
+                return self
+                    .list_versions(model)?
+                    .into_iter()
+                    .max_by_key(|version| version.version)
+                    .ok_or_else(|| ModelsError::VersionNotFound {
+                        model: model.to_string(),
+                        version: spec,
+                    });
+            }
         };
 
         let route = self.route_version(model, &id)?;
@@ -198,6 +200,8 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
         checksum: response.checksum,
         published_by: None,
         created_at: station_timestamp(&response.created_at),
+        // The Station's version response carries no metadata.
+        metadata: serde_json::Value::Null,
         manifest: VersionManifest {
             files: response
                 .manifest
@@ -210,7 +214,6 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
                 })
                 .collect(),
         },
-        metadata: serde_json::Value::Null,
     }
 }
 
@@ -219,7 +222,7 @@ fn station_failure(error: tracel_client::ClientError) -> ModelsError {
 }
 
 fn map_model_error(error: tracel_client::ClientError, name: &str) -> ModelsError {
-    if crate::error::client_error_is_not_found(&error) {
+    if error.is_not_found() {
         return ModelsError::ModelNotFound {
             name: name.to_string(),
         };
@@ -232,7 +235,7 @@ fn map_version_error(
     model: &str,
     id: &VersionId,
 ) -> ModelsError {
-    if crate::error::client_error_is_not_found(&error) {
+    if error.is_not_found() {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
             version: VersionSpec::Exact(id.clone()),

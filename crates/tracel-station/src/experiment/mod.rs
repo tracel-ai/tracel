@@ -1,6 +1,9 @@
 mod artifacts;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use serde_json::Value;
 use tracel_artifact::bundle::FsBundle;
 use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
 use tracel_artifact::upload::{
@@ -8,27 +11,19 @@ use tracel_artifact::upload::{
 };
 use tracel_client::station::experiment::{
     ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
-    ListArtifactsQuery,
+    CreateExperimentRequest, ListArtifactsQuery,
 };
 use tracel_client::websocket::WebSocketError;
 use tracel_client::{ClientError, station::StationClient};
+use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
+use tracel_experiment::{
+    ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
+    ExperimentRunControl,
+};
+use tracel_experiment_remote::RemoteExperimentSession;
 
 use self::artifacts::{StationArtifactReader, StationArtifactUploader};
-
-use std::collections::HashMap;
-
-use serde_json::Value;
-use tracel_client::station::experiment::CreateExperimentRequest;
-use tracel_experiment::ArtifactKind;
-use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
-
-use tracel_experiment::ExperimentProvider;
-
-use std::sync::Arc;
-
 use crate::station::StationInner;
-use tracel_experiment_remote::RemoteExperimentSession;
 
 #[derive(Debug, thiserror::Error)]
 enum RunError {
@@ -76,21 +71,21 @@ impl ExperimentArtifactClient {
         let name = name.into();
 
         let mut specs = Vec::with_capacity(bundle.files().len());
-        for f in bundle.files() {
-            let size_bytes = f.size_bytes.ok_or_else(|| {
-                ArtifactError::Internal(format!("Missing file size for {}", f.rel_path))
+        for file in bundle.files() {
+            let size_bytes = file.size_bytes.ok_or_else(|| {
+                ArtifactError::Internal(format!("Missing file size for {}", file.rel_path))
             })?;
-            let checksum = f.checksum.clone().ok_or_else(|| {
-                ArtifactError::Internal(format!("Missing checksum for {}", f.rel_path))
+            let checksum = file.checksum.clone().ok_or_else(|| {
+                ArtifactError::Internal(format!("Missing checksum for {}", file.rel_path))
             })?;
             specs.push(ArtifactFileSpecRequest {
-                rel_path: f.rel_path.clone(),
+                rel_path: file.rel_path.clone(),
                 size_bytes,
                 checksum,
             });
         }
 
-        let res = client.create_artifact(
+        let created = client.create_artifact(
             self.exp_path.experiment_num(),
             CreateArtifactRequest {
                 name: name.clone(),
@@ -100,17 +95,17 @@ impl ExperimentArtifactClient {
         )?;
 
         let mut multipart_map = BTreeMap::new();
-        for f in &res.files {
-            multipart_map.insert(f.rel_path.clone(), &f.urls);
+        for file in &created.files {
+            multipart_map.insert(file.rel_path.clone(), &file.urls);
         }
 
         let mut uploads = Vec::with_capacity(bundle.files().len());
 
-        for f in bundle.files() {
-            let multipart_info = multipart_map.get(&f.rel_path).ok_or_else(|| {
+        for file in bundle.files() {
+            let multipart_info = multipart_map.get(&file.rel_path).ok_or_else(|| {
                 ArtifactError::Internal(format!(
                     "Missing multipart upload info for file {}",
-                    f.rel_path
+                    file.rel_path
                 ))
             })?;
 
@@ -125,7 +120,7 @@ impl ExperimentArtifactClient {
                 .collect::<Vec<_>>();
 
             uploads.push(MultipartUploadFile {
-                rel_path: f.rel_path.clone(),
+                rel_path: file.rel_path.clone(),
                 parts,
             });
         }
@@ -133,24 +128,24 @@ impl ExperimentArtifactClient {
 
         client.complete_artifact_upload(
             self.exp_path.experiment_num(),
-            &res.id,
+            &created.id,
             CompleteUploadRequest { file_names: None },
         )?;
 
-        Ok(res.id)
+        Ok(created.id)
     }
 
     /// Download an artifact as a filesystem-backed bundle.
     pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
-        let resp = self
+        let presigned = self
             .client
             .experiments()
             .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string())?;
 
-        let mut files = Vec::with_capacity(resp.files.len());
-        for file in resp.files {
+        let mut files = Vec::with_capacity(presigned.files.len());
+        for file in presigned.files {
             files.push(ArtifactDownloadFile {
                 rel_path: file.rel_path,
                 url: file.url,
@@ -159,8 +154,9 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let mut bundle = FsBundle::temp()
-            .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
+        let mut bundle = FsBundle::temp().map_err(|error| {
+            ArtifactError::Internal(format!("Failed to create temp bundle: {error}"))
+        })?;
 
         download_artifacts_to_sink(&mut bundle, &files)?;
 
@@ -217,10 +213,10 @@ impl ExperimentProvider for StationExperimentProvider {
         name: String,
         attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        create_run(self.station.client.clone(), name, attributes).map_err(|e| ExperimentError {
+        create_run(self.station.client.clone(), name, attributes).map_err(|error| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
-            source: Some(Box::new(e)),
+            source: Some(Box::new(error)),
         })
     }
 }
@@ -249,7 +245,7 @@ fn create_run(
     let session = RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
 
     let reader = StationArtifactReader::new(client);
-    let id = ExperimentId::from(format!("{}", experiment_num));
+    let id = ExperimentId::from(experiment_num.to_string());
 
     Ok(ExperimentRun::new_with_control(
         id, session, reader, control,

@@ -16,7 +16,7 @@ default = []
 server = ["tracel-app/server"]
 station = ["tracel-core/station"]
 runner = ["dep:tracel-runner"]
-burn = ["tracel-experiment/burn"]
+burn = ["tracel-experiment/burn", "tracel-datasets/burn"]
 
 [dependencies]
 tracel-core.workspace = true
@@ -28,4 +28,3 @@ tracel-artifact.workspace = true
 tracel-console.workspace = true
 tracel-datasets.workspace = true
 tracel-models.workspace = true
-tracel-client.workspace = true

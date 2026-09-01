@@ -24,15 +24,20 @@ struct ActiveSession {
     socket: ExperimentSocket,
 }
 
+/// An artifact that could not be handed to the backend.
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to upload artifact: {message}")]
 pub struct ArtifactUploadError {
+    /// What went wrong.
     pub message: String,
+    /// The backend's own error, when it reported one.
     #[source]
     pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
+/// Sends a run's artifacts wherever the backend keeps them.
 pub trait ArtifactUploader {
+    /// Uploads one bundle under `name`.
     fn upload(
         &self,
         name: &str,
@@ -41,14 +46,17 @@ pub trait ArtifactUploader {
     ) -> Result<(), ArtifactUploadError>;
 }
 
+/// An [`ArtifactUploader`] a session can own.
 pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 
+/// An [`ExperimentSession`] that speaks the Tracel remote experiment protocol over a websocket.
 pub struct RemoteExperimentSession {
     artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
 }
 
 impl RemoteExperimentSession {
+    /// Opens a session over `websocket`, handing artifacts to `artifact_uploader`.
     pub fn new(
         artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
         websocket: WebSocketClient,

@@ -24,16 +24,15 @@ impl Connection {
     pub(crate) fn into_backend(self) -> Result<Arc<dyn Backend>, ContextError> {
         match self {
             Connection::Cloud => {
-                let env = crate::cloud::discover_env()?;
-                let credentials = crate::cloud::discover_credentials(&env)?;
+                let credentials = crate::cloud::discover_credentials()?;
                 let (namespace, project) = crate::cloud::discover_namespace_project()?;
 
-                let console = Console::connect(env, &credentials)?;
+                let console = Console::connect(&credentials)?;
                 let project = console.project(namespace, project);
 
                 Ok(Arc::new(project))
             }
-            Connection::Offline(path) => Ok(Arc::new(LocalBackend::create_context(path))),
+            Connection::Offline(path) => Ok(Arc::new(LocalBackend::new(path))),
             #[cfg(feature = "station")]
             Connection::Station(url) => Ok(Arc::new(Station::connect(url))),
         }

@@ -1,7 +1,8 @@
 //! Discovering how to reach the console: environment, credentials, and which project.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use directories::{BaseDirs, ProjectDirs};
 use serde::Deserialize;
 use tracel_client::{
     ClientError,
@@ -17,16 +18,10 @@ const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 pub enum CloudError {
     #[error("No API key found: set {TRACEL_API_KEY} or run `tracel login`")]
     NoCredentials,
-    #[error("API key is invalid or has expired: run `tracel login` to log in again")]
-    InvalidCredentials,
     #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
     #[error("No project found: set {TRACEL_PROJECT} or add project to tracel.toml")]
     NoProject,
-    #[error("Invalid environment variable {env_var}: {message}")]
-    InvalidEnv { env_var: String, message: String },
-    #[error("could not determine a cache directory for downloaded models")]
-    NoCacheDir,
     #[error(transparent)]
     Client(#[from] ClientError),
 }
@@ -44,14 +39,16 @@ struct TracelTomlConfig {
     project: Option<String>,
 }
 
-pub(crate) fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
+pub fn discover_credentials() -> Result<TracelCredentials, CloudError> {
     if let Ok(creds) = TracelCredentials::from_env() {
         return Ok(creds);
     }
 
-    let config_dir = crate::resolve_config_dir().ok_or(CloudError::NoCredentials)?;
+    let env = discover_env();
 
-    let filename = match env {
+    let config_dir = resolve_config_dir().ok_or(CloudError::NoCredentials)?;
+
+    let filename = match &env {
         Env::Production => "credentials.json".to_string(),
         Env::Staging(v) => format!("credentials-staging{v}.json"),
         Env::Development => "credentials-dev.json".to_string(),
@@ -68,7 +65,7 @@ pub(crate) fn discover_credentials(env: &Env) -> Result<TracelCredentials, Cloud
     Err(CloudError::NoCredentials)
 }
 
-pub(crate) fn discover_namespace_project() -> Result<(String, String), CloudError> {
+pub fn discover_namespace_project() -> Result<(String, String), CloudError> {
     let namespace_env = std::env::var(TRACEL_NAMESPACE).ok();
     let project_env = std::env::var(TRACEL_PROJECT).ok();
 
@@ -89,25 +86,19 @@ pub(crate) fn discover_namespace_project() -> Result<(String, String), CloudErro
     Ok((namespace, project))
 }
 
-pub(crate) fn discover_env() -> Result<Env, CloudError> {
-    let invalid_env = || CloudError::InvalidEnv {
-        env_var: TRACEL_ENV.to_string(),
-        message: "expected value to be one of: 'Production', 'Development', or 'Staging(N)'"
-            .to_string(),
+fn discover_env() -> Env {
+    let Ok(value) = std::env::var(TRACEL_ENV) else {
+        return Env::Production;
     };
 
-    match std::env::var(TRACEL_ENV) {
-        Ok(val) => match val.as_str() {
-            "Production" => Ok(Env::Production),
-            "Development" => Ok(Env::Development),
-            other => other
-                .strip_prefix("Staging(")
-                .and_then(|rest| rest.strip_suffix(')'))
-                .and_then(|n| n.parse::<u8>().ok())
-                .map(Env::Staging)
-                .ok_or_else(invalid_env),
-        },
-        Err(_) => Ok(Env::Production),
+    match value.as_str() {
+        "Development" => Env::Development,
+        other => other
+            .strip_prefix("Staging(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(|number| number.parse().ok())
+            .map(Env::Staging)
+            .unwrap_or(Env::Production),
     }
 }
 
@@ -120,4 +111,10 @@ fn read_tracel_toml() -> TracelTomlConfig {
         return TracelTomlConfig::default();
     };
     toml::from_str(&contents).unwrap_or_default()
+}
+
+fn resolve_config_dir() -> Option<PathBuf> {
+    ProjectDirs::from("", "", "tracel")
+        .map(|dirs| dirs.config_dir().to_path_buf())
+        .or_else(|| BaseDirs::new().map(|dirs| dirs.config_dir().join("tracel")))
 }

@@ -1,4 +1,4 @@
-pub(crate) mod local;
+pub mod local;
 
 use std::sync::Arc;
 

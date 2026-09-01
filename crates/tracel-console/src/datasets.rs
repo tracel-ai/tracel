@@ -174,11 +174,17 @@ impl DatasetOps for ConsoleDatasetOps {
                     break;
                 }
 
+                let asked_from = next;
                 for item in page.items {
                     next = item.entry_idx + 1;
                     if item.entry_idx < run.end {
                         read.insert(item.entry_idx, item_from_wire(&item.payload)?);
                     }
+                }
+
+                // A page that leaves the cursor where it was would be asked for forever.
+                if next <= asked_from {
+                    break;
                 }
             }
         }
