@@ -28,7 +28,7 @@ const MAX_BATCH: usize = 512;
 
 /// Inference provider that ships session telemetry to the console.
 pub struct ConsoleInferenceProvider {
-    pub scope: Arc<ProjectScope>,
+    scope: Arc<ProjectScope>,
     groups: Mutex<HashMap<String, Arc<GroupTelemetryWorker>>>,
     request_counter: AtomicU64,
 }
