@@ -1,3 +1,5 @@
+mod artifacts;
+
 use std::collections::BTreeMap;
 use tracel_artifact::bundle::FsBundle;
 use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
@@ -11,9 +13,7 @@ use tracel_client::station::experiment::{
 use tracel_client::websocket::WebSocketError;
 use tracel_client::{ClientError, station::StationClient};
 
-mod artifacts;
-
-use artifacts::{StationArtifactReader, StationArtifactUploader};
+use self::artifacts::{StationArtifactReader, StationArtifactUploader};
 
 use std::collections::HashMap;
 
@@ -25,11 +25,13 @@ use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunC
 
 use tracel_experiment::ExperimentProvider;
 
-use crate::backend::station::StationBackend;
+use std::sync::Arc;
+
+use crate::station::StationInner;
 use tracel_experiment_remote::RemoteExperimentSession;
 
 #[derive(Debug, thiserror::Error)]
-enum StationError {
+enum RunError {
     #[error("Failed to create experiment on Station: check your Station URL and connectivity")]
     ExperimentCreation(#[from] ClientError),
     #[error("Failed to establish WebSocket connection to Station")]
@@ -205,13 +207,17 @@ pub enum ArtifactError {
     Internal(String),
 }
 
-impl ExperimentProvider for StationBackend {
+pub struct StationExperimentProvider {
+    pub station: Arc<StationInner>,
+}
+
+impl ExperimentProvider for StationExperimentProvider {
     fn create_experiment(
         &self,
         name: String,
         attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        create_run(self.client.clone(), name, attributes).map_err(|e| ExperimentError {
+        create_run(self.station.client.clone(), name, attributes).map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
             source: Some(Box::new(e)),
@@ -223,7 +229,7 @@ fn create_run(
     client: StationClient,
     name: String,
     attributes: HashMap<String, Value>,
-) -> Result<ExperimentRun, StationError> {
+) -> Result<ExperimentRun, RunError> {
     let experiments_client = client.experiments();
     let experiment = experiments_client.create(CreateExperimentRequest {
         name: Some(name),

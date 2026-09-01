@@ -1,9 +1,4 @@
-mod cache;
 #[cfg(feature = "station")]
-mod station;
-
-pub(crate) use cache::ModelCache;
-
 use std::sync::Arc;
 
 use tracel_artifact::bundle::{BundleDecode, FsBundle};

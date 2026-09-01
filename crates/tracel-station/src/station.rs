@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::station::StationClient;
 use tracel_datasets::Datasets;
+use tracel_experiment::ExperimentModule;
 use tracel_models::Models;
 use url::Url;
 
@@ -27,6 +28,13 @@ impl Station {
                 transfer_client: ReqwestTransferClient::new(),
             }),
         }
+    }
+
+    /// Returns experiment operations scoped to this Station without performing I/O.
+    pub fn experiments(&self) -> ExperimentModule {
+        ExperimentModule::new(Arc::new(crate::experiment::StationExperimentProvider {
+            station: Arc::clone(&self.inner),
+        }))
     }
 
     /// Returns dataset operations scoped to this Station without performing I/O.

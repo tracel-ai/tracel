@@ -9,12 +9,12 @@ use tracel_experiment::ExperimentModule;
 use tracel_inference::{InferenceModule, InferenceProvider};
 
 use crate::backend::local::LocalBackend;
-#[cfg(feature = "station")]
-use crate::backend::station::{StationBackend, StationError};
 use crate::cloud::CloudError;
 use crate::dataset::DatasetModule;
 use crate::inference::DefaultInferenceProvider;
 use crate::model_registry::ModelRegistryModule;
+#[cfg(feature = "station")]
+use tracel_station::Station;
 
 /// The capabilities a connection makes available.
 pub struct Capabilities {
@@ -61,12 +61,12 @@ impl Connection {
             }
             #[cfg(feature = "station")]
             Connection::Station(url) => {
-                let backend = Arc::new(StationBackend::create_context(url)?);
+                let station = Station::connect(url);
                 Ok(Capabilities {
-                    experiment: ExperimentModule::new(backend.clone()),
+                    experiment: station.experiments(),
                     inference: default_inference(),
-                    model_registry: Some(ModelRegistryModule::new(backend.clone())),
-                    dataset: Some(DatasetModule::new(backend)),
+                    model_registry: None,
+                    dataset: None,
                 })
             }
         }
@@ -85,7 +85,4 @@ pub enum ContextError {
     Cloud(#[from] CloudError),
     #[error(transparent)]
     Console(#[from] ConsoleError),
-    #[cfg(feature = "station")]
-    #[error(transparent)]
-    Station(#[from] StationError),
 }

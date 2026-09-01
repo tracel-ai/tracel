@@ -13,11 +13,12 @@ categories.workspace = true
 
 [features]
 default = []
-station = ["tracel-client/station"]
+station = ["dep:tracel-station", "tracel-client/station"]
 
 [dependencies]
 tracel-client.workspace = true
 tracel-console.workspace = true
+tracel-station = { workspace = true, optional = true }
 tracel-experiment.workspace = true
 tracel-experiment-remote.workspace = true
 tracel-inference.workspace = true

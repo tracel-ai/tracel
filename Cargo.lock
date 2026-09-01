@@ -6830,6 +6830,7 @@ dependencies = [
  "tracel-experiment",
  "tracel-experiment-remote",
  "tracel-inference",
+ "tracel-station",
  "tracing",
  "url",
 ]
@@ -6944,6 +6945,8 @@ dependencies = [
  "tracel-artifact",
  "tracel-client",
  "tracel-datasets",
+ "tracel-experiment",
+ "tracel-experiment-remote",
  "tracel-models",
  "url",
 ]

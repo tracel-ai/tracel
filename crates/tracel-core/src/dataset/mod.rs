@@ -21,7 +21,6 @@
 mod download;
 mod item;
 #[cfg(feature = "station")]
-mod station;
 mod stream;
 
 use std::error::Error;

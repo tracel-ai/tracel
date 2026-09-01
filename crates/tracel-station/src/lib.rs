@@ -7,6 +7,7 @@
 
 mod datasets;
 mod error;
+mod experiment;
 mod models;
 mod station;
 mod wire;
