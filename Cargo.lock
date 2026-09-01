@@ -6772,7 +6772,8 @@ dependencies = [
 [[package]]
 name = "tracel-client"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn-central-client?branch=main#b5063f3e4249049faa8f754be404c40b9be62039"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "379ac162bfcde1baff7efe2c3f810e5a073c6c8fee459ad617a0c478c31a3ce2"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",
