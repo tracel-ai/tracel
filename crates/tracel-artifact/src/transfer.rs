@@ -3,7 +3,7 @@ use std::time::Duration;
 
 const TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE: u64 = 10;
 
-const MINIMUN_TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
+const MINIMUM_TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -18,7 +18,7 @@ fn timeout_worth_allowing_a_transfer_of(size_bytes: Option<u64>) -> Duration {
     let allowed =
         Duration::from_secs(megabytes.saturating_mul(TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE));
 
-    allowed.max(MINIMUN_TRANSFER_TIMEOUT)
+    allowed.max(MINIMUM_TRANSFER_TIMEOUT)
 }
 
 fn transport_failure(error: &dyn std::error::Error) -> TransferError {
