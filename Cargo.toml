@@ -79,11 +79,13 @@ tracel-client = { version = "0.17.0", default-features = false, features = [
 tracel-runner = { path = "crates/tracel-runner", version = "0.10.0" }
 tracel-console = { path = "crates/tracel-console", version = "0.10.0" }
 tracel-models = { path = "crates/tracel-models", version = "0.10.0" }
+tracel-station = { path = "crates/tracel-station", version = "0.10.0" }
 tracel-datasets = { path = "crates/tracel-datasets", version = "0.10.0" }
 tracel-app = { path = "crates/tracel-app", version = "0.10.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.10.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.10.0" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.10.0" }
+tracel-experiment-remote = { path = "crates/tracel-experiment-remote", version = "0.10.0" }
 tracel-core = { path = "crates/tracel-core", version = "0.10.0" }
 tracel = { path = "crates/tracel", version = "0.10.0" }
 

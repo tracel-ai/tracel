@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
+use tracel_client::console::SessionToken;
 use tracel_client::console::auth::{DeviceAuthClient, DeviceFlowError, DevicePollOutcome};
-use tracel_client::console::{Env, SessionToken};
 
 use crate::ConsoleError;
 
@@ -26,8 +26,8 @@ pub struct DeviceLogin {
 
 impl DeviceLogin {
     /// Asks the console to start a sign-in.
-    pub fn start(env: Env, client_id: impl Into<String>) -> Result<Self, ConsoleError> {
-        let client = DeviceAuthClient::new(env, client_id);
+    pub fn start(client_id: impl Into<String>) -> Result<Self, ConsoleError> {
+        let client = DeviceAuthClient::new(crate::env::from_environment(), client_id);
         let started = client.start().map_err(login_failure)?;
 
         Ok(Self {

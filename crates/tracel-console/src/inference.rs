@@ -1,55 +1,42 @@
-//! Ships inference session telemetry to the backend inference-group endpoint. One long-lived
+//! Ships inference session telemetry to the console's inference-group endpoint. One long-lived
 //! worker per group batches events from all its requests and flushes them over the client.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
-    thread::JoinHandle,
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use chrono::SecondsFormat;
 use crossbeam::channel::{self, Receiver, RecvTimeoutError, Sender};
+use tracel_client::ClientError;
+use tracel_client::console::inference::request::{
+    IngestTelemetryRequest, LogIngestionEvent, LogLevel as WireLogLevel,
+    MetricData as WireMetricData, MetricDescriptorEvent, MetricIngestionEvent,
+    MetricKind as WireMetricKind,
+};
+use tracel_inference::sink::{
+    InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
+};
+use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
 
-use tracel_client::{
-    ClientError,
-    console::{
-        Client,
-        inference::request::{
-            IngestTelemetryRequest, LogIngestionEvent, LogLevel as WireLogLevel,
-            MetricData as WireMetricData, MetricDescriptorEvent, MetricIngestionEvent,
-            MetricKind as WireMetricKind,
-        },
-    },
-};
-use tracel_inference::{
-    InferenceError, InferenceProvider, InferenceSession,
-    sink::{
-        InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
-    },
-};
+use crate::ConsoleError;
+use crate::console::ProjectScope;
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_BATCH: usize = 512;
 
-/// Inference provider that ships session telemetry to the cloud backend.
-pub struct CloudInferenceProvider {
-    client: Client,
-    namespace: String,
-    project: String,
+/// Inference provider that ships session telemetry to the console.
+pub struct ConsoleInferenceProvider {
+    scope: Arc<ProjectScope>,
     groups: Mutex<HashMap<String, Arc<GroupTelemetryWorker>>>,
     request_counter: AtomicU64,
 }
 
-impl CloudInferenceProvider {
-    pub fn new(client: Client, namespace: String, project: String) -> Self {
+impl ConsoleInferenceProvider {
+    pub fn new(scope: Arc<ProjectScope>) -> Self {
         Self {
-            client,
-            namespace,
-            project,
+            scope,
             groups: Mutex::new(HashMap::new()),
             request_counter: AtomicU64::new(0),
         }
@@ -64,9 +51,7 @@ impl CloudInferenceProvider {
         self.ensure_group_exists(name)?;
 
         let worker = Arc::new(GroupTelemetryWorker::spawn(
-            self.client.clone(),
-            self.namespace.clone(),
-            self.project.clone(),
+            Arc::clone(&self.scope),
             name.to_string(),
         ));
         groups.insert(name.to_string(), worker.clone());
@@ -74,15 +59,16 @@ impl CloudInferenceProvider {
     }
 
     fn ensure_group_exists(&self, name: &str) -> Result<(), InferenceError> {
-        match self
-            .client
-            .get_inference_group(&self.namespace, &self.project, name)
-        {
+        match self.scope.console.client.get_inference_group(
+            &self.scope.owner,
+            &self.scope.project,
+            name,
+        ) {
             Ok(_) => Ok(()),
             Err(err) if err.is_not_found() => {
-                match self.client.create_inference_group(
-                    &self.namespace,
-                    &self.project,
+                match self.scope.console.client.create_inference_group(
+                    &self.scope.owner,
+                    &self.scope.project,
                     name.to_string(),
                     None,
                 ) {
@@ -97,7 +83,7 @@ impl CloudInferenceProvider {
     }
 }
 
-impl InferenceProvider for CloudInferenceProvider {
+impl InferenceProvider for ConsoleInferenceProvider {
     fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
         let worker = self.ensure_group(name)?;
         let n = self.request_counter.fetch_add(1, Ordering::Relaxed);
@@ -107,15 +93,14 @@ impl InferenceProvider for CloudInferenceProvider {
             tx: worker.sender(),
         });
 
-        // Per-request stats and any metrics/logs the inference records flow through this sink,
-        // scoped with `inference_name` (and `request_id`, seeded by the session).
         Ok(InferenceSession::new(request_id, sink)
             .with_attributes([("inference_name", name.to_string())]))
     }
 }
 
-fn client_error(group: &str, err: ClientError) -> InferenceError {
-    InferenceError::with_source(format!("inference group `{group}`: {err}"), err)
+fn client_error(group: &str, error: ClientError) -> InferenceError {
+    let message = format!("inference group `{group}`: {error}");
+    InferenceError::with_source(message, ConsoleError::from(error))
 }
 
 struct ChannelSink {
@@ -150,10 +135,10 @@ struct GroupTelemetryWorker {
 }
 
 impl GroupTelemetryWorker {
-    fn spawn(client: Client, namespace: String, project: String, group: String) -> Self {
+    fn spawn(scope: Arc<ProjectScope>, group: String) -> Self {
         let (tx, rx) = channel::unbounded();
         let handle = std::thread::spawn(move || {
-            run_worker(client, namespace, project, group, rx);
+            run_worker(scope, group, rx);
         });
         Self {
             tx,
@@ -175,13 +160,7 @@ impl Drop for GroupTelemetryWorker {
     }
 }
 
-fn run_worker(
-    client: Client,
-    namespace: String,
-    project: String,
-    group: String,
-    rx: Receiver<TelemetryMsg>,
-) {
+fn run_worker(scope: Arc<ProjectScope>, group: String, rx: Receiver<TelemetryMsg>) {
     let mut batch = Batch::default();
 
     loop {
@@ -193,20 +172,20 @@ fn run_worker(
                         batch.push(message);
                     }
                 }
-                batch.flush(&client, &namespace, &project, &group);
+                batch.flush(&scope, &group);
                 break;
             }
             Ok(message) => {
                 batch.push(message);
                 if batch.len() >= MAX_BATCH {
-                    batch.flush(&client, &namespace, &project, &group);
+                    batch.flush(&scope, &group);
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                batch.flush(&client, &namespace, &project, &group);
+                batch.flush(&scope, &group);
             }
             Err(RecvTimeoutError::Disconnected) => {
-                batch.flush(&client, &namespace, &project, &group);
+                batch.flush(&scope, &group);
                 break;
             }
         }
@@ -240,7 +219,7 @@ impl Batch {
         }
     }
 
-    fn flush(&mut self, client: &Client, namespace: &str, project: &str, group: &str) {
+    fn flush(&mut self, scope: &ProjectScope, group: &str) {
         if self.metrics.is_empty() && self.descriptors.is_empty() && self.logs.is_empty() {
             return;
         }
@@ -251,7 +230,12 @@ impl Batch {
             logs: std::mem::take(&mut self.logs),
         };
 
-        if let Err(err) = client.ingest_inference_telemetry(namespace, project, group, request) {
+        if let Err(err) = scope.console.client.ingest_inference_telemetry(
+            &scope.owner,
+            &scope.project,
+            group,
+            request,
+        ) {
             tracing::warn!(
                 error = %err,
                 group = %group,

@@ -58,9 +58,9 @@ pub enum DatasetsError {
         dataset: String,
         /// Version that was read.
         version: VersionId,
-        /// Item count the version reports.
+        /// How many items were asked for.
         expected: u64,
-        /// Item count actually received.
+        /// How many arrived.
         actual: u64,
     },
 

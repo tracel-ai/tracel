@@ -62,17 +62,15 @@ pub mod experiment {
     pub use tracel_experiment::*;
 }
 
-/// Dataset streaming (Station-only).
-pub mod dataset {
-    pub use tracel_core::{
-        DatasetError, DatasetItem, DatasetModule, DatasetVersionSpec, DownloadedDataset,
-        StreamedDataset,
-    };
-}
-
 /// The Tracel console: its organizations, projects, and users.
 #[doc(inline)]
 pub use tracel_console as console;
+
+/// A Tracel Station: experiments, models, and datasets served by one Station URL (requires the
+/// `station` feature).
+#[cfg(feature = "station")]
+#[doc(inline)]
+pub use tracel_station as station;
 
 /// The dataset domain the console or a Station serves, and the operations over it.
 #[doc(inline)]

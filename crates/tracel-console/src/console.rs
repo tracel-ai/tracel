@@ -2,12 +2,16 @@ use std::fmt;
 use std::sync::Arc;
 
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::console::{Client, Env, TracelCredentials};
+use tracel_client::console::{Client, TracelCredentials};
 use tracel_datasets::Datasets;
+use tracel_experiment::ExperimentModule;
+use tracel_inference::InferenceModule;
 use tracel_models::Models;
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
+use crate::experiment::ConsoleExperimentProvider;
+use crate::inference::ConsoleInferenceProvider;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
@@ -32,8 +36,8 @@ pub struct ProjectScope {
 
 impl Console {
     /// Connects to the console and verifies the credentials.
-    pub fn connect(env: Env, credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
-        let client = Client::connect(env, credentials)?;
+    pub fn connect(credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
+        let client = Client::connect(crate::env::from_environment(), credentials)?;
 
         Ok(Self {
             inner: Arc::new(ConsoleInner {
@@ -169,6 +173,24 @@ impl ProjectHandle {
         Models::new(Arc::new(ConsoleModelOps {
             scope: Arc::clone(&self.scope),
         }))
+    }
+
+    /// Builds an experiment provider scoped to this project.
+    pub fn experiments(&self) -> ExperimentModule {
+        ExperimentModule::new(Arc::new(ConsoleExperimentProvider::new(Arc::clone(
+            &self.scope,
+        ))))
+    }
+
+    /// Builds an inference module scoped to this project.
+    ///
+    /// Unlike [`datasets`](Self::datasets)/[`models`](Self::models), the returned module owns a
+    /// background worker per inference group: build it once and reuse it, rather than calling
+    /// this again for every request.
+    pub fn inference(&self) -> InferenceModule {
+        InferenceModule::new(Arc::new(ConsoleInferenceProvider::new(Arc::clone(
+            &self.scope,
+        ))))
     }
 }
 

@@ -4,13 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracel_inference::sink::NoopSink;
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
 
-mod cloud;
-
-pub use cloud::CloudInferenceProvider;
-
 /// Local inference provider for offline execution: it ships nothing (sessions record into a
 /// [`NoopSink`], so per-request stats and any metrics/logs are discarded). See
-/// [`CloudInferenceProvider`] to ship.
+/// the console capability to ship.
 #[derive(Default)]
 pub struct DefaultInferenceProvider {
     request_counter: AtomicU64,

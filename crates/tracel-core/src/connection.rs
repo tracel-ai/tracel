@@ -4,22 +4,13 @@ use std::sync::Arc;
 #[cfg(feature = "station")]
 use url::Url;
 
-use crate::backend::cloud::{CloudBackend, CloudError};
-use crate::backend::local::LocalBackend;
-#[cfg(feature = "station")]
-use crate::backend::station::{StationBackend, StationError};
-use crate::dataset::DatasetProvider;
-use crate::inference::{CloudInferenceProvider, DefaultInferenceProvider};
-use crate::model_registry::ModelRegistryProvider;
-use tracel_experiment::ExperimentProvider;
-use tracel_inference::InferenceProvider;
+use tracel_console::{Console, ConsoleError};
 
-pub struct Providers {
-    pub experiment: Arc<dyn ExperimentProvider>,
-    pub inference: Arc<dyn InferenceProvider>,
-    pub model_registry: Option<Arc<dyn ModelRegistryProvider>>,
-    pub dataset: Option<Arc<dyn DatasetProvider>>,
-}
+use crate::backend::Backend;
+use crate::backend::local::LocalBackend;
+use crate::cloud::CloudError;
+#[cfg(feature = "station")]
+use tracel_station::Station;
 
 #[derive(Debug, Clone)]
 pub enum Connection {
@@ -30,41 +21,20 @@ pub enum Connection {
 }
 
 impl Connection {
-    pub(crate) fn into_providers(self) -> Result<Providers, ContextError> {
+    pub(crate) fn into_backend(self) -> Result<Arc<dyn Backend>, ContextError> {
         match self {
             Connection::Cloud => {
-                let backend = Arc::new(CloudBackend::create_context()?);
-                let inference = Arc::new(CloudInferenceProvider::new(
-                    backend.client.clone(),
-                    backend.namespace.clone(),
-                    backend.project.clone(),
-                ));
-                Ok(Providers {
-                    experiment: backend.clone(),
-                    inference,
-                    model_registry: Some(backend),
-                    dataset: None,
-                })
+                let credentials = crate::cloud::discover_credentials()?;
+                let (namespace, project) = crate::cloud::discover_namespace_project()?;
+
+                let console = Console::connect(&credentials)?;
+                let project = console.project(namespace, project);
+
+                Ok(Arc::new(project))
             }
-            Connection::Offline(path) => {
-                let backend = Arc::new(LocalBackend::create_context(path));
-                Ok(Providers {
-                    experiment: backend,
-                    inference: Arc::new(DefaultInferenceProvider::new()),
-                    model_registry: None,
-                    dataset: None,
-                })
-            }
+            Connection::Offline(path) => Ok(Arc::new(LocalBackend::new(path))),
             #[cfg(feature = "station")]
-            Connection::Station(url) => {
-                let backend = Arc::new(StationBackend::create_context(url)?);
-                Ok(Providers {
-                    experiment: backend.clone(),
-                    inference: Arc::new(DefaultInferenceProvider::new()),
-                    model_registry: Some(backend.clone()),
-                    dataset: Some(backend),
-                })
-            }
+            Connection::Station(url) => Ok(Arc::new(Station::connect(url))),
         }
     }
 }
@@ -73,7 +43,6 @@ impl Connection {
 pub enum ContextError {
     #[error(transparent)]
     Cloud(#[from] CloudError),
-    #[cfg(feature = "station")]
     #[error(transparent)]
-    Station(#[from] StationError),
+    Console(#[from] ConsoleError),
 }

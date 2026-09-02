@@ -10,7 +10,7 @@ use url::Url;
 ///
 /// - unset or `offline`: record locally under `./runs`, no account required
 /// - `cloud`: ship to the [console](https://console.tracel.ai) (needs `tracel login`)
-/// - `station`: ship to the Tracel Station at [`station_url`]
+/// - `station`: ship to the Tracel Station at [`station_url`] (needs the `station` feature)
 ///
 /// This is the pattern to copy into a real application: resolve the [`Connection`] once, from the
 /// environment or your own config, then share the [`Context`] across the program.
@@ -32,7 +32,12 @@ fn connection() -> anyhow::Result<Connection> {
     match std::env::var("TRACEL_CONNECTION").as_deref() {
         Err(_) | Ok("offline") => Ok(Connection::Offline("./runs".into())),
         Ok("cloud") => Ok(Connection::Cloud),
+        #[cfg(feature = "station")]
         Ok("station") => Ok(Connection::Station(station_url()?)),
+        #[cfg(not(feature = "station"))]
+        Ok("station") => {
+            anyhow::bail!("TRACEL_CONNECTION=station needs the `station` feature")
+        }
         Ok(other) => {
             anyhow::bail!(
                 "unknown TRACEL_CONNECTION={other:?}; expected `offline`, `cloud`, or `station`"

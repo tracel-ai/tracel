@@ -73,3 +73,15 @@ impl From<ClientError> for ConsoleError {
         }
     }
 }
+
+pub fn client_error_is_not_found(error: &ClientError) -> bool {
+    error.is_not_found()
+        || matches!(
+            error,
+            ClientError::ApiError { status, .. } if status_is_not_found(*status)
+        )
+}
+
+fn status_is_not_found(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND
+}

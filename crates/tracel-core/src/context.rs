@@ -1,46 +1,38 @@
 use std::sync::Arc;
 
-use crate::connection::{Connection, ContextError};
-use crate::dataset::{DatasetModule, DatasetProvider};
-use crate::model_registry::{ModelRegistryModule, ModelRegistryProvider};
+use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
-use tracel_experiment::ExperimentProvider;
-use tracel_inference::{InferenceModule, InferenceProvider};
+use tracel_inference::InferenceModule;
+use tracel_models::Models;
+
+use crate::backend::Backend;
+use crate::connection::{Connection, ContextError};
 
 #[derive(Clone)]
 pub struct Context {
-    experiment_provider: Arc<dyn ExperimentProvider>,
-    inference_provider: Arc<dyn InferenceProvider>,
-    model_registry_provider: Option<Arc<dyn ModelRegistryProvider>>,
-    dataset_provider: Option<Arc<dyn DatasetProvider>>,
+    backend: Arc<dyn Backend>,
 }
 
 impl Context {
     pub fn new(connection: Connection) -> Result<Self, ContextError> {
-        let providers = connection.into_providers()?;
         Ok(Self {
-            experiment_provider: providers.experiment,
-            inference_provider: providers.inference,
-            model_registry_provider: providers.model_registry,
-            dataset_provider: providers.dataset,
+            backend: connection.into_backend()?,
         })
     }
 
     pub fn experiment(&self) -> ExperimentModule {
-        ExperimentModule::new(self.experiment_provider.clone())
+        self.backend.experiments()
     }
 
     pub fn inference(&self) -> InferenceModule {
-        InferenceModule::new(self.inference_provider.clone())
+        self.backend.inference()
     }
 
-    pub fn models(&self) -> Option<ModelRegistryModule> {
-        self.model_registry_provider
-            .clone()
-            .map(ModelRegistryModule::new)
+    pub fn models(&self) -> Option<Models> {
+        self.backend.models()
     }
 
-    pub fn datasets(&self) -> Option<DatasetModule> {
-        self.dataset_provider.clone().map(DatasetModule::new)
+    pub fn datasets(&self) -> Option<Datasets> {
+        self.backend.datasets()
     }
 }

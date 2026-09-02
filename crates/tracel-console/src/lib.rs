@@ -9,7 +9,10 @@
 mod console;
 mod datasets;
 mod domain;
+mod env;
 mod error;
+mod experiment;
+mod inference;
 mod login;
 mod models;
 mod wire;
@@ -18,4 +21,4 @@ pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};
 pub use error::ConsoleError;
 pub use login::{DeviceApproval, DeviceLogin};
-pub use tracel_client::console::{Env, SessionToken, TracelCredentials};
+pub use tracel_client::console::{SessionToken, TracelCredentials};

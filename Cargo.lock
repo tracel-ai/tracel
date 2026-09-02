@@ -6729,7 +6729,6 @@ version = "0.10.0"
 dependencies = [
  "tracel-app",
  "tracel-artifact",
- "tracel-client",
  "tracel-console",
  "tracel-core",
  "tracel-datasets",
@@ -6737,6 +6736,7 @@ dependencies = [
  "tracel-inference",
  "tracel-models",
  "tracel-runner",
+ "tracel-station",
 ]
 
 [[package]]
@@ -6792,6 +6792,7 @@ name = "tracel-console"
 version = "0.10.0"
 dependencies = [
  "chrono",
+ "crossbeam",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -6800,7 +6801,11 @@ dependencies = [
  "tracel-artifact",
  "tracel-client",
  "tracel-datasets",
+ "tracel-experiment",
+ "tracel-experiment-remote",
+ "tracel-inference",
  "tracel-models",
+ "tracing",
  "url",
 ]
 
@@ -6808,22 +6813,21 @@ dependencies = [
 name = "tracel-core"
 version = "0.10.0"
 dependencies = [
- "burn",
- "chrono",
  "crossbeam",
  "directories",
  "serde",
  "serde_json",
- "serde_with",
- "sha2",
  "tempfile",
  "thiserror 2.0.20",
  "toml",
  "tracel-artifact",
  "tracel-client",
+ "tracel-console",
+ "tracel-datasets",
  "tracel-experiment",
  "tracel-inference",
- "tracing",
+ "tracel-models",
+ "tracel-station",
  "url",
 ]
 
@@ -6849,6 +6853,20 @@ dependencies = [
  "tracel-artifact",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "tracel-experiment-remote"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "crossbeam",
+ "serde",
+ "thiserror 2.0.20",
+ "tracel-artifact",
+ "tracel-client",
+ "tracel-experiment",
+ "tracing",
 ]
 
 [[package]]
@@ -6909,6 +6927,24 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "tracel-station"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.20",
+ "tracel-artifact",
+ "tracel-client",
+ "tracel-datasets",
+ "tracel-experiment",
+ "tracel-experiment-remote",
+ "tracel-models",
+ "url",
 ]
 
 [[package]]
