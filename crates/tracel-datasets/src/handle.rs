@@ -312,11 +312,6 @@ mod tests {
         );
     }
 
-    /// What one read moves is the caller's judgement, not the version's.
-    ///
-    /// A dataset of small examples pays a round trip per sixty-four items for
-    /// nothing, and one of large examples cannot afford even that; a default
-    /// with no way past it makes one of the two wrong on every dataset.
     #[test]
     fn a_caller_can_say_how_many_items_one_read_asks_for() {
         let ops = Arc::new(FakeOps::new());
