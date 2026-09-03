@@ -7,12 +7,7 @@ use serde::de::DeserializeOwned;
 use crate::{DatasetOps, DatasetVersion, DatasetsError, Item};
 
 /// Items [`Items`] reads per request where the caller does not say.
-///
-/// An item carries its whole example payload, so the size of a read is the
-/// dataset's own rather than the SDK's: sixty-four keeps one response inside
-/// what a connection settles in for a version of large examples, and a caller
-/// whose items are small raises it with [`Items::with_items_per_read`].
-pub const ITEMS_PER_READ: u64 = 64;
+const ITEMS_PER_READ: u64 = 64;
 
 /// One item of a dataset version, with its annotation decoded into the caller's type.
 #[derive(Clone, Debug, PartialEq)]
