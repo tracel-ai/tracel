@@ -172,12 +172,7 @@ pub struct Items<A> {
 }
 
 impl<A> Items<A> {
-    /// Asks for `items` per read rather than [`ITEMS_PER_READ`].
-    ///
-    /// How much one read moves is the caller's to judge: it knows how large its
-    /// examples are and what its connection tolerates, and neither is
-    /// something the version announces. Zero would ask for nothing and leave
-    /// the cursor where it was, so it is read as one.
+    /// Asks for `items` per read.
     pub fn with_items_per_read(mut self, items: u64) -> Self {
         self.items_per_read = items.max(1);
         self
