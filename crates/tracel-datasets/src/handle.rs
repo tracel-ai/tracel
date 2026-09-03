@@ -6,8 +6,13 @@ use serde::de::DeserializeOwned;
 
 use crate::{DatasetOps, DatasetVersion, DatasetsError, Item};
 
-/// Items read per batch by [`Items`].
-const BATCH: u64 = 256;
+/// Items [`Items`] reads per request where the caller does not say.
+///
+/// An item carries its whole example payload, so the size of a read is the
+/// dataset's own rather than the SDK's: sixty-four keeps one response inside
+/// what a connection settles in for a version of large examples, and a caller
+/// whose items are small raises it with [`Items::with_items_per_read`].
+pub const ITEMS_PER_READ: u64 = 64;
 
 /// One item of a dataset version, with its annotation decoded into the caller's type.
 #[derive(Clone, Debug, PartialEq)]
@@ -119,11 +124,15 @@ where
     }
 
     /// Iterates from `from` to the end of the version, reading in batches.
+    ///
+    /// Each read asks for [`ITEMS_PER_READ`] items unless
+    /// [`Items::with_items_per_read`] says otherwise.
     pub fn iter(&self, from: u64) -> Items<A> {
         Items {
             handle: self.clone(),
             next: from,
             buffer: VecDeque::new(),
+            items_per_read: ITEMS_PER_READ,
         }
     }
 
@@ -164,6 +173,20 @@ pub struct Items<A> {
     handle: DatasetHandle<A>,
     next: u64,
     buffer: VecDeque<DatasetItem<A>>,
+    items_per_read: u64,
+}
+
+impl<A> Items<A> {
+    /// Asks for `items` per read rather than [`ITEMS_PER_READ`].
+    ///
+    /// How much one read moves is the caller's to judge: it knows how large its
+    /// examples are and what its connection tolerates, and neither is
+    /// something the version announces. Zero would ask for nothing and leave
+    /// the cursor where it was, so it is read as one.
+    pub fn with_items_per_read(mut self, items: u64) -> Self {
+        self.items_per_read = items.max(1);
+        self
+    }
 }
 
 impl<A> Iterator for Items<A>
@@ -180,7 +203,7 @@ where
                 return None;
             }
 
-            let end = (self.next + BATCH).min(item_count);
+            let end = (self.next + self.items_per_read).min(item_count);
             let indexes: Vec<u64> = (self.next..end).collect();
 
             match self.handle.items(&indexes) {
@@ -282,7 +305,48 @@ mod tests {
         let items: Vec<_> = data.iter(0).collect::<Result<Vec<_>, _>>().unwrap();
 
         assert_eq!(items.len(), 600);
-        assert_eq!(ops.reads(), 3, "600 items over a 256 batch");
+        assert_eq!(
+            ops.reads(),
+            10,
+            "600 items over the default 64 a read asks for"
+        );
+    }
+
+    /// What one read moves is the caller's judgement, not the version's.
+    ///
+    /// A dataset of small examples pays a round trip per sixty-four items for
+    /// nothing, and one of large examples cannot afford even that; a default
+    /// with no way past it makes one of the two wrong on every dataset.
+    #[test]
+    fn a_caller_can_say_how_many_items_one_read_asks_for() {
+        let ops = Arc::new(FakeOps::new());
+        let data = handle(ops.clone(), 600);
+
+        let items: Vec<_> = data
+            .iter(0)
+            .with_items_per_read(256)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(items.len(), 600);
+        assert_eq!(ops.reads(), 3, "600 items over the 256 asked for");
+    }
+
+    /// A batch of zero would ask for no indexes, get none back, and leave the
+    /// cursor where it was — the iterator would never end.
+    #[test]
+    fn a_read_of_zero_items_is_read_as_one_rather_than_never_advancing() {
+        let ops = Arc::new(FakeOps::new());
+        let data = handle(ops.clone(), 5);
+
+        let items: Vec<_> = data
+            .iter(0)
+            .with_items_per_read(0)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(items.len(), 5);
+        assert_eq!(ops.reads(), 5, "one item per read");
     }
 
     #[test]

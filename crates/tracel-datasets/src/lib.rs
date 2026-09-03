@@ -18,5 +18,5 @@ mod test_support;
 pub use datasets::{Datasets, VersionDraft};
 pub use domain::{Dataset, DatasetVersion, Item, NewItem, VersionId, VersionSpec};
 pub use error::DatasetsError;
-pub use handle::{DatasetHandle, DatasetItem, Items};
+pub use handle::{DatasetHandle, DatasetItem, ITEMS_PER_READ, Items};
 pub use ops::{DatasetOps, Publication};
