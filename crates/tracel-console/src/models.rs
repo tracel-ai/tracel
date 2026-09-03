@@ -313,7 +313,7 @@ impl VersionFileSource for ConsoleVersionFileSource {
 
     fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
         self.transfer_client
-            .get_reader(&self.url)
+            .get_reader(&self.url, Some(self.file.size_bytes))
             .map_err(|error| ModelsError::other(ConsoleError::Transport(error.to_string())))
     }
 }

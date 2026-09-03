@@ -107,12 +107,13 @@ pub fn download_artifacts_to_sink_with_client_and_observer<
             return Err(DownloadError::Cancelled { rel_path });
         }
 
-        let reader = client
-            .get_reader(&file.url)
-            .map_err(|e| DownloadError::Transfer {
-                rel_path: rel_path.clone(),
-                source: e,
-            })?;
+        let reader =
+            client
+                .get_reader(&file.url, file.size_bytes)
+                .map_err(|e| DownloadError::Transfer {
+                    rel_path: rel_path.clone(),
+                    source: e,
+                })?;
         if observer.is_cancelled() {
             return Err(DownloadError::Cancelled { rel_path });
         }
@@ -374,7 +375,11 @@ mod tests {
             Ok(())
         }
 
-        fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+        fn get_reader(
+            &self,
+            url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Box<dyn Read + Send>, TransferError> {
             let bytes = self
                 .files
                 .get(url)
@@ -788,7 +793,11 @@ mod tests {
             unreachable!("the cancellation test only downloads")
         }
 
-        fn get_reader(&self, _url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+        fn get_reader(
+            &self,
+            _url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Box<dyn Read + Send>, TransferError> {
             Ok(Box::new(ChunkedReader {
                 bytes: Arc::clone(&self.bytes),
                 consumed: Arc::clone(&self.consumed),

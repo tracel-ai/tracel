@@ -1,4 +1,37 @@
 use std::io::Read;
+use std::time::Duration;
+
+const TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE: u64 = 10;
+
+const MINIMUM_TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn timeout_worth_allowing_a_transfer_of(size_bytes: Option<u64>) -> Duration {
+    const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
+
+    let Some(size_bytes) = size_bytes else {
+        return Duration::from_secs(60 * 60);
+    };
+
+    let megabytes = size_bytes.div_ceil(BYTES_PER_MEGABYTE);
+    let allowed =
+        Duration::from_secs(megabytes.saturating_mul(TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE));
+
+    allowed.max(MINIMUM_TRANSFER_TIMEOUT)
+}
+
+fn transport_failure(error: &dyn std::error::Error) -> TransferError {
+    let mut described = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        described.push_str(": ");
+        described.push_str(&cause.to_string());
+        source = cause.source();
+    }
+
+    TransferError::Transport(described)
+}
 
 /// Watches a transfer as it runs, and can stop it.
 ///
@@ -71,7 +104,15 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
     ) -> Result<(), TransferError>;
 
     /// Download data from the given URL as a reader.
-    fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
+    ///
+    /// `expected_size_bytes` is what the manifest announced, where one did, so
+    /// that an implementation can give a large download the time it needs. It is
+    /// absent for an artifact published without a manifest.
+    fn get_reader(
+        &self,
+        url: &str,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError>;
 }
 
 /// Reqwest-based transfer client.
@@ -81,10 +122,18 @@ pub struct ReqwestTransferClient {
 }
 
 impl ReqwestTransferClient {
+    /// A transfer is one request whose duration is set by the caller's
+    /// bandwidth, so the deadline is set per request from the size being moved
+    /// rather than once here. Reqwest's own default is 30 seconds, which no
+    /// model larger than a few megabytes survives.
     pub fn new() -> Self {
-        Self {
-            http: reqwest::blocking::Client::new(),
-        }
+        let http = reqwest::blocking::Client::builder()
+            .timeout(None)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .expect("failed to build the HTTP transfer client");
+
+        Self { http }
     }
 
     pub fn with_client(http: reqwest::blocking::Client) -> Self {
@@ -109,29 +158,35 @@ impl FileTransferClient for ReqwestTransferClient {
         let response = self
             .http
             .put(url)
+            .timeout(timeout_worth_allowing_a_transfer_of(Some(size_bytes)))
             .body(body)
             .send()
-            .map_err(|e| TransferError::Transport(e.to_string()))?;
+            .map_err(|error| transport_failure(&error))?;
 
         if !response.status().is_success() {
-            return Err(TransferError::Transport(
-                response.error_for_status().err().unwrap().to_string(),
+            return Err(transport_failure(
+                &response.error_for_status().err().unwrap(),
             ));
         }
 
         Ok(())
     }
 
-    fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+    fn get_reader(
+        &self,
+        url: &str,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError> {
         let response = self
             .http
             .get(url)
+            .timeout(timeout_worth_allowing_a_transfer_of(expected_size_bytes))
             .send()
-            .map_err(|e| TransferError::Transport(e.to_string()))?;
+            .map_err(|error| transport_failure(&error))?;
 
         if !response.status().is_success() {
-            return Err(TransferError::Transport(
-                response.error_for_status().err().unwrap().to_string(),
+            return Err(transport_failure(
+                &response.error_for_status().err().unwrap(),
             ));
         }
 
