@@ -104,8 +104,8 @@ fn open_for_download_with_plan<C: RangeSource>(
         plan,
         &stop,
     ) {
-        Ok(first) => Ok(Box::new(RangedReader::new(
-            client, url, size_bytes, plan, first, stop,
+        Ok((first, attempts)) => Ok(Box::new(RangedReader::new(
+            client, url, size_bytes, plan, first, attempts, stop,
         ))),
         Err(RangeSourceError::Unsupported) => client.get_whole_reader(url),
         Err(RangeSourceError::Transfer(error)) => Err(error),
@@ -141,6 +141,7 @@ impl<C: RangeSource> RangedReader<C> {
         size_bytes: u64,
         plan: &RangePlan,
         first: RangeResponse,
+        first_attempts: u32,
         stop: Arc<AtomicBool>,
     ) -> Self {
         let ranges = size_bytes.div_ceil(plan.range_bytes.get()) as usize;
@@ -157,6 +158,7 @@ impl<C: RangeSource> RangedReader<C> {
                 size_bytes,
                 plan,
                 first,
+                first_attempts,
                 Arc::clone(&stop),
             )),
             arrived: BTreeMap::new(),
@@ -274,6 +276,7 @@ impl<C: RangeSource> RangeStream<C> {
         expected_size: u64,
         plan: &RangePlan,
         response: RangeResponse,
+        spent: u32,
         stop: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -284,7 +287,7 @@ impl<C: RangeSource> RangeStream<C> {
             reader: response.reader,
             next_offset: response.range.start,
             end_offset: response.range.end,
-            spent: 1,
+            spent,
             stop,
         }
     }
@@ -457,13 +460,13 @@ fn request_range<C: RangeSource>(
     expected_size: u64,
     plan: &RangePlan,
     stop: &AtomicBool,
-) -> Result<RangeResponse, RangeSourceError> {
+) -> Result<(RangeResponse, u32), RangeSourceError> {
     let mut spent = 0;
     loop {
         let attempt = request_range_once(client, url, offset, length, expected_size);
         spent += 1;
         match attempt {
-            Ok(response) => return Ok(response),
+            Ok(response) => return Ok((response, spent)),
             Err(RangeSourceError::Unsupported) => return Err(RangeSourceError::Unsupported),
             Err(error) if spent >= plan.attempts.get() || stop.load(Ordering::Relaxed) => {
                 return Err(error);
