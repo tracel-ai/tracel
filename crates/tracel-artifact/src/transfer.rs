@@ -88,9 +88,13 @@ impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TransferError {
     #[error("Transport error: {0}")]
     Transport(String),
+    /// The source answered a ranged request with the whole file.
+    #[error("the source does not serve ranges")]
+    RangesUnsupported,
 }
 
 /// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
@@ -104,15 +108,21 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
     ) -> Result<(), TransferError>;
 
     /// Download data from the given URL as a reader.
+    fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
+
+    /// Download `length` bytes of the file at `url`, starting at `offset`.
     ///
-    /// `expected_size_bytes` is what the manifest announced, where one did, so
-    /// that an implementation can give a large download the time it needs. It is
-    /// absent for an artifact published without a manifest.
-    fn get_reader(
+    /// Answer [`TransferError::RangesUnsupported`] when the transport cannot serve part of a
+    /// file, which is what the default does.
+    fn get_range(
         &self,
         url: &str,
-        expected_size_bytes: Option<u64>,
-    ) -> Result<Box<dyn Read + Send>, TransferError>;
+        offset: u64,
+        length: u64,
+    ) -> Result<Box<dyn Read + Send>, TransferError> {
+        let _ = (url, offset, length);
+        Err(TransferError::RangesUnsupported)
+    }
 }
 
 /// Reqwest-based transfer client.
@@ -191,5 +201,31 @@ impl FileTransferClient for ReqwestTransferClient {
         }
 
         Ok(Box::new(response))
+    }
+
+    fn get_range(
+        &self,
+        url: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<Box<dyn Read + Send>, TransferError> {
+        let last = offset + length.saturating_sub(1);
+        let response = self
+            .http
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={offset}-{last}"))
+            .send()
+            .map_err(|e| TransferError::Transport(e.to_string()))?;
+
+        if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            return Ok(Box::new(response));
+        }
+        // Any other success is the whole file: the source ignored the header.
+        if response.status().is_success() {
+            return Err(TransferError::RangesUnsupported);
+        }
+        Err(TransferError::Transport(
+            response.error_for_status().err().unwrap().to_string(),
+        ))
     }
 }

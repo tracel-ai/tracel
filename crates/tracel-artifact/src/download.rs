@@ -108,12 +108,12 @@ pub fn download_artifacts_to_sink_with_client_and_observer<
         }
 
         let reader =
-            client
-                .get_reader(&file.url, file.size_bytes)
-                .map_err(|e| DownloadError::Transfer {
+            crate::ranged::open_for_download(client, &file.url, file.size_bytes).map_err(|e| {
+                DownloadError::Transfer {
                     rel_path: rel_path.clone(),
                     source: e,
-                })?;
+                }
+            })?;
         if observer.is_cancelled() {
             return Err(DownloadError::Cancelled { rel_path });
         }

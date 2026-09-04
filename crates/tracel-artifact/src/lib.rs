@@ -5,6 +5,7 @@ mod transfer;
 
 pub mod bundle;
 pub mod download;
+pub mod ranged;
 pub mod upload;
 
 pub use tools::validation::normalize_checksum;

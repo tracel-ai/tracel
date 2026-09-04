@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use serde::Deserialize;
+use tracel_artifact::ReqwestTransferClient;
 use tracel_artifact::TransferObserver;
+use tracel_artifact::ranged::open_for_download;
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource,
     upload_bundle_multipart_with_client_and_observer,
 };
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
@@ -312,8 +313,7 @@ impl VersionFileSource for ConsoleVersionFileSource {
     }
 
     fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
-        self.transfer_client
-            .get_reader(&self.url, Some(self.file.size_bytes))
+        open_for_download(&self.transfer_client, &self.url, Some(self.file.size_bytes))
             .map_err(|error| ModelsError::other(ConsoleError::Transport(error.to_string())))
     }
 }
