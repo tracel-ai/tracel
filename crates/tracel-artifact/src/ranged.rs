@@ -94,8 +94,8 @@ fn open_for_download_with_plan<C: RangeSource>(
     // The first range is the file's own first chunk, and fetching it here answers whether the
     // source serves ranges before any worker is spawned.
     let stop = Arc::new(AtomicBool::new(false));
-    match read_range(client, url, 0, plan.range_bytes, size_bytes, plan, &stop) {
-        Ok(first) => Ok(Box::new(RangedReader::spawn(
+    match request_range(client, url, 0, plan.range_bytes, size_bytes, plan, &stop) {
+        Ok(first) => Ok(Box::new(RangedReader::new(
             client, url, size_bytes, plan, first, stop,
         ))),
         Err(RangeSourceError::Unsupported) => client.get_whole_reader(url),
@@ -104,24 +104,34 @@ fn open_for_download_with_plan<C: RangeSource>(
 }
 
 /// Reads a file's ranges as they arrive and hands the bytes on in order.
-struct RangedReader {
+struct RangedReader<C> {
     ranges: usize,
     next: usize,
-    current: io::Cursor<Vec<u8>>,
+    current: Box<dyn Read + Send>,
     arrived: BTreeMap<usize, Vec<u8>>,
     results: Receiver<Result<(usize, Vec<u8>), RangeSourceError>>,
     jobs: Arc<RangeJobs>,
     next_to_schedule: usize,
     stop: Arc<AtomicBool>,
+    workers: Option<WorkerStart<C>>,
 }
 
-impl RangedReader {
-    fn spawn<C: RangeSource>(
+struct WorkerStart<C> {
+    client: C,
+    url: String,
+    size_bytes: u64,
+    plan: RangePlan,
+    count: usize,
+    sender: SyncSender<Result<(usize, Vec<u8>), RangeSourceError>>,
+}
+
+impl<C: RangeSource> RangedReader<C> {
+    fn new(
         client: &C,
         url: &str,
         size_bytes: u64,
         plan: &RangePlan,
-        first: Vec<u8>,
+        first: RangeResponse,
         stop: Arc<AtomicBool>,
     ) -> Self {
         let ranges = size_bytes.div_ceil(plan.range_bytes) as usize;
@@ -129,30 +139,51 @@ impl RangedReader {
         let jobs = Arc::new(RangeJobs::new(1..=scheduled));
         let (sender, results) = sync_channel(plan.workers);
 
-        for _ in 0..scheduled {
-            let client = client.clone();
-            let url = url.to_string();
-            let plan = plan.clone();
-            let jobs = Arc::clone(&jobs);
-            let stop = Arc::clone(&stop);
-            let sender = sender.clone();
-            thread::spawn(move || {
-                fetch_ranges(&client, &url, size_bytes, &plan, &jobs, &stop, &sender)
-            });
-        }
-        // The reader's own handle would otherwise keep it from ever disconnecting.
-        drop(sender);
-
         Self {
             ranges,
             next: 1,
-            current: io::Cursor::new(first),
+            current: Box::new(RangeStream::new(
+                client,
+                url,
+                size_bytes,
+                plan,
+                first,
+                Arc::clone(&stop),
+            )),
             arrived: BTreeMap::new(),
             results,
             jobs,
             next_to_schedule: scheduled + 1,
             stop,
+            workers: Some(WorkerStart {
+                client: client.clone(),
+                url: url.to_string(),
+                size_bytes,
+                plan: plan.clone(),
+                count: scheduled,
+                sender,
+            }),
         }
+    }
+
+    fn start_workers(&mut self) {
+        let Some(start) = self.workers.take() else {
+            return;
+        };
+        for _ in 0..start.count {
+            let client = start.client.clone();
+            let url = start.url.clone();
+            let plan = start.plan.clone();
+            let jobs = Arc::clone(&self.jobs);
+            let stop = Arc::clone(&self.stop);
+            let sender = start.sender.clone();
+            let size_bytes = start.size_bytes;
+            thread::spawn(move || {
+                fetch_ranges(&client, &url, size_bytes, &plan, &jobs, &stop, &sender)
+            });
+        }
+        // The reader's own handle would otherwise keep it from ever disconnecting.
+        drop(start.sender);
     }
 
     fn schedule_next(&mut self) {
@@ -188,8 +219,12 @@ impl RangedReader {
     }
 }
 
-impl Read for RangedReader {
+impl<C: RangeSource> Read for RangedReader<C> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        self.start_workers();
         loop {
             let read = self.current.read(buf)?;
             if read > 0 || buf.is_empty() {
@@ -200,15 +235,114 @@ impl Read for RangedReader {
             }
             // Release the exhausted range before waiting for another one so it does not count
             // against the reader's memory bound.
-            self.current = io::Cursor::new(Vec::new());
+            self.current = Box::new(io::empty());
             let bytes = self.take(self.next)?;
             self.next += 1;
-            self.current = io::Cursor::new(bytes);
+            self.current = Box::new(io::Cursor::new(bytes));
         }
     }
 }
 
-impl Drop for RangedReader {
+/// Streams the leading range directly to the caller, resuming the unread suffix when its body is
+/// interrupted. Later ranges can be buffered by workers because the caller has already had an
+/// opportunity to observe progress and cancellation by then.
+struct RangeStream<C> {
+    client: C,
+    url: String,
+    expected_size: u64,
+    plan: RangePlan,
+    reader: Box<dyn Read + Send>,
+    next_offset: u64,
+    end_offset: u64,
+    spent: u32,
+    stop: Arc<AtomicBool>,
+}
+
+impl<C: RangeSource> RangeStream<C> {
+    fn new(
+        client: &C,
+        url: &str,
+        expected_size: u64,
+        plan: &RangePlan,
+        response: RangeResponse,
+        stop: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            client: client.clone(),
+            url: url.to_string(),
+            expected_size,
+            plan: plan.clone(),
+            reader: response.reader,
+            next_offset: response.range.start,
+            end_offset: response.range.end,
+            spent: 1,
+            stop,
+        }
+    }
+
+    fn resume(&mut self, mut error: RangeSourceError) -> io::Result<()> {
+        loop {
+            if self.spent >= self.plan.attempts || self.stop.load(Ordering::Relaxed) {
+                return Err(io::Error::other(error));
+            }
+            thread::sleep(self.plan.backoff * self.spent);
+            self.spent += 1;
+            match request_range_once(
+                &self.client,
+                &self.url,
+                self.next_offset,
+                self.end_offset - self.next_offset,
+                self.expected_size,
+            ) {
+                Ok(response) => {
+                    self.reader = response.reader;
+                    return Ok(());
+                }
+                Err(next) => error = next,
+            }
+        }
+    }
+}
+
+impl<C: RangeSource> Read for RangeStream<C> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.next_offset == self.end_offset {
+                let mut extra = [0];
+                return match self.reader.read(&mut extra) {
+                    Ok(0) => Ok(0),
+                    Ok(_) => Err(io::Error::other(format!(
+                        "range ending at {} answered more bytes than requested",
+                        self.end_offset
+                    ))),
+                    Err(error) => Err(error),
+                };
+            }
+
+            let remaining = (self.end_offset - self.next_offset) as usize;
+            let limit = buffer.len().min(remaining);
+            match self.reader.read(&mut buffer[..limit]) {
+                Ok(0) => self.resume(
+                    TransferError::Transport(format!(
+                        "range at {} ended before {}",
+                        self.next_offset, self.end_offset
+                    ))
+                    .into(),
+                )?,
+                Ok(read) => {
+                    self.next_offset += read as u64;
+                    return Ok(read);
+                }
+                Err(error) => self.resume(TransferError::Transport(error.to_string()).into())?,
+            }
+        }
+    }
+}
+
+impl<C> Drop for RangedReader<C> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         self.jobs.wake_all();
@@ -306,6 +440,30 @@ fn read_range<C: RangeSource>(
     }
 }
 
+fn request_range<C: RangeSource>(
+    client: &C,
+    url: &str,
+    offset: u64,
+    length: u64,
+    expected_size: u64,
+    plan: &RangePlan,
+    stop: &AtomicBool,
+) -> Result<RangeResponse, RangeSourceError> {
+    let mut spent = 0;
+    loop {
+        let attempt = request_range_once(client, url, offset, length, expected_size);
+        spent += 1;
+        match attempt {
+            Ok(response) => return Ok(response),
+            Err(RangeSourceError::Unsupported) => return Err(RangeSourceError::Unsupported),
+            Err(error) if spent >= plan.attempts || stop.load(Ordering::Relaxed) => {
+                return Err(error);
+            }
+            Err(_) => thread::sleep(plan.backoff * spent),
+        }
+    }
+}
+
 fn read_range_once<C: RangeSource>(
     client: &C,
     url: &str,
@@ -313,23 +471,7 @@ fn read_range_once<C: RangeSource>(
     length: u64,
     expected_size: u64,
 ) -> Result<Vec<u8>, RangeSourceError> {
-    let response = client.get_range(url, offset, length)?;
-    let expected_range = offset..offset + length;
-    if response.range != expected_range {
-        return Err(TransferError::Transport(format!(
-            "requested range {expected_range:?}, source answered {:?}",
-            response.range
-        ))
-        .into());
-    }
-    if response.total_size != expected_size {
-        return Err(TransferError::Transport(format!(
-            "source size is {} bytes, expected {expected_size} bytes",
-            response.total_size
-        ))
-        .into());
-    }
-
+    let response = request_range_once(client, url, offset, length, expected_size)?;
     let mut bytes = Vec::with_capacity(length as usize);
     response
         .reader
@@ -347,6 +489,33 @@ fn read_range_once<C: RangeSource>(
         .into());
     }
     Ok(bytes)
+}
+
+fn request_range_once<C: RangeSource>(
+    client: &C,
+    url: &str,
+    offset: u64,
+    length: u64,
+    expected_size: u64,
+) -> Result<RangeResponse, RangeSourceError> {
+    let response = client.get_range(url, offset, length)?;
+    let expected_range = offset..offset + length;
+    if response.range != expected_range {
+        return Err(TransferError::Transport(format!(
+            "requested range {expected_range:?}, source answered {:?}",
+            response.range
+        ))
+        .into());
+    }
+    if response.total_size != expected_size {
+        return Err(TransferError::Transport(format!(
+            "source size is {} bytes, expected {expected_size} bytes",
+            response.total_size
+        ))
+        .into());
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -375,6 +544,7 @@ mod tests {
         ranges: Ranges,
         range_calls: Arc<AtomicUsize>,
         whole_calls: Arc<AtomicUsize>,
+        first_body_reads: Arc<AtomicUsize>,
         /// Makes later ranges arrive first, so ordering is actually exercised.
         stagger: Duration,
     }
@@ -386,6 +556,7 @@ mod tests {
                 ranges,
                 range_calls: Arc::new(AtomicUsize::new(0)),
                 whole_calls: Arc::new(AtomicUsize::new(0)),
+                first_body_reads: Arc::new(AtomicUsize::new(0)),
                 stagger: Duration::ZERO,
             }
         }
@@ -429,13 +600,33 @@ mod tests {
                         Ranges::WrongTotal(total) => total,
                         _ => self.bytes.len() as u64,
                     };
+                    let reader: Box<dyn Read + Send> = if offset == 0 {
+                        Box::new(CountingReader {
+                            inner: Cursor::new(self.bytes[start..end].to_vec()),
+                            reads: Arc::clone(&self.first_body_reads),
+                        })
+                    } else {
+                        Box::new(Cursor::new(self.bytes[start..end].to_vec()))
+                    };
                     Ok(RangeResponse {
-                        reader: Box::new(Cursor::new(self.bytes[start..end].to_vec())),
+                        reader,
                         range: offset..offset + length,
                         total_size,
                     })
                 }
             }
+        }
+    }
+
+    struct CountingReader {
+        inner: Cursor<Vec<u8>>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.inner.read(buffer)
         }
     }
 
@@ -473,8 +664,12 @@ mod tests {
         let source = Source::new(20 * 1024, Ranges::Served);
         let size = source.bytes.len() as u64;
 
-        let reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
+        let mut reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
             .expect("the first range is served");
+        let mut first_byte = [0];
+        reader
+            .read_exact(&mut first_byte)
+            .expect("start the workers");
         // The source is in-memory, so this is ample time for every scheduled worker to finish.
         thread::sleep(Duration::from_millis(20));
 
@@ -482,6 +677,20 @@ mod tests {
             source.range_calls.load(Ordering::Relaxed),
             1 + plan().workers
         );
+        drop(reader);
+    }
+
+    #[test]
+    fn opening_does_not_read_a_body_or_start_workers() {
+        let source = Source::new(8 * 1024, Ranges::Served);
+        let size = source.bytes.len() as u64;
+
+        let reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
+            .expect("the first range headers are served");
+        thread::sleep(Duration::from_millis(20));
+
+        assert_eq!(source.range_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(source.first_body_reads.load(Ordering::Relaxed), 0);
         drop(reader);
     }
 
@@ -535,7 +744,7 @@ mod tests {
 
         let error = read_all(&source, Some(size)).expect_err("a short range is not the file");
 
-        assert!(error.to_string().contains("of 1024 bytes"), "{error}");
+        assert!(error.to_string().contains("ended before 1024"), "{error}");
     }
 
     #[test]
