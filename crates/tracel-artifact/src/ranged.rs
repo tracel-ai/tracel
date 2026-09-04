@@ -535,6 +535,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
 
     /// What a source does when asked for part of a file.
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -682,13 +683,16 @@ mod tests {
         reader
             .read_exact(&mut first_byte)
             .expect("start the workers");
-        // The source is in-memory, so this is ample time for every scheduled worker to finish.
+        let expected = 1 + plan().workers.get();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while source.range_calls.load(Ordering::Relaxed) < expected {
+            assert!(Instant::now() < deadline, "workers did not finish in time");
+            thread::yield_now();
+        }
+        // Once the active window is full, workers must remain idle until the reader advances.
         thread::sleep(Duration::from_millis(20));
 
-        assert_eq!(
-            source.range_calls.load(Ordering::Relaxed),
-            1 + plan().workers.get()
-        );
+        assert_eq!(source.range_calls.load(Ordering::Relaxed), expected);
         drop(reader);
     }
 
@@ -699,7 +703,6 @@ mod tests {
 
         let reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
             .expect("the first range headers are served");
-        thread::sleep(Duration::from_millis(20));
 
         assert_eq!(source.range_calls.load(Ordering::Relaxed), 1);
         assert_eq!(source.first_body_reads.load(Ordering::Relaxed), 0);

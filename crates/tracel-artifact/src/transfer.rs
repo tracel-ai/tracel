@@ -241,6 +241,10 @@ fn parse_content_range(
         .get(reqwest::header::CONTENT_RANGE)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| TransferError::Transport("partial response omitted Content-Range".into()))?;
+    parse_content_range_value(value)
+}
+
+fn parse_content_range_value(value: &str) -> Result<(std::ops::Range<u64>, u64), TransferError> {
     let value = value.strip_prefix("bytes ").ok_or_else(|| {
         TransferError::Transport(format!("invalid Content-Range header: {value}"))
     })?;
@@ -268,4 +272,32 @@ fn parse_content_range(
         )));
     }
     Ok((start..end, total))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_content_range_value;
+
+    #[test]
+    fn parses_content_range_boundaries() {
+        let (range, total) =
+            parse_content_range_value("bytes 10-19/100").expect("valid Content-Range");
+
+        assert_eq!(range, 10..20);
+        assert_eq!(total, 100);
+    }
+
+    #[test]
+    fn rejects_content_range_without_a_known_total() {
+        let error = parse_content_range_value("bytes 10-19/*").expect_err("unknown total");
+
+        assert!(error.to_string().contains("invalid Content-Range"));
+    }
+
+    #[test]
+    fn rejects_content_range_past_its_total() {
+        let error = parse_content_range_value("bytes 90-100/100").expect_err("range past total");
+
+        assert!(error.to_string().contains("invalid Content-Range"));
+    }
 }
