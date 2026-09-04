@@ -11,14 +11,33 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 use std::time::Duration;
 
-use crate::{FileTransferClient, TransferError};
+use crate::TransferError;
+
+pub(crate) trait RangeSource: Clone + Send + Sync + 'static {
+    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
+
+    fn get_range(
+        &self,
+        url: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<Box<dyn Read + Send>, RangeSourceError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RangeSourceError {
+    #[error("the source does not serve ranges")]
+    Unsupported,
+    #[error(transparent)]
+    Transfer(#[from] TransferError),
+}
 
 /// How a file is split across concurrent ranged requests.
 ///
 /// At most `workers` ranges are being fetched and `workers` more may sit buffered ahead of the
 /// reader, so a plan holds up to `2 * workers * range_bytes` in memory.
 #[derive(Debug, Clone)]
-pub struct RangePlan {
+struct RangePlan {
     /// Ranges fetched at once.
     pub workers: usize,
     /// Bytes one range asks for.
@@ -41,7 +60,7 @@ impl Default for RangePlan {
 }
 
 /// Opens `url` for reading under the default [`RangePlan`].
-pub fn open_for_download<C: FileTransferClient>(
+pub(crate) fn open_for_download<C: RangeSource>(
     client: &C,
     url: &str,
     size_bytes: Option<u64>,
@@ -54,7 +73,7 @@ pub fn open_for_download<C: FileTransferClient>(
 ///
 /// Falls back to one whole-file request when the size is unknown, when the file fits in a single
 /// range, or when the source answers a ranged request with the whole file.
-pub fn open_for_download_with_plan<C: FileTransferClient>(
+fn open_for_download_with_plan<C: RangeSource>(
     client: &C,
     url: &str,
     size_bytes: Option<u64>,
@@ -62,7 +81,7 @@ pub fn open_for_download_with_plan<C: FileTransferClient>(
 ) -> Result<Box<dyn Read + Send>, TransferError> {
     let split = size_bytes.filter(|size| *size > plan.range_bytes && plan.workers > 0);
     let Some(size_bytes) = split else {
-        return client.get_reader(url);
+        return client.get_whole_reader(url);
     };
 
     // The first range is the file's own first chunk, and fetching it here answers whether the
@@ -72,8 +91,8 @@ pub fn open_for_download_with_plan<C: FileTransferClient>(
         Ok(first) => Ok(Box::new(RangedReader::spawn(
             client, url, size_bytes, plan, first, stop,
         ))),
-        Err(TransferError::RangesUnsupported) => client.get_reader(url),
-        Err(error) => Err(error),
+        Err(RangeSourceError::Unsupported) => client.get_whole_reader(url),
+        Err(RangeSourceError::Transfer(error)) => Err(error),
     }
 }
 
@@ -83,12 +102,12 @@ struct RangedReader {
     next: usize,
     current: io::Cursor<Vec<u8>>,
     arrived: BTreeMap<usize, Vec<u8>>,
-    results: Receiver<Result<(usize, Vec<u8>), TransferError>>,
+    results: Receiver<Result<(usize, Vec<u8>), RangeSourceError>>,
     stop: Arc<AtomicBool>,
 }
 
 impl RangedReader {
-    fn spawn<C: FileTransferClient>(
+    fn spawn<C: RangeSource>(
         client: &C,
         url: &str,
         size_bytes: u64,
@@ -170,14 +189,14 @@ impl Drop for RangedReader {
 }
 
 /// Claims ranges until they run out, the reader goes away, or one of them cannot be read.
-fn fetch_ranges<C: FileTransferClient>(
+fn fetch_ranges<C: RangeSource>(
     client: &C,
     url: &str,
     size_bytes: u64,
     plan: &RangePlan,
     claimed: &AtomicUsize,
     stop: &AtomicBool,
-    sender: &SyncSender<Result<(usize, Vec<u8>), TransferError>>,
+    sender: &SyncSender<Result<(usize, Vec<u8>), RangeSourceError>>,
 ) {
     while !stop.load(Ordering::Relaxed) {
         let index = claimed.fetch_add(1, Ordering::Relaxed);
@@ -196,21 +215,21 @@ fn fetch_ranges<C: FileTransferClient>(
 }
 
 /// One range, retried while the failure is not the source refusing to serve ranges at all.
-fn read_range<C: FileTransferClient>(
+fn read_range<C: RangeSource>(
     client: &C,
     url: &str,
     offset: u64,
     length: u64,
     plan: &RangePlan,
     stop: &AtomicBool,
-) -> Result<Vec<u8>, TransferError> {
+) -> Result<Vec<u8>, RangeSourceError> {
     let mut spent = 0;
     loop {
         let attempt = read_range_once(client, url, offset, length);
         spent += 1;
         match attempt {
             Ok(bytes) => return Ok(bytes),
-            Err(TransferError::RangesUnsupported) => return Err(TransferError::RangesUnsupported),
+            Err(RangeSourceError::Unsupported) => return Err(RangeSourceError::Unsupported),
             Err(error) if spent >= plan.attempts || stop.load(Ordering::Relaxed) => {
                 return Err(error);
             }
@@ -219,12 +238,12 @@ fn read_range<C: FileTransferClient>(
     }
 }
 
-fn read_range_once<C: FileTransferClient>(
+fn read_range_once<C: RangeSource>(
     client: &C,
     url: &str,
     offset: u64,
     length: u64,
-) -> Result<Vec<u8>, TransferError> {
+) -> Result<Vec<u8>, RangeSourceError> {
     let mut bytes = Vec::with_capacity(length as usize);
     client
         .get_range(url, offset, length)?
@@ -237,7 +256,8 @@ fn read_range_once<C: FileTransferClient>(
         return Err(TransferError::Transport(format!(
             "range at {offset} answered {} of {length} bytes",
             bytes.len()
-        )));
+        ))
+        .into());
     }
     Ok(bytes)
 }
@@ -286,17 +306,8 @@ mod tests {
         }
     }
 
-    impl FileTransferClient for Source {
-        fn put_reader<R: Read + Send + 'static>(
-            &self,
-            _url: &str,
-            _reader: R,
-            _size_bytes: u64,
-        ) -> Result<(), TransferError> {
-            unreachable!("the ranged reader never uploads")
-        }
-
-        fn get_reader(&self, _url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+    impl RangeSource for Source {
+        fn get_whole_reader(&self, _url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
             self.whole_calls.fetch_add(1, Ordering::Relaxed);
             Ok(Box::new(Cursor::new(self.bytes.as_ref().clone())))
         }
@@ -306,15 +317,15 @@ mod tests {
             _url: &str,
             offset: u64,
             length: u64,
-        ) -> Result<Box<dyn Read + Send>, TransferError> {
+        ) -> Result<Box<dyn Read + Send>, RangeSourceError> {
             let index = self.range_calls.fetch_add(1, Ordering::Relaxed);
             if !self.stagger.is_zero() {
                 thread::sleep(self.stagger * (8 - (index as u32).min(7)));
             }
             match self.ranges {
-                Ranges::Ignored => Err(TransferError::RangesUnsupported),
+                Ranges::Ignored => Err(RangeSourceError::Unsupported),
                 Ranges::Failing(at) if at as u64 == offset => {
-                    Err(TransferError::Transport("nope".into()))
+                    Err(TransferError::Transport("nope".into()).into())
                 }
                 served => {
                     let start = offset as usize;

@@ -108,12 +108,12 @@ pub fn download_artifacts_to_sink_with_client_and_observer<
         }
 
         let reader =
-            crate::ranged::open_for_download(client, &file.url, file.size_bytes).map_err(|e| {
-                DownloadError::Transfer {
+            client
+                .get_reader(&file.url, file.size_bytes)
+                .map_err(|e| DownloadError::Transfer {
                     rel_path: rel_path.clone(),
                     source: e,
-                }
-            })?;
+                })?;
         if observer.is_cancelled() {
             return Err(DownloadError::Cancelled { rel_path });
         }
@@ -378,7 +378,7 @@ mod tests {
         fn get_reader(
             &self,
             url: &str,
-            _expected_size_bytes: Option<u64>,
+            _expected_size: Option<u64>,
         ) -> Result<Box<dyn Read + Send>, TransferError> {
             let bytes = self
                 .files
@@ -796,7 +796,7 @@ mod tests {
         fn get_reader(
             &self,
             _url: &str,
-            _expected_size_bytes: Option<u64>,
+            _expected_size: Option<u64>,
         ) -> Result<Box<dyn Read + Send>, TransferError> {
             Ok(Box::new(ChunkedReader {
                 bytes: Arc::clone(&self.bytes),

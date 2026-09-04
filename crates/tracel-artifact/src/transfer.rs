@@ -33,6 +33,8 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
     TransferError::Transport(described)
 }
 
+use crate::ranged::{RangeSource, RangeSourceError};
+
 /// Watches a transfer as it runs, and can stop it.
 ///
 /// Every method defaults to doing nothing, so an implementation only has to define the events it
@@ -88,13 +90,9 @@ impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum TransferError {
     #[error("Transport error: {0}")]
     Transport(String),
-    /// The source answered a ranged request with the whole file.
-    #[error("the source does not serve ranges")]
-    RangesUnsupported,
 }
 
 /// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
@@ -108,21 +106,14 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
     ) -> Result<(), TransferError>;
 
     /// Download data from the given URL as a reader.
-    fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
-
-    /// Download `length` bytes of the file at `url`, starting at `offset`.
     ///
-    /// Answer [`TransferError::RangesUnsupported`] when the transport cannot serve part of a
-    /// file, which is what the default does.
-    fn get_range(
+    /// `expected_size` is a transport hint. Implementations may ignore it and read the whole
+    /// source, or use it to select a more efficient transfer strategy.
+    fn get_reader(
         &self,
         url: &str,
-        offset: u64,
-        length: u64,
-    ) -> Result<Box<dyn Read + Send>, TransferError> {
-        let _ = (url, offset, length);
-        Err(TransferError::RangesUnsupported)
-    }
+        expected_size: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError>;
 }
 
 /// Reqwest-based transfer client.
@@ -148,6 +139,22 @@ impl ReqwestTransferClient {
 
     pub fn with_client(http: reqwest::blocking::Client) -> Self {
         Self { http }
+    }
+
+    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .map_err(|e| TransferError::Transport(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(TransferError::Transport(
+                response.error_for_status().err().unwrap().to_string(),
+            ));
+        }
+
+        Ok(Box::new(response))
     }
 }
 
@@ -185,22 +192,15 @@ impl FileTransferClient for ReqwestTransferClient {
     fn get_reader(
         &self,
         url: &str,
-        expected_size_bytes: Option<u64>,
+        expected_size: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
-        let response = self
-            .http
-            .get(url)
-            .timeout(timeout_worth_allowing_a_transfer_of(expected_size_bytes))
-            .send()
-            .map_err(|error| transport_failure(&error))?;
+        crate::ranged::open_for_download(self, url, expected_size)
+    }
+}
 
-        if !response.status().is_success() {
-            return Err(transport_failure(
-                &response.error_for_status().err().unwrap(),
-            ));
-        }
-
-        Ok(Box::new(response))
+impl RangeSource for ReqwestTransferClient {
+    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+        self.get_whole_reader(url)
     }
 
     fn get_range(
@@ -208,7 +208,7 @@ impl FileTransferClient for ReqwestTransferClient {
         url: &str,
         offset: u64,
         length: u64,
-    ) -> Result<Box<dyn Read + Send>, TransferError> {
+    ) -> Result<Box<dyn Read + Send>, RangeSourceError> {
         let last = offset + length.saturating_sub(1);
         let response = self
             .http
@@ -222,10 +222,8 @@ impl FileTransferClient for ReqwestTransferClient {
         }
         // Any other success is the whole file: the source ignored the header.
         if response.status().is_success() {
-            return Err(TransferError::RangesUnsupported);
+            return Err(RangeSourceError::Unsupported);
         }
-        Err(TransferError::Transport(
-            response.error_for_status().err().unwrap().to_string(),
-        ))
+        Err(TransferError::Transport(response.error_for_status().err().unwrap().to_string()).into())
     }
 }

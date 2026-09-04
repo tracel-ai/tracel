@@ -1,11 +1,11 @@
 //! This crate centralizes traits, structures and utilities for handling artifacts.
 
+mod ranged;
 mod tools;
 mod transfer;
 
 pub mod bundle;
 pub mod download;
-pub mod ranged;
 pub mod upload;
 
 pub use tools::validation::normalize_checksum;
