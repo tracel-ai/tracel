@@ -47,6 +47,14 @@ impl Console {
         })
     }
 
+    /// Ends the session this console connected with.
+    ///
+    /// Consumes the console. The session is revoked at the console, so handles derived from it
+    /// stop working too.
+    pub fn logout(self) -> Result<(), ConsoleError> {
+        self.inner.client.clone().logout().map_err(Into::into)
+    }
+
     /// Returns the normalized console API base URL.
     pub fn base_url(&self) -> &Url {
         self.inner.client.base_url()
