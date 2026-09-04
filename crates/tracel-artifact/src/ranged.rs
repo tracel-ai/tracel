@@ -3,11 +3,11 @@
 //! The bytes come back in order through a plain [`Read`], so everything downstream — bundle
 //! sinks, checksum verification, progress and cancellation — is unchanged by the split.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Read};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -34,8 +34,8 @@ pub(crate) enum RangeSourceError {
 
 /// How a file is split across concurrent ranged requests.
 ///
-/// At most `workers` ranges are being fetched and `workers` more may sit buffered ahead of the
-/// reader, so a plan holds up to `2 * workers * range_bytes` in memory.
+/// At most `workers` ranges are scheduled ahead of the reader, so together with the range being
+/// read a plan holds up to `(workers + 1) * range_bytes` in memory.
 #[derive(Debug, Clone)]
 struct RangePlan {
     /// Ranges fetched at once.
@@ -103,6 +103,8 @@ struct RangedReader {
     current: io::Cursor<Vec<u8>>,
     arrived: BTreeMap<usize, Vec<u8>>,
     results: Receiver<Result<(usize, Vec<u8>), RangeSourceError>>,
+    jobs: Arc<RangeJobs>,
+    next_to_schedule: usize,
     stop: Arc<AtomicBool>,
 }
 
@@ -116,18 +118,19 @@ impl RangedReader {
         stop: Arc<AtomicBool>,
     ) -> Self {
         let ranges = size_bytes.div_ceil(plan.range_bytes) as usize;
-        let claimed = Arc::new(AtomicUsize::new(1));
+        let scheduled = plan.workers.min(ranges - 1);
+        let jobs = Arc::new(RangeJobs::new(1..=scheduled));
         let (sender, results) = sync_channel(plan.workers);
 
-        for _ in 0..plan.workers.min(ranges - 1) {
+        for _ in 0..scheduled {
             let client = client.clone();
             let url = url.to_string();
             let plan = plan.clone();
-            let claimed = Arc::clone(&claimed);
+            let jobs = Arc::clone(&jobs);
             let stop = Arc::clone(&stop);
             let sender = sender.clone();
             thread::spawn(move || {
-                fetch_ranges(&client, &url, size_bytes, &plan, &claimed, &stop, &sender)
+                fetch_ranges(&client, &url, size_bytes, &plan, &jobs, &stop, &sender)
             });
         }
         // The reader's own handle would otherwise keep it from ever disconnecting.
@@ -139,18 +142,31 @@ impl RangedReader {
             current: io::Cursor::new(first),
             arrived: BTreeMap::new(),
             results,
+            jobs,
+            next_to_schedule: scheduled + 1,
             stop,
+        }
+    }
+
+    fn schedule_next(&mut self) {
+        if self.next_to_schedule < self.ranges {
+            self.jobs.push(self.next_to_schedule);
+            self.next_to_schedule += 1;
         }
     }
 
     /// The bytes of one range, waiting for it when it has not arrived yet.
     fn take(&mut self, index: usize) -> io::Result<Vec<u8>> {
         if let Some(bytes) = self.arrived.remove(&index) {
+            self.schedule_next();
             return Ok(bytes);
         }
         loop {
             match self.results.recv() {
-                Ok(Ok((arrived, bytes))) if arrived == index => return Ok(bytes),
+                Ok(Ok((arrived, bytes))) if arrived == index => {
+                    self.schedule_next();
+                    return Ok(bytes);
+                }
                 Ok(Ok((arrived, bytes))) => {
                     self.arrived.insert(arrived, bytes);
                 }
@@ -175,6 +191,9 @@ impl Read for RangedReader {
             if self.next >= self.ranges {
                 return Ok(0);
             }
+            // Release the exhausted range before waiting for another one so it does not count
+            // against the reader's memory bound.
+            self.current = io::Cursor::new(Vec::new());
             let bytes = self.take(self.next)?;
             self.next += 1;
             self.current = io::Cursor::new(bytes);
@@ -185,6 +204,46 @@ impl Read for RangedReader {
 impl Drop for RangedReader {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.jobs.wake_all();
+    }
+}
+
+struct RangeJobs {
+    pending: Mutex<VecDeque<usize>>,
+    ready: Condvar,
+}
+
+impl RangeJobs {
+    fn new(pending: impl IntoIterator<Item = usize>) -> Self {
+        Self {
+            pending: Mutex::new(pending.into_iter().collect()),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn push(&self, index: usize) {
+        self.pending
+            .lock()
+            .expect("lock range jobs")
+            .push_back(index);
+        self.ready.notify_one();
+    }
+
+    fn take(&self, stop: &AtomicBool) -> Option<usize> {
+        let mut pending = self.pending.lock().expect("lock range jobs");
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            if let Some(index) = pending.pop_front() {
+                return Some(index);
+            }
+            pending = self.ready.wait(pending).expect("wait for range job");
+        }
+    }
+
+    fn wake_all(&self) {
+        self.ready.notify_all();
     }
 }
 
@@ -194,21 +253,22 @@ fn fetch_ranges<C: RangeSource>(
     url: &str,
     size_bytes: u64,
     plan: &RangePlan,
-    claimed: &AtomicUsize,
+    jobs: &RangeJobs,
     stop: &AtomicBool,
     sender: &SyncSender<Result<(usize, Vec<u8>), RangeSourceError>>,
 ) {
-    while !stop.load(Ordering::Relaxed) {
-        let index = claimed.fetch_add(1, Ordering::Relaxed);
+    while let Some(index) = jobs.take(stop) {
         let offset = index as u64 * plan.range_bytes;
-        if offset >= size_bytes {
-            return;
-        }
+        debug_assert!(offset < size_bytes);
 
         let length = plan.range_bytes.min(size_bytes - offset);
         let result = read_range(client, url, offset, length, plan, stop);
         let failed = result.is_err();
         if sender.send(result.map(|bytes| (index, bytes))).is_err() || failed {
+            if failed {
+                stop.store(true, Ordering::Relaxed);
+                jobs.wake_all();
+            }
             return;
         }
     }
@@ -266,6 +326,7 @@ fn read_range_once<C: RangeSource>(
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::sync::atomic::AtomicUsize;
 
     /// What a source does when asked for part of a file.
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -368,6 +429,23 @@ mod tests {
 
         assert_eq!(read, *source.bytes);
         assert_eq!(source.whole_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn fetching_stays_within_the_reader_window() {
+        let source = Source::new(20 * 1024, Ranges::Served);
+        let size = source.bytes.len() as u64;
+
+        let reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
+            .expect("the first range is served");
+        // The source is in-memory, so this is ample time for every scheduled worker to finish.
+        thread::sleep(Duration::from_millis(20));
+
+        assert_eq!(
+            source.range_calls.load(Ordering::Relaxed),
+            1 + plan().workers
+        );
+        drop(reader);
     }
 
     #[test]
