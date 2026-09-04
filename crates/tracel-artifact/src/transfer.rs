@@ -33,7 +33,7 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
     TransferError::Transport(described)
 }
 
-use crate::ranged::{RangeSource, RangeSourceError};
+use crate::ranged::{RangeResponse, RangeSource, RangeSourceError};
 
 /// Watches a transfer as it runs, and can stop it.
 ///
@@ -208,7 +208,7 @@ impl RangeSource for ReqwestTransferClient {
         url: &str,
         offset: u64,
         length: u64,
-    ) -> Result<Box<dyn Read + Send>, RangeSourceError> {
+    ) -> Result<RangeResponse, RangeSourceError> {
         let last = offset + length.saturating_sub(1);
         let response = self
             .http
@@ -218,7 +218,12 @@ impl RangeSource for ReqwestTransferClient {
             .map_err(|e| TransferError::Transport(e.to_string()))?;
 
         if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
-            return Ok(Box::new(response));
+            let (range, total_size) = parse_content_range(&response)?;
+            return Ok(RangeResponse {
+                reader: Box::new(response),
+                range,
+                total_size,
+            });
         }
         // Any other success is the whole file: the source ignored the header.
         if response.status().is_success() {
@@ -226,4 +231,41 @@ impl RangeSource for ReqwestTransferClient {
         }
         Err(TransferError::Transport(response.error_for_status().err().unwrap().to_string()).into())
     }
+}
+
+fn parse_content_range(
+    response: &reqwest::blocking::Response,
+) -> Result<(std::ops::Range<u64>, u64), TransferError> {
+    let value = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| TransferError::Transport("partial response omitted Content-Range".into()))?;
+    let value = value.strip_prefix("bytes ").ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    let (range, total) = value.split_once('/').ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    let (start, end) = range.split_once('-').ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
+    let total = total
+        .parse::<u64>()
+        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
+    let end = end.checked_add(1).ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    if start >= end || end > total {
+        return Err(TransferError::Transport(format!(
+            "invalid Content-Range header: {value}"
+        )));
+    }
+    Ok((start..end, total))
 }

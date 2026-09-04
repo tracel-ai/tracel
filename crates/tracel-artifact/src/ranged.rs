@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Read};
+use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -21,7 +22,13 @@ pub(crate) trait RangeSource: Clone + Send + Sync + 'static {
         url: &str,
         offset: u64,
         length: u64,
-    ) -> Result<Box<dyn Read + Send>, RangeSourceError>;
+    ) -> Result<RangeResponse, RangeSourceError>;
+}
+
+pub(crate) struct RangeResponse {
+    pub reader: Box<dyn Read + Send>,
+    pub range: Range<u64>,
+    pub total_size: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +94,7 @@ fn open_for_download_with_plan<C: RangeSource>(
     // The first range is the file's own first chunk, and fetching it here answers whether the
     // source serves ranges before any worker is spawned.
     let stop = Arc::new(AtomicBool::new(false));
-    match read_range(client, url, 0, plan.range_bytes, plan, &stop) {
+    match read_range(client, url, 0, plan.range_bytes, size_bytes, plan, &stop) {
         Ok(first) => Ok(Box::new(RangedReader::spawn(
             client, url, size_bytes, plan, first, stop,
         ))),
@@ -262,7 +269,7 @@ fn fetch_ranges<C: RangeSource>(
         debug_assert!(offset < size_bytes);
 
         let length = plan.range_bytes.min(size_bytes - offset);
-        let result = read_range(client, url, offset, length, plan, stop);
+        let result = read_range(client, url, offset, length, size_bytes, plan, stop);
         let failed = result.is_err();
         if sender.send(result.map(|bytes| (index, bytes))).is_err() || failed {
             if failed {
@@ -280,12 +287,13 @@ fn read_range<C: RangeSource>(
     url: &str,
     offset: u64,
     length: u64,
+    expected_size: u64,
     plan: &RangePlan,
     stop: &AtomicBool,
 ) -> Result<Vec<u8>, RangeSourceError> {
     let mut spent = 0;
     loop {
-        let attempt = read_range_once(client, url, offset, length);
+        let attempt = read_range_once(client, url, offset, length, expected_size);
         spent += 1;
         match attempt {
             Ok(bytes) => return Ok(bytes),
@@ -303,15 +311,34 @@ fn read_range_once<C: RangeSource>(
     url: &str,
     offset: u64,
     length: u64,
+    expected_size: u64,
 ) -> Result<Vec<u8>, RangeSourceError> {
+    let response = client.get_range(url, offset, length)?;
+    let expected_range = offset..offset + length;
+    if response.range != expected_range {
+        return Err(TransferError::Transport(format!(
+            "requested range {expected_range:?}, source answered {:?}",
+            response.range
+        ))
+        .into());
+    }
+    if response.total_size != expected_size {
+        return Err(TransferError::Transport(format!(
+            "source size is {} bytes, expected {expected_size} bytes",
+            response.total_size
+        ))
+        .into());
+    }
+
     let mut bytes = Vec::with_capacity(length as usize);
-    client
-        .get_range(url, offset, length)?
-        .take(length)
+    response
+        .reader
+        .take(length.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|error| TransferError::Transport(error.to_string()))?;
 
-    // A short range would silently truncate the file, and the checksum would be blamed for it.
+    // A short or long body would silently change the file, and the checksum would be blamed for
+    // what is really a broken range response.
     if bytes.len() as u64 != length {
         return Err(TransferError::Transport(format!(
             "range at {offset} answered {} of {length} bytes",
@@ -338,6 +365,8 @@ mod tests {
         Short,
         /// Never answers this range.
         Failing(usize),
+        /// Announces a total different from the source length.
+        WrongTotal(u64),
     }
 
     #[derive(Clone)]
@@ -378,7 +407,7 @@ mod tests {
             _url: &str,
             offset: u64,
             length: u64,
-        ) -> Result<Box<dyn Read + Send>, RangeSourceError> {
+        ) -> Result<RangeResponse, RangeSourceError> {
             let index = self.range_calls.fetch_add(1, Ordering::Relaxed);
             if !self.stagger.is_zero() {
                 thread::sleep(self.stagger * (8 - (index as u32).min(7)));
@@ -396,7 +425,15 @@ mod tests {
                     } else {
                         end
                     };
-                    Ok(Box::new(Cursor::new(self.bytes[start..end].to_vec())))
+                    let total_size = match served {
+                        Ranges::WrongTotal(total) => total,
+                        _ => self.bytes.len() as u64,
+                    };
+                    Ok(RangeResponse {
+                        reader: Box::new(Cursor::new(self.bytes[start..end].to_vec())),
+                        range: offset..offset + length,
+                        total_size,
+                    })
                 }
             }
         }
@@ -499,5 +536,18 @@ mod tests {
         let error = read_all(&source, Some(size)).expect_err("a short range is not the file");
 
         assert!(error.to_string().contains("of 1024 bytes"), "{error}");
+    }
+
+    #[test]
+    fn a_source_with_a_different_total_size_is_refused() {
+        let source = Source::new(8 * 1024, Ranges::WrongTotal(9 * 1024));
+        let size = source.bytes.len() as u64;
+
+        let error = read_all(&source, Some(size)).expect_err("the total size changed");
+
+        assert!(
+            error.to_string().contains("source size is 9216 bytes"),
+            "{error}"
+        );
     }
 }
