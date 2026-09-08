@@ -2,7 +2,8 @@
 
 //! Backend-agnostic model domain and capability.
 //!
-//! [`Models`] owns model transfer, verification, staging, and delivery.
+//! [`Models`] owns model transfer, verification, staging, and delivery, including downloading a
+//! verified version directly into a filesystem directory.
 //! Backends implement the blocking primitives in [`ModelOps`] after binding their own scope.
 
 mod domain;

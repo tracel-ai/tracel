@@ -17,3 +17,5 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracel-artifact = { workspace = true }
 
+[dev-dependencies]
+tempfile.workspace = true

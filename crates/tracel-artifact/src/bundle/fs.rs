@@ -1,7 +1,9 @@
 //! File-backed bundle implementation for artifacts.
 //!
 //! This module provides an implementation of the `BundleSink` and `BundleSource` traits that uses the local filesystem to store artifact files.
-//! It supports both temporary bundles (which clean up after themselves) and persistent bundles rooted at a specified directory.
+//! It supports temporary bundles in the system temp directory or inside a parent of the caller's
+//! choosing (which clean up after themselves), and persistent bundles rooted at a specified
+//! directory.
 //! The implementation ensures that file paths are sanitized to prevent directory traversal, and that concurrent writes to the same path are handled safely using temporary files and atomic renames.
 
 use std::collections::HashSet;
@@ -41,6 +43,25 @@ impl FsBundle {
     /// Create a temporary writable bundle that cleans up on drop.
     pub fn temp() -> Result<Self, std::io::Error> {
         let temp = TempDir::new()?;
+        let root = temp.path().to_path_buf();
+        Ok(Self {
+            root,
+            files: Vec::new(),
+            seen: HashSet::new(),
+            _temp: Some(temp),
+        })
+    }
+
+    /// Create a temporary writable bundle inside `parent`, cleaned up on drop.
+    ///
+    /// For staging beside a destination: a file renamed from here into a sibling of `parent`
+    /// stays on one filesystem.
+    pub fn temp_in(parent: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+        let parent = parent.as_ref();
+        fs::create_dir_all(parent)?;
+        let temp = tempfile::Builder::new()
+            .prefix(".staging-")
+            .tempdir_in(parent)?;
         let root = temp.path().to_path_buf();
         Ok(Self {
             root,
@@ -280,5 +301,25 @@ impl MultipartUploadSource for FsBundle {
                 source: Box::new(e),
             })?;
         Ok(Box::new(file.take(size)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_temp_bundle_in_a_parent_lives_there_and_leaves_on_drop() {
+        let home = TempDir::new().unwrap();
+        let parent = home.path().join("parent");
+        let bundle = FsBundle::temp_in(&parent).unwrap();
+        let root = bundle.root().to_path_buf();
+
+        assert_eq!(root.parent(), Some(parent.as_path()));
+        assert!(root.exists());
+
+        drop(bundle);
+
+        assert_eq!(parent.read_dir().unwrap().count(), 0);
     }
 }

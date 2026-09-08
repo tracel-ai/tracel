@@ -21,6 +21,7 @@ pub struct SourceSpec {
     pub opens: Arc<AtomicUsize>,
     pub consumed: Arc<AtomicUsize>,
     pub opened_paths: Arc<Mutex<Vec<String>>>,
+    pub on_open: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl SourceSpec {
@@ -37,6 +38,7 @@ impl SourceSpec {
             opens: Arc::new(AtomicUsize::new(0)),
             consumed: Arc::new(AtomicUsize::new(0)),
             opened_paths: Arc::new(Mutex::new(Vec::new())),
+            on_open: None,
         }
     }
 
@@ -53,6 +55,9 @@ impl VersionFileSource for TestSource {
     }
 
     fn open(&self, canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
+        if let Some(on_open) = &self.0.on_open {
+            on_open();
+        }
         self.0.opens.fetch_add(1, Ordering::SeqCst);
         self.0
             .opened_paths

@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::fs;
 use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 
 use tracel_artifact::TransferObserver;
@@ -58,7 +60,9 @@ impl Models {
     ///
     /// Progress callbacks run synchronously while backend bytes are staged and may cancel the
     /// active transfer through [`TransferObserver::is_cancelled`]. The destination is untouched
-    /// unless every file passes path, size, and checksum verification.
+    /// unless every file passes path, size, and checksum verification. For a directory
+    /// destination, [`download_into`](Self::download_into) avoids the copy by renaming staged
+    /// files into place.
     pub fn download<S, O>(
         &self,
         model: &str,
@@ -70,8 +74,34 @@ impl Models {
         S: BundleSink,
         O: TransferObserver,
     {
-        let staged = self.stage(model, id, observer)?;
+        let staged = self.stage(model, id, Staging::Anywhere, observer)?;
         staged.copy_to(destination, observer)
+    }
+
+    /// Downloads and verifies a version into `directory`.
+    ///
+    /// The files are staged in a sibling of `directory` and renamed into it once every one of
+    /// them has passed path, size, and checksum verification, so no byte is written twice.
+    /// `directory` is created only then; a cancelled or failed transfer leaves it untouched.
+    /// An output failure during the final renames may leave files already moved into place.
+    ///
+    /// A file already in `directory` under a published path is replaced. Files there under other
+    /// paths are left alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`download`](Self::download), plus [`ModelsError::Output`] when `directory` or its
+    /// parent cannot be written.
+    pub fn download_into<O: TransferObserver>(
+        &self,
+        model: &str,
+        id: &VersionId,
+        directory: &Path,
+        observer: &mut O,
+    ) -> Result<FsBundle, ModelsError> {
+        let parent = directory.parent().unwrap_or_else(|| Path::new("."));
+        let staged = self.stage(model, id, Staging::Beside(parent), observer)?;
+        staged.move_into(directory)
     }
 
     /// Downloads, verifies, and decodes a model version using `settings`.
@@ -84,7 +114,7 @@ impl Models {
         id: &VersionId,
         settings: &D::Settings,
     ) -> Result<D, ModelsError> {
-        let staged = self.stage(model, id, &mut ())?;
+        let staged = self.stage(model, id, Staging::Anywhere, &mut ())?;
         D::decode(&staged, settings).map_err(|error| {
             let error: Box<dyn std::error::Error + Send + Sync> = error.into();
             ModelsError::Decode(error.to_string())
@@ -124,6 +154,7 @@ impl Models {
         &self,
         model: &str,
         id: &VersionId,
+        staging: Staging<'_>,
         observer: &mut O,
     ) -> Result<StagedVersion, ModelsError> {
         if observer.is_cancelled() {
@@ -132,7 +163,11 @@ impl Models {
 
         let sources = self.ops.fetch_version_files(model, id)?;
         let paths = validated_source_paths(&sources)?;
-        let mut bundle = FsBundle::temp().map_err(ModelsError::other)?;
+        let mut bundle = match staging {
+            Staging::Anywhere => FsBundle::temp(),
+            Staging::Beside(parent) => FsBundle::temp_in(parent),
+        }
+        .map_err(ModelsError::other)?;
 
         for (source, path) in sources.iter().zip(paths) {
             stage_source(source.as_ref(), path, &mut bundle, observer)?;
@@ -146,6 +181,14 @@ impl fmt::Debug for Models {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("Models").finish_non_exhaustive()
     }
+}
+
+/// Where an unverified version is held until its last byte checks out.
+enum Staging<'a> {
+    /// The system temp directory, for a version that is decoded or copied out.
+    Anywhere,
+    /// Inside `parent`, for a version renamed into a sibling of it.
+    Beside(&'a Path),
 }
 
 struct StagedVersion {
@@ -168,6 +211,39 @@ impl StagedVersion {
                 .map_err(ModelsError::Output)?;
         }
         Ok(())
+    }
+
+    /// Moves every staged file into `directory` by rename.
+    fn move_into(self, directory: &Path) -> Result<FsBundle, ModelsError> {
+        fs::create_dir_all(directory).map_err(|error| ModelsError::Output(error.to_string()))?;
+        let paths = self.bundle.file_paths();
+
+        for file in self.bundle.files() {
+            let target = directory.join(&file.rel_path);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| ModelsError::Output(error.to_string()))?;
+            }
+            move_file(&file.abs_path, &target)
+                .map_err(|error| ModelsError::Output(format!("{}: {error}", file.rel_path)))?;
+        }
+
+        FsBundle::with_files(directory.to_path_buf(), paths).map_err(ModelsError::Output)
+    }
+}
+
+fn move_file(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+    if to.exists() {
+        fs::remove_file(to)?;
+    }
+
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+            fs::copy(from, to)?;
+            fs::remove_file(from)
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -384,8 +460,11 @@ fn invalid_path(message: String) -> ModelsError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
 
+    use tempfile::TempDir;
     use tracel_artifact::bundle::InMemoryBundleSources;
 
     use super::*;
@@ -501,6 +580,141 @@ mod tests {
         assert_eq!(observer.progress.last(), Some(&(bytes.len() as u64)));
         assert_eq!(observer.completed, vec![bytes.len() as u64]);
         assert_eq!(destination.files()[0].source(), bytes);
+    }
+
+    #[test]
+    fn download_into_renames_verified_files_into_the_directory() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let models = models_with_sources(vec![
+            SourceSpec::new("weights.bin", b"weights"),
+            SourceSpec::new("config/model.json", b"configuration"),
+        ]);
+
+        let bundle = models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap();
+
+        assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), b"weights");
+        assert_eq!(
+            fs::read(directory.join("config/model.json")).unwrap(),
+            b"configuration"
+        );
+        assert_eq!(
+            bundle.file_paths(),
+            vec!["weights.bin", "config/model.json"]
+        );
+        assert_eq!(home.path().read_dir().unwrap().count(), 1);
+        assert!(directory.exists());
+    }
+
+    #[test]
+    fn download_into_stages_beside_the_directory() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let observed = Arc::new(Mutex::new(None));
+        let observed_on_open = Arc::clone(&observed);
+        let home_on_open = home.path().to_path_buf();
+        let directory_on_open = directory.clone();
+        let mut second = SourceSpec::new("second.bin", b"second");
+        second.on_open = Some(Arc::new(move || {
+            let entries: Vec<String> = home_on_open
+                .read_dir()
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            *observed_on_open.lock().unwrap() = Some((entries, directory_on_open.exists()));
+        }));
+        let models = models_with_sources(vec![SourceSpec::new("first.bin", b"first"), second]);
+
+        models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap();
+
+        let observed = observed.lock().unwrap();
+        let (entries, directory_existed) = observed.as_ref().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].starts_with(".staging-"), "{entries:?}");
+        assert!(!directory_existed);
+    }
+
+    #[test]
+    fn a_failed_download_into_leaves_nothing_behind() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let mut failing = SourceSpec::new("second.bin", b"incomplete payload");
+        failing.chunk_size = 4;
+        failing.failure_at = Some(4);
+        let models = models_with_sources(vec![
+            SourceSpec::new("first.bin", b"already staged"),
+            failing,
+        ]);
+
+        let error = models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap_err();
+
+        assert!(error.to_string().contains("mid-stream"), "{error}");
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_cancelled_download_into_leaves_nothing_behind() {
+        #[derive(Default)]
+        struct CancelAfterFirst {
+            completed: usize,
+        }
+
+        impl TransferObserver for CancelAfterFirst {
+            fn is_cancelled(&self) -> bool {
+                self.completed > 0
+            }
+
+            fn file_completed(&mut self, _rel_path: &str, _downloaded_bytes: u64) {
+                self.completed += 1;
+            }
+        }
+
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let models = models_with_sources(vec![
+            SourceSpec::new("first.bin", b"first"),
+            SourceSpec::new("second.bin", b"second"),
+        ]);
+
+        let error = models
+            .download_into(
+                "alpha",
+                &VersionId::new("version-id"),
+                &directory,
+                &mut CancelAfterFirst::default(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, ModelsError::Cancelled));
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[test]
+    fn download_into_replaces_a_published_path_and_keeps_the_rest() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("weights.bin"), b"old weights").unwrap();
+        fs::write(directory.join("notes.txt"), b"keep me").unwrap();
+        let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"new weights")]);
+
+        models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap();
+
+        assert_eq!(
+            fs::read(directory.join("weights.bin")).unwrap(),
+            b"new weights"
+        );
+        assert_eq!(fs::read(directory.join("notes.txt")).unwrap(), b"keep me");
     }
 
     #[test]
