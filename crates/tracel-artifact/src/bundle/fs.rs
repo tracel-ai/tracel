@@ -73,9 +73,12 @@ impl FsBundle {
 
     /// Moves every registered file into `directory` and returns a bundle rooted there.
     ///
-    /// Existing files under registered paths are replaced; other files in `directory` are left
-    /// alone. Renames replace atomically where the platform supports it. Crossing a mount point
-    /// falls back to a copy through a temporary destination file.
+    /// This merges into `directory` rather than replacing it: existing files under registered
+    /// paths are replaced, and other files there are left alone. A caller that needs `directory`
+    /// to hold this bundle and nothing else must clear it first, and one whose own marker files
+    /// live there must not let them outlive the merge. Renames replace atomically where the
+    /// platform supports it. Crossing a mount point falls back to a copy through a temporary
+    /// destination file.
     ///
     /// If moving one file fails, files already moved remain in `directory` and this bundle's
     /// temporary root is cleaned up on return.
