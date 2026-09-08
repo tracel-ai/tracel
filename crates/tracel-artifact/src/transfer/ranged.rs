@@ -13,10 +13,16 @@ use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender, bounded};
 
-use super::{ReqwestTransferClient, TransferError};
+use super::{
+    ReqwestTransferClient, TransferError, timeout_worth_allowing_a_transfer_of, transport_failure,
+};
 
 trait RangeSource: Clone + Send + Sync + 'static {
-    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
+    fn get_whole_reader(
+        &self,
+        url: &str,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError>;
 
     /// Returns `None` when the source ignores a range request and serves whole files only.
     fn try_get_range(
@@ -82,7 +88,7 @@ fn open_with_plan<C: RangeSource>(
 ) -> Result<Box<dyn Read + Send>, TransferError> {
     let split = size_bytes.filter(|size| *size > plan.range_bytes);
     let Some(size_bytes) = split else {
-        return client.get_whole_reader(url);
+        return client.get_whole_reader(url, size_bytes);
     };
 
     // The first range is the file's own first chunk, and fetching it here answers whether the
@@ -100,7 +106,7 @@ fn open_with_plan<C: RangeSource>(
         Ok(Some(first)) => Ok(Box::new(RangedReader::new(
             client, url, size_bytes, plan, first, stop,
         ))),
-        Ok(None) => client.get_whole_reader(url),
+        Ok(None) => client.get_whole_reader(url, Some(size_bytes)),
         Err(error) => Err(error),
     }
 }
@@ -465,8 +471,12 @@ fn request_once<C: RangeSource>(
 }
 
 impl RangeSource for ReqwestTransferClient {
-    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
-        self.get_whole_reader(url)
+    fn get_whole_reader(
+        &self,
+        url: &str,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError> {
+        self.get_whole_reader(url, expected_size_bytes)
     }
 
     fn try_get_range(
@@ -480,8 +490,9 @@ impl RangeSource for ReqwestTransferClient {
             .http
             .get(url)
             .header(reqwest::header::RANGE, format!("bytes={offset}-{last}"))
+            .timeout(timeout_worth_allowing_a_transfer_of(Some(length)))
             .send()
-            .map_err(|error| TransferError::Transport(error.to_string()))?;
+            .map_err(|error| transport_failure(&error))?;
 
         if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
             let (range, total_size) = parse_content_range(&response)?;
@@ -495,8 +506,8 @@ impl RangeSource for ReqwestTransferClient {
         if response.status().is_success() {
             return Ok(None);
         }
-        Err(TransferError::Transport(
-            response.error_for_status().err().unwrap().to_string(),
+        Err(transport_failure(
+            &response.error_for_status().err().unwrap(),
         ))
     }
 }
@@ -597,7 +608,11 @@ mod tests {
     }
 
     impl RangeSource for Source {
-        fn get_whole_reader(&self, _url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+        fn get_whole_reader(
+            &self,
+            _url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Box<dyn Read + Send>, TransferError> {
             self.whole_calls.fetch_add(1, Ordering::Relaxed);
             Ok(Box::new(Cursor::new(self.bytes.as_ref().clone())))
         }

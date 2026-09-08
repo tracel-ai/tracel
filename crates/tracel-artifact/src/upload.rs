@@ -245,7 +245,7 @@ mod tests {
         fn get_reader(
             &self,
             _url: &str,
-            _expected_size: Option<u64>,
+            _expected_size_bytes: Option<u64>,
         ) -> Result<Box<dyn Read + Send>, TransferError> {
             Err(TransferError::Transport(
                 "get_reader should not be used in upload tests".to_string(),

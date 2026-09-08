@@ -107,12 +107,13 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
 
     /// Download data from the given URL as a reader.
     ///
-    /// `expected_size` is a transport hint. Implementations may ignore it and read the whole
-    /// source, or use it to select a more efficient transfer strategy.
+    /// `expected_size_bytes` is what the manifest announced, where one did. Implementations may
+    /// use it to choose a transfer strategy and give a large download enough time. It is absent
+    /// for an artifact published without a manifest.
     fn get_reader(
         &self,
         url: &str,
-        expected_size: Option<u64>,
+        expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError>;
 }
 
@@ -141,16 +142,21 @@ impl ReqwestTransferClient {
         Self { http }
     }
 
-    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+    fn get_whole_reader(
+        &self,
+        url: &str,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError> {
         let response = self
             .http
             .get(url)
+            .timeout(timeout_worth_allowing_a_transfer_of(expected_size_bytes))
             .send()
-            .map_err(|e| TransferError::Transport(e.to_string()))?;
+            .map_err(|error| transport_failure(&error))?;
 
         if !response.status().is_success() {
-            return Err(TransferError::Transport(
-                response.error_for_status().err().unwrap().to_string(),
+            return Err(transport_failure(
+                &response.error_for_status().err().unwrap(),
             ));
         }
 
@@ -192,8 +198,8 @@ impl FileTransferClient for ReqwestTransferClient {
     fn get_reader(
         &self,
         url: &str,
-        expected_size: Option<u64>,
+        expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
-        ranged::open(self, url, expected_size)
+        ranged::open(self, url, expected_size_bytes)
     }
 }

@@ -378,7 +378,7 @@ mod tests {
         fn get_reader(
             &self,
             url: &str,
-            _expected_size: Option<u64>,
+            _expected_size_bytes: Option<u64>,
         ) -> Result<Box<dyn Read + Send>, TransferError> {
             let bytes = self
                 .files
@@ -796,7 +796,7 @@ mod tests {
         fn get_reader(
             &self,
             _url: &str,
-            _expected_size: Option<u64>,
+            _expected_size_bytes: Option<u64>,
         ) -> Result<Box<dyn Read + Send>, TransferError> {
             Ok(Box::new(ChunkedReader {
                 bytes: Arc::clone(&self.bytes),
