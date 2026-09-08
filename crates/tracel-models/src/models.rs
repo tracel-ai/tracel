@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::fmt;
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -77,13 +76,17 @@ impl Models {
         directory: &Path,
         observer: &mut O,
     ) -> Result<FsBundle, ModelsError> {
+        if observer.is_cancelled() {
+            return Err(ModelsError::Cancelled);
+        }
         let parent = directory
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        let verified = self.stage(model, id, Staging::Beside(parent), observer)?;
-        verified
-            .into_bundle()
+        let staging =
+            FsBundle::temp_in(parent).map_err(|error| ModelsError::Output(error.to_string()))?;
+        let bundle = self.stage_verified(model, id, staging, observer)?;
+        bundle
             .move_into(directory)
             .map_err(|error| ModelsError::Output(error.to_string()))
     }
@@ -98,8 +101,9 @@ impl Models {
         id: &VersionId,
         settings: &D::Settings,
     ) -> Result<D, ModelsError> {
-        let verified = self.stage(model, id, Staging::Anywhere, &mut ())?;
-        D::decode(&verified, settings).map_err(|error| {
+        let staging = FsBundle::temp().map_err(ModelsError::other)?;
+        let bundle = self.stage_verified(model, id, staging, &mut ())?;
+        D::decode(&bundle, settings).map_err(|error| {
             let error: Box<dyn std::error::Error + Send + Sync> = error.into();
             ModelsError::Decode(error.to_string())
         })
@@ -134,67 +138,31 @@ impl Models {
             .publish_version(model, &files, source, metadata.as_ref(), observer)
     }
 
-    fn stage<O: TransferObserver>(
+    fn stage_verified<O: TransferObserver>(
         &self,
         model: &str,
         id: &VersionId,
-        staging: Staging<'_>,
+        mut bundle: FsBundle,
         observer: &mut O,
-    ) -> Result<VerifiedBundle, ModelsError> {
+    ) -> Result<FsBundle, ModelsError> {
         if observer.is_cancelled() {
             return Err(ModelsError::Cancelled);
         }
 
         let sources = self.ops.fetch_version_files(model, id)?;
         let paths = validated_source_paths(&sources)?;
-        let mut bundle = match staging {
-            Staging::Anywhere => FsBundle::temp().map_err(ModelsError::other),
-            Staging::Beside(parent) => {
-                FsBundle::temp_in(parent).map_err(|error| ModelsError::Output(error.to_string()))
-            }
-        }?;
 
         for (source, path) in sources.iter().zip(paths) {
             stage_source(source.as_ref(), path, &mut bundle, observer)?;
         }
 
-        Ok(VerifiedBundle { bundle })
+        Ok(bundle)
     }
 }
 
 impl fmt::Debug for Models {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("Models").finish_non_exhaustive()
-    }
-}
-
-/// Where an unverified version is held until its last byte checks out.
-enum Staging<'a> {
-    /// The system temp directory, for a version that is decoded.
-    Anywhere,
-    /// Inside `parent`, for a version renamed into a sibling of it.
-    Beside(&'a Path),
-}
-
-/// A complete staged bundle whose published paths, sizes, and checksums matched.
-struct VerifiedBundle {
-    bundle: FsBundle,
-}
-
-impl VerifiedBundle {
-    fn into_bundle(self) -> FsBundle {
-        self.bundle
-    }
-}
-
-impl BundleSource for VerifiedBundle {
-    fn open(&self, path: &str) -> Result<Box<dyn Read + Send>, String> {
-        let canonical = canonical_version_path(path).map_err(|error| error.to_string())?;
-        self.bundle.open(&canonical)
-    }
-
-    fn list(&self) -> Result<Vec<String>, String> {
-        self.bundle.list()
     }
 }
 
@@ -401,9 +369,10 @@ fn invalid_path(message: String) -> ModelsError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Read;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::atomic::Ordering;
-    use std::sync::{Arc, Mutex};
 
     use tempfile::TempDir;
     use tracel_artifact::bundle::BundleSink;
@@ -539,29 +508,49 @@ mod tests {
 
     #[test]
     fn download_into_stages_beside_the_directory() {
+        struct ObserveStaging {
+            home: PathBuf,
+            directory: PathBuf,
+            observed: Option<(Vec<String>, bool)>,
+        }
+
+        impl TransferObserver for ObserveStaging {
+            fn file_started(&mut self, rel_path: &str, _expected_bytes: Option<u64>) {
+                if rel_path != "second.bin" {
+                    return;
+                }
+                let entries = self
+                    .home
+                    .read_dir()
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect();
+                self.observed = Some((entries, self.directory.exists()));
+            }
+        }
+
         let home = TempDir::new().unwrap();
         let directory = home.path().join("landed");
-        let observed = Arc::new(Mutex::new(None));
-        let observed_on_open = Arc::clone(&observed);
-        let home_on_open = home.path().to_path_buf();
-        let directory_on_open = directory.clone();
-        let mut second = SourceSpec::new("second.bin", b"second");
-        second.on_open = Some(Arc::new(move || {
-            let entries: Vec<String> = home_on_open
-                .read_dir()
-                .unwrap()
-                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-                .collect();
-            *observed_on_open.lock().unwrap() = Some((entries, directory_on_open.exists()));
-        }));
-        let models = models_with_sources(vec![SourceSpec::new("first.bin", b"first"), second]);
+        let models = models_with_sources(vec![
+            SourceSpec::new("first.bin", b"first"),
+            SourceSpec::new("second.bin", b"second"),
+        ]);
+        let mut observer = ObserveStaging {
+            home: home.path().to_path_buf(),
+            directory: directory.clone(),
+            observed: None,
+        };
 
         models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into(
+                "alpha",
+                &VersionId::new("version-id"),
+                &directory,
+                &mut observer,
+            )
             .unwrap();
 
-        let observed = observed.lock().unwrap();
-        let (entries, directory_existed) = observed.as_ref().unwrap();
+        let (entries, directory_existed) = observer.observed.unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].starts_with(".staging-"), "{entries:?}");
         assert!(!directory_existed);
