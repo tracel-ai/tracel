@@ -549,6 +549,8 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::time::Instant;
 
+    const TEST_RANGE_BYTES: u64 = 1024;
+
     /// What a source does when asked for part of a file.
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Ranges {
@@ -568,6 +570,7 @@ mod tests {
         bytes: Arc<Vec<u8>>,
         ranges: Ranges,
         range_calls: Arc<AtomicUsize>,
+        first_chunk_calls: Arc<AtomicUsize>,
         whole_calls: Arc<AtomicUsize>,
         first_body_reads: Arc<AtomicUsize>,
         /// Makes later ranges arrive first, so ordering is actually exercised.
@@ -580,6 +583,7 @@ mod tests {
                 bytes: Arc::new((0..len).map(|byte| byte as u8).collect()),
                 ranges,
                 range_calls: Arc::new(AtomicUsize::new(0)),
+                first_chunk_calls: Arc::new(AtomicUsize::new(0)),
                 whole_calls: Arc::new(AtomicUsize::new(0)),
                 first_body_reads: Arc::new(AtomicUsize::new(0)),
                 stagger: Duration::ZERO,
@@ -605,6 +609,9 @@ mod tests {
             length: u64,
         ) -> Result<Option<RangeResponse>, TransferError> {
             let index = self.range_calls.fetch_add(1, Ordering::Relaxed);
+            if offset < TEST_RANGE_BYTES {
+                self.first_chunk_calls.fetch_add(1, Ordering::Relaxed);
+            }
             if !self.stagger.is_zero() {
                 thread::sleep(self.stagger * (8 - (index as u32).min(7)));
             }
@@ -616,7 +623,7 @@ mod tests {
                 served => {
                     let start = offset as usize;
                     let end = (start + length as usize).min(self.bytes.len());
-                    let end = if served == Ranges::Short {
+                    let end = if served == Ranges::Short && offset < TEST_RANGE_BYTES {
                         end - 1
                     } else {
                         end
@@ -658,7 +665,7 @@ mod tests {
     fn plan() -> RangePlan {
         RangePlan {
             workers: 4,
-            range_bytes: 1024,
+            range_bytes: TEST_RANGE_BYTES,
             attempts: 2,
             backoff: Duration::from_millis(1),
         }
@@ -772,7 +779,7 @@ mod tests {
 
         assert!(error.to_string().contains("ended before 1024"), "{error}");
         assert_eq!(
-            source.range_calls.load(Ordering::Relaxed),
+            source.first_chunk_calls.load(Ordering::Relaxed),
             plan().attempts as usize
         );
     }
