@@ -35,6 +35,9 @@ impl From<ClientError> for StationError {
         if error.is_not_found() {
             return Self::NotFound;
         }
-        Self::other(error)
+        match error {
+            ClientError::UnknownError(message) => Self::Transport(message),
+            error => Self::other(error),
+        }
     }
 }

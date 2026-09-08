@@ -187,7 +187,7 @@ fn stage_source<O: TransferObserver>(
 fn map_download_error(error: DownloadError) -> ModelsError {
     match error {
         DownloadError::Cancelled { .. } => ModelsError::Cancelled,
-        DownloadError::Transfer { source, .. } => ModelsError::other(source),
+        error @ DownloadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
         DownloadError::TargetError(message) => ModelsError::Output(message),
         DownloadError::SizeMismatch {
             path,
@@ -715,9 +715,7 @@ mod tests {
         let (home, directory, result) = download_into_temp(&models, &mut ());
         let error = result.unwrap_err();
 
-        assert!(
-            matches!(&error, ModelsError::Other(source) if source.to_string().contains("mid-stream"))
-        );
+        assert!(matches!(&error, ModelsError::Transport(reason) if reason.contains("mid-stream")));
         assert!(!directory.exists());
         assert_eq!(home.path().read_dir().unwrap().count(), 0);
     }
