@@ -336,8 +336,6 @@ fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsE
     console_failure(error)
 }
 
-/// Classifies transport failures and preserves the console-specific errors the model domain does
-/// not interpret.
 fn console_failure(error: ClientError) -> ModelsError {
     match ConsoleError::from(error) {
         ConsoleError::Transport(reason) => ModelsError::Transport(reason),

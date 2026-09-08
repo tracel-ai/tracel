@@ -107,9 +107,8 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
 
     /// Download data from the given URL as a reader.
     ///
-    /// `expected_size_bytes` is what the manifest announced, where one did. Implementations may
-    /// use it to choose a transfer strategy and give a large download enough time. It is absent
-    /// for an artifact published without a manifest.
+    /// `expected_size_bytes` is the size declared by the manifest. Implementations may use it to
+    /// select a transfer strategy or timeout. It is `None` when no size was declared.
     fn get_reader(
         &self,
         url: &str,

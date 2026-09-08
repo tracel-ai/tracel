@@ -47,10 +47,9 @@ impl Console {
         })
     }
 
-    /// Ends the session this console connected with.
+    /// Logs out and consumes this console connection.
     ///
-    /// Consumes the console. The session is revoked at the console, so handles derived from it
-    /// stop working too.
+    /// This revokes the remote session used by this connection and its derived handles.
     pub fn logout(self) -> Result<(), ConsoleError> {
         self.inner.client.clone().logout().map_err(Into::into)
     }

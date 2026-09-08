@@ -1,7 +1,4 @@
-//! Reading one file through several concurrent ranged requests.
-//!
-//! The bytes come back in order through a plain [`Read`], so everything downstream — bundle
-//! sinks, checksum verification, progress and cancellation — is unchanged by the split.
+//! Concurrent ranged downloads exposed as a sequential [`Read`] stream.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read};
@@ -24,7 +21,7 @@ trait RangeSource: Clone + Send + Sync + 'static {
         expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError>;
 
-    /// Returns `None` when the source ignores a range request and serves whole files only.
+    /// Returns `None` if the source does not serve ranged requests.
     fn try_get_range(
         &self,
         url: &str,
@@ -39,19 +36,19 @@ struct RangeResponse {
     total_size: u64,
 }
 
-/// How a file is split across concurrent ranged requests.
+/// Configuration for a ranged download.
 ///
-/// At most `workers` ranges are scheduled ahead of the reader, so together with the range being
-/// read a plan holds up to `(workers + 1) * range_bytes` in memory.
+/// Buffered data is limited to `(workers + 1) * range_bytes`: one active range and at most
+/// `workers` prefetched ranges.
 #[derive(Debug, Clone)]
 struct RangePlan {
-    /// Ranges fetched at once.
+    /// Maximum number of ranges fetched in the background.
     workers: usize,
-    /// Bytes one range asks for.
+    /// Requested bytes per range.
     range_bytes: u64,
-    /// Attempts a range gets before the read fails.
+    /// Maximum number of requests per range.
     attempts: u32,
-    /// Wait before retrying a range, multiplied by the attempt already spent.
+    /// Base delay between retries.
     backoff: Duration,
 }
 
@@ -66,7 +63,7 @@ impl Default for RangePlan {
     }
 }
 
-/// Opens `url` for reading under the default [`RangePlan`].
+/// Opens `url` as a sequential reader using the default [`RangePlan`].
 pub fn open(
     client: &ReqwestTransferClient,
     url: &str,
@@ -75,11 +72,10 @@ pub fn open(
     open_with_plan(client, url, size_bytes, &RangePlan::default())
 }
 
-/// Opens `url` for reading, splitting it across concurrent ranged requests when its announced
-/// size makes that worth doing and the source serves ranges.
+/// Opens `url` using ranged requests when its expected size exceeds one range.
 ///
-/// Falls back to one whole-file request when the size is unknown, when the file fits in a single
-/// range, or when the source answers a ranged request with the whole file.
+/// Falls back to a whole-file request when the size is unknown, the file fits in one range, or the
+/// source does not serve ranged requests.
 fn open_with_plan<C: RangeSource>(
     client: &C,
     url: &str,
@@ -91,8 +87,7 @@ fn open_with_plan<C: RangeSource>(
         return client.get_whole_reader(url, size_bytes);
     };
 
-    // The first range is the file's own first chunk, and fetching it here answers whether the
-    // source serves ranges before any worker is spawned.
+    // Fetch the first range before starting workers to detect range support.
     let stop = Arc::new(AtomicBool::new(false));
     let first_range = 0..plan.range_bytes;
     match ResumableRange::open(
@@ -111,7 +106,7 @@ fn open_with_plan<C: RangeSource>(
     }
 }
 
-/// Reads a file's ranges as they arrive and hands the bytes on in order.
+/// Presents completed ranges in file order.
 struct RangedReader<C> {
     ranges: usize,
     next: usize,
@@ -200,7 +195,7 @@ impl<C: RangeSource> RangedReader<C> {
         Ok(())
     }
 
-    /// The bytes of one range, waiting for it when it has not arrived yet.
+    /// Waits for and returns the requested range.
     fn take(&mut self, index: usize) -> io::Result<Vec<u8>> {
         if let Some(bytes) = self.arrived.remove(&index) {
             self.schedule_next()?;
@@ -240,8 +235,7 @@ impl<C: RangeSource> Read for RangedReader<C> {
             if self.next >= self.ranges {
                 return Ok(0);
             }
-            // Release the exhausted range before waiting for another one so it does not count
-            // against the reader's memory bound.
+            // Release the exhausted range before waiting to preserve the memory bound.
             self.current = Box::new(io::empty());
             let bytes = self.take(self.next)?;
             self.next += 1;
@@ -364,7 +358,7 @@ impl<C> Drop for RangedReader<C> {
     }
 }
 
-/// Claims ranges until they run out, the reader goes away, or one of them cannot be read.
+/// Processes range jobs until cancellation, channel closure, or a transfer failure.
 fn fetch_ranges<C: RangeSource>(
     client: &C,
     url: &str,
@@ -397,7 +391,7 @@ fn fetch_ranges<C: RangeSource>(
     }
 }
 
-/// One range, retried while the failure is not the source refusing to serve ranges at all.
+/// Downloads one range according to the retry plan.
 fn read_range<C: RangeSource>(
     client: &C,
     url: &str,
@@ -502,7 +496,7 @@ impl RangeSource for ReqwestTransferClient {
                 total_size,
             }));
         }
-        // Any other success is the whole file: the source ignored the header.
+        // A non-partial success indicates that the source ignored the Range header.
         if response.status().is_success() {
             return Ok(None);
         }
@@ -562,17 +556,17 @@ mod tests {
 
     const TEST_RANGE_BYTES: u64 = 1024;
 
-    /// What a source does when asked for part of a file.
+    /// Test behavior for ranged requests.
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Ranges {
         Served,
-        /// Answers the whole file however little was asked for.
+        /// Returns the entire file.
         Ignored,
-        /// Answers one byte short.
+        /// Returns one byte fewer than requested.
         Short,
-        /// Never answers this range.
+        /// Fails at the given offset.
         Failing(usize),
-        /// Announces a total different from the source length.
+        /// Reports a different total size.
         WrongTotal(u64),
     }
 
@@ -584,7 +578,7 @@ mod tests {
         first_chunk_calls: Arc<AtomicUsize>,
         whole_calls: Arc<AtomicUsize>,
         first_body_reads: Arc<AtomicUsize>,
-        /// Makes later ranges arrive first, so ordering is actually exercised.
+        /// Delays earlier requests longer than later requests.
         stagger: Duration,
     }
 
@@ -722,7 +716,7 @@ mod tests {
             assert!(Instant::now() < deadline, "workers did not finish in time");
             thread::yield_now();
         }
-        // Once the active window is full, workers must remain idle until the reader advances.
+        // A full prefetch window prevents further requests until the reader advances.
         thread::sleep(Duration::from_millis(20));
 
         assert_eq!(source.range_calls.load(Ordering::Relaxed), expected);
