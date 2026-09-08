@@ -3,41 +3,34 @@
 //! The bytes come back in order through a plain [`Read`], so everything downstream — bundle
 //! sinks, checksum verification, progress and cancellation — is unchanged by the split.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io::{self, Read};
-use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use super::TransferError;
+use crossbeam::channel::{Receiver, Sender, bounded};
 
-pub(crate) trait RangeSource: Clone + Send + Sync + 'static {
+use super::{ReqwestTransferClient, TransferError};
+
+trait RangeSource: Clone + Send + Sync + 'static {
     fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
 
-    fn get_range(
+    /// Returns `None` when the source ignores a range request and serves whole files only.
+    fn try_get_range(
         &self,
         url: &str,
         offset: u64,
         length: u64,
-    ) -> Result<RangeResponse, RangeSourceError>;
+    ) -> Result<Option<RangeResponse>, TransferError>;
 }
 
-pub(crate) struct RangeResponse {
-    pub reader: Box<dyn Read + Send>,
-    pub range: Range<u64>,
-    pub total_size: u64,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum RangeSourceError {
-    #[error("the source does not serve ranges")]
-    Unsupported,
-    #[error(transparent)]
-    Transfer(#[from] TransferError),
+struct RangeResponse {
+    reader: Box<dyn Read + Send>,
+    range: Range<u64>,
+    total_size: u64,
 }
 
 /// How a file is split across concurrent ranged requests.
@@ -47,33 +40,33 @@ pub(crate) enum RangeSourceError {
 #[derive(Debug, Clone)]
 struct RangePlan {
     /// Ranges fetched at once.
-    workers: NonZeroUsize,
+    workers: usize,
     /// Bytes one range asks for.
-    range_bytes: NonZeroU64,
+    range_bytes: u64,
     /// Attempts a range gets before the read fails.
-    attempts: NonZeroU32,
+    attempts: u32,
     /// Wait before retrying a range, multiplied by the attempt already spent.
-    pub backoff: Duration,
+    backoff: Duration,
 }
 
 impl Default for RangePlan {
     fn default() -> Self {
         Self {
-            workers: NonZeroUsize::new(6).expect("default worker count is nonzero"),
-            range_bytes: NonZeroU64::new(8 * 1024 * 1024).expect("default range size is nonzero"),
-            attempts: NonZeroU32::new(3).expect("default attempt count is nonzero"),
+            workers: 6,
+            range_bytes: 8 * 1024 * 1024,
+            attempts: 3,
             backoff: Duration::from_millis(400),
         }
     }
 }
 
 /// Opens `url` for reading under the default [`RangePlan`].
-pub(crate) fn open_for_download<C: RangeSource>(
-    client: &C,
+pub fn open(
+    client: &ReqwestTransferClient,
     url: &str,
     size_bytes: Option<u64>,
 ) -> Result<Box<dyn Read + Send>, TransferError> {
-    open_for_download_with_plan(client, url, size_bytes, &RangePlan::default())
+    open_with_plan(client, url, size_bytes, &RangePlan::default())
 }
 
 /// Opens `url` for reading, splitting it across concurrent ranged requests when its announced
@@ -81,13 +74,13 @@ pub(crate) fn open_for_download<C: RangeSource>(
 ///
 /// Falls back to one whole-file request when the size is unknown, when the file fits in a single
 /// range, or when the source answers a ranged request with the whole file.
-fn open_for_download_with_plan<C: RangeSource>(
+fn open_with_plan<C: RangeSource>(
     client: &C,
     url: &str,
     size_bytes: Option<u64>,
     plan: &RangePlan,
 ) -> Result<Box<dyn Read + Send>, TransferError> {
-    let split = size_bytes.filter(|size| *size > plan.range_bytes.get());
+    let split = size_bytes.filter(|size| *size > plan.range_bytes);
     let Some(size_bytes) = split else {
         return client.get_whole_reader(url);
     };
@@ -95,20 +88,20 @@ fn open_for_download_with_plan<C: RangeSource>(
     // The first range is the file's own first chunk, and fetching it here answers whether the
     // source serves ranges before any worker is spawned.
     let stop = Arc::new(AtomicBool::new(false));
-    match request_range(
+    let first_range = 0..plan.range_bytes;
+    match ResumableRange::open(
         client,
         url,
-        0,
-        plan.range_bytes.get(),
+        first_range,
         size_bytes,
         plan,
-        &stop,
+        Arc::clone(&stop),
     ) {
-        Ok((first, attempts)) => Ok(Box::new(RangedReader::new(
-            client, url, size_bytes, plan, first, attempts, stop,
+        Ok(Some(first)) => Ok(Box::new(RangedReader::new(
+            client, url, size_bytes, plan, first, stop,
         ))),
-        Err(RangeSourceError::Unsupported) => client.get_whole_reader(url),
-        Err(RangeSourceError::Transfer(error)) => Err(error),
+        Ok(None) => client.get_whole_reader(url),
+        Err(error) => Err(error),
     }
 }
 
@@ -118,8 +111,8 @@ struct RangedReader<C> {
     next: usize,
     current: Box<dyn Read + Send>,
     arrived: BTreeMap<usize, Vec<u8>>,
-    results: Receiver<Result<(usize, Vec<u8>), RangeSourceError>>,
-    jobs: Arc<RangeJobs>,
+    results: Receiver<Result<(usize, Vec<u8>), TransferError>>,
+    jobs: Sender<usize>,
     next_to_schedule: usize,
     stop: Arc<AtomicBool>,
     workers: Option<WorkerStart<C>>,
@@ -131,7 +124,8 @@ struct WorkerStart<C> {
     size_bytes: u64,
     plan: RangePlan,
     count: usize,
-    sender: SyncSender<Result<(usize, Vec<u8>), RangeSourceError>>,
+    jobs: Receiver<usize>,
+    results: Sender<Result<(usize, Vec<u8>), TransferError>>,
 }
 
 impl<C: RangeSource> RangedReader<C> {
@@ -140,27 +134,21 @@ impl<C: RangeSource> RangedReader<C> {
         url: &str,
         size_bytes: u64,
         plan: &RangePlan,
-        first: RangeResponse,
-        first_attempts: u32,
+        first: ResumableRange<C>,
         stop: Arc<AtomicBool>,
     ) -> Self {
-        let ranges = size_bytes.div_ceil(plan.range_bytes.get()) as usize;
-        let scheduled = plan.workers.get().min(ranges - 1);
-        let jobs = Arc::new(RangeJobs::new(1..=scheduled));
-        let (sender, results) = sync_channel(plan.workers.get());
+        let ranges = size_bytes.div_ceil(plan.range_bytes) as usize;
+        let scheduled = plan.workers.min(ranges - 1);
+        let (jobs, pending_jobs) = bounded(plan.workers);
+        for index in 1..=scheduled {
+            jobs.send(index).expect("range job receiver is alive");
+        }
+        let (completed_ranges, results) = bounded(plan.workers);
 
         Self {
             ranges,
             next: 1,
-            current: Box::new(RangeStream::new(
-                client,
-                url,
-                size_bytes,
-                plan,
-                first,
-                first_attempts,
-                Arc::clone(&stop),
-            )),
+            current: Box::new(first),
             arrived: BTreeMap::new(),
             results,
             jobs,
@@ -172,7 +160,8 @@ impl<C: RangeSource> RangedReader<C> {
                 size_bytes,
                 plan: plan.clone(),
                 count: scheduled,
-                sender,
+                jobs: pending_jobs,
+                results: completed_ranges,
             }),
         }
     }
@@ -185,35 +174,36 @@ impl<C: RangeSource> RangedReader<C> {
             let client = start.client.clone();
             let url = start.url.clone();
             let plan = start.plan.clone();
-            let jobs = Arc::clone(&self.jobs);
+            let jobs = start.jobs.clone();
             let stop = Arc::clone(&self.stop);
-            let sender = start.sender.clone();
+            let results = start.results.clone();
             let size_bytes = start.size_bytes;
             thread::spawn(move || {
-                fetch_ranges(&client, &url, size_bytes, &plan, &jobs, &stop, &sender)
+                fetch_ranges(&client, &url, size_bytes, &plan, &jobs, &stop, &results)
             });
         }
-        // The reader's own handle would otherwise keep it from ever disconnecting.
-        drop(start.sender);
     }
 
-    fn schedule_next(&mut self) {
+    fn schedule_next(&mut self) -> io::Result<()> {
         if self.next_to_schedule < self.ranges {
-            self.jobs.push(self.next_to_schedule);
+            self.jobs.send(self.next_to_schedule).map_err(|_| {
+                io::Error::other("range workers stopped before all ranges were scheduled")
+            })?;
             self.next_to_schedule += 1;
         }
+        Ok(())
     }
 
     /// The bytes of one range, waiting for it when it has not arrived yet.
     fn take(&mut self, index: usize) -> io::Result<Vec<u8>> {
         if let Some(bytes) = self.arrived.remove(&index) {
-            self.schedule_next();
+            self.schedule_next()?;
             return Ok(bytes);
         }
         loop {
             match self.results.recv() {
                 Ok(Ok((arrived, bytes))) if arrived == index => {
-                    self.schedule_next();
+                    self.schedule_next()?;
                     return Ok(bytes);
                 }
                 Ok(Ok((arrived, bytes))) => {
@@ -254,10 +244,8 @@ impl<C: RangeSource> Read for RangedReader<C> {
     }
 }
 
-/// Streams the leading range directly to the caller, resuming the unread suffix when its body is
-/// interrupted. Later ranges can be buffered by workers because the caller has already had an
-/// opportunity to observe progress and cancellation by then.
-struct RangeStream<C> {
+/// Streams one range and resumes its unread suffix if the response body is interrupted.
+struct ResumableRange<C> {
     client: C,
     url: String,
     expected_size: u64,
@@ -269,17 +257,30 @@ struct RangeStream<C> {
     stop: Arc<AtomicBool>,
 }
 
-impl<C: RangeSource> RangeStream<C> {
-    fn new(
+impl<C: RangeSource> ResumableRange<C> {
+    fn open(
         client: &C,
         url: &str,
+        range: Range<u64>,
         expected_size: u64,
         plan: &RangePlan,
-        response: RangeResponse,
-        spent: u32,
         stop: Arc<AtomicBool>,
-    ) -> Self {
-        Self {
+    ) -> Result<Option<Self>, TransferError> {
+        let mut spent = 0;
+        let Some(response) = request_with_retry(
+            client,
+            url,
+            range.clone(),
+            expected_size,
+            plan,
+            &stop,
+            &mut spent,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
             client: client.clone(),
             url: url.to_string(),
             expected_size,
@@ -289,34 +290,34 @@ impl<C: RangeSource> RangeStream<C> {
             end_offset: response.range.end,
             spent,
             stop,
-        }
+        }))
     }
 
-    fn resume(&mut self, mut error: RangeSourceError) -> io::Result<()> {
-        loop {
-            if self.spent >= self.plan.attempts.get() || self.stop.load(Ordering::Relaxed) {
-                return Err(io::Error::other(error));
-            }
-            thread::sleep(self.plan.backoff * self.spent);
-            self.spent += 1;
-            match request_range_once(
-                &self.client,
-                &self.url,
-                self.next_offset,
-                self.end_offset - self.next_offset,
-                self.expected_size,
-            ) {
-                Ok(response) => {
-                    self.reader = response.reader;
-                    return Ok(());
-                }
-                Err(next) => error = next,
-            }
+    fn resume(&mut self, error: TransferError) -> io::Result<()> {
+        if self.spent >= self.plan.attempts || self.stop.load(Ordering::Relaxed) {
+            return Err(io::Error::other(error));
         }
+        let response = request_with_retry(
+            &self.client,
+            &self.url,
+            self.next_offset..self.end_offset,
+            self.expected_size,
+            &self.plan,
+            &self.stop,
+            &mut self.spent,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "source stopped serving ranges after an interrupted response: {error}"
+            ))
+        })?;
+        self.reader = response.reader;
+        Ok(())
     }
 }
 
-impl<C: RangeSource> Read for RangeStream<C> {
+impl<C: RangeSource> Read for ResumableRange<C> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         if buffer.is_empty() {
             return Ok(0);
@@ -337,18 +338,15 @@ impl<C: RangeSource> Read for RangeStream<C> {
             let remaining = (self.end_offset - self.next_offset) as usize;
             let limit = buffer.len().min(remaining);
             match self.reader.read(&mut buffer[..limit]) {
-                Ok(0) => self.resume(
-                    TransferError::Transport(format!(
-                        "range at {} ended before {}",
-                        self.next_offset, self.end_offset
-                    ))
-                    .into(),
-                )?,
+                Ok(0) => self.resume(TransferError::Transport(format!(
+                    "range at {} ended before {}",
+                    self.next_offset, self.end_offset
+                )))?,
                 Ok(read) => {
                     self.next_offset += read as u64;
                     return Ok(read);
                 }
-                Err(error) => self.resume(TransferError::Transport(error.to_string()).into())?,
+                Err(error) => self.resume(TransferError::Transport(error.to_string()))?,
             }
         }
     }
@@ -357,46 +355,6 @@ impl<C: RangeSource> Read for RangeStream<C> {
 impl<C> Drop for RangedReader<C> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.jobs.wake_all();
-    }
-}
-
-struct RangeJobs {
-    pending: Mutex<VecDeque<usize>>,
-    ready: Condvar,
-}
-
-impl RangeJobs {
-    fn new(pending: impl IntoIterator<Item = usize>) -> Self {
-        Self {
-            pending: Mutex::new(pending.into_iter().collect()),
-            ready: Condvar::new(),
-        }
-    }
-
-    fn push(&self, index: usize) {
-        self.pending
-            .lock()
-            .expect("lock range jobs")
-            .push_back(index);
-        self.ready.notify_one();
-    }
-
-    fn take(&self, stop: &AtomicBool) -> Option<usize> {
-        let mut pending = self.pending.lock().expect("lock range jobs");
-        loop {
-            if stop.load(Ordering::Relaxed) {
-                return None;
-            }
-            if let Some(index) = pending.pop_front() {
-                return Some(index);
-            }
-            pending = self.ready.wait(pending).expect("wait for range job");
-        }
-    }
-
-    fn wake_all(&self) {
-        self.ready.notify_all();
     }
 }
 
@@ -406,21 +364,27 @@ fn fetch_ranges<C: RangeSource>(
     url: &str,
     size_bytes: u64,
     plan: &RangePlan,
-    jobs: &RangeJobs,
-    stop: &AtomicBool,
-    sender: &SyncSender<Result<(usize, Vec<u8>), RangeSourceError>>,
+    jobs: &Receiver<usize>,
+    stop: &Arc<AtomicBool>,
+    results: &Sender<Result<(usize, Vec<u8>), TransferError>>,
 ) {
-    while let Some(index) = jobs.take(stop) {
-        let offset = index as u64 * plan.range_bytes.get();
+    while !stop.load(Ordering::Relaxed) {
+        let Ok(index) = jobs.recv() else {
+            return;
+        };
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let offset = index as u64 * plan.range_bytes;
         debug_assert!(offset < size_bytes);
 
-        let length = plan.range_bytes.get().min(size_bytes - offset);
+        let length = plan.range_bytes.min(size_bytes - offset);
         let result = read_range(client, url, offset, length, size_bytes, plan, stop);
         let failed = result.is_err();
-        if sender.send(result.map(|bytes| (index, bytes))).is_err() || failed {
+        if results.send(result.map(|bytes| (index, bytes))).is_err() || failed {
             if failed {
                 stop.store(true, Ordering::Relaxed);
-                jobs.wake_all();
             }
             return;
         }
@@ -435,99 +399,147 @@ fn read_range<C: RangeSource>(
     length: u64,
     expected_size: u64,
     plan: &RangePlan,
-    stop: &AtomicBool,
-) -> Result<Vec<u8>, RangeSourceError> {
-    let mut spent = 0;
-    loop {
-        let attempt = read_range_once(client, url, offset, length, expected_size);
-        spent += 1;
-        match attempt {
-            Ok(bytes) => return Ok(bytes),
-            Err(RangeSourceError::Unsupported) => return Err(RangeSourceError::Unsupported),
-            Err(error) if spent >= plan.attempts.get() || stop.load(Ordering::Relaxed) => {
-                return Err(error);
-            }
-            Err(_) => thread::sleep(plan.backoff * spent),
-        }
-    }
-}
+    stop: &Arc<AtomicBool>,
+) -> Result<Vec<u8>, TransferError> {
+    let range = offset..offset + length;
+    let Some(mut reader) =
+        ResumableRange::open(client, url, range, expected_size, plan, Arc::clone(stop))?
+    else {
+        return Err(TransferError::Transport(
+            "source stopped serving ranges".into(),
+        ));
+    };
 
-fn request_range<C: RangeSource>(
-    client: &C,
-    url: &str,
-    offset: u64,
-    length: u64,
-    expected_size: u64,
-    plan: &RangePlan,
-    stop: &AtomicBool,
-) -> Result<(RangeResponse, u32), RangeSourceError> {
-    let mut spent = 0;
-    loop {
-        let attempt = request_range_once(client, url, offset, length, expected_size);
-        spent += 1;
-        match attempt {
-            Ok(response) => return Ok((response, spent)),
-            Err(RangeSourceError::Unsupported) => return Err(RangeSourceError::Unsupported),
-            Err(error) if spent >= plan.attempts.get() || stop.load(Ordering::Relaxed) => {
-                return Err(error);
-            }
-            Err(_) => thread::sleep(plan.backoff * spent),
-        }
-    }
-}
-
-fn read_range_once<C: RangeSource>(
-    client: &C,
-    url: &str,
-    offset: u64,
-    length: u64,
-    expected_size: u64,
-) -> Result<Vec<u8>, RangeSourceError> {
-    let response = request_range_once(client, url, offset, length, expected_size)?;
     let mut bytes = Vec::with_capacity(length as usize);
-    response
-        .reader
-        .take(length.saturating_add(1))
+    reader
         .read_to_end(&mut bytes)
         .map_err(|error| TransferError::Transport(error.to_string()))?;
-
-    // A short or long body would silently change the file, and the checksum would be blamed for
-    // what is really a broken range response.
-    if bytes.len() as u64 != length {
-        return Err(TransferError::Transport(format!(
-            "range at {offset} answered {} of {length} bytes",
-            bytes.len()
-        ))
-        .into());
-    }
     Ok(bytes)
 }
 
-fn request_range_once<C: RangeSource>(
+fn request_with_retry<C: RangeSource>(
     client: &C,
     url: &str,
-    offset: u64,
-    length: u64,
+    range: Range<u64>,
     expected_size: u64,
-) -> Result<RangeResponse, RangeSourceError> {
-    let response = client.get_range(url, offset, length)?;
-    let expected_range = offset..offset + length;
+    plan: &RangePlan,
+    stop: &AtomicBool,
+    spent: &mut u32,
+) -> Result<Option<RangeResponse>, TransferError> {
+    loop {
+        *spent += 1;
+        match request_once(client, url, range.clone(), expected_size) {
+            Ok(response) => return Ok(response),
+            Err(error) if *spent >= plan.attempts || stop.load(Ordering::Relaxed) => {
+                return Err(error);
+            }
+            Err(_) => thread::sleep(plan.backoff * *spent),
+        }
+    }
+}
+
+fn request_once<C: RangeSource>(
+    client: &C,
+    url: &str,
+    expected_range: Range<u64>,
+    expected_size: u64,
+) -> Result<Option<RangeResponse>, TransferError> {
+    let length = expected_range.end - expected_range.start;
+    let Some(response) = client.try_get_range(url, expected_range.start, length)? else {
+        return Ok(None);
+    };
     if response.range != expected_range {
         return Err(TransferError::Transport(format!(
             "requested range {expected_range:?}, source answered {:?}",
             response.range
-        ))
-        .into());
+        )));
     }
     if response.total_size != expected_size {
         return Err(TransferError::Transport(format!(
             "source size is {} bytes, expected {expected_size} bytes",
             response.total_size
-        ))
-        .into());
+        )));
     }
 
-    Ok(response)
+    Ok(Some(response))
+}
+
+impl RangeSource for ReqwestTransferClient {
+    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
+        self.get_whole_reader(url)
+    }
+
+    fn try_get_range(
+        &self,
+        url: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<Option<RangeResponse>, TransferError> {
+        let last = offset + length.saturating_sub(1);
+        let response = self
+            .http
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={offset}-{last}"))
+            .send()
+            .map_err(|error| TransferError::Transport(error.to_string()))?;
+
+        if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            let (range, total_size) = parse_content_range(&response)?;
+            return Ok(Some(RangeResponse {
+                reader: Box::new(response),
+                range,
+                total_size,
+            }));
+        }
+        // Any other success is the whole file: the source ignored the header.
+        if response.status().is_success() {
+            return Ok(None);
+        }
+        Err(TransferError::Transport(
+            response.error_for_status().err().unwrap().to_string(),
+        ))
+    }
+}
+
+fn parse_content_range(
+    response: &reqwest::blocking::Response,
+) -> Result<(Range<u64>, u64), TransferError> {
+    let value = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| TransferError::Transport("partial response omitted Content-Range".into()))?;
+    parse_content_range_value(value)
+}
+
+fn parse_content_range_value(value: &str) -> Result<(Range<u64>, u64), TransferError> {
+    let value = value.strip_prefix("bytes ").ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    let (range, total) = value.split_once('/').ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    let (start, end) = range.split_once('-').ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
+    let total = total
+        .parse::<u64>()
+        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
+    let end = end.checked_add(1).ok_or_else(|| {
+        TransferError::Transport(format!("invalid Content-Range header: {value}"))
+    })?;
+    if start >= end || end > total {
+        return Err(TransferError::Transport(format!(
+            "invalid Content-Range header: {value}"
+        )));
+    }
+    Ok((start..end, total))
 }
 
 #[cfg(test)]
@@ -586,20 +598,20 @@ mod tests {
             Ok(Box::new(Cursor::new(self.bytes.as_ref().clone())))
         }
 
-        fn get_range(
+        fn try_get_range(
             &self,
             _url: &str,
             offset: u64,
             length: u64,
-        ) -> Result<RangeResponse, RangeSourceError> {
+        ) -> Result<Option<RangeResponse>, TransferError> {
             let index = self.range_calls.fetch_add(1, Ordering::Relaxed);
             if !self.stagger.is_zero() {
                 thread::sleep(self.stagger * (8 - (index as u32).min(7)));
             }
             match self.ranges {
-                Ranges::Ignored => Err(RangeSourceError::Unsupported),
+                Ranges::Ignored => Ok(None),
                 Ranges::Failing(at) if at as u64 == offset => {
-                    Err(TransferError::Transport("nope".into()).into())
+                    Err(TransferError::Transport("nope".into()))
                 }
                 served => {
                     let start = offset as usize;
@@ -621,11 +633,11 @@ mod tests {
                     } else {
                         Box::new(Cursor::new(self.bytes[start..end].to_vec()))
                     };
-                    Ok(RangeResponse {
+                    Ok(Some(RangeResponse {
                         reader,
                         range: offset..offset + length,
                         total_size,
-                    })
+                    }))
                 }
             }
         }
@@ -645,16 +657,15 @@ mod tests {
 
     fn plan() -> RangePlan {
         RangePlan {
-            workers: NonZeroUsize::new(4).unwrap(),
-            range_bytes: NonZeroU64::new(1024).unwrap(),
-            attempts: NonZeroU32::new(2).unwrap(),
+            workers: 4,
+            range_bytes: 1024,
+            attempts: 2,
             backoff: Duration::from_millis(1),
         }
     }
 
     fn read_all(source: &Source, size: Option<u64>) -> io::Result<Vec<u8>> {
-        let mut reader =
-            open_for_download_with_plan(source, "url", size, &plan()).map_err(io::Error::other)?;
+        let mut reader = open_with_plan(source, "url", size, &plan()).map_err(io::Error::other)?;
         let mut read = Vec::new();
         reader.read_to_end(&mut read)?;
         Ok(read)
@@ -677,13 +688,13 @@ mod tests {
         let source = Source::new(20 * 1024, Ranges::Served);
         let size = source.bytes.len() as u64;
 
-        let mut reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
-            .expect("the first range is served");
+        let mut reader =
+            open_with_plan(&source, "url", Some(size), &plan()).expect("the first range is served");
         let mut first_byte = [0];
         reader
             .read_exact(&mut first_byte)
             .expect("start the workers");
-        let expected = 1 + plan().workers.get();
+        let expected = 1 + plan().workers;
         let deadline = Instant::now() + Duration::from_secs(1);
         while source.range_calls.load(Ordering::Relaxed) < expected {
             assert!(Instant::now() < deadline, "workers did not finish in time");
@@ -701,7 +712,7 @@ mod tests {
         let source = Source::new(8 * 1024, Ranges::Served);
         let size = source.bytes.len() as u64;
 
-        let reader = open_for_download_with_plan(&source, "url", Some(size), &plan())
+        let reader = open_with_plan(&source, "url", Some(size), &plan())
             .expect("the first range headers are served");
 
         assert_eq!(source.range_calls.load(Ordering::Relaxed), 1);
@@ -760,6 +771,10 @@ mod tests {
         let error = read_all(&source, Some(size)).expect_err("a short range is not the file");
 
         assert!(error.to_string().contains("ended before 1024"), "{error}");
+        assert_eq!(
+            source.range_calls.load(Ordering::Relaxed),
+            plan().attempts as usize
+        );
     }
 
     #[test]
@@ -773,5 +788,28 @@ mod tests {
             error.to_string().contains("source size is 9216 bytes"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn parses_content_range_boundaries() {
+        let (range, total) =
+            parse_content_range_value("bytes 10-19/100").expect("valid Content-Range");
+
+        assert_eq!(range, 10..20);
+        assert_eq!(total, 100);
+    }
+
+    #[test]
+    fn rejects_content_range_without_a_known_total() {
+        let error = parse_content_range_value("bytes 10-19/*").expect_err("unknown total");
+
+        assert!(error.to_string().contains("invalid Content-Range"));
+    }
+
+    #[test]
+    fn rejects_content_range_past_its_total() {
+        let error = parse_content_range_value("bytes 90-100/100").expect_err("range past total");
+
+        assert!(error.to_string().contains("invalid Content-Range"));
     }
 }

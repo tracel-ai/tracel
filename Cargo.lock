@@ -6761,6 +6761,7 @@ dependencies = [
 name = "tracel-artifact"
 version = "0.10.0"
 dependencies = [
+ "crossbeam",
  "reqwest 0.13.4",
  "serde",
  "serde_json",

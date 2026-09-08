@@ -35,8 +35,6 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
 
 mod ranged;
 
-use ranged::{RangeResponse, RangeSource, RangeSourceError};
-
 /// Watches a transfer as it runs, and can stop it.
 ///
 /// Every method defaults to doing nothing, so an implementation only has to define the events it
@@ -196,110 +194,6 @@ impl FileTransferClient for ReqwestTransferClient {
         url: &str,
         expected_size: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
-        ranged::open_for_download(self, url, expected_size)
-    }
-}
-
-impl RangeSource for ReqwestTransferClient {
-    fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError> {
-        self.get_whole_reader(url)
-    }
-
-    fn get_range(
-        &self,
-        url: &str,
-        offset: u64,
-        length: u64,
-    ) -> Result<RangeResponse, RangeSourceError> {
-        let last = offset + length.saturating_sub(1);
-        let response = self
-            .http
-            .get(url)
-            .header(reqwest::header::RANGE, format!("bytes={offset}-{last}"))
-            .send()
-            .map_err(|e| TransferError::Transport(e.to_string()))?;
-
-        if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
-            let (range, total_size) = parse_content_range(&response)?;
-            return Ok(RangeResponse {
-                reader: Box::new(response),
-                range,
-                total_size,
-            });
-        }
-        // Any other success is the whole file: the source ignored the header.
-        if response.status().is_success() {
-            return Err(RangeSourceError::Unsupported);
-        }
-        Err(TransferError::Transport(response.error_for_status().err().unwrap().to_string()).into())
-    }
-}
-
-fn parse_content_range(
-    response: &reqwest::blocking::Response,
-) -> Result<(std::ops::Range<u64>, u64), TransferError> {
-    let value = response
-        .headers()
-        .get(reqwest::header::CONTENT_RANGE)
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| TransferError::Transport("partial response omitted Content-Range".into()))?;
-    parse_content_range_value(value)
-}
-
-fn parse_content_range_value(value: &str) -> Result<(std::ops::Range<u64>, u64), TransferError> {
-    let value = value.strip_prefix("bytes ").ok_or_else(|| {
-        TransferError::Transport(format!("invalid Content-Range header: {value}"))
-    })?;
-    let (range, total) = value.split_once('/').ok_or_else(|| {
-        TransferError::Transport(format!("invalid Content-Range header: {value}"))
-    })?;
-    let (start, end) = range.split_once('-').ok_or_else(|| {
-        TransferError::Transport(format!("invalid Content-Range header: {value}"))
-    })?;
-    let start = start
-        .parse::<u64>()
-        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
-    let end = end
-        .parse::<u64>()
-        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
-    let total = total
-        .parse::<u64>()
-        .map_err(|_| TransferError::Transport(format!("invalid Content-Range header: {value}")))?;
-    let end = end.checked_add(1).ok_or_else(|| {
-        TransferError::Transport(format!("invalid Content-Range header: {value}"))
-    })?;
-    if start >= end || end > total {
-        return Err(TransferError::Transport(format!(
-            "invalid Content-Range header: {value}"
-        )));
-    }
-    Ok((start..end, total))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_content_range_value;
-
-    #[test]
-    fn parses_content_range_boundaries() {
-        let (range, total) =
-            parse_content_range_value("bytes 10-19/100").expect("valid Content-Range");
-
-        assert_eq!(range, 10..20);
-        assert_eq!(total, 100);
-    }
-
-    #[test]
-    fn rejects_content_range_without_a_known_total() {
-        let error = parse_content_range_value("bytes 10-19/*").expect_err("unknown total");
-
-        assert!(error.to_string().contains("invalid Content-Range"));
-    }
-
-    #[test]
-    fn rejects_content_range_past_its_total() {
-        let error = parse_content_range_value("bytes 90-100/100").expect_err("range past total");
-
-        assert!(error.to_string().contains("invalid Content-Range"));
+        ranged::open(self, url, expected_size)
     }
 }
