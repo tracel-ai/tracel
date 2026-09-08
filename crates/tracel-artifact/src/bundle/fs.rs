@@ -1,10 +1,9 @@
-//! File-backed bundle implementation for artifacts.
+//! Filesystem-backed artifact bundles.
 //!
-//! This module provides an implementation of the `BundleSink` and `BundleSource` traits that uses the local filesystem to store artifact files.
-//! It supports temporary bundles in the system temp directory or inside a parent of the caller's
-//! choosing (which clean up after themselves), and persistent bundles rooted at a specified
-//! directory.
-//! The implementation ensures that file paths are sanitized to prevent directory traversal, and that concurrent writes to the same path are handled safely using temporary files and atomic renames.
+//! [`FsBundle`] supports persistent directories and temporary directories that are removed on
+//! drop. Temporary bundles may use the system temporary directory or a caller-provided parent.
+//! Relative paths are validated before access, and writes are completed by renaming temporary
+//! files into place.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -52,16 +51,14 @@ impl FsBundle {
         })
     }
 
-    /// Create a temporary writable bundle inside `parent`, cleaned up on drop.
+    /// Creates a temporary writable bundle in `parent`.
     ///
-    /// For staging beside a destination: a file renamed from here into another child of `parent`
-    /// stays on one filesystem.
-    pub fn temp_in(parent: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+    /// The bundle directory name starts with `prefix`. The directory and its contents are removed
+    /// when the bundle is dropped.
+    pub fn temp_in(parent: impl AsRef<Path>, prefix: &str) -> Result<Self, std::io::Error> {
         let parent = parent.as_ref();
         fs::create_dir_all(parent)?;
-        let temp = tempfile::Builder::new()
-            .prefix(".staging-")
-            .tempdir_in(parent)?;
+        let temp = tempfile::Builder::new().prefix(prefix).tempdir_in(parent)?;
         let root = temp.path().to_path_buf();
         Ok(Self {
             root,
@@ -71,17 +68,14 @@ impl FsBundle {
         })
     }
 
-    /// Moves every registered file into `directory` and returns a bundle rooted there.
+    /// Moves the registered files into `directory`.
     ///
-    /// This merges into `directory` rather than replacing it: existing files under registered
-    /// paths are replaced, and other files there are left alone. A caller that needs `directory`
-    /// to hold this bundle and nothing else must clear it first, and one whose own marker files
-    /// live there must not let them outlive the merge. Renames replace atomically where the
-    /// platform supports it. Crossing a mount point falls back to a copy through a temporary
-    /// destination file.
+    /// Existing files at registered paths are replaced. Other entries in `directory` are
+    /// unchanged. Each replacement is atomic when supported by the platform and filesystem.
+    /// Moving across filesystems falls back to copying through a temporary destination file.
     ///
-    /// If moving one file fails, files already moved remain in `directory` and this bundle's
-    /// temporary root is cleaned up on return.
+    /// This operation is not transactional. If an error occurs, files moved before the error
+    /// remain in `directory`.
     pub fn move_into(self, directory: impl AsRef<Path>) -> Result<Self, std::io::Error> {
         let directory = directory.as_ref();
         fs::create_dir_all(directory)?;
@@ -293,8 +287,7 @@ fn temp_path(dest: &Path) -> Result<PathBuf, std::io::Error> {
 }
 
 fn finalize_temp_file(tmp: &Path, dest: &Path) -> Result<(), std::io::Error> {
-    // Unix rename replaces an existing file atomically. Windows requires the destination to be
-    // removed first.
+    // `rename` replaces the destination on Unix. Windows requires its removal first.
     #[cfg(windows)]
     if dest.exists() {
         fs::remove_file(dest)?;
@@ -381,10 +374,16 @@ mod tests {
     fn a_temp_bundle_in_a_parent_lives_there_and_leaves_on_drop() {
         let home = TempDir::new().unwrap();
         let parent = home.path().join("parent");
-        let bundle = FsBundle::temp_in(&parent).unwrap();
+        let bundle = FsBundle::temp_in(&parent, ".bundle-").unwrap();
         let root = bundle.root().to_path_buf();
 
         assert_eq!(root.parent(), Some(parent.as_path()));
+        assert!(
+            root.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".bundle-")
+        );
         assert!(root.exists());
 
         drop(bundle);
@@ -399,7 +398,7 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join("weights.bin"), b"old").unwrap();
         fs::write(directory.join("notes.txt"), b"keep").unwrap();
-        let mut bundle = FsBundle::temp_in(home.path()).unwrap();
+        let mut bundle = FsBundle::temp_in(home.path(), ".bundle-").unwrap();
         let staging = bundle.root().to_path_buf();
         bundle.put_file("weights.bin", &mut &b"new"[..]).unwrap();
         bundle

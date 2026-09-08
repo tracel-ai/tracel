@@ -56,19 +56,12 @@ impl Models {
 
     /// Downloads and verifies a version into `directory`.
     ///
-    /// The files are staged in a sibling of `directory` and renamed into it once every one of
-    /// them has passed path, size, and checksum verification. A mount-point boundary may require
-    /// copying a file instead. `directory` is created only after verification; a cancelled or
-    /// failed transfer leaves it untouched. An output failure during the final moves may leave
-    /// files already moved into place.
+    /// Files are downloaded to a temporary sibling of `directory`. No destination files are
+    /// changed until every path, size, and checksum has been verified.
     ///
-    /// A file already in `directory` under a published path is replaced. Files there under other
-    /// paths are left alone.
-    ///
-    /// # Errors
-    ///
-    /// Returns lookup, transfer, cancellation, or verification failures from obtaining the
-    /// version, and [`ModelsError::Output`] when `directory` cannot be written.
+    /// The verified files are then moved into `directory`. Existing files at published paths are
+    /// replaced, while other entries are unchanged. This final move is not transactional; an
+    /// output error may leave some files replaced.
     pub fn download_into<O: TransferObserver>(
         &self,
         model: &str,
@@ -83,8 +76,8 @@ impl Models {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        let staging =
-            FsBundle::temp_in(parent).map_err(|error| ModelsError::Output(error.to_string()))?;
+        let staging = FsBundle::temp_in(parent, ".staging-")
+            .map_err(|error| ModelsError::Output(error.to_string()))?;
         let bundle = self.stage(model, id, staging, observer)?;
         bundle
             .move_into(directory)
