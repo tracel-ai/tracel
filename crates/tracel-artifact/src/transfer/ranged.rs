@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::TransferError;
+use super::TransferError;
 
 pub(crate) trait RangeSource: Clone + Send + Sync + 'static {
     fn get_whole_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;

@@ -1,6 +1,5 @@
 //! This crate centralizes traits, structures and utilities for handling artifacts.
 
-mod ranged;
 mod tools;
 mod transfer;
 

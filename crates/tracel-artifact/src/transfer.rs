@@ -33,7 +33,9 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
     TransferError::Transport(described)
 }
 
-use crate::ranged::{RangeResponse, RangeSource, RangeSourceError};
+mod ranged;
+
+use ranged::{RangeResponse, RangeSource, RangeSourceError};
 
 /// Watches a transfer as it runs, and can stop it.
 ///
@@ -194,7 +196,7 @@ impl FileTransferClient for ReqwestTransferClient {
         url: &str,
         expected_size: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
-        crate::ranged::open_for_download(self, url, expected_size)
+        ranged::open_for_download(self, url, expected_size)
     }
 }
 
