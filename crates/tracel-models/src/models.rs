@@ -85,7 +85,7 @@ impl Models {
             .unwrap_or_else(|| Path::new("."));
         let staging =
             FsBundle::temp_in(parent).map_err(|error| ModelsError::Output(error.to_string()))?;
-        let bundle = self.stage_verified(model, id, staging, observer)?;
+        let bundle = self.stage(model, id, staging, observer)?;
         bundle
             .move_into(directory)
             .map_err(|error| ModelsError::Output(error.to_string()))
@@ -102,7 +102,7 @@ impl Models {
         settings: &D::Settings,
     ) -> Result<D, ModelsError> {
         let staging = FsBundle::temp().map_err(ModelsError::other)?;
-        let bundle = self.stage_verified(model, id, staging, &mut ())?;
+        let bundle = self.stage(model, id, staging, &mut ())?;
         D::decode(&bundle, settings).map_err(|error| {
             let error: Box<dyn std::error::Error + Send + Sync> = error.into();
             ModelsError::Decode(error.to_string())
@@ -138,7 +138,7 @@ impl Models {
             .publish_version(model, &files, source, metadata.as_ref(), observer)
     }
 
-    fn stage_verified<O: TransferObserver>(
+    fn stage<O: TransferObserver>(
         &self,
         model: &str,
         id: &VersionId,
