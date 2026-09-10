@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use serde::Deserialize;
-use tracel_artifact::TransferObserver;
 use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource,
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
     upload_bundle_multipart_with_client_and_observer,
 };
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
+use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
@@ -180,7 +179,7 @@ impl ModelOps for ConsoleModelOps {
             &uploads,
             &mut observer,
         )
-        .map_err(ModelsError::other)?;
+        .map_err(model_upload_failure)?;
 
         self.scope
             .console
@@ -314,7 +313,7 @@ impl VersionFileSource for ConsoleVersionFileSource {
     fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
         self.transfer_client
             .get_reader(&self.url, Some(self.file.size_bytes))
-            .map_err(|error| ModelsError::other(ConsoleError::Transport(error.to_string())))
+            .map_err(|error| ModelsError::Transport(error.to_string()))
     }
 }
 
@@ -337,7 +336,17 @@ fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsE
     console_failure(error)
 }
 
-/// Hands a client failure to the model domain as this console's own.
 fn console_failure(error: ClientError) -> ModelsError {
-    ModelsError::other(ConsoleError::from(error))
+    match ConsoleError::from(error) {
+        ConsoleError::Transport(reason) => ModelsError::Transport(reason),
+        error => ModelsError::other(error),
+    }
+}
+
+fn model_upload_failure(error: UploadError) -> ModelsError {
+    match error {
+        UploadError::Cancelled { .. } => ModelsError::Cancelled,
+        error @ UploadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
+        error => ModelsError::other(error),
+    }
 }

@@ -21,6 +21,9 @@ pub enum ModelsError {
     /// The transfer was cancelled.
     #[error("model transfer cancelled")]
     Cancelled,
+    /// Communication with the backend or a file endpoint failed.
+    #[error("model transport failed: {0}")]
+    Transport(String),
     /// A file in the version is published under a path that cannot be used.
     #[error("invalid model file path: {0}")]
     InvalidPath(String),

@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 use std::fmt;
-use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 
 use tracel_artifact::TransferObserver;
-use tracel_artifact::bundle::{BundleDecode, BundleSink, BundleSource, FsBundle};
+use tracel_artifact::bundle::{BundleDecode, BundleSource, FsBundle};
 use tracel_artifact::download::{
     ArtifactFile, DownloadError, transfer_reader_to_sink_with_observer,
 };
@@ -54,24 +54,34 @@ impl Models {
         self.ops.get_version(model, spec.into())
     }
 
-    /// Downloads and verifies a version before copying it into a caller-owned bundle sink.
+    /// Downloads and verifies a version into `directory`.
     ///
-    /// Progress callbacks run synchronously while backend bytes are staged and may cancel the
-    /// active transfer through [`TransferObserver::is_cancelled`]. The destination is untouched
-    /// unless every file passes path, size, and checksum verification.
-    pub fn download<S, O>(
+    /// Files are downloaded to a temporary sibling of `directory`. No destination files are
+    /// changed until every path, size, and checksum has been verified.
+    ///
+    /// The verified files are then moved into `directory`. Existing files at published paths are
+    /// replaced, while other entries are unchanged. This final move is not transactional; an
+    /// output error may leave some files replaced.
+    pub fn download_into<O: TransferObserver>(
         &self,
         model: &str,
         id: &VersionId,
-        destination: &mut S,
+        directory: &Path,
         observer: &mut O,
-    ) -> Result<(), ModelsError>
-    where
-        S: BundleSink,
-        O: TransferObserver,
-    {
-        let staged = self.stage(model, id, observer)?;
-        staged.copy_to(destination, observer)
+    ) -> Result<FsBundle, ModelsError> {
+        if observer.is_cancelled() {
+            return Err(ModelsError::Cancelled);
+        }
+        let parent = directory
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let staging = FsBundle::temp_in(parent, ".staging-")
+            .map_err(|error| ModelsError::Output(error.to_string()))?;
+        let bundle = self.stage(model, id, staging, observer)?;
+        bundle
+            .move_into(directory)
+            .map_err(|error| ModelsError::Output(error.to_string()))
     }
 
     /// Downloads, verifies, and decodes a model version using `settings`.
@@ -84,8 +94,9 @@ impl Models {
         id: &VersionId,
         settings: &D::Settings,
     ) -> Result<D, ModelsError> {
-        let staged = self.stage(model, id, &mut ())?;
-        D::decode(&staged, settings).map_err(|error| {
+        let staging = FsBundle::temp().map_err(ModelsError::other)?;
+        let bundle = self.stage(model, id, staging, &mut ())?;
+        D::decode(&bundle, settings).map_err(|error| {
             let error: Box<dyn std::error::Error + Send + Sync> = error.into();
             ModelsError::Decode(error.to_string())
         })
@@ -124,61 +135,27 @@ impl Models {
         &self,
         model: &str,
         id: &VersionId,
+        mut bundle: FsBundle,
         observer: &mut O,
-    ) -> Result<StagedVersion, ModelsError> {
+    ) -> Result<FsBundle, ModelsError> {
         if observer.is_cancelled() {
             return Err(ModelsError::Cancelled);
         }
 
         let sources = self.ops.fetch_version_files(model, id)?;
         let paths = validated_source_paths(&sources)?;
-        let mut bundle = FsBundle::temp().map_err(ModelsError::other)?;
 
         for (source, path) in sources.iter().zip(paths) {
             stage_source(source.as_ref(), path, &mut bundle, observer)?;
         }
 
-        Ok(StagedVersion { bundle })
+        Ok(bundle)
     }
 }
 
 impl fmt::Debug for Models {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("Models").finish_non_exhaustive()
-    }
-}
-
-struct StagedVersion {
-    bundle: FsBundle,
-}
-
-impl StagedVersion {
-    fn copy_to<S: BundleSink, O: TransferObserver>(
-        &self,
-        destination: &mut S,
-        observer: &mut O,
-    ) -> Result<(), ModelsError> {
-        for path in self.bundle.file_paths() {
-            if observer.is_cancelled() {
-                return Err(ModelsError::Cancelled);
-            }
-            let mut reader = self.bundle.open(&path).map_err(ModelsError::Output)?;
-            destination
-                .put_file(&path, &mut reader)
-                .map_err(ModelsError::Output)?;
-        }
-        Ok(())
-    }
-}
-
-impl BundleSource for StagedVersion {
-    fn open(&self, path: &str) -> Result<Box<dyn Read + Send>, String> {
-        let canonical = canonical_version_path(path).map_err(|error| error.to_string())?;
-        self.bundle.open(&canonical)
-    }
-
-    fn list(&self) -> Result<Vec<String>, String> {
-        self.bundle.list()
     }
 }
 
@@ -203,7 +180,7 @@ fn stage_source<O: TransferObserver>(
 fn map_download_error(error: DownloadError) -> ModelsError {
     match error {
         DownloadError::Cancelled { .. } => ModelsError::Cancelled,
-        DownloadError::Transfer { source, .. } => ModelsError::other(source),
+        error @ DownloadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
         DownloadError::TargetError(message) => ModelsError::Output(message),
         DownloadError::SizeMismatch {
             path,
@@ -384,9 +361,14 @@ fn invalid_path(message: String) -> ModelsError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::io::Read;
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
-    use tracel_artifact::bundle::InMemoryBundleSources;
+    use tempfile::TempDir;
+    use tracel_artifact::bundle::BundleSink;
 
     use super::*;
     use crate::test_support::{FakeOps, SourceSpec, checksum, models_with_sources};
@@ -414,20 +396,15 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct RecordingSink {
-        files: Vec<(String, Vec<u8>)>,
-    }
-
-    impl tracel_artifact::bundle::BundleSink for RecordingSink {
-        fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String> {
-            let mut bytes = Vec::new();
-            reader
-                .read_to_end(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            self.files.push((path.to_string(), bytes));
-            Ok(())
-        }
+    fn download_into_temp<O: TransferObserver>(
+        models: &Models,
+        observer: &mut O,
+    ) -> (TempDir, PathBuf, Result<FsBundle, ModelsError>) {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let result =
+            models.download_into("alpha", &VersionId::new("version-id"), &directory, observer);
+        (home, directory, result)
     }
 
     #[test]
@@ -483,24 +460,191 @@ mod tests {
     }
 
     #[test]
-    fn download_reports_verified_progress() {
+    fn download_into_reports_verified_progress() {
         let bytes = b"verified payload";
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", bytes)]);
-        let mut destination = InMemoryBundleSources::new();
         let mut observer = RecordingObserver::default();
 
+        let (_home, directory, result) = download_into_temp(&models, &mut observer);
+        result.unwrap();
+
+        assert_eq!(observer.progress.last(), Some(&(bytes.len() as u64)));
+        assert_eq!(observer.completed, vec![bytes.len() as u64]);
+        assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), bytes);
+    }
+
+    #[test]
+    fn download_into_renames_verified_files_into_the_directory() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let models = models_with_sources(vec![
+            SourceSpec::new("weights.bin", b"weights"),
+            SourceSpec::new("config/model.json", b"configuration"),
+        ]);
+
+        let bundle = models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap();
+
+        assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), b"weights");
+        assert_eq!(
+            fs::read(directory.join("config/model.json")).unwrap(),
+            b"configuration"
+        );
+        assert_eq!(
+            bundle.file_paths(),
+            vec!["weights.bin", "config/model.json"]
+        );
+        assert_eq!(home.path().read_dir().unwrap().count(), 1);
+        assert!(directory.exists());
+    }
+
+    #[test]
+    fn download_into_stages_beside_the_directory() {
+        struct ObserveStaging {
+            home: PathBuf,
+            directory: PathBuf,
+            observed: Option<(Vec<String>, bool)>,
+        }
+
+        impl TransferObserver for ObserveStaging {
+            fn file_started(&mut self, rel_path: &str, _expected_bytes: Option<u64>) {
+                if rel_path != "second.bin" {
+                    return;
+                }
+                let entries = self
+                    .home
+                    .read_dir()
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect();
+                self.observed = Some((entries, self.directory.exists()));
+            }
+        }
+
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let models = models_with_sources(vec![
+            SourceSpec::new("first.bin", b"first"),
+            SourceSpec::new("second.bin", b"second"),
+        ]);
+        let mut observer = ObserveStaging {
+            home: home.path().to_path_buf(),
+            directory: directory.clone(),
+            observed: None,
+        };
+
         models
-            .download(
+            .download_into(
                 "alpha",
                 &VersionId::new("version-id"),
-                &mut destination,
+                &directory,
                 &mut observer,
             )
             .unwrap();
 
-        assert_eq!(observer.progress.last(), Some(&(bytes.len() as u64)));
-        assert_eq!(observer.completed, vec![bytes.len() as u64]);
-        assert_eq!(destination.files()[0].source(), bytes);
+        let (entries, directory_existed) = observer.observed.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].starts_with(".staging-"), "{entries:?}");
+        assert!(!directory_existed);
+    }
+
+    #[test]
+    fn a_failed_download_into_leaves_nothing_behind() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let mut failing = SourceSpec::new("second.bin", b"incomplete payload");
+        failing.chunk_size = 4;
+        failing.failure_at = Some(4);
+        let models = models_with_sources(vec![
+            SourceSpec::new("first.bin", b"already staged"),
+            failing,
+        ]);
+
+        let error = models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap_err();
+
+        assert!(error.to_string().contains("mid-stream"), "{error}");
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_cancelled_download_into_leaves_nothing_behind() {
+        #[derive(Default)]
+        struct CancelAfterFirst {
+            completed: usize,
+        }
+
+        impl TransferObserver for CancelAfterFirst {
+            fn is_cancelled(&self) -> bool {
+                self.completed > 0
+            }
+
+            fn file_completed(&mut self, _rel_path: &str, _downloaded_bytes: u64) {
+                self.completed += 1;
+            }
+        }
+
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        let models = models_with_sources(vec![
+            SourceSpec::new("first.bin", b"first"),
+            SourceSpec::new("second.bin", b"second"),
+        ]);
+
+        let error = models
+            .download_into(
+                "alpha",
+                &VersionId::new("version-id"),
+                &directory,
+                &mut CancelAfterFirst::default(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, ModelsError::Cancelled));
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[test]
+    fn download_into_replaces_a_published_path_and_keeps_the_rest() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("weights.bin"), b"old weights").unwrap();
+        fs::write(directory.join("notes.txt"), b"keep me").unwrap();
+        let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"new weights")]);
+
+        models
+            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .unwrap();
+
+        assert_eq!(
+            fs::read(directory.join("weights.bin")).unwrap(),
+            b"new weights"
+        );
+        assert_eq!(fs::read(directory.join("notes.txt")).unwrap(), b"keep me");
+    }
+
+    #[test]
+    fn an_unusable_staging_parent_is_an_output_error() {
+        let home = TempDir::new().unwrap();
+        let parent = home.path().join("not-a-directory");
+        fs::write(&parent, b"file").unwrap();
+        let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"weights")]);
+
+        let error = models
+            .download_into(
+                "alpha",
+                &VersionId::new("version-id"),
+                &parent.join("landed"),
+                &mut (),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, ModelsError::Output(_)));
     }
 
     #[test]
@@ -509,20 +653,14 @@ mod tests {
         let mut invalid = SourceSpec::new("second.bin", b"untrusted");
         invalid.file.size_bytes += 1;
         let models = models_with_sources(vec![valid, invalid]);
-        let mut destination = InMemoryBundleSources::new();
         let mut observer = RecordingObserver::default();
 
-        let error = models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut destination,
-                &mut observer,
-            )
-            .unwrap_err();
+        let (home, directory, result) = download_into_temp(&models, &mut observer);
+        let error = result.unwrap_err();
 
         assert!(error.is_verification());
-        assert!(destination.is_empty());
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
         assert_eq!(observer.completed_paths, vec!["first.bin"]);
     }
 
@@ -566,21 +704,13 @@ mod tests {
             SourceSpec::new("metadata.json", b"already staged"),
             source,
         ]);
-        let mut destination = InMemoryBundleSources::new();
 
-        let error = models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut destination,
-                &mut (),
-            )
-            .unwrap_err();
+        let (home, directory, result) = download_into_temp(&models, &mut ());
+        let error = result.unwrap_err();
 
-        assert!(
-            matches!(&error, ModelsError::Other(source) if source.to_string().contains("mid-stream"))
-        );
-        assert!(destination.is_empty());
+        assert!(matches!(&error, ModelsError::Transport(reason) if reason.contains("mid-stream")));
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
     }
 
     #[test]
@@ -588,20 +718,14 @@ mod tests {
         let source = SourceSpec::new("weights\\./model.bin", b"canonical");
         let opened_paths = Arc::clone(&source.opened_paths);
         let models = models_with_sources(vec![source]);
-        let mut destination = RecordingSink::default();
 
-        models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut destination,
-                &mut (),
-            )
-            .unwrap();
+        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let bundle = result.unwrap();
 
+        assert_eq!(bundle.file_paths(), vec!["weights/model.bin".to_string()]);
         assert_eq!(
-            destination.files,
-            vec![("weights/model.bin".to_string(), b"canonical".to_vec())]
+            fs::read(directory.join("weights/model.bin")).unwrap(),
+            b"canonical"
         );
         assert_eq!(
             opened_paths.lock().unwrap().as_slice(),
@@ -617,19 +741,12 @@ mod tests {
         ];
         let opens = Arc::clone(&sources[0].opens);
         let models = models_with_sources(sources);
-        let mut destination = RecordingSink::default();
 
-        let error = models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut destination,
-                &mut (),
-            )
-            .unwrap_err();
+        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let error = result.unwrap_err();
 
         assert!(matches!(error, ModelsError::InvalidPath(_)));
-        assert!(destination.files.is_empty());
+        assert!(!directory.exists());
         assert_eq!(opens.load(Ordering::SeqCst), 0);
     }
 
@@ -640,16 +757,11 @@ mod tests {
         let opens = [Arc::clone(&first.opens), Arc::clone(&second.opens)];
         let models = models_with_sources(vec![first, second]);
 
-        let error = models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut RecordingSink::default(),
-                &mut (),
-            )
-            .unwrap_err();
+        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let error = result.unwrap_err();
 
         assert!(error.is_verification());
+        assert!(!directory.exists());
         assert!(opens.iter().all(|opens| opens.load(Ordering::SeqCst) == 0));
     }
 
@@ -664,16 +776,11 @@ mod tests {
             let opens = [Arc::clone(&first.opens), Arc::clone(&second.opens)];
             let models = models_with_sources(vec![first, second]);
 
-            let error = models
-                .download(
-                    "alpha",
-                    &VersionId::new("version-id"),
-                    &mut RecordingSink::default(),
-                    &mut (),
-                )
-                .unwrap_err();
+            let (_home, directory, result) = download_into_temp(&models, &mut ());
+            let error = result.unwrap_err();
 
             assert!(error.is_verification());
+            assert!(!directory.exists());
             assert!(opens.iter().all(|opens| opens.load(Ordering::SeqCst) == 0));
         }
     }
@@ -692,19 +799,14 @@ mod tests {
         ] {
             let models = models_with_sources(vec![SourceSpec::new(path, b"payload")]);
 
-            let error = models
-                .download(
-                    "alpha",
-                    &VersionId::new("version-id"),
-                    &mut RecordingSink::default(),
-                    &mut (),
-                )
-                .unwrap_err();
+            let (_home, directory, result) = download_into_temp(&models, &mut ());
+            let error = result.unwrap_err();
 
             assert!(
                 error.is_verification(),
                 "unexpected error for {path:?}: {error}"
             );
+            assert!(!directory.exists());
         }
     }
 
@@ -715,16 +817,11 @@ mod tests {
         let opens = Arc::clone(&source.opens);
         let models = models_with_sources(vec![source]);
 
-        let error = models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut RecordingSink::default(),
-                &mut (),
-            )
-            .unwrap_err();
+        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let error = result.unwrap_err();
 
         assert!(matches!(error, ModelsError::InvalidChecksum(_)));
+        assert!(!directory.exists());
         assert_eq!(opens.load(Ordering::SeqCst), 0);
     }
 
@@ -755,22 +852,16 @@ mod tests {
         let consumed = Arc::clone(&source.consumed);
         let total = source.bytes.len();
         let models = models_with_sources(vec![source]);
-        let mut destination = InMemoryBundleSources::new();
         let mut observer = CancellingObserver::default();
 
-        let error = models
-            .download(
-                "alpha",
-                &VersionId::new("version-id"),
-                &mut destination,
-                &mut observer,
-            )
-            .unwrap_err();
+        let (home, directory, result) = download_into_temp(&models, &mut observer);
+        let error = result.unwrap_err();
 
         assert!(error.is_cancelled());
         assert_eq!(consumed.load(Ordering::SeqCst), 4);
         assert!(consumed.load(Ordering::SeqCst) < total);
         assert!(!observer.completed);
-        assert!(destination.is_empty());
+        assert!(!directory.exists());
+        assert_eq!(home.path().read_dir().unwrap().count(), 0);
     }
 }

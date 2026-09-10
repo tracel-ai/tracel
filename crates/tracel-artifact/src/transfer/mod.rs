@@ -33,6 +33,8 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
     TransferError::Transport(described)
 }
 
+mod ranged;
+
 /// Watches a transfer as it runs, and can stop it.
 ///
 /// Every method defaults to doing nothing, so an implementation only has to define the events it
@@ -105,9 +107,8 @@ pub trait FileTransferClient: Clone + Send + Sync + 'static {
 
     /// Download data from the given URL as a reader.
     ///
-    /// `expected_size_bytes` is what the manifest announced, where one did, so
-    /// that an implementation can give a large download the time it needs. It is
-    /// absent for an artifact published without a manifest.
+    /// `expected_size_bytes` is the size declared by the manifest. Implementations may use it to
+    /// select a transfer strategy or timeout. It is `None` when no size was declared.
     fn get_reader(
         &self,
         url: &str,
@@ -138,6 +139,27 @@ impl ReqwestTransferClient {
 
     pub fn with_client(http: reqwest::blocking::Client) -> Self {
         Self { http }
+    }
+
+    fn get_whole_reader(
+        &self,
+        url: &str,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<Box<dyn Read + Send>, TransferError> {
+        let response = self
+            .http
+            .get(url)
+            .timeout(timeout_worth_allowing_a_transfer_of(expected_size_bytes))
+            .send()
+            .map_err(|error| transport_failure(&error))?;
+
+        if !response.status().is_success() {
+            return Err(transport_failure(
+                &response.error_for_status().err().unwrap(),
+            ));
+        }
+
+        Ok(Box::new(response))
     }
 }
 
@@ -177,19 +199,6 @@ impl FileTransferClient for ReqwestTransferClient {
         url: &str,
         expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
-        let response = self
-            .http
-            .get(url)
-            .timeout(timeout_worth_allowing_a_transfer_of(expected_size_bytes))
-            .send()
-            .map_err(|error| transport_failure(&error))?;
-
-        if !response.status().is_success() {
-            return Err(transport_failure(
-                &response.error_for_status().err().unwrap(),
-            ));
-        }
-
-        Ok(Box::new(response))
+        ranged::open(self, url, expected_size_bytes)
     }
 }

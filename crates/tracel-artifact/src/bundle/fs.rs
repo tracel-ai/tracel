@@ -1,8 +1,9 @@
-//! File-backed bundle implementation for artifacts.
+//! Filesystem-backed artifact bundles.
 //!
-//! This module provides an implementation of the `BundleSink` and `BundleSource` traits that uses the local filesystem to store artifact files.
-//! It supports both temporary bundles (which clean up after themselves) and persistent bundles rooted at a specified directory.
-//! The implementation ensures that file paths are sanitized to prevent directory traversal, and that concurrent writes to the same path are handled safely using temporary files and atomic renames.
+//! [`FsBundle`] supports persistent directories and temporary directories that are removed on
+//! drop. Temporary bundles may use the system temporary directory or a caller-provided parent.
+//! Relative paths are validated before access, and writes are completed by renaming temporary
+//! files into place.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -48,6 +49,55 @@ impl FsBundle {
             seen: HashSet::new(),
             _temp: Some(temp),
         })
+    }
+
+    /// Creates a temporary writable bundle in `parent`.
+    ///
+    /// The bundle directory name starts with `prefix`. The directory and its contents are removed
+    /// when the bundle is dropped.
+    pub fn temp_in(parent: impl AsRef<Path>, prefix: &str) -> Result<Self, std::io::Error> {
+        let parent = parent.as_ref();
+        fs::create_dir_all(parent)?;
+        let temp = tempfile::Builder::new().prefix(prefix).tempdir_in(parent)?;
+        let root = temp.path().to_path_buf();
+        Ok(Self {
+            root,
+            files: Vec::new(),
+            seen: HashSet::new(),
+            _temp: Some(temp),
+        })
+    }
+
+    /// Moves the registered files into `directory`.
+    ///
+    /// Existing files at registered paths are replaced. Other entries in `directory` are
+    /// unchanged. Each replacement is atomic when supported by the platform and filesystem.
+    /// Moving across filesystems falls back to copying through a temporary destination file.
+    ///
+    /// This operation is not transactional. If an error occurs, files moved before the error
+    /// remain in `directory`.
+    pub fn move_into(self, directory: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+        let directory = directory.as_ref();
+        fs::create_dir_all(directory)?;
+        if fs::canonicalize(directory)?.starts_with(fs::canonicalize(&self.root)?) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a bundle cannot be moved inside its own root",
+            ));
+        }
+
+        let paths = self.file_paths();
+        for file in self.files() {
+            let target = safe_join(directory, &file.rel_path).map_err(std::io::Error::other)?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            move_file(&file.abs_path, &target).map_err(|error| {
+                std::io::Error::new(error.kind(), format!("{}: {error}", file.rel_path))
+            })?;
+        }
+
+        Self::with_files(directory.to_path_buf(), paths).map_err(std::io::Error::other)
     }
 
     /// Create a read-oriented bundle backed by an existing root + file list.
@@ -237,11 +287,44 @@ fn temp_path(dest: &Path) -> Result<PathBuf, std::io::Error> {
 }
 
 fn finalize_temp_file(tmp: &Path, dest: &Path) -> Result<(), std::io::Error> {
+    // `rename` replaces the destination on Unix. Windows requires its removal first.
+    #[cfg(windows)]
     if dest.exists() {
         fs::remove_file(dest)?;
     }
 
     fs::rename(tmp, dest)
+}
+
+fn move_file(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+    #[cfg(windows)]
+    if to.exists() {
+        fs::remove_file(to)?;
+    }
+
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+            copy_across_devices(from, to)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn copy_across_devices(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+    let tmp = temp_path(to)?;
+    if tmp.exists() {
+        fs::remove_file(&tmp)?;
+    }
+    if let Err(error) = fs::copy(from, &tmp) {
+        let _ = fs::remove_file(&tmp);
+        return Err(error);
+    }
+    if let Err(error) = finalize_temp_file(&tmp, to) {
+        let _ = fs::remove_file(&tmp);
+        return Err(error);
+    }
+    fs::remove_file(from)
 }
 
 impl MultipartUploadSource for FsBundle {
@@ -280,5 +363,68 @@ impl MultipartUploadSource for FsBundle {
                 source: Box::new(e),
             })?;
         Ok(Box::new(file.take(size)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_temp_bundle_in_a_parent_lives_there_and_leaves_on_drop() {
+        let home = TempDir::new().unwrap();
+        let parent = home.path().join("parent");
+        let bundle = FsBundle::temp_in(&parent, ".bundle-").unwrap();
+        let root = bundle.root().to_path_buf();
+
+        assert_eq!(root.parent(), Some(parent.as_path()));
+        assert!(
+            root.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".bundle-")
+        );
+        assert!(root.exists());
+
+        drop(bundle);
+
+        assert_eq!(parent.read_dir().unwrap().count(), 0);
+    }
+
+    #[test]
+    fn moving_a_bundle_replaces_its_files_and_keeps_unregistered_files() {
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("weights.bin"), b"old").unwrap();
+        fs::write(directory.join("notes.txt"), b"keep").unwrap();
+        let mut bundle = FsBundle::temp_in(home.path(), ".bundle-").unwrap();
+        let staging = bundle.root().to_path_buf();
+        bundle.put_file("weights.bin", &mut &b"new"[..]).unwrap();
+        bundle
+            .put_file("config/model.json", &mut &b"configuration"[..])
+            .unwrap();
+
+        let moved = bundle.move_into(&directory).unwrap();
+
+        assert!(!staging.exists());
+        assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), b"new");
+        assert_eq!(fs::read(directory.join("notes.txt")).unwrap(), b"keep");
+        assert_eq!(
+            fs::read(directory.join("config/model.json")).unwrap(),
+            b"configuration"
+        );
+        assert_eq!(moved.file_paths(), vec!["weights.bin", "config/model.json"]);
+    }
+
+    #[test]
+    fn a_bundle_cannot_be_moved_inside_its_own_root() {
+        let mut bundle = FsBundle::temp().unwrap();
+        bundle.put_file("weights.bin", &mut &b"model"[..]).unwrap();
+        let directory = bundle.root().join("nested");
+
+        let error = bundle.move_into(directory).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 }

@@ -1,9 +1,9 @@
 #![deny(missing_docs)]
 
-//! Backend-agnostic model domain and capability.
+//! Backend-independent model operations.
 //!
-//! [`Models`] owns model transfer, verification, staging, and delivery.
-//! Backends implement the blocking primitives in [`ModelOps`] after binding their own scope.
+//! [`Models`] validates, transfers, stages, and loads model versions. Backends implement the
+//! blocking operations in [`ModelOps`] for a specific scope.
 
 mod domain;
 mod error;

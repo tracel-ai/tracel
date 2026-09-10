@@ -143,7 +143,7 @@ impl VersionFileSource for StationVersionFileSource {
     fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
         self.transfer_client
             .get_reader(&self.url, Some(self.file.size_bytes))
-            .map_err(|error| ModelsError::other(StationError::Transport(error.to_string())))
+            .map_err(|error| ModelsError::Transport(error.to_string()))
     }
 }
 
@@ -218,7 +218,10 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
 }
 
 fn station_failure(error: tracel_client::ClientError) -> ModelsError {
-    ModelsError::other(StationError::from(error))
+    match StationError::from(error) {
+        StationError::Transport(reason) => ModelsError::Transport(reason),
+        error => ModelsError::other(error),
+    }
 }
 
 fn map_model_error(error: tracel_client::ClientError, name: &str) -> ModelsError {

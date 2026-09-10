@@ -29,8 +29,9 @@ pub trait VersionFileSource: Send + Sync + 'static {
 ///
 /// An implementation is already scoped to one location, so it is never asked which one.
 ///
-/// Report a missing model or version as such; report everything else through
-/// [`ModelsError::other`], which keeps the implementation's own error type intact.
+/// Implementations should use the dedicated not-found variants for missing models and versions,
+/// and [`ModelsError::Transport`] for communication failures. Backend-specific failures may be
+/// preserved with [`ModelsError::other`].
 pub trait ModelOps: Send + Sync + 'static {
     /// Lists models in the implementation's scope.
     fn list_models(&self) -> Result<Vec<Model>, ModelsError>;
