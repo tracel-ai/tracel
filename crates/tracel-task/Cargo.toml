@@ -11,9 +11,13 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+tokio = ["dep:tokio"]
+
 [dependencies]
 async-channel = { workspace = true }
 futures = { workspace = true }
+tokio = { version = "1", features = ["rt"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = { workspace = true }

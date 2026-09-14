@@ -10,15 +10,19 @@
 //! Handles are `Send` whenever their payloads are, regardless of the work behind them: only the
 //! result crosses a handle, so a producer may hold state that cannot leave its thread.
 
+#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+mod runtime;
 mod spawn;
 mod streaming;
 mod task;
 
+#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+pub use runtime::TokioRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use spawn::BrowserSpawn;
 #[cfg(not(target_arch = "wasm32"))]
 pub use spawn::ThreadSpawn;
-pub use spawn::{DynFuture, DynStream, MaybeSend, MaybeSync, Spawn, SpawnedFuture};
+pub use spawn::{BlockingWork, DynFuture, DynStream, MaybeSend, MaybeSync, Spawn, SpawnedFuture};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};

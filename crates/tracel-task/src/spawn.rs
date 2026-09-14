@@ -62,6 +62,9 @@ pub type DynStream<'a, T> = LocalBoxStream<'a, T>;
 /// A boxed future ready to be spawned.
 pub type SpawnedFuture = DynFuture<'static, ()>;
 
+/// Work that blocks the thread it runs on.
+pub type BlockingWork = Box<dyn FnOnce() + Send + 'static>;
+
 /// Runs futures to completion in the background.
 ///
 /// The one runtime capability the handles need. Whoever owns an executor implements it and hands
@@ -69,6 +72,13 @@ pub type SpawnedFuture = DynFuture<'static, ()>;
 pub trait Spawn: Send + Sync + 'static {
     /// Starts `future` and returns without waiting for it.
     fn spawn(&self, future: SpawnedFuture);
+
+    /// Runs `work` where blocking will not stall the executor, when there is such a place.
+    ///
+    /// An executor without threads runs it inline.
+    fn spawn_blocking(&self, work: BlockingWork) {
+        work();
+    }
 }
 
 /// Runs each spawned future on its own OS thread.
@@ -82,6 +92,10 @@ pub struct ThreadSpawn;
 impl Spawn for ThreadSpawn {
     fn spawn(&self, future: SpawnedFuture) {
         std::thread::spawn(move || futures::executor::block_on(future));
+    }
+
+    fn spawn_blocking(&self, work: BlockingWork) {
+        std::thread::spawn(work);
     }
 }
 
