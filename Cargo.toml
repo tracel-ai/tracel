@@ -65,6 +65,8 @@ derive_more = { version = "2.1.1", default-features = false, features = [
 ] }
 chrono = "0.4.45"
 futures = "0.3.33"
+futures-timer = "3.0.4"
+bytes = "1.12.1"
 async-channel = "2.5.0"
 wasm-bindgen-futures = "0.4.76"
 tracing = "0.1.44"

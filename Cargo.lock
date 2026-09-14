@@ -6789,13 +6789,17 @@ dependencies = [
 name = "tracel-artifact"
 version = "0.10.0"
 dependencies = [
- "crossbeam",
+ "bytes",
+ "futures",
+ "futures-timer",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
+ "tracel-task",
 ]
 
 [[package]]
