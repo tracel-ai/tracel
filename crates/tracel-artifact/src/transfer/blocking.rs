@@ -3,10 +3,9 @@ use std::io::{self, Read};
 use std::sync::Arc;
 
 use bytes::Bytes;
-use futures::StreamExt;
-use tracel_task::{BlockingIter, Spawn, Streaming, StreamingSink, TokioRuntime};
+use tracel_task::{BlockingIter, Spawn, Streaming, TokioRuntime};
 
-use super::{ByteStream, HttpTransferClient, TransferClient, TransferError, reader_stream};
+use super::{HttpTransferClient, TransferClient, TransferError, reader_stream};
 
 /// A transfer client for callers that block.
 ///
@@ -73,29 +72,13 @@ impl ReqwestTransferClient {
         expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
         let body = self.block_on(self.http.get(url, expected_size_bytes))?;
-        let chunks = Streaming::spawn(&*self.runtime, 1, |sink| pump(body, sink));
+        let chunks = Streaming::spawn(&*self.runtime, 1, |sink| sink.forward(body));
 
         Ok(Box::new(ByteReader {
             chunks: chunks.blocking_iter(),
             current: Bytes::new(),
             _runtime: Arc::clone(&self.runtime),
         }))
-    }
-}
-
-async fn pump(mut body: ByteStream, sink: StreamingSink<Bytes, TransferError>) {
-    while let Some(item) = body.next().await {
-        match item {
-            Ok(chunk) => {
-                if sink.send(chunk).await.is_err() {
-                    return;
-                }
-            }
-            Err(error) => {
-                sink.fail(error).await;
-                return;
-            }
-        }
     }
 }
 

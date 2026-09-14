@@ -12,6 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+bytes = { workspace = true }
 futures = { workspace = true }
 sha2 = { workspace = true }
 serde_json = { workspace = true }

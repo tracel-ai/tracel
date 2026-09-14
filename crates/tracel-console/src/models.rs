@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
 use serde::Deserialize;
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError, upload_multipart,
 };
-use tracel_artifact::{ByteStream, HttpTransferClient, TransferClient, TransferObserver};
+use tracel_artifact::{HttpTransferClient, TransferClient, TransferError, TransferObserver};
 use tracel_client::console::Client;
 use tracel_client::{
     console::model::request::{
@@ -20,7 +21,7 @@ use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
     VersionManifest, VersionSpec,
 };
-use tracel_task::{DynFuture, Task};
+use tracel_task::{Spawn, Streaming, Task};
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
@@ -62,76 +63,56 @@ impl ConsoleModelOps {
 }
 
 impl ModelOps for ConsoleModelOps {
-    fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
-        Box::pin(async move {
-            let (owner, project) = self.location();
-            let response = self
-                .call(move |client| {
-                    client
-                        .list_models(&owner, &project)
-                        .map_err(console_failure)
-                })
-                .await?;
-            Ok(models_from_wire(response))
+    fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
+        let (owner, project) = self.location();
+        self.call(move |client| {
+            client
+                .list_models(&owner, &project)
+                .map(models_from_wire)
+                .map_err(console_failure)
         })
     }
 
-    fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>> {
-        Box::pin(async move {
-            let (owner, project) = self.location();
-            let name = name.to_string();
-            self.call(move |client| {
-                client
-                    .get_model(&owner, &project, &name)
-                    .map(model_from_wire)
-                    .map_err(|error| map_model_error(error, &name))
-            })
-            .await
+    fn get_model(&self, name: String) -> Task<Model, ModelsError> {
+        let (owner, project) = self.location();
+        self.call(move |client| {
+            client
+                .get_model(&owner, &project, &name)
+                .map(model_from_wire)
+                .map_err(|error| map_model_error(error, &name))
         })
     }
 
-    fn list_versions<'a>(
-        &'a self,
-        model: &'a str,
-    ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>> {
-        Box::pin(async move {
-            let (owner, project) = self.location();
-            let model = model.to_string();
-            let response = self
-                .call(move |client| {
-                    client
-                        .list_model_versions(&owner, &project, &model)
-                        .map_err(|error| map_model_error(error, &model))
-                })
-                .await?;
-            model_versions_from_wire(response)
+    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
+        let (owner, project) = self.location();
+        self.call(move |client| {
+            client
+                .list_model_versions(&owner, &project, &model)
+                .map_err(|error| map_model_error(error, &model))
+                .and_then(model_versions_from_wire)
         })
     }
 
-    fn get_version<'a>(
-        &'a self,
-        model: &'a str,
-        spec: VersionSpec,
-    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
-        Box::pin(async move {
+    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
+        let this = self.clone();
+        Task::spawn(&*self.scope.console.spawn, async move {
             let id = match &spec {
                 VersionSpec::Exact(id) => id.clone(),
-                VersionSpec::Latest => self
-                    .list_versions(model)
+                VersionSpec::Latest => this
+                    .list_versions(model.clone())
                     .await?
                     .into_iter()
                     .max_by_key(|version| version.version)
                     .map(|version| version.id)
                     .ok_or_else(|| ModelsError::VersionNotFound {
-                        model: model.to_string(),
+                        model: model.clone(),
                         version: spec.clone(),
                     })?,
             };
 
-            let route = self.route_version(model, &id)?;
-            let (owner, project) = self.location();
-            let model = model.to_string();
-            self.call(move |client| {
+            let route = this.route_version(&model, &id)?;
+            let (owner, project) = this.location();
+            this.call(move |client| {
                 client
                     .get_model_version(&owner, &project, &model, route)
                     .map_err(|error| map_version_error(error, &model, &id))
@@ -141,61 +122,47 @@ impl ModelOps for ConsoleModelOps {
         })
     }
 
-    fn fetch_version_files<'a>(
-        &'a self,
-        model: &'a str,
-        id: &'a VersionId,
-    ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>> {
-        Box::pin(async move {
-            let version = self.route_version(model, id)?;
-            let (owner, project) = self.location();
-            let model = model.to_string();
-            let id = id.clone();
-            let response = self
-                .call(move |client| {
-                    client
-                        .presign_model_download(&owner, &project, &model, version)
-                        .map_err(|error| map_version_error(error, &model, &id))
-                })
-                .await?;
-            Ok(file_sources_from_wire(
-                &self.scope.console.transfer,
-                response,
-            ))
+    fn fetch_version_files(
+        &self,
+        model: String,
+        id: VersionId,
+    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError> {
+        let route = match self.route_version(&model, &id) {
+            Ok(route) => route,
+            Err(error) => return Task::failed(error),
+        };
+        let (owner, project) = self.location();
+        let transfer = self.scope.console.transfer.clone();
+        let spawn = Arc::clone(&self.scope.console.spawn);
+        self.call(move |client| {
+            client
+                .presign_model_download(&owner, &project, &model, route)
+                .map_err(|error| map_version_error(error, &model, &id))
+                .map(|response| file_sources_from_wire(&transfer, &spawn, response))
         })
     }
 
-    fn create_model<'a>(
-        &'a self,
-        name: &'a str,
-        description: Option<&'a str>,
-    ) -> DynFuture<'a, Result<Model, ModelsError>> {
-        Box::pin(async move {
-            let (owner, project) = self.location();
-            let request = CreateModelRequest {
-                name: name.to_string(),
-                description: description.map(str::to_string),
-            };
-            self.call(move |client| {
-                client
-                    .create_model(&owner, &project, request)
-                    .map(model_from_wire)
-                    .map_err(console_failure)
-            })
-            .await
+    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
+        let (owner, project) = self.location();
+        self.call(move |client| {
+            client
+                .create_model(&owner, &project, CreateModelRequest { name, description })
+                .map(model_from_wire)
+                .map_err(console_failure)
         })
     }
 
-    fn publish_version<'a>(
-        &'a self,
-        model: &'a str,
-        files: &'a [VersionFile],
-        contents: &'a dyn MultipartUploadSource,
-        metadata: Option<&'a serde_json::Value>,
-        observer: &'a mut dyn TransferObserver,
-    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
-        Box::pin(async move {
-            let (owner, project) = self.location();
+    fn publish_version(
+        &self,
+        model: String,
+        files: Vec<VersionFile>,
+        contents: Arc<dyn MultipartUploadSource>,
+        metadata: Option<serde_json::Value>,
+        mut observer: Box<dyn TransferObserver>,
+    ) -> Task<ModelVersion, ModelsError> {
+        let this = self.clone();
+        Task::spawn(&*self.scope.console.spawn, async move {
+            let (owner, project) = this.location();
             let request = RequestModelVersionUploadRequest {
                 files: files
                     .iter()
@@ -205,11 +172,11 @@ impl ModelOps for ConsoleModelOps {
                         checksum: file.checksum.clone(),
                     })
                     .collect(),
-                metadata: metadata.cloned(),
+                metadata,
             };
             let planned = {
-                let (owner, project, model) = (owner.clone(), project.clone(), model.to_string());
-                self.call(move |client| {
+                let (owner, project, model) = (owner.clone(), project.clone(), model.clone());
+                this.call(move |client| {
                     client
                         .request_model_version_upload(&owner, &project, &model, request)
                         .map_err(|error| map_model_error(error, &model))
@@ -235,14 +202,19 @@ impl ModelOps for ConsoleModelOps {
                 })
                 .collect::<Vec<_>>();
 
-            upload_multipart(&self.scope.console.transfer, contents, &uploads, observer)
-                .await
-                .map_err(model_upload_failure)?;
+            upload_multipart(
+                &this.scope.console.transfer,
+                &*contents,
+                &uploads,
+                &mut *observer,
+            )
+            .await
+            .map_err(model_upload_failure)?;
 
             let version = planned.version;
             {
-                let (owner, project, model) = (owner.clone(), project.clone(), model.to_string());
-                self.call(move |client| {
+                let (owner, project, model) = (owner.clone(), project.clone(), model.clone());
+                this.call(move |client| {
                     client
                         .complete_model_version_upload(&owner, &project, &model, version)
                         .map_err(|error| map_model_error(error, &model))
@@ -250,8 +222,7 @@ impl ModelOps for ConsoleModelOps {
                 .await?;
             }
 
-            let model = model.to_string();
-            self.call(move |client| {
+            this.call(move |client| {
                 client
                     .get_model_version(&owner, &project, &model, version)
                     .map_err(|error| map_model_error(error, &model))
@@ -336,6 +307,7 @@ impl From<WireManifest> for VersionManifest {
 
 fn file_sources_from_wire(
     transfer: &HttpTransferClient,
+    spawn: &Arc<dyn Spawn>,
     response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
@@ -350,6 +322,7 @@ fn file_sources_from_wire(
                 },
                 url: file.url,
                 transfer: transfer.clone(),
+                spawn: Arc::clone(spawn),
             }) as Box<dyn VersionFileSource>
         })
         .collect()
@@ -359,6 +332,7 @@ struct ConsoleVersionFileSource {
     file: VersionFile,
     url: String,
     transfer: HttpTransferClient,
+    spawn: Arc<dyn Spawn>,
 }
 
 impl VersionFileSource for ConsoleVersionFileSource {
@@ -366,15 +340,15 @@ impl VersionFileSource for ConsoleVersionFileSource {
         &self.file
     }
 
-    fn open<'a>(
-        &'a self,
-        _canonical_path: &'a str,
-    ) -> DynFuture<'a, Result<ByteStream, ModelsError>> {
-        Box::pin(async move {
-            self.transfer
-                .get(&self.url, Some(self.file.size_bytes))
-                .await
-                .map_err(|error| ModelsError::Transport(error.to_string()))
+    fn open(&self, _canonical_path: String) -> Streaming<Bytes, TransferError> {
+        let transfer = self.transfer.clone();
+        let url = self.url.clone();
+        let size = self.file.size_bytes;
+        Streaming::spawn(&*self.spawn, 1, |sink| async move {
+            match transfer.get(&url, Some(size)).await {
+                Ok(body) => sink.forward(body).await,
+                Err(error) => sink.fail(error).await,
+            }
         })
     }
 }

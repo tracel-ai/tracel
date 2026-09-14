@@ -53,7 +53,7 @@ pub struct MultipartUploadFile {
 }
 
 /// Source abstraction for multipart uploads.
-pub trait MultipartUploadSource: Sync {
+pub trait MultipartUploadSource: Send + Sync {
     /// Return the file length in bytes for a relative path.
     fn file_len(&self, rel_path: &str) -> Result<u64, UploadError>;
 

@@ -204,6 +204,29 @@ impl<T, E> StreamingSink<T, E> {
     pub async fn fail(self, error: E) {
         let _ = self.tx.send(Err(error)).await;
     }
+
+    /// Feeds every item of `stream` through, ending with its error if it yields one, and stops
+    /// early once the consumer is gone.
+    pub async fn forward<S>(self, mut stream: S)
+    where
+        S: Stream<Item = Result<T, E>> + Unpin,
+    {
+        use futures::StreamExt;
+
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(item) => {
+                    if self.send(item).await.is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    self.fail(error).await;
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl<T, E> fmt::Debug for StreamingSink<T, E> {
@@ -336,6 +359,17 @@ mod tests {
             set_within(&dropped, 5),
             "producer kept running after cancel"
         );
+    }
+
+    #[test]
+    fn given_forwarded_stream_when_it_ends_with_an_error_then_items_precede_it() {
+        let (sink, stream) = Streaming::<u8, Aborted>::channel(1);
+        let source = futures::stream::iter(vec![Ok(1), Ok(2), Err(Aborted), Ok(3)]);
+
+        std::thread::spawn(move || futures::executor::block_on(sink.forward(source)));
+        let items: Vec<_> = stream.blocking_iter().collect();
+
+        assert_eq!(items, vec![Ok(1), Ok(2), Err(Aborted)]);
     }
 
     #[test]

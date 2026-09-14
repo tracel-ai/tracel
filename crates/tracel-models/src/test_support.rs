@@ -2,12 +2,13 @@ use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use bytes::Bytes;
 use futures::TryStreamExt;
 use sha2::Digest;
 
 use tracel_artifact::upload::MultipartUploadSource;
-use tracel_artifact::{ByteStream, TransferError, TransferObserver, reader_stream};
-use tracel_task::{DynFuture, ThreadSpawn};
+use tracel_artifact::{TransferError, TransferObserver, reader_stream};
+use tracel_task::{Streaming, Task, ThreadSpawn};
 
 use crate::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileSource, VersionId,
@@ -54,16 +55,9 @@ impl VersionFileSource for TestSource {
         &self.0.file
     }
 
-    fn open<'a>(
-        &'a self,
-        canonical_path: &'a str,
-    ) -> DynFuture<'a, Result<ByteStream, ModelsError>> {
+    fn open(&self, canonical_path: String) -> Streaming<Bytes, TransferError> {
         self.0.opens.fetch_add(1, Ordering::SeqCst);
-        self.0
-            .opened_paths
-            .lock()
-            .unwrap()
-            .push(canonical_path.to_string());
+        self.0.opened_paths.lock().unwrap().push(canonical_path);
         let reader = TestReader {
             bytes: self.0.bytes.clone(),
             chunk_size: self.0.chunk_size,
@@ -71,11 +65,10 @@ impl VersionFileSource for TestSource {
             offset: 0,
             consumed: Arc::clone(&self.0.consumed),
         };
-        Box::pin(async move {
-            let body: ByteStream = Box::pin(
-                reader_stream(reader).map_err(|error| TransferError::Transport(error.to_string())),
-            );
-            Ok(body)
+        Streaming::spawn(&ThreadSpawn, 1, |sink| async move {
+            let chunks =
+                reader_stream(reader).map_err(|error| TransferError::Transport(error.to_string()));
+            sink.forward(std::pin::pin!(chunks)).await;
         })
     }
 }
@@ -160,99 +153,85 @@ impl FakeOps {
 }
 
 impl ModelOps for FakeOps {
-    fn create_model<'a>(
-        &'a self,
-        name: &'a str,
-        description: Option<&'a str>,
-    ) -> DynFuture<'a, Result<Model, ModelsError>> {
-        let mut created = model(name);
-        created.description = description.map(str::to_string);
-        Box::pin(async move { Ok(created) })
+    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
+        let mut created = model(&name);
+        created.description = description;
+        Task::ready(created)
     }
 
-    fn publish_version<'a>(
-        &'a self,
-        model: &'a str,
-        files: &'a [VersionFile],
-        contents: &'a dyn MultipartUploadSource,
-        metadata: Option<&'a serde_json::Value>,
-        observer: &'a mut dyn TransferObserver,
-    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
-        Box::pin(async move {
-            self.find_model(model)?;
-            for file in files {
-                let len = contents
-                    .file_len(&file.rel_path)
-                    .map_err(ModelsError::other)?;
-                if len != file.size_bytes {
-                    return Err(ModelsError::other(
-                        "the measured size does not match the source",
-                    ));
-                }
+    fn publish_version(
+        &self,
+        model: String,
+        files: Vec<VersionFile>,
+        contents: Arc<dyn MultipartUploadSource>,
+        metadata: Option<serde_json::Value>,
+        mut observer: Box<dyn TransferObserver>,
+    ) -> Task<ModelVersion, ModelsError> {
+        if let Err(error) = self.find_model(&model) {
+            return Task::failed(error);
+        }
+        for file in &files {
+            let len = match contents.file_len(&file.rel_path) {
+                Ok(len) => len,
+                Err(error) => return Task::failed(ModelsError::other(error)),
+            };
+            if len != file.size_bytes {
+                return Task::failed(ModelsError::other(
+                    "the measured size does not match the source",
+                ));
             }
+        }
 
-            for file in files {
-                observer.file_started(&file.rel_path, Some(file.size_bytes));
-                observer.file_completed(&file.rel_path, file.size_bytes);
-            }
+        for file in &files {
+            observer.file_started(&file.rel_path, Some(file.size_bytes));
+            observer.file_completed(&file.rel_path, file.size_bytes);
+        }
 
-            let mut record = self.published.lock().unwrap();
-            record.files = files.to_vec();
-            record.metadata = metadata.cloned();
-            record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
+        let mut record = self.published.lock().unwrap();
+        record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
+        record.files = files;
+        record.metadata = metadata;
 
-            Ok(version(VersionId::new("published-id")))
-        })
+        Task::ready(version(VersionId::new("published-id")))
     }
 
-    fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
-        Box::pin(async move { Ok(self.models.clone()) })
+    fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
+        Task::ready(self.models.clone())
     }
 
-    fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>> {
-        Box::pin(async move { self.find_model(name) })
+    fn get_model(&self, name: String) -> Task<Model, ModelsError> {
+        Task::from_result(self.find_model(&name))
     }
 
-    fn list_versions<'a>(
-        &'a self,
-        model: &'a str,
-    ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>> {
-        Box::pin(async move {
-            self.find_model(model)?;
-            Ok(Vec::new())
-        })
+    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
+        Task::from_result(self.find_model(&model).map(|_| Vec::new()))
     }
 
-    fn get_version<'a>(
-        &'a self,
-        model: &'a str,
-        spec: VersionSpec,
-    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
-        Box::pin(async move {
-            self.find_model(model)?;
+    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
+        Task::from_result(self.find_model(&model).and_then(|_| {
             Err(ModelsError::VersionNotFound {
-                model: model.to_string(),
+                model,
                 version: spec,
             })
-        })
+        }))
     }
 
-    fn fetch_version_files<'a>(
-        &'a self,
-        model: &'a str,
-        id: &'a VersionId,
-    ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>> {
-        Box::pin(async move {
-            self.find_model(model)?;
-            if id.as_str() != "version-id" {
-                return Err(ModelsError::VersionNotFound {
-                    model: model.to_string(),
-                    version: VersionSpec::Exact(id.clone()),
-                });
-            }
+    fn fetch_version_files(
+        &self,
+        model: String,
+        id: VersionId,
+    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError> {
+        if let Err(error) = self.find_model(&model) {
+            return Task::failed(error);
+        }
+        if id.as_str() != "version-id" {
+            return Task::failed(ModelsError::VersionNotFound {
+                model,
+                version: VersionSpec::Exact(id),
+            });
+        }
 
-            Ok(self.sources.iter().map(SourceSpec::source).collect())
-        })
+        Task::ready(self.sources.iter().map(SourceSpec::source).collect())
     }
 }
 
