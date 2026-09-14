@@ -112,6 +112,12 @@ pub enum TransferError {
     Transport(String),
 }
 
+impl From<tracel_task::Aborted> for TransferError {
+    fn from(aborted: tracel_task::Aborted) -> Self {
+        Self::Transport(aborted.to_string())
+    }
+}
+
 /// A downloaded body: `Send` on native targets, thread-local on wasm.
 #[cfg(not(target_arch = "wasm32"))]
 pub type ByteStream = futures::stream::BoxStream<'static, Result<Bytes, TransferError>>;

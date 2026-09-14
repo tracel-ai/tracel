@@ -1,11 +1,12 @@
 use std::io;
 use std::ops::Range;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use reqwest::{StatusCode, header::HeaderMap};
-use tracel_task::MaybeSend;
+use tracel_task::{MaybeSend, Spawn};
 
 use super::ranged::{self, RangePlan, RangeResponse, RangeSource};
 use super::timeout_worth_allowing_a_transfer_of;
@@ -13,17 +14,20 @@ use super::{ByteStream, TransferClient, TransferError, transport_failure};
 
 /// Transfers bytes over HTTP, on every target.
 ///
-/// Large downloads are fetched as concurrent ranges when the source serves them. Each request's
-/// deadline follows the size it moves, since a transfer's duration is set by the caller's
-/// bandwidth rather than by any fixed budget.
+/// Large downloads are fetched as concurrent ranges when the source serves them, each on the
+/// given [`Spawn`], so throughput is bounded by the backend's executor and the network rather
+/// than by how fast the bytes are consumed. Each request's deadline follows the size it moves,
+/// since a transfer's duration is set by the caller's bandwidth rather than by any fixed budget.
 #[derive(Clone)]
 pub struct HttpTransferClient {
     http: reqwest::Client,
     plan: RangePlan,
+    spawn: Arc<dyn Spawn>,
 }
 
 impl HttpTransferClient {
-    pub fn new() -> Self {
+    /// Builds a client whose requests must be able to run on `spawn`.
+    pub fn new(spawn: Arc<dyn Spawn>) -> Self {
         let builder = reqwest::Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.connect_timeout(super::CONNECT_TIMEOUT);
@@ -31,20 +35,15 @@ impl HttpTransferClient {
             .build()
             .expect("failed to build the HTTP transfer client");
 
-        Self::with_client(http)
+        Self::with_client(http, spawn)
     }
 
-    pub fn with_client(http: reqwest::Client) -> Self {
+    pub fn with_client(http: reqwest::Client, spawn: Arc<dyn Spawn>) -> Self {
         Self {
             http,
             plan: RangePlan::default(),
+            spawn,
         }
-    }
-}
-
-impl Default for HttpTransferClient {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -107,7 +106,7 @@ impl TransferClient for HttpTransferClient {
         url: &str,
         expected_size_bytes: Option<u64>,
     ) -> Result<ByteStream, TransferError> {
-        ranged::open(self, url, expected_size_bytes, &self.plan).await
+        ranged::open(self, url, expected_size_bytes, &self.plan, &self.spawn).await
     }
 
     async fn put<B>(&self, url: &str, body: B, size_bytes: u64) -> Result<(), TransferError>
@@ -187,6 +186,14 @@ mod tests {
     use super::super::test_server::TestServer;
     use super::*;
 
+    struct OnRuntime(tokio::runtime::Handle);
+
+    impl Spawn for OnRuntime {
+        fn spawn(&self, future: tracel_task::SpawnedFuture) {
+            self.0.spawn(future);
+        }
+    }
+
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -194,7 +201,7 @@ mod tests {
             .unwrap()
     }
 
-    fn client(range_bytes: u64) -> HttpTransferClient {
+    fn client(runtime: &tokio::runtime::Runtime, range_bytes: u64) -> HttpTransferClient {
         HttpTransferClient {
             http: reqwest::Client::new(),
             plan: RangePlan {
@@ -203,6 +210,7 @@ mod tests {
                 attempts: 2,
                 backoff: Duration::from_millis(1),
             },
+            spawn: Arc::new(OnRuntime(runtime.handle().clone())),
         }
     }
 
@@ -220,9 +228,10 @@ mod tests {
     #[test]
     fn downloads_a_file_that_fits_one_range_in_one_request() {
         let server = TestServer::serve(file(500), true);
-        let client = client(1024);
+        let runtime = runtime();
+        let client = client(&runtime, 1024);
 
-        let read = runtime().block_on(async {
+        let read = runtime.block_on(async {
             let body = client.get(&server.url("/file"), Some(500)).await.unwrap();
             read_all(body).await
         });
@@ -236,9 +245,10 @@ mod tests {
     #[test]
     fn downloads_a_large_file_as_ranges_and_reassembles_it() {
         let server = TestServer::serve(file(3 * 1024 + 100), true);
-        let client = client(1024);
+        let runtime = runtime();
+        let client = client(&runtime, 1024);
 
-        let read = runtime().block_on(async {
+        let read = runtime.block_on(async {
             let body = client
                 .get(&server.url("/file"), Some(3 * 1024 + 100))
                 .await
@@ -266,9 +276,10 @@ mod tests {
     #[test]
     fn a_source_without_range_support_is_downloaded_whole() {
         let server = TestServer::serve(file(3 * 1024), false);
-        let client = client(1024);
+        let runtime = runtime();
+        let client = client(&runtime, 1024);
 
-        let read = runtime().block_on(async {
+        let read = runtime.block_on(async {
             let body = client
                 .get(&server.url("/file"), Some(3 * 1024))
                 .await
@@ -282,9 +293,10 @@ mod tests {
     #[test]
     fn a_missing_file_fails_before_any_body_is_read() {
         let server = TestServer::serve(file(10), true);
-        let client = client(1024);
+        let runtime = runtime();
+        let client = client(&runtime, 1024);
 
-        let error = runtime()
+        let error = runtime
             .block_on(client.get(&server.url("/missing"), Some(10)))
             .err()
             .expect("404 is a transport failure");
@@ -295,11 +307,12 @@ mod tests {
     #[test]
     fn uploads_announce_their_length_rather_than_chunking() {
         let server = TestServer::serve(Vec::new(), true);
-        let client = client(1024);
+        let runtime = runtime();
+        let client = client(&runtime, 1024);
         let payload = file(70 * 1024);
         let body = super::super::reader_stream(io::Cursor::new(payload.clone()));
 
-        runtime()
+        runtime
             .block_on(client.put(&server.url("/upload"), body, payload.len() as u64))
             .unwrap();
 

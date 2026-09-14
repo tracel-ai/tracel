@@ -23,14 +23,10 @@ pub struct ReqwestTransferClient {
 
 impl ReqwestTransferClient {
     pub fn new() -> Self {
-        Self::with_client(HttpTransferClient::new())
-    }
+        let driver = Arc::new(Driver::start());
+        let http = HttpTransferClient::new(Arc::clone(&driver) as Arc<dyn Spawn>);
 
-    pub fn with_client(http: HttpTransferClient) -> Self {
-        Self {
-            http,
-            driver: Arc::new(Driver::start()),
-        }
+        Self { http, driver }
     }
 
     /// The asynchronous client this one drives.
@@ -73,7 +69,7 @@ impl ReqwestTransferClient {
         expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
         let body = self.block_on(self.http.get(url, expected_size_bytes))?;
-        let chunks = Streaming::spawn(&*self.driver, 4, |sink| pump(body, sink));
+        let chunks = Streaming::spawn(&*self.driver, 1, |sink| pump(body, sink));
 
         Ok(Box::new(ByteReader {
             chunks: chunks.blocking_iter(),

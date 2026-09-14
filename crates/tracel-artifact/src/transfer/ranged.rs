@@ -2,11 +2,12 @@
 
 use std::future::Future;
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
-use tracel_task::{MaybeSend, MaybeSync};
+use tracel_task::{MaybeSend, MaybeSync, Spawn, Task};
 
 use super::{ByteStream, TransferError};
 
@@ -41,8 +42,8 @@ pub struct RangeResponse<B> {
 
 /// Configuration for a ranged download.
 ///
-/// Buffered data is limited to `(workers + 1) * range_bytes`: the range being read and at most
-/// `workers` fetched ahead of it.
+/// Buffered data is limited to about `(workers + 2) * range_bytes`: the range being read, the
+/// one handed to the reader, and at most `workers` fetched ahead of them.
 #[derive(Debug, Clone)]
 pub struct RangePlan {
     /// Maximum number of ranges fetched ahead of the one being read.
@@ -71,11 +72,16 @@ impl Default for RangePlan {
 /// Falls back to a whole-file request when the size is unknown, the file fits in one range, or the
 /// source does not serve ranged requests. The first range is requested before this returns, so
 /// that fallback is decided here; nothing else is fetched until the stream is read.
+///
+/// Each range is fetched on `spawn` as the read window reaches it, so the network stays busy up
+/// to the window however slowly the stream is consumed. Dropping the stream abandons the ranges
+/// in flight.
 pub async fn open<C: RangeSource>(
     client: &C,
     url: &str,
     size_bytes: Option<u64>,
     plan: &RangePlan,
+    spawn: &Arc<dyn Spawn>,
 ) -> Result<ByteStream, TransferError> {
     let Some(size_bytes) = size_bytes.filter(|size| *size > plan.range_bytes) else {
         return Ok(Box::pin(client.whole(url, size_bytes).await?));
@@ -91,6 +97,7 @@ pub async fn open<C: RangeSource>(
 
     let ranges = size_bytes.div_ceil(plan.range_bytes);
     let window = plan.workers + 1;
+    let spawn = Arc::clone(spawn);
     let client = client.clone();
     let url = url.to_string();
     let plan = plan.clone();
@@ -120,6 +127,7 @@ pub async fn open<C: RangeSource>(
     Ok(Box::pin(
         stream::iter(std::iter::once(first))
             .chain(rest)
+            .map(move |range| Task::spawn(&*spawn, range).abort_on_drop())
             .buffered(window)
             .map_ok(Bytes::from),
     ))
@@ -261,10 +269,12 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll};
+    use std::time::Instant;
     use std::vec;
 
     use futures::executor::block_on;
     use futures::future;
+    use tracel_task::ThreadSpawn;
 
     use super::*;
 
@@ -447,9 +457,25 @@ mod tests {
         }
     }
 
+    fn spawner() -> Arc<dyn Spawn> {
+        Arc::new(ThreadSpawn)
+    }
+
+    /// Waits for a counter to reach `expected`, since spawned ranges run on their own threads.
+    fn reaches(counter: &AtomicUsize, expected: usize) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while counter.load(Ordering::Relaxed) < expected {
+            if Instant::now() > deadline {
+                return false;
+            }
+            std::thread::yield_now();
+        }
+        true
+    }
+
     fn read_all(source: &Source, size: Option<u64>) -> Result<Vec<u8>, TransferError> {
         block_on(async {
-            open(source, "url", size, &plan())
+            open(source, "url", size, &plan(), &spawner())
                 .await?
                 .map_ok(|chunk| chunk.to_vec())
                 .try_concat()
@@ -475,21 +501,22 @@ mod tests {
 
     #[test]
     fn fetching_stays_within_the_read_window() {
-        let source = Source::new(20 * 1024, Ranges::Served).stagger(earlier_finish_later);
+        let source = Source::new(20 * 1024, Ranges::Served);
         let size = source.bytes.len() as u64;
+        let window = 1 + plan().workers;
 
-        block_on(async {
-            let mut body = open(&source, "url", Some(size), &plan())
-                .await
-                .expect("the first range is served");
-            body.next().await.expect("the first range").unwrap();
+        let mut body = block_on(open(&source, "url", Some(size), &plan(), &spawner()))
+            .expect("the first range is served");
+        block_on(body.next()).expect("the first range").unwrap();
 
-            // A full window is `workers` ranges fetched ahead of the one just read.
-            assert_eq!(
-                source.range_calls.load(Ordering::Relaxed),
-                1 + plan().workers
-            );
-        });
+        assert!(
+            reaches(&source.range_calls, window),
+            "the window never filled"
+        );
+        // A full window fetches nothing more until the reader advances.
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(source.range_calls.load(Ordering::Relaxed), window);
+        drop(body);
     }
 
     #[test]
@@ -497,8 +524,9 @@ mod tests {
         let source = Source::new(8 * 1024, Ranges::Served);
         let size = source.bytes.len() as u64;
 
-        let body = block_on(open(&source, "url", Some(size), &plan()))
+        let body = block_on(open(&source, "url", Some(size), &plan(), &spawner()))
             .expect("the first range headers are served");
+        std::thread::sleep(Duration::from_millis(20));
 
         assert_eq!(source.range_calls.load(Ordering::Relaxed), 1);
         assert_eq!(source.first_body_reads.load(Ordering::Relaxed), 0);
@@ -508,18 +536,17 @@ mod tests {
     #[test]
     fn dropping_the_stream_abandons_the_ranges_in_flight() {
         let source = Source::new(20 * 1024, Ranges::Served)
-            .stagger(|index| if index == 0 { 1 } else { 100 });
+            .stagger(|index| if index == 0 { 0 } else { usize::MAX });
         let size = source.bytes.len() as u64;
 
-        block_on(async {
-            let mut body = open(&source, "url", Some(size), &plan()).await.unwrap();
-            body.next().await.unwrap().unwrap();
-            drop(body);
-        });
+        let mut body = block_on(open(&source, "url", Some(size), &plan(), &spawner())).unwrap();
+        block_on(body.next()).unwrap().unwrap();
+        assert!(reaches(&source.range_calls, 1 + plan().workers));
+        drop(body);
 
-        assert_eq!(
-            source.unfinished_drops.load(Ordering::Relaxed),
-            plan().workers
+        assert!(
+            reaches(&source.unfinished_drops, plan().workers),
+            "the ranges in flight kept running after the stream was dropped"
         );
     }
 
