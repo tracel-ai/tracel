@@ -46,9 +46,12 @@ impl Station {
 
     /// Returns model operations scoped to this Station without performing I/O.
     pub fn models(&self) -> Models {
-        Models::new(Arc::new(crate::models::StationModelOps {
-            station: Arc::clone(&self.inner),
-        }))
+        Models::new(
+            Arc::new(crate::models::StationModelOps {
+                station: Arc::clone(&self.inner),
+            }),
+            self.inner.transfer_client.spawner(),
+        )
     }
 }
 

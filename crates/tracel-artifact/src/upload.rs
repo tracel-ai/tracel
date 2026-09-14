@@ -8,6 +8,7 @@ use crate::TransferClient;
 use crate::transfer::{TransferError, TransferObserver, reader_stream};
 use std::collections::HashSet;
 use std::io::Read;
+use tracel_task::DynFuture;
 
 /// Errors that can occur during artifact file uploads.
 #[derive(Debug, thiserror::Error)]
@@ -91,8 +92,8 @@ pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     upload_bundle_multipart_with_client(&client, source, files)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Upload multiple files from a multipart source using presigned URLs and a custom client.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn upload_bundle_multipart_with_client<S: MultipartUploadSource>(
     client: &ReqwestTransferClient,
     source: &S,
@@ -101,8 +102,8 @@ pub fn upload_bundle_multipart_with_client<S: MultipartUploadSource>(
     upload_bundle_multipart_with_client_and_observer(client, source, files, &mut ())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Upload multiple files, reporting progress and honouring cancellation through `observer`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn upload_bundle_multipart_with_client_and_observer<S, O>(
     client: &ReqwestTransferClient,
     source: &S,
@@ -145,7 +146,15 @@ where
             });
         }
 
-        upload_file_parts(client, source, &file.rel_path, &file.parts, observer).await?;
+        // Boxed so a caller's `dyn` arguments do not run into rust-lang/rust#100013.
+        let upload: DynFuture<'_, Result<(), UploadError>> = Box::pin(upload_file_parts(
+            client,
+            source,
+            &file.rel_path,
+            &file.parts,
+            observer,
+        ));
+        upload.await?;
     }
 
     Ok(())

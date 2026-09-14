@@ -2,14 +2,16 @@ use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use futures::TryStreamExt;
 use sha2::Digest;
 
-use tracel_artifact::TransferObserver;
 use tracel_artifact::upload::MultipartUploadSource;
+use tracel_artifact::{ByteStream, TransferError, TransferObserver, reader_stream};
+use tracel_task::{DynFuture, ThreadSpawn};
 
 use crate::{
-    Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
-    VersionFileSource, VersionId, VersionSpec,
+    Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileSource, VersionId,
+    VersionSpec,
 };
 
 #[derive(Clone)]
@@ -52,20 +54,29 @@ impl VersionFileSource for TestSource {
         &self.0.file
     }
 
-    fn open(&self, canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
+    fn open<'a>(
+        &'a self,
+        canonical_path: &'a str,
+    ) -> DynFuture<'a, Result<ByteStream, ModelsError>> {
         self.0.opens.fetch_add(1, Ordering::SeqCst);
         self.0
             .opened_paths
             .lock()
             .unwrap()
             .push(canonical_path.to_string());
-        Ok(Box::new(TestReader {
+        let reader = TestReader {
             bytes: self.0.bytes.clone(),
             chunk_size: self.0.chunk_size,
             failure_at: self.0.failure_at,
             offset: 0,
             consumed: Arc::clone(&self.0.consumed),
-        }))
+        };
+        Box::pin(async move {
+            let body: ByteStream = Box::pin(
+                reader_stream(reader).map_err(|error| TransferError::Transport(error.to_string())),
+            );
+            Ok(body)
+        })
     }
 }
 
@@ -136,51 +147,8 @@ impl FakeOps {
     }
 }
 
-impl ModelOps for FakeOps {
-    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        let mut created = model(name);
-        created.description = description.map(str::to_string);
-        Ok(created)
-    }
-
-    fn publish_version(
-        &self,
-        model: &str,
-        files: &[VersionFile],
-        contents: &dyn MultipartUploadSource,
-        metadata: Option<&serde_json::Value>,
-        observer: &mut dyn TransferObserver,
-    ) -> Result<ModelVersion, ModelsError> {
-        self.get_model(model)?;
-        for file in files {
-            let len = contents
-                .file_len(&file.rel_path)
-                .map_err(ModelsError::other)?;
-            if len != file.size_bytes {
-                return Err(ModelsError::other(
-                    "the measured size does not match the source",
-                ));
-            }
-        }
-
-        for file in files {
-            observer.file_started(&file.rel_path, Some(file.size_bytes));
-            observer.file_completed(&file.rel_path, file.size_bytes);
-        }
-
-        let mut record = self.published.lock().unwrap();
-        record.files = files.to_vec();
-        record.metadata = metadata.cloned();
-        record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
-
-        Ok(version(VersionId::new("published-id")))
-    }
-
-    fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
-        Ok(self.models.clone())
-    }
-
-    fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
+impl FakeOps {
+    fn find_model(&self, name: &str) -> Result<Model, ModelsError> {
         self.models
             .iter()
             .find(|model| model.name == name)
@@ -189,34 +157,102 @@ impl ModelOps for FakeOps {
                 name: name.to_string(),
             })
     }
+}
 
-    fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
-        self.get_model(model)?;
-        Ok(Vec::new())
+impl ModelOps for FakeOps {
+    fn create_model<'a>(
+        &'a self,
+        name: &'a str,
+        description: Option<&'a str>,
+    ) -> DynFuture<'a, Result<Model, ModelsError>> {
+        let mut created = model(name);
+        created.description = description.map(str::to_string);
+        Box::pin(async move { Ok(created) })
     }
 
-    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        self.get_model(model)?;
-        Err(ModelsError::VersionNotFound {
-            model: model.to_string(),
-            version: spec,
+    fn publish_version<'a>(
+        &'a self,
+        model: &'a str,
+        files: &'a [VersionFile],
+        contents: &'a dyn MultipartUploadSource,
+        metadata: Option<&'a serde_json::Value>,
+        observer: &'a mut dyn TransferObserver,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
+        Box::pin(async move {
+            self.find_model(model)?;
+            for file in files {
+                let len = contents
+                    .file_len(&file.rel_path)
+                    .map_err(ModelsError::other)?;
+                if len != file.size_bytes {
+                    return Err(ModelsError::other(
+                        "the measured size does not match the source",
+                    ));
+                }
+            }
+
+            for file in files {
+                observer.file_started(&file.rel_path, Some(file.size_bytes));
+                observer.file_completed(&file.rel_path, file.size_bytes);
+            }
+
+            let mut record = self.published.lock().unwrap();
+            record.files = files.to_vec();
+            record.metadata = metadata.cloned();
+            record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
+
+            Ok(version(VersionId::new("published-id")))
         })
     }
 
-    fn fetch_version_files(
-        &self,
-        model: &str,
-        id: &VersionId,
-    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
-        self.get_model(model)?;
-        if id.as_str() != "version-id" {
-            return Err(ModelsError::VersionNotFound {
-                model: model.to_string(),
-                version: VersionSpec::Exact(id.clone()),
-            });
-        }
+    fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
+        Box::pin(async move { Ok(self.models.clone()) })
+    }
 
-        Ok(self.sources.iter().map(SourceSpec::source).collect())
+    fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>> {
+        Box::pin(async move { self.find_model(name) })
+    }
+
+    fn list_versions<'a>(
+        &'a self,
+        model: &'a str,
+    ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>> {
+        Box::pin(async move {
+            self.find_model(model)?;
+            Ok(Vec::new())
+        })
+    }
+
+    fn get_version<'a>(
+        &'a self,
+        model: &'a str,
+        spec: VersionSpec,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
+        Box::pin(async move {
+            self.find_model(model)?;
+            Err(ModelsError::VersionNotFound {
+                model: model.to_string(),
+                version: spec,
+            })
+        })
+    }
+
+    fn fetch_version_files<'a>(
+        &'a self,
+        model: &'a str,
+        id: &'a VersionId,
+    ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>> {
+        Box::pin(async move {
+            self.find_model(model)?;
+            if id.as_str() != "version-id" {
+                return Err(ModelsError::VersionNotFound {
+                    model: model.to_string(),
+                    version: VersionSpec::Exact(id.clone()),
+                });
+            }
+
+            Ok(self.sources.iter().map(SourceSpec::source).collect())
+        })
     }
 }
 
@@ -246,7 +282,11 @@ fn model(name: &str) -> Model {
 }
 
 pub fn models_with_sources(sources: Vec<SourceSpec>) -> Models {
-    Models::new(Arc::new(FakeOps::new(sources)))
+    models_over(FakeOps::new(sources))
+}
+
+pub fn models_over(ops: FakeOps) -> Models {
+    Models::new(Arc::new(ops), Arc::new(ThreadSpawn))
 }
 
 pub fn checksum(bytes: &[u8]) -> String {

@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
-    upload_bundle_multipart_with_client_and_observer,
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError, upload_multipart,
 };
-use tracel_artifact::{ReqwestTransferClient, TransferObserver};
+use tracel_artifact::{ByteStream, HttpTransferClient, TransferClient, TransferObserver};
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
@@ -17,9 +16,10 @@ use tracel_client::{
     error::ClientError,
 };
 use tracel_models::{
-    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
+    VersionManifest, VersionSpec,
 };
+use tracel_task::DynFuture;
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
@@ -42,167 +42,200 @@ impl ConsoleModelOps {
     }
 }
 
+/// Console calls block until `tracel-client` is asynchronous; they run on the backend's executor.
 impl ModelOps for ConsoleModelOps {
-    fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
-        let response = self
-            .scope
-            .console
-            .client
-            .list_models(&self.scope.owner, &self.scope.project)
-            .map_err(console_failure)?;
-        Ok(models_from_wire(response))
+    fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
+        Box::pin(async move {
+            let response = self
+                .scope
+                .console
+                .client
+                .list_models(&self.scope.owner, &self.scope.project)
+                .map_err(console_failure)?;
+            Ok(models_from_wire(response))
+        })
     }
 
-    fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
-        self.scope
-            .console
-            .client
-            .get_model(&self.scope.owner, &self.scope.project, name)
-            .map(model_from_wire)
-            .map_err(|error| map_model_error(error, name))
+    fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>> {
+        Box::pin(async move {
+            self.scope
+                .console
+                .client
+                .get_model(&self.scope.owner, &self.scope.project, name)
+                .map(model_from_wire)
+                .map_err(|error| map_model_error(error, name))
+        })
     }
 
-    fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
-        let response = self
-            .scope
-            .console
-            .client
-            .list_model_versions(&self.scope.owner, &self.scope.project, model)
-            .map_err(|error| map_model_error(error, model))?;
-        model_versions_from_wire(response)
+    fn list_versions<'a>(
+        &'a self,
+        model: &'a str,
+    ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>> {
+        Box::pin(async move {
+            let response = self
+                .scope
+                .console
+                .client
+                .list_model_versions(&self.scope.owner, &self.scope.project, model)
+                .map_err(|error| map_model_error(error, model))?;
+            model_versions_from_wire(response)
+        })
     }
 
-    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            VersionSpec::Latest => self
-                .list_versions(model)?
-                .into_iter()
-                .max_by_key(|version| version.version)
-                .map(|version| version.id)
-                .ok_or_else(|| ModelsError::VersionNotFound {
-                    model: model.to_string(),
-                    version: spec.clone(),
-                })?,
-        };
-
-        let route = self.route_version(model, &id)?;
-        self.scope
-            .console
-            .client
-            .get_model_version(&self.scope.owner, &self.scope.project, model, route)
-            .map_err(|error| map_version_error(error, model, &id))
-            .and_then(model_version_from_wire)
-    }
-
-    fn fetch_version_files(
-        &self,
-        model: &str,
-        id: &VersionId,
-    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
-        let version = self.route_version(model, id)?;
-        let response = self
-            .scope
-            .console
-            .client
-            .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
-            .map_err(|error| map_version_error(error, model, id))?;
-        Ok(file_sources_from_wire(
-            &self.scope.console.transfer_client,
-            response,
-        ))
-    }
-
-    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        self.scope
-            .console
-            .client
-            .create_model(
-                &self.scope.owner,
-                &self.scope.project,
-                CreateModelRequest {
-                    name: name.to_string(),
-                    description: description.map(str::to_string),
-                },
-            )
-            .map(model_from_wire)
-            .map_err(console_failure)
-    }
-
-    fn publish_version(
-        &self,
-        model: &str,
-        files: &[VersionFile],
-        contents: &dyn MultipartUploadSource,
-        metadata: Option<&serde_json::Value>,
-        mut observer: &mut dyn TransferObserver,
-    ) -> Result<ModelVersion, ModelsError> {
-        let request = RequestModelVersionUploadRequest {
-            files: files
-                .iter()
-                .map(|file| ModelFileSpecRequest {
-                    rel_path: file.rel_path.clone(),
-                    size_bytes: file.size_bytes,
-                    checksum: file.checksum.clone(),
-                })
-                .collect(),
-            metadata: metadata.cloned(),
-        };
-        let planned = self
-            .scope
-            .console
-            .client
-            .request_model_version_upload(&self.scope.owner, &self.scope.project, model, request)
-            .map_err(|error| map_model_error(error, model))?;
-
-        let uploads = planned
-            .files
-            .into_iter()
-            .map(|file| MultipartUploadFile {
-                rel_path: file.rel_path,
-                parts: file
-                    .urls
-                    .parts
+    fn get_version<'a>(
+        &'a self,
+        model: &'a str,
+        spec: VersionSpec,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
+        Box::pin(async move {
+            let id = match &spec {
+                VersionSpec::Exact(id) => id.clone(),
+                VersionSpec::Latest => self
+                    .list_versions(model)
+                    .await?
                     .into_iter()
-                    .map(|part| MultipartUploadPart {
-                        part: part.part,
-                        url: part.url,
-                        size_bytes: part.size_bytes,
+                    .max_by_key(|version| version.version)
+                    .map(|version| version.id)
+                    .ok_or_else(|| ModelsError::VersionNotFound {
+                        model: model.to_string(),
+                        version: spec.clone(),
+                    })?,
+            };
+
+            let route = self.route_version(model, &id)?;
+            self.scope
+                .console
+                .client
+                .get_model_version(&self.scope.owner, &self.scope.project, model, route)
+                .map_err(|error| map_version_error(error, model, &id))
+                .and_then(model_version_from_wire)
+        })
+    }
+
+    fn fetch_version_files<'a>(
+        &'a self,
+        model: &'a str,
+        id: &'a VersionId,
+    ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>> {
+        Box::pin(async move {
+            let version = self.route_version(model, id)?;
+            let response = self
+                .scope
+                .console
+                .client
+                .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
+                .map_err(|error| map_version_error(error, model, id))?;
+            Ok(file_sources_from_wire(
+                self.scope.console.transfer_client.http(),
+                response,
+            ))
+        })
+    }
+
+    fn create_model<'a>(
+        &'a self,
+        name: &'a str,
+        description: Option<&'a str>,
+    ) -> DynFuture<'a, Result<Model, ModelsError>> {
+        Box::pin(async move {
+            self.scope
+                .console
+                .client
+                .create_model(
+                    &self.scope.owner,
+                    &self.scope.project,
+                    CreateModelRequest {
+                        name: name.to_string(),
+                        description: description.map(str::to_string),
+                    },
+                )
+                .map(model_from_wire)
+                .map_err(console_failure)
+        })
+    }
+
+    fn publish_version<'a>(
+        &'a self,
+        model: &'a str,
+        files: &'a [VersionFile],
+        contents: &'a dyn MultipartUploadSource,
+        metadata: Option<&'a serde_json::Value>,
+        observer: &'a mut dyn TransferObserver,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
+        Box::pin(async move {
+            let request = RequestModelVersionUploadRequest {
+                files: files
+                    .iter()
+                    .map(|file| ModelFileSpecRequest {
+                        rel_path: file.rel_path.clone(),
+                        size_bytes: file.size_bytes,
+                        checksum: file.checksum.clone(),
                     })
                     .collect(),
-            })
-            .collect::<Vec<_>>();
+                metadata: metadata.cloned(),
+            };
+            let planned = self
+                .scope
+                .console
+                .client
+                .request_model_version_upload(
+                    &self.scope.owner,
+                    &self.scope.project,
+                    model,
+                    request,
+                )
+                .map_err(|error| map_model_error(error, model))?;
 
-        upload_bundle_multipart_with_client_and_observer(
-            &self.scope.console.transfer_client,
-            &contents,
-            &uploads,
-            &mut observer,
-        )
-        .map_err(model_upload_failure)?;
+            let uploads = planned
+                .files
+                .into_iter()
+                .map(|file| MultipartUploadFile {
+                    rel_path: file.rel_path,
+                    parts: file
+                        .urls
+                        .parts
+                        .into_iter()
+                        .map(|part| MultipartUploadPart {
+                            part: part.part,
+                            url: part.url,
+                            size_bytes: part.size_bytes,
+                        })
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
 
-        self.scope
-            .console
-            .client
-            .complete_model_version_upload(
-                &self.scope.owner,
-                &self.scope.project,
-                model,
-                planned.version,
+            upload_multipart(
+                self.scope.console.transfer_client.http(),
+                contents,
+                &uploads,
+                observer,
             )
-            .map_err(|error| map_model_error(error, model))?;
+            .await
+            .map_err(model_upload_failure)?;
 
-        self.scope
-            .console
-            .client
-            .get_model_version(
-                &self.scope.owner,
-                &self.scope.project,
-                model,
-                planned.version,
-            )
-            .map_err(|error| map_model_error(error, model))
-            .and_then(model_version_from_wire)
+            self.scope
+                .console
+                .client
+                .complete_model_version_upload(
+                    &self.scope.owner,
+                    &self.scope.project,
+                    model,
+                    planned.version,
+                )
+                .map_err(|error| map_model_error(error, model))?;
+
+            self.scope
+                .console
+                .client
+                .get_model_version(
+                    &self.scope.owner,
+                    &self.scope.project,
+                    model,
+                    planned.version,
+                )
+                .map_err(|error| map_model_error(error, model))
+                .and_then(model_version_from_wire)
+        })
     }
 }
 
@@ -279,7 +312,7 @@ impl From<WireManifest> for VersionManifest {
 }
 
 fn file_sources_from_wire(
-    transfer_client: &ReqwestTransferClient,
+    transfer: &HttpTransferClient,
     response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
@@ -293,7 +326,7 @@ fn file_sources_from_wire(
                     checksum: file.checksum,
                 },
                 url: file.url,
-                transfer_client: transfer_client.clone(),
+                transfer: transfer.clone(),
             }) as Box<dyn VersionFileSource>
         })
         .collect()
@@ -302,7 +335,7 @@ fn file_sources_from_wire(
 struct ConsoleVersionFileSource {
     file: VersionFile,
     url: String,
-    transfer_client: ReqwestTransferClient,
+    transfer: HttpTransferClient,
 }
 
 impl VersionFileSource for ConsoleVersionFileSource {
@@ -310,10 +343,16 @@ impl VersionFileSource for ConsoleVersionFileSource {
         &self.file
     }
 
-    fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
-        self.transfer_client
-            .get_reader(&self.url, Some(self.file.size_bytes))
-            .map_err(|error| ModelsError::Transport(error.to_string()))
+    fn open<'a>(
+        &'a self,
+        _canonical_path: &'a str,
+    ) -> DynFuture<'a, Result<ByteStream, ModelsError>> {
+        Box::pin(async move {
+            self.transfer
+                .get(&self.url, Some(self.file.size_bytes))
+                .await
+                .map_err(|error| ModelsError::Transport(error.to_string()))
+        })
     }
 }
 

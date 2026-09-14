@@ -1,12 +1,8 @@
-use std::io::Read;
-
-use tracel_artifact::TransferObserver;
 use tracel_artifact::upload::MultipartUploadSource;
+use tracel_artifact::{ByteStream, TransferObserver};
+use tracel_task::DynFuture;
 
 use crate::{Model, ModelVersion, ModelsError, VersionFile, VersionId, VersionSpec};
-
-/// A readable stream for one model-version file.
-pub type VersionFileReader = Box<dyn Read + Send>;
 
 /// One backend-owned file in a model version.
 ///
@@ -22,7 +18,10 @@ pub trait VersionFileSource: Send + Sync + 'static {
     /// The supplied path is the canonical form of [`Self::file`]'s published relative path. It
     /// lets implementations use one stable identity for backend-private concerns without taking
     /// ownership of path validation.
-    fn open(&self, canonical_path: &str) -> Result<VersionFileReader, ModelsError>;
+    fn open<'a>(
+        &'a self,
+        canonical_path: &'a str,
+    ) -> DynFuture<'a, Result<ByteStream, ModelsError>>;
 }
 
 /// Backend primitives required by the model capability.
@@ -34,38 +33,49 @@ pub trait VersionFileSource: Send + Sync + 'static {
 /// preserved with [`ModelsError::other`].
 pub trait ModelOps: Send + Sync + 'static {
     /// Lists models in the implementation's scope.
-    fn list_models(&self) -> Result<Vec<Model>, ModelsError>;
+    fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>>;
 
     /// Fetches one model by name.
-    fn get_model(&self, name: &str) -> Result<Model, ModelsError>;
+    fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>>;
 
     /// Lists published versions of a model.
-    fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError>;
+    fn list_versions<'a>(
+        &'a self,
+        model: &'a str,
+    ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>>;
 
     /// Resolves a version selector against a model.
-    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError>;
+    fn get_version<'a>(
+        &'a self,
+        model: &'a str,
+        spec: VersionSpec,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>>;
 
     /// Fetches the backend-owned file sources for one version.
-    fn fetch_version_files(
-        &self,
-        model: &str,
-        id: &VersionId,
-    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError>;
+    fn fetch_version_files<'a>(
+        &'a self,
+        model: &'a str,
+        id: &'a VersionId,
+    ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>>;
 
     /// Creates a model that can hold versions.
-    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError>;
+    fn create_model<'a>(
+        &'a self,
+        name: &'a str,
+        description: Option<&'a str>,
+    ) -> DynFuture<'a, Result<Model, ModelsError>>;
 
     /// Publishes a version of `model` containing the files the capability measured.
     ///
     /// The bytes are read from `contents` by each file's relative path. Whether they travel in
     /// one request or a hundred, and whether the version appears atomically or is assembled
     /// first, is the implementation's business: a version either becomes visible or it does not.
-    fn publish_version(
-        &self,
-        model: &str,
-        files: &[VersionFile],
-        contents: &dyn MultipartUploadSource,
-        metadata: Option<&serde_json::Value>,
-        observer: &mut dyn TransferObserver,
-    ) -> Result<ModelVersion, ModelsError>;
+    fn publish_version<'a>(
+        &'a self,
+        model: &'a str,
+        files: &'a [VersionFile],
+        contents: &'a dyn MultipartUploadSource,
+        metadata: Option<&'a serde_json::Value>,
+        observer: &'a mut dyn TransferObserver,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>>;
 }

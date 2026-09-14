@@ -106,6 +106,33 @@ impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
     }
 }
 
+/// So an observer can be handed to a transfer and still be read by whoever started it.
+impl<O: TransferObserver + ?Sized> TransferObserver for std::sync::Arc<std::sync::Mutex<O>> {
+    fn is_cancelled(&self) -> bool {
+        self.lock()
+            .map(|observer| observer.is_cancelled())
+            .unwrap_or(true)
+    }
+
+    fn file_started(&mut self, rel_path: &str, total_bytes: Option<u64>) {
+        if let Ok(mut observer) = self.lock() {
+            observer.file_started(rel_path, total_bytes);
+        }
+    }
+
+    fn file_progress(&mut self, rel_path: &str, transferred_bytes: u64) {
+        if let Ok(mut observer) = self.lock() {
+            observer.file_progress(rel_path, transferred_bytes);
+        }
+    }
+
+    fn file_completed(&mut self, rel_path: &str, transferred_bytes: u64) {
+        if let Ok(mut observer) = self.lock() {
+            observer.file_completed(rel_path, transferred_bytes);
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error("Transport error: {0}")]

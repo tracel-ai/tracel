@@ -15,14 +15,14 @@ fn main() -> anyhow::Result<()> {
         .project(namespace.as_str(), project.as_str())
         .models();
 
-    for model in models.list()? {
+    for model in models.list().block()? {
         let latest = model
             .latest_version
             .map(|version| format!("v{version}"))
             .unwrap_or_else(|| "no versions yet".to_string());
         println!("\n{} — {latest}", model.name);
 
-        for version in models.list_versions(&model.name)? {
+        for version in models.list_versions(&model.name).block()? {
             let number = version
                 .version
                 .map(|version| format!("v{version}"))

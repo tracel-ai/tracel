@@ -15,6 +15,7 @@ use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
 use crate::{TransferClient, TransferError, TransferObserver};
+use tracel_task::{DynFuture, MaybeSend};
 
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +88,7 @@ pub async fn download_into<C, S, O>(
 ) -> Result<(), DownloadError>
 where
     C: TransferClient,
-    S: BundleSink + ?Sized,
+    S: BundleSink + MaybeSend + ?Sized,
     O: TransferObserver + ?Sized,
 {
     let files = validated_download_files(files)?;
@@ -109,7 +110,14 @@ where
             size_bytes: file.size_bytes,
             checksum: file.checksum.clone(),
         };
-        transfer_stream_to_sink(body, sink, &artifact_file, observer).await?;
+        // Boxed so a caller's `dyn` arguments do not run into rust-lang/rust#100013.
+        let transfer: DynFuture<'_, Result<(), DownloadError>> = Box::pin(transfer_stream_to_sink(
+            body,
+            sink,
+            &artifact_file,
+            observer,
+        ));
+        transfer.await?;
     }
 
     Ok(())
@@ -177,9 +185,9 @@ where
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Download artifact files into any bundle sink implementation.
-pub fn download_artifacts_to_sink<S: BundleSink>(
+#[cfg(not(target_arch = "wasm32"))]
+pub fn download_artifacts_to_sink<S: BundleSink + Send>(
     sink: &mut S,
     files: &[ArtifactDownloadFile],
 ) -> Result<(), DownloadError> {
@@ -187,9 +195,9 @@ pub fn download_artifacts_to_sink<S: BundleSink>(
     download_artifacts_to_sink_with_client(&client, sink, files)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Download artifact files into any bundle sink implementation using a custom transfer client.
-pub fn download_artifacts_to_sink_with_client<S: BundleSink>(
+#[cfg(not(target_arch = "wasm32"))]
+pub fn download_artifacts_to_sink_with_client<S: BundleSink + Send>(
     client: &ReqwestTransferClient,
     sink: &mut S,
     files: &[ArtifactDownloadFile],
@@ -201,7 +209,7 @@ pub fn download_artifacts_to_sink_with_client<S: BundleSink>(
 /// Download artifact files into any bundle sink implementation using a custom transfer client,
 /// reporting progress to an observer.
 pub fn download_artifacts_to_sink_with_client_and_observer<
-    S: BundleSink,
+    S: BundleSink + Send,
     O: TransferObserver + ?Sized,
 >(
     client: &ReqwestTransferClient,

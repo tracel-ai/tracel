@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
-use tracel_artifact::ReqwestTransferClient;
+use tracel_artifact::{ByteStream, HttpTransferClient, TransferClient};
 use tracel_client::station::model::request::CreateModelRequest;
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
     ModelVersionResponse,
 };
 use tracel_models::{
-    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
+    VersionManifest, VersionSpec,
 };
+use tracel_task::DynFuture;
 
 use crate::StationError;
 use crate::station::StationInner;
@@ -30,109 +31,136 @@ impl StationModelOps {
     }
 }
 
+/// Station calls block until `tracel-client` is asynchronous; they run on the backend's executor.
 impl ModelOps for StationModelOps {
-    fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
-        let response = self
-            .station
-            .client
-            .models()
-            .list()
-            .map_err(station_failure)?;
-        Ok(models_from_wire(response))
+    fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
+        Box::pin(async move {
+            let response = self
+                .station
+                .client
+                .models()
+                .list()
+                .map_err(station_failure)?;
+            Ok(models_from_wire(response))
+        })
     }
 
-    fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
-        self.station
-            .client
-            .models()
-            .get(name)
-            .map(model_from_wire)
-            .map_err(|error| map_model_error(error, name))
+    fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>> {
+        Box::pin(async move {
+            self.station
+                .client
+                .models()
+                .get(name)
+                .map(model_from_wire)
+                .map_err(|error| map_model_error(error, name))
+        })
     }
 
-    fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
-        let response = self
-            .station
-            .client
-            .models()
-            .versions(model)
-            .map_err(|error| map_model_error(error, model))?;
-        Ok(model_versions_from_wire(response))
+    fn list_versions<'a>(
+        &'a self,
+        model: &'a str,
+    ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>> {
+        Box::pin(async move {
+            let response = self
+                .station
+                .client
+                .models()
+                .versions(model)
+                .map_err(|error| map_model_error(error, model))?;
+            Ok(model_versions_from_wire(response))
+        })
     }
 
-    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            // The Station has no latest-version route, so the listing answers it.
-            VersionSpec::Latest => {
-                return self
-                    .list_versions(model)?
-                    .into_iter()
-                    .max_by_key(|version| version.version)
-                    .ok_or_else(|| ModelsError::VersionNotFound {
-                        model: model.to_string(),
-                        version: spec,
-                    });
-            }
-        };
+    fn get_version<'a>(
+        &'a self,
+        model: &'a str,
+        spec: VersionSpec,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
+        Box::pin(async move {
+            let id = match &spec {
+                VersionSpec::Exact(id) => id.clone(),
+                // The Station has no latest-version route, so the listing answers it.
+                VersionSpec::Latest => {
+                    return self
+                        .list_versions(model)
+                        .await?
+                        .into_iter()
+                        .max_by_key(|version| version.version)
+                        .ok_or_else(|| ModelsError::VersionNotFound {
+                            model: model.to_string(),
+                            version: spec,
+                        });
+                }
+            };
 
-        let route = self.route_version(model, &id)?;
-        self.station
-            .client
-            .models()
-            .version(model, route)
-            .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &id))
+            let route = self.route_version(model, &id)?;
+            self.station
+                .client
+                .models()
+                .version(model, route)
+                .map(model_version_from_wire)
+                .map_err(|error| map_version_error(error, model, &id))
+        })
     }
 
-    fn fetch_version_files(
-        &self,
-        model: &str,
-        id: &VersionId,
-    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
-        let route = self.route_version(model, id)?;
-        let response = self
-            .station
-            .client
-            .models()
-            .download(model, route)
-            .map_err(|error| map_version_error(error, model, id))?;
-        Ok(file_sources_from_wire(
-            &self.station.transfer_client,
-            response,
-        ))
+    fn fetch_version_files<'a>(
+        &'a self,
+        model: &'a str,
+        id: &'a VersionId,
+    ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>> {
+        Box::pin(async move {
+            let route = self.route_version(model, id)?;
+            let response = self
+                .station
+                .client
+                .models()
+                .download(model, route)
+                .map_err(|error| map_version_error(error, model, id))?;
+            Ok(file_sources_from_wire(
+                self.station.transfer_client.http(),
+                response,
+            ))
+        })
     }
 
-    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        self.station
-            .client
-            .models()
-            .create(CreateModelRequest {
-                name: name.to_string(),
-                description: description.map(str::to_string),
-            })
-            .map(model_from_wire)
-            .map_err(station_failure)
+    fn create_model<'a>(
+        &'a self,
+        name: &'a str,
+        description: Option<&'a str>,
+    ) -> DynFuture<'a, Result<Model, ModelsError>> {
+        Box::pin(async move {
+            self.station
+                .client
+                .models()
+                .create(CreateModelRequest {
+                    name: name.to_string(),
+                    description: description.map(str::to_string),
+                })
+                .map(model_from_wire)
+                .map_err(station_failure)
+        })
     }
 
-    fn publish_version(
-        &self,
-        _model: &str,
-        _files: &[VersionFile],
-        _contents: &dyn tracel_artifact::upload::MultipartUploadSource,
-        _metadata: Option<&serde_json::Value>,
-        _observer: &mut dyn tracel_artifact::TransferObserver,
-    ) -> Result<ModelVersion, ModelsError> {
-        Err(ModelsError::other(
-            "publishing a model version is not implemented for the station yet",
-        ))
+    fn publish_version<'a>(
+        &'a self,
+        _model: &'a str,
+        _files: &'a [VersionFile],
+        _contents: &'a dyn tracel_artifact::upload::MultipartUploadSource,
+        _metadata: Option<&'a serde_json::Value>,
+        _observer: &'a mut dyn tracel_artifact::TransferObserver,
+    ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
+        Box::pin(async move {
+            Err(ModelsError::other(
+                "publishing a model version is not implemented for the station yet",
+            ))
+        })
     }
 }
 
 struct StationVersionFileSource {
     file: VersionFile,
     url: String,
-    transfer_client: ReqwestTransferClient,
+    transfer: HttpTransferClient,
 }
 
 impl VersionFileSource for StationVersionFileSource {
@@ -140,15 +168,21 @@ impl VersionFileSource for StationVersionFileSource {
         &self.file
     }
 
-    fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
-        self.transfer_client
-            .get_reader(&self.url, Some(self.file.size_bytes))
-            .map_err(|error| ModelsError::Transport(error.to_string()))
+    fn open<'a>(
+        &'a self,
+        _canonical_path: &'a str,
+    ) -> DynFuture<'a, Result<ByteStream, ModelsError>> {
+        Box::pin(async move {
+            self.transfer
+                .get(&self.url, Some(self.file.size_bytes))
+                .await
+                .map_err(|error| ModelsError::Transport(error.to_string()))
+        })
     }
 }
 
 fn file_sources_from_wire(
-    transfer_client: &ReqwestTransferClient,
+    transfer: &HttpTransferClient,
     response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
@@ -162,7 +196,7 @@ fn file_sources_from_wire(
                     checksum: file.checksum,
                 },
                 url: file.url,
-                transfer_client: transfer_client.clone(),
+                transfer: transfer.clone(),
             }) as Box<dyn VersionFileSource>
         })
         .collect()
