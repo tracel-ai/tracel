@@ -89,6 +89,10 @@ pub use tracel_inference as inference;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
+/// Effect handles: work that can be awaited, blocked on, or polled without naming a runtime.
+#[doc(inline)]
+pub use tracel_task as task;
+
 /// App module for job registration, CLI, and config mappers
 #[doc(inline)]
 pub use tracel_app as app;

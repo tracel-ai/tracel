@@ -1,0 +1,19 @@
+[package]
+name = "tracel-task"
+description = "Effect handles for the Tracel SDK: work you can await, block on, or poll without depending on a runtime."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+async-channel = { workspace = true }
+futures = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = { workspace = true }
