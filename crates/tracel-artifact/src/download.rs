@@ -340,7 +340,7 @@ fn validate_download(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::{BundleSink, InMemoryBundleSources};
+    use crate::bundle::{BoxFileWriter, BundleSink, FileWriter, InMemoryBundleSources};
     use crate::transfer::TransferError;
     use std::collections::HashMap;
     use std::fmt;
@@ -483,9 +483,32 @@ mod tests {
         }
     }
 
+    /// Discards what it is given.
+    struct Discard;
+
+    impl io::Write for Discard {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl FileWriter for Discard {
+        fn finish(self: Box<Self>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     struct SwallowingSink;
 
     impl BundleSink for SwallowingSink {
+        fn begin_file(&mut self, _path: &str) -> Result<BoxFileWriter<'_>, String> {
+            Ok(Box::new(Discard))
+        }
+
         fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
             let mut byte = [0];
             let _ = reader.read(&mut byte);
@@ -496,6 +519,10 @@ mod tests {
     struct RejectingSink;
 
     impl BundleSink for RejectingSink {
+        fn begin_file(&mut self, _path: &str) -> Result<BoxFileWriter<'_>, String> {
+            Err("target rejected the file".to_string())
+        }
+
         fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
             let mut bytes = Vec::new();
             reader

@@ -171,3 +171,20 @@ fn test_bundle_contains_expected_files() {
     assert!(files.contains(&settings.metadata_filename));
     assert_eq!(files.len(), 2);
 }
+
+#[test]
+fn a_file_dropped_before_finish_is_not_part_of_the_bundle() {
+    use std::io::Write;
+
+    let mut sources = InMemoryBundleSources::new();
+
+    let mut writer = sources.begin_file("weights.bin").unwrap();
+    writer.write_all(b"partial").unwrap();
+    drop(writer);
+    let mut writer = sources.begin_file("weights.bin").unwrap();
+    writer.write_all(b"complete").unwrap();
+    writer.finish().unwrap();
+
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources.files()[0].source(), b"complete");
+}

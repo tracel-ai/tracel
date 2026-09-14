@@ -44,7 +44,7 @@ pub use fs::*;
 pub use memory::*;
 
 use serde::{Serialize, de::DeserializeOwned};
-use std::io::Read;
+use std::io::{self, Read, Write};
 
 /// Trait for encoding data into a bundle of files
 ///
@@ -76,10 +76,33 @@ pub trait BundleDecode: Sized {
     fn decode<I: BundleSource>(source: &I, settings: &Self::Settings) -> Result<Self, Self::Error>;
 }
 
+/// A file being written into a [`BundleSink`].
+///
+/// The file exists in the bundle only once [`finish`](FileWriter::finish) returns; dropping the
+/// writer first discards what was written.
+pub trait FileWriter: Write {
+    /// Completes the file.
+    fn finish(self: Box<Self>) -> Result<(), String>;
+}
+
+/// A boxed [`FileWriter`]: `Send` on native targets, thread-local on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxFileWriter<'a> = Box<dyn FileWriter + Send + 'a>;
+/// A boxed [`FileWriter`]: `Send` on native targets, thread-local on wasm.
+#[cfg(target_arch = "wasm32")]
+pub type BoxFileWriter<'a> = Box<dyn FileWriter + 'a>;
+
 /// Trait for writing files to a bundle
 pub trait BundleSink {
-    /// Add a file by streaming its bytes. Returns computed checksum + size.
-    fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String>;
+    /// Starts writing the file at `path`, byte by byte.
+    fn begin_file(&mut self, path: &str) -> Result<BoxFileWriter<'_>, String>;
+
+    /// Add a file by streaming its bytes.
+    fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String> {
+        let mut writer = self.begin_file(path)?;
+        io::copy(reader, &mut writer).map_err(|e| e.to_string())?;
+        writer.finish()
+    }
 
     /// Convenience: write all bytes.
     fn put_bytes(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
