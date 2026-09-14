@@ -18,7 +18,7 @@ mod task;
 pub use spawn::BrowserSpawn;
 #[cfg(not(target_arch = "wasm32"))]
 pub use spawn::ThreadSpawn;
-pub use spawn::{MaybeSend, Spawn, SpawnedFuture};
+pub use spawn::{MaybeSend, MaybeSync, Spawn, SpawnedFuture};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};
@@ -34,6 +34,16 @@ fn assert_handles_are_send_and_sync() {
     assert::<Reply<Vec<u8>, Aborted>>();
     assert::<Streaming<Vec<u8>, Aborted>>();
     assert::<StreamingSink<Vec<u8>, Aborted>>();
+}
+
+/// Holds on every target: trait objects borrowed across a suspension point can carry the bounds.
+#[allow(dead_code)]
+fn assert_unsized_types_carry_the_bounds() {
+    fn send<T: MaybeSend + ?Sized>() {}
+    fn sync<T: MaybeSync + ?Sized>() {}
+
+    send::<dyn std::any::Any + Send>();
+    sync::<dyn std::any::Any + Sync>();
 }
 
 /// Holds on wasm: work that cannot leave its thread is still spawnable.
