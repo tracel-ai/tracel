@@ -4840,7 +4840,7 @@ dependencies = [
  "combine",
  "downcast-rs",
  "dyn-clone",
- "hashbrown 0.13.2",
+ "hashbrown 0.17.1",
  "hi_sparse_bitset",
  "indexmap 2.14.0",
  "inventory",
@@ -6772,9 +6772,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "379ac162bfcde1baff7efe2c3f810e5a073c6c8fee459ad617a0c478c31a3ce2"
+version = "0.18.0"
 dependencies = [
  "reqwest 0.13.4",
  "rustls",
