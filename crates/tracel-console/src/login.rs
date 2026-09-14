@@ -1,9 +1,12 @@
-//! Signing in from a device that cannot host a browser session.
+//! Signing in from a device that cannot host a browser session, and renewing that
+//! session afterwards without signing in again.
 
 use std::time::Duration;
 
-use tracel_client::console::SessionToken;
-use tracel_client::console::auth::{DeviceAuthClient, DeviceFlowError, DevicePollOutcome};
+use tracel_client::console::RefreshToken;
+use tracel_client::console::auth::{
+    DeviceAuthClient, DeviceFlowError, DevicePollOutcome, IssuedSession,
+};
 
 use crate::ConsoleError;
 
@@ -48,7 +51,7 @@ impl DeviceLogin {
         match self.client.poll(&self.device_code) {
             Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
             Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
-            Ok(DevicePollOutcome::Approved(token)) => Ok(DeviceApproval::Approved(token)),
+            Ok(DevicePollOutcome::Approved(session)) => Ok(DeviceApproval::Approved(session)),
             Err(error) => Err(login_failure(error)),
         }
     }
@@ -62,8 +65,23 @@ pub enum DeviceApproval {
     Waiting,
     /// Answered too soon; wait longer before asking again.
     PollLessOften,
-    /// The user approved, and the console issued this session.
-    Approved(SessionToken),
+    /// The user approved, and the console issued this session and the grant that renews it.
+    Approved(IssuedSession),
+}
+
+/// Renews a session from a refresh token kept since an earlier sign-in.
+///
+/// The renewal needs no [`DeviceLogin`], only the token and the same `client_id` the
+/// sign-in used. Every renewal rotates the token, so the grant that comes back replaces
+/// the one spent here. [`ConsoleError::RefreshRejected`] is terminal: only a new
+/// [`DeviceLogin`] recovers from it.
+pub fn refresh_session(
+    client_id: impl Into<String>,
+    refresh_token: &RefreshToken,
+) -> Result<IssuedSession, ConsoleError> {
+    DeviceAuthClient::new(crate::env::from_environment(), client_id)
+        .refresh_session(refresh_token)
+        .map_err(login_failure)
 }
 
 /// Reads a sign-in failure without exposing the protocol it was spoken in.
@@ -71,6 +89,7 @@ fn login_failure(error: DeviceFlowError) -> ConsoleError {
     match error {
         DeviceFlowError::AccessDenied => ConsoleError::LoginDenied,
         DeviceFlowError::ExpiredToken => ConsoleError::LoginExpired,
+        DeviceFlowError::InvalidGrant => ConsoleError::RefreshRejected,
         DeviceFlowError::Client(error) => ConsoleError::from(error),
         error => ConsoleError::InvalidResponse(error.to_string()),
     }
