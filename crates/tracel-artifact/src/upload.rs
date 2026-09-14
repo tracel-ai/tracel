@@ -1,9 +1,9 @@
 //! This module provides utilities for uploading artifact files from any source to any target bundle sink using multipart uploads with presigned URLs.
 //!
-//! The upload process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
+//! The upload process can be customized with any implementation of the TransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
-use crate::transfer::{TransferError, TransferObserver};
-use crate::{FileTransferClient, ReqwestTransferClient};
+use crate::transfer::{TransferError, TransferObserver, reader_stream};
+use crate::{ReqwestTransferClient, TransferClient};
 use std::collections::HashSet;
 use std::io::Read;
 
@@ -89,8 +89,8 @@ pub fn upload_bundle_multipart<S: MultipartUploadSource>(
 }
 
 /// Upload multiple files from a multipart source using presigned URLs and a custom client.
-pub fn upload_bundle_multipart_with_client<FTC: FileTransferClient, S: MultipartUploadSource>(
-    client: &FTC,
+pub fn upload_bundle_multipart_with_client<S: MultipartUploadSource>(
+    client: &ReqwestTransferClient,
     source: &S,
     files: &[MultipartUploadFile],
 ) -> Result<(), UploadError> {
@@ -98,16 +98,32 @@ pub fn upload_bundle_multipart_with_client<FTC: FileTransferClient, S: Multipart
 }
 
 /// Upload multiple files, reporting progress and honouring cancellation through `observer`.
-pub fn upload_bundle_multipart_with_client_and_observer<
-    FTC: FileTransferClient,
-    S: MultipartUploadSource,
-    O: TransferObserver,
->(
-    client: &FTC,
+pub fn upload_bundle_multipart_with_client_and_observer<S, O>(
+    client: &ReqwestTransferClient,
     source: &S,
     files: &[MultipartUploadFile],
     observer: &mut O,
-) -> Result<(), UploadError> {
+) -> Result<(), UploadError>
+where
+    S: MultipartUploadSource,
+    O: TransferObserver + ?Sized,
+{
+    client.block_on(upload_multipart(client.http(), source, files, observer))
+}
+
+/// Uploads `files` from `source` part by part to their presigned URLs, reporting progress and
+/// honouring cancellation through `observer`.
+pub async fn upload_multipart<C, S, O>(
+    client: &C,
+    source: &S,
+    files: &[MultipartUploadFile],
+    observer: &mut O,
+) -> Result<(), UploadError>
+where
+    C: TransferClient,
+    S: MultipartUploadSource + ?Sized,
+    O: TransferObserver + ?Sized,
+{
     let mut seen = HashSet::new();
 
     for file in files {
@@ -124,29 +140,24 @@ pub fn upload_bundle_multipart_with_client_and_observer<
             });
         }
 
-        upload_source_file_multipart_streaming(
-            client,
-            source,
-            &file.rel_path,
-            &file.parts,
-            observer,
-        )?;
+        upload_file_parts(client, source, &file.rel_path, &file.parts, observer).await?;
     }
 
     Ok(())
 }
 
-fn upload_source_file_multipart_streaming<
-    FTC: FileTransferClient,
-    S: MultipartUploadSource,
-    O: TransferObserver,
->(
-    client: &FTC,
+async fn upload_file_parts<C, S, O>(
+    client: &C,
     source: &S,
     rel_path: &str,
     parts: &[MultipartUploadPart],
     observer: &mut O,
-) -> Result<(), UploadError> {
+) -> Result<(), UploadError>
+where
+    C: TransferClient,
+    S: MultipartUploadSource + ?Sized,
+    O: TransferObserver + ?Sized,
+{
     let file_len = source.file_len(rel_path)?;
     observer.file_started(rel_path, Some(file_len));
 
@@ -187,7 +198,8 @@ fn upload_source_file_multipart_streaming<
 
         let reader = source.open_part(rel_path, offset, size)?;
         client
-            .put_reader(&part.url, reader, size)
+            .put(&part.url, reader_stream(reader), size)
+            .await
             .map_err(|e| UploadError::Transfer {
                 part_index: part_index + 1,
                 total_parts: parts.len(),
@@ -213,10 +225,12 @@ fn upload_source_file_multipart_streaming<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transfer::TransferError;
+    use bytes::Bytes;
+    use futures::{Stream, TryStreamExt};
     use std::collections::HashMap;
-    use std::io::{Cursor, Read};
+    use std::io::{self, Cursor, Read};
     use std::sync::{Arc, Mutex};
+    use tracel_task::MaybeSend;
 
     #[derive(Clone, Default)]
     struct MockClient {
@@ -224,16 +238,27 @@ mod tests {
         puts: Arc<Mutex<Vec<(String, u64, Vec<u8>)>>>,
     }
 
-    impl FileTransferClient for MockClient {
-        fn put_reader<R: Read + Send + 'static>(
+    impl TransferClient for MockClient {
+        type Body = futures::stream::Empty<Result<Bytes, TransferError>>;
+
+        async fn get(
             &self,
-            url: &str,
-            mut reader: R,
-            size_bytes: u64,
-        ) -> Result<(), TransferError> {
-            let mut bytes = Vec::new();
-            reader
-                .read_to_end(&mut bytes)
+            _url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Self::Body, TransferError> {
+            Err(TransferError::Transport(
+                "get should not be used in upload tests".to_string(),
+            ))
+        }
+
+        async fn put<B>(&self, url: &str, body: B, size_bytes: u64) -> Result<(), TransferError>
+        where
+            B: Stream<Item = Result<Bytes, io::Error>> + MaybeSend + 'static,
+        {
+            let bytes = body
+                .map_ok(|chunk| chunk.to_vec())
+                .try_concat()
+                .await
                 .map_err(|e| TransferError::Transport(e.to_string()))?;
             self.puts
                 .lock()
@@ -241,16 +266,14 @@ mod tests {
                 .push((url.to_string(), size_bytes, bytes));
             Ok(())
         }
+    }
 
-        fn get_reader(
-            &self,
-            _url: &str,
-            _expected_size_bytes: Option<u64>,
-        ) -> Result<Box<dyn Read + Send>, TransferError> {
-            Err(TransferError::Transport(
-                "get_reader should not be used in upload tests".to_string(),
-            ))
-        }
+    fn upload(
+        client: &MockClient,
+        source: &MockSource,
+        files: &[MultipartUploadFile],
+    ) -> Result<(), UploadError> {
+        futures::executor::block_on(upload_multipart(client, source, files, &mut ()))
     }
 
     struct MockSource {
@@ -319,8 +342,7 @@ mod tests {
             ],
         }];
 
-        let err = upload_bundle_multipart_with_client(&client, &source, &files)
-            .expect_err("part numbering must be contiguous");
+        let err = upload(&client, &source, &files).expect_err("part numbering must be contiguous");
 
         match err {
             UploadError::InvalidMultipart(msg) => assert!(msg.contains("expected 2, got 3")),
@@ -351,8 +373,8 @@ mod tests {
             ],
         }];
 
-        let err = upload_bundle_multipart_with_client(&client, &source, &files)
-            .expect_err("total part sizes cannot exceed file len");
+        let err =
+            upload(&client, &source, &files).expect_err("total part sizes cannot exceed file len");
 
         match err {
             UploadError::InvalidMultipart(msg) => assert!(msg.contains("exceeds file length")),
@@ -388,8 +410,7 @@ mod tests {
             ],
         }];
 
-        upload_bundle_multipart_with_client(&client, &source, &files)
-            .expect("valid multipart plan should upload");
+        upload(&client, &source, &files).expect("valid multipart plan should upload");
 
         let puts = client.puts.lock().expect("lock puts");
         assert_eq!(puts.len(), 3);

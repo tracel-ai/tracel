@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
+use tracel_artifact::ReqwestTransferClient;
 use tracel_client::station::model::request::CreateModelRequest;
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,

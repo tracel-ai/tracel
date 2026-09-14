@@ -5,7 +5,7 @@ use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
     upload_bundle_multipart_with_client_and_observer,
 };
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
+use tracel_artifact::{ReqwestTransferClient, TransferObserver};
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,

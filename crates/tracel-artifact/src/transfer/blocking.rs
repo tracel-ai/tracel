@@ -11,28 +11,6 @@ use tracel_task::{BlockingIter, Spawn, SpawnedFuture, Streaming, StreamingSink};
 
 use super::{ByteStream, HttpTransferClient, TransferClient, TransferError, reader_stream};
 
-/// Generic client interface used for uploading and downloading files, abstracting over the
-/// underlying HTTP client or other transport mechanism.
-pub trait FileTransferClient: Clone + Send + Sync + 'static {
-    /// Upload data from a reader to the given URL with known size.
-    fn put_reader<R: Read + Send + 'static>(
-        &self,
-        url: &str,
-        reader: R,
-        size_bytes: u64,
-    ) -> Result<(), TransferError>;
-
-    /// Download data from the given URL as a reader.
-    ///
-    /// `expected_size_bytes` is the size declared by the manifest. Implementations may use it to
-    /// select a transfer strategy or timeout. It is `None` when no size was declared.
-    fn get_reader(
-        &self,
-        url: &str,
-        expected_size_bytes: Option<u64>,
-    ) -> Result<Box<dyn Read + Send>, TransferError>;
-}
-
 /// A transfer client for callers that block.
 ///
 /// Drives an [`HttpTransferClient`] on a private runtime thread, so a caller needs neither a
@@ -73,8 +51,9 @@ impl Default for ReqwestTransferClient {
     }
 }
 
-impl FileTransferClient for ReqwestTransferClient {
-    fn put_reader<R: Read + Send + 'static>(
+impl ReqwestTransferClient {
+    /// Uploads `size_bytes` from `reader` to `url`.
+    pub fn put_reader<R: Read + Send + 'static>(
         &self,
         url: &str,
         reader: R,
@@ -83,7 +62,12 @@ impl FileTransferClient for ReqwestTransferClient {
         self.block_on(self.http.put(url, reader_stream(reader), size_bytes))
     }
 
-    fn get_reader(
+    /// Downloads `url` as a reader.
+    ///
+    /// `expected_size_bytes` is the size declared by the manifest, `None` when none was. It
+    /// selects the transfer strategy and the deadline. A failure to open the download is
+    /// reported here rather than on the first read.
+    pub fn get_reader(
         &self,
         url: &str,
         expected_size_bytes: Option<u64>,

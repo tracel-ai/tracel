@@ -12,7 +12,7 @@ mod ranged;
 #[cfg(test)]
 mod test_server;
 
-pub use blocking::{FileTransferClient, ReqwestTransferClient};
+pub use blocking::ReqwestTransferClient;
 pub use http::HttpTransferClient;
 
 const TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE: u64 = 10;
