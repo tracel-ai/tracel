@@ -1,21 +1,27 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tracel_artifact::ReqwestTransferClient;
+use tracel_artifact::{HttpTransferClient, ReqwestTransferClient};
 use tracel_client::console::{Client, TracelCredentials};
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
 use tracel_models::Models;
+use tracel_task::Spawn;
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
 use crate::experiment::ConsoleExperimentProvider;
 use crate::inference::ConsoleInferenceProvider;
+use crate::link::Link;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
-/// A blocking client rooted at one Tracel console URL.
+/// A client rooted at one Tracel console URL.
+///
+/// The connection owns the executor its work runs on — a runtime of its own on native, the
+/// JavaScript event loop on wasm — and a session actor that every call goes through. Nothing a
+/// caller does requires a runtime of the caller's own.
 #[derive(Clone)]
 pub struct Console {
     inner: Arc<ConsoleInner>,
@@ -25,6 +31,9 @@ pub struct Console {
 pub struct ConsoleInner {
     pub client: Client,
     pub transfer_client: ReqwestTransferClient,
+    pub spawn: Arc<dyn Spawn>,
+    pub link: Link,
+    pub transfer: HttpTransferClient,
 }
 
 /// A project location bound to a console connection.
@@ -38,11 +47,17 @@ impl Console {
     /// Connects to the console and verifies the credentials.
     pub fn connect(credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
         let client = Client::connect(crate::env::from_environment(), credentials)?;
+        let (spawn, transfer_client) = executor();
+        let link = Link::start(client.clone(), Arc::clone(&spawn));
+        let transfer = transfer_client.http().clone();
 
         Ok(Self {
             inner: Arc::new(ConsoleInner {
                 client,
-                transfer_client: ReqwestTransferClient::new(),
+                transfer_client,
+                spawn,
+                link,
+                transfer,
             }),
         })
     }
@@ -181,7 +196,7 @@ impl ProjectHandle {
             Arc::new(ConsoleModelOps {
                 scope: Arc::clone(&self.scope),
             }),
-            self.scope.console.transfer_client.spawner(),
+            Arc::clone(&self.scope.console.spawn),
         )
     }
 
@@ -212,4 +227,14 @@ impl fmt::Debug for ProjectHandle {
             .field("project", &self.scope.project)
             .finish()
     }
+}
+
+/// The one place the target decides how work runs. Native owns a runtime; wasm will hand over
+/// the event loop here once the client is asynchronous. The blocking transfer client shares the
+/// runtime while callers still block.
+fn executor() -> (Arc<dyn Spawn>, ReqwestTransferClient) {
+    let runtime =
+        Arc::new(tracel_task::TokioRuntime::start().expect("failed to start the console runtime"));
+    let transfer_client = ReqwestTransferClient::with_runtime(Arc::clone(&runtime));
+    (runtime, transfer_client)
 }

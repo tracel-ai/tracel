@@ -1,32 +1,36 @@
 use std::future::Future;
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::thread;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use futures::channel::oneshot;
-use tokio::runtime::{Builder, Handle};
-use tracel_task::{BlockingIter, Spawn, SpawnedFuture, Streaming, StreamingSink};
+use tracel_task::{BlockingIter, Spawn, Streaming, StreamingSink, TokioRuntime};
 
 use super::{ByteStream, HttpTransferClient, TransferClient, TransferError, reader_stream};
 
 /// A transfer client for callers that block.
 ///
-/// Drives an [`HttpTransferClient`] on a private runtime thread, so a caller needs neither a
-/// runtime nor an executor of its own. Clones share that thread.
+/// Drives an [`HttpTransferClient`] on a [`TokioRuntime`], so a caller needs neither a runtime
+/// nor an executor of its own. Clones share the runtime.
 #[derive(Clone)]
 pub struct ReqwestTransferClient {
     http: HttpTransferClient,
-    driver: Arc<Driver>,
+    runtime: Arc<TokioRuntime>,
 }
 
 impl ReqwestTransferClient {
+    /// Starts a runtime of its own.
     pub fn new() -> Self {
-        let driver = Arc::new(Driver::start());
-        let http = HttpTransferClient::new(Arc::clone(&driver) as Arc<dyn Spawn>);
+        Self::with_runtime(Arc::new(
+            TokioRuntime::start().expect("failed to start the transfer runtime"),
+        ))
+    }
 
-        Self { http, driver }
+    /// Runs on a runtime someone else owns, typically the backend the client belongs to.
+    pub fn with_runtime(runtime: Arc<TokioRuntime>) -> Self {
+        let http = HttpTransferClient::new(Arc::clone(&runtime) as Arc<dyn Spawn>);
+
+        Self { http, runtime }
     }
 
     /// The asynchronous client this one drives.
@@ -34,15 +38,10 @@ impl ReqwestTransferClient {
         &self.http
     }
 
-    /// The executor this client's transfers run on.
-    pub fn spawner(&self) -> Arc<dyn Spawn> {
-        Arc::clone(&self.driver) as Arc<dyn Spawn>
-    }
-
     /// Runs `future` to completion on the calling thread, with its IO driven by the client's
     /// runtime.
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.driver.handle.block_on(future)
+        self.runtime.block_on(future)
     }
 }
 
@@ -74,12 +73,12 @@ impl ReqwestTransferClient {
         expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
         let body = self.block_on(self.http.get(url, expected_size_bytes))?;
-        let chunks = Streaming::spawn(&*self.driver, 1, |sink| pump(body, sink));
+        let chunks = Streaming::spawn(&*self.runtime, 1, |sink| pump(body, sink));
 
         Ok(Box::new(ByteReader {
             chunks: chunks.blocking_iter(),
             current: Bytes::new(),
-            _driver: Arc::clone(&self.driver),
+            _runtime: Arc::clone(&self.runtime),
         }))
     }
 }
@@ -100,55 +99,11 @@ async fn pump(mut body: ByteStream, sink: StreamingSink<Bytes, TransferError>) {
     }
 }
 
-/// A single-threaded runtime on a thread of its own, alive as long as anyone holds it.
-struct Driver {
-    handle: Handle,
-    shutdown: Option<oneshot::Sender<()>>,
-}
-
-impl Driver {
-    fn start() -> Self {
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build the transfer runtime");
-        let handle = runtime.handle().clone();
-        let (shutdown, stopped) = oneshot::channel::<()>();
-        thread::Builder::new()
-            .name("tracel-transfer".to_string())
-            .spawn(move || {
-                runtime.block_on(async {
-                    let _ = stopped.await;
-                });
-            })
-            .expect("failed to start the transfer runtime thread");
-
-        Self {
-            handle,
-            shutdown: Some(shutdown),
-        }
-    }
-}
-
-impl Drop for Driver {
-    fn drop(&mut self) {
-        if let Some(shutdown) = self.shutdown.take() {
-            let _ = shutdown.send(());
-        }
-    }
-}
-
-impl Spawn for Driver {
-    fn spawn(&self, future: SpawnedFuture) {
-        self.handle.spawn(future);
-    }
-}
-
 /// Reads a download chunk by chunk, keeping its runtime alive until it is dropped.
 struct ByteReader {
     chunks: BlockingIter<Bytes, TransferError>,
     current: Bytes,
-    _driver: Arc<Driver>,
+    _runtime: Arc<TokioRuntime>,
 }
 
 impl Read for ByteReader {

@@ -1,14 +1,18 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tracel_artifact::ReqwestTransferClient;
+use tracel_artifact::HttpTransferClient;
 use tracel_client::station::StationClient;
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_models::Models;
+use tracel_task::{Spawn, TokioRuntime};
 use url::Url;
 
-/// A blocking client rooted at one Station URL.
+/// A client rooted at one Station URL.
+///
+/// The connection owns the runtime its work runs on; nothing a caller does requires one of the
+/// caller's own.
 #[derive(Clone)]
 pub struct Station {
     inner: Arc<StationInner>,
@@ -16,16 +20,22 @@ pub struct Station {
 
 pub struct StationInner {
     pub client: StationClient,
-    pub transfer_client: ReqwestTransferClient,
+    pub spawn: Arc<dyn Spawn>,
+    pub transfer: HttpTransferClient,
 }
 
 impl Station {
     /// Binds to a Station without performing I/O.
     pub fn connect(url: Url) -> Self {
+        let spawn: Arc<dyn Spawn> =
+            Arc::new(TokioRuntime::start().expect("failed to start the station runtime"));
+        let transfer = HttpTransferClient::new(Arc::clone(&spawn));
+
         Self {
             inner: Arc::new(StationInner {
                 client: StationClient::from_url(url),
-                transfer_client: ReqwestTransferClient::new(),
+                spawn,
+                transfer,
             }),
         }
     }
@@ -50,7 +60,7 @@ impl Station {
             Arc::new(crate::models::StationModelOps {
                 station: Arc::clone(&self.inner),
             }),
-            self.inner.transfer_client.spawner(),
+            Arc::clone(&self.inner.spawn),
         )
     }
 }

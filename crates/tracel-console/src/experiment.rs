@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tracel_artifact::bundle::FsBundle;
-use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
+use tracel_artifact::download::{
+    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink_with_client,
+};
 use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
+    MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart_with_client,
 };
 use tracel_client::ClientError;
 use tracel_client::console::artifact::{
@@ -166,7 +168,7 @@ impl ExperimentArtifactClient {
                 parts,
             });
         }
-        upload_bundle_multipart(bundle, &uploads)?;
+        upload_bundle_multipart_with_client(&self.scope.console.transfer_client, bundle, &uploads)?;
 
         self.scope.console.client.complete_artifact_upload(
             &self.scope.owner,
@@ -202,7 +204,11 @@ impl ExperimentArtifactClient {
         let mut bundle = FsBundle::temp()
             .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
 
-        download_artifacts_to_sink(&mut bundle, &files)?;
+        download_artifacts_to_sink_with_client(
+            &self.scope.console.transfer_client,
+            &mut bundle,
+            &files,
+        )?;
 
         Ok(bundle)
     }

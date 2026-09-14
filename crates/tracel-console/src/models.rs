@@ -42,28 +42,45 @@ impl ConsoleModelOps {
     }
 }
 
-/// Console calls block until `tracel-client` is asynchronous; they run on the backend's executor.
+impl ConsoleModelOps {
+    fn location(&self) -> (String, String) {
+        (self.scope.owner.clone(), self.scope.project.clone())
+    }
+}
+
+/// Every session call goes through the connection actor; bytes go straight to the transport.
 impl ModelOps for ConsoleModelOps {
     fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
         Box::pin(async move {
+            let (owner, project) = self.location();
             let response = self
                 .scope
                 .console
-                .client
-                .list_models(&self.scope.owner, &self.scope.project)
-                .map_err(console_failure)?;
+                .link
+                .call(move |client| {
+                    client
+                        .list_models(&owner, &project)
+                        .map_err(console_failure)
+                })
+                .await?;
             Ok(models_from_wire(response))
         })
     }
 
     fn get_model<'a>(&'a self, name: &'a str) -> DynFuture<'a, Result<Model, ModelsError>> {
         Box::pin(async move {
+            let (owner, project) = self.location();
+            let name = name.to_string();
             self.scope
                 .console
-                .client
-                .get_model(&self.scope.owner, &self.scope.project, name)
-                .map(model_from_wire)
-                .map_err(|error| map_model_error(error, name))
+                .link
+                .call(move |client| {
+                    client
+                        .get_model(&owner, &project, &name)
+                        .map(model_from_wire)
+                        .map_err(|error| map_model_error(error, &name))
+                })
+                .await
         })
     }
 
@@ -72,12 +89,18 @@ impl ModelOps for ConsoleModelOps {
         model: &'a str,
     ) -> DynFuture<'a, Result<Vec<ModelVersion>, ModelsError>> {
         Box::pin(async move {
+            let (owner, project) = self.location();
+            let model = model.to_string();
             let response = self
                 .scope
                 .console
-                .client
-                .list_model_versions(&self.scope.owner, &self.scope.project, model)
-                .map_err(|error| map_model_error(error, model))?;
+                .link
+                .call(move |client| {
+                    client
+                        .list_model_versions(&owner, &project, &model)
+                        .map_err(|error| map_model_error(error, &model))
+                })
+                .await?;
             model_versions_from_wire(response)
         })
     }
@@ -103,12 +126,18 @@ impl ModelOps for ConsoleModelOps {
             };
 
             let route = self.route_version(model, &id)?;
+            let (owner, project) = self.location();
+            let model = model.to_string();
             self.scope
                 .console
-                .client
-                .get_model_version(&self.scope.owner, &self.scope.project, model, route)
-                .map_err(|error| map_version_error(error, model, &id))
-                .and_then(model_version_from_wire)
+                .link
+                .call(move |client| {
+                    client
+                        .get_model_version(&owner, &project, &model, route)
+                        .map_err(|error| map_version_error(error, &model, &id))
+                        .and_then(model_version_from_wire)
+                })
+                .await
         })
     }
 
@@ -119,14 +148,21 @@ impl ModelOps for ConsoleModelOps {
     ) -> DynFuture<'a, Result<Vec<Box<dyn VersionFileSource>>, ModelsError>> {
         Box::pin(async move {
             let version = self.route_version(model, id)?;
+            let (owner, project) = self.location();
+            let model = model.to_string();
+            let id = id.clone();
             let response = self
                 .scope
                 .console
-                .client
-                .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
-                .map_err(|error| map_version_error(error, model, id))?;
+                .link
+                .call(move |client| {
+                    client
+                        .presign_model_download(&owner, &project, &model, version)
+                        .map_err(|error| map_version_error(error, &model, &id))
+                })
+                .await?;
             Ok(file_sources_from_wire(
-                self.scope.console.transfer_client.http(),
+                &self.scope.console.transfer,
                 response,
             ))
         })
@@ -138,19 +174,21 @@ impl ModelOps for ConsoleModelOps {
         description: Option<&'a str>,
     ) -> DynFuture<'a, Result<Model, ModelsError>> {
         Box::pin(async move {
+            let (owner, project) = self.location();
+            let request = CreateModelRequest {
+                name: name.to_string(),
+                description: description.map(str::to_string),
+            };
             self.scope
                 .console
-                .client
-                .create_model(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    CreateModelRequest {
-                        name: name.to_string(),
-                        description: description.map(str::to_string),
-                    },
-                )
-                .map(model_from_wire)
-                .map_err(console_failure)
+                .link
+                .call(move |client| {
+                    client
+                        .create_model(&owner, &project, request)
+                        .map(model_from_wire)
+                        .map_err(console_failure)
+                })
+                .await
         })
     }
 
@@ -163,6 +201,8 @@ impl ModelOps for ConsoleModelOps {
         observer: &'a mut dyn TransferObserver,
     ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
         Box::pin(async move {
+            let link = &self.scope.console.link;
+            let (owner, project) = self.location();
             let request = RequestModelVersionUploadRequest {
                 files: files
                     .iter()
@@ -174,17 +214,15 @@ impl ModelOps for ConsoleModelOps {
                     .collect(),
                 metadata: metadata.cloned(),
             };
-            let planned = self
-                .scope
-                .console
-                .client
-                .request_model_version_upload(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    model,
-                    request,
-                )
-                .map_err(|error| map_model_error(error, model))?;
+            let planned = {
+                let (owner, project, model) = (owner.clone(), project.clone(), model.to_string());
+                link.call(move |client| {
+                    client
+                        .request_model_version_upload(&owner, &project, &model, request)
+                        .map_err(|error| map_model_error(error, &model))
+                })
+                .await?
+            };
 
             let uploads = planned
                 .files
@@ -204,37 +242,29 @@ impl ModelOps for ConsoleModelOps {
                 })
                 .collect::<Vec<_>>();
 
-            upload_multipart(
-                self.scope.console.transfer_client.http(),
-                contents,
-                &uploads,
-                observer,
-            )
+            upload_multipart(&self.scope.console.transfer, contents, &uploads, observer)
+                .await
+                .map_err(model_upload_failure)?;
+
+            let version = planned.version;
+            {
+                let (owner, project, model) = (owner.clone(), project.clone(), model.to_string());
+                link.call(move |client| {
+                    client
+                        .complete_model_version_upload(&owner, &project, &model, version)
+                        .map_err(|error| map_model_error(error, &model))
+                })
+                .await?;
+            }
+
+            let model = model.to_string();
+            link.call(move |client| {
+                client
+                    .get_model_version(&owner, &project, &model, version)
+                    .map_err(|error| map_model_error(error, &model))
+                    .and_then(model_version_from_wire)
+            })
             .await
-            .map_err(model_upload_failure)?;
-
-            self.scope
-                .console
-                .client
-                .complete_model_version_upload(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    model,
-                    planned.version,
-                )
-                .map_err(|error| map_model_error(error, model))?;
-
-            self.scope
-                .console
-                .client
-                .get_model_version(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    model,
-                    planned.version,
-                )
-                .map_err(|error| map_model_error(error, model))
-                .and_then(model_version_from_wire)
         })
     }
 }
