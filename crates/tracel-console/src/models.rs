@@ -5,6 +5,7 @@ use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError, upload_multipart,
 };
 use tracel_artifact::{ByteStream, HttpTransferClient, TransferClient, TransferObserver};
+use tracel_client::console::Client;
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
@@ -19,7 +20,7 @@ use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
     VersionManifest, VersionSpec,
 };
-use tracel_task::DynFuture;
+use tracel_task::{DynFuture, Task};
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
@@ -46,17 +47,25 @@ impl ConsoleModelOps {
     fn location(&self) -> (String, String) {
         (self.scope.owner.clone(), self.scope.project.clone())
     }
+
+    /// Runs one client call on the backend's executor. Until `tracel-client` is asynchronous
+    /// every call blocks, so it goes to the blocking lane rather than the scheduler.
+    fn call<T, E, F>(&self, call: F) -> Task<T, E>
+    where
+        F: FnOnce(&Client) -> Result<T, E> + Send + 'static,
+        T: Send + 'static,
+        E: Send + 'static,
+    {
+        let client = self.scope.console.client.clone();
+        Task::spawn_blocking(&*self.scope.console.spawn, move || call(&client))
+    }
 }
 
-/// Every session call goes through the connection actor; bytes go straight to the transport.
 impl ModelOps for ConsoleModelOps {
     fn list_models(&self) -> DynFuture<'_, Result<Vec<Model>, ModelsError>> {
         Box::pin(async move {
             let (owner, project) = self.location();
             let response = self
-                .scope
-                .console
-                .link
                 .call(move |client| {
                     client
                         .list_models(&owner, &project)
@@ -71,16 +80,13 @@ impl ModelOps for ConsoleModelOps {
         Box::pin(async move {
             let (owner, project) = self.location();
             let name = name.to_string();
-            self.scope
-                .console
-                .link
-                .call(move |client| {
-                    client
-                        .get_model(&owner, &project, &name)
-                        .map(model_from_wire)
-                        .map_err(|error| map_model_error(error, &name))
-                })
-                .await
+            self.call(move |client| {
+                client
+                    .get_model(&owner, &project, &name)
+                    .map(model_from_wire)
+                    .map_err(|error| map_model_error(error, &name))
+            })
+            .await
         })
     }
 
@@ -92,9 +98,6 @@ impl ModelOps for ConsoleModelOps {
             let (owner, project) = self.location();
             let model = model.to_string();
             let response = self
-                .scope
-                .console
-                .link
                 .call(move |client| {
                     client
                         .list_model_versions(&owner, &project, &model)
@@ -128,16 +131,13 @@ impl ModelOps for ConsoleModelOps {
             let route = self.route_version(model, &id)?;
             let (owner, project) = self.location();
             let model = model.to_string();
-            self.scope
-                .console
-                .link
-                .call(move |client| {
-                    client
-                        .get_model_version(&owner, &project, &model, route)
-                        .map_err(|error| map_version_error(error, &model, &id))
-                        .and_then(model_version_from_wire)
-                })
-                .await
+            self.call(move |client| {
+                client
+                    .get_model_version(&owner, &project, &model, route)
+                    .map_err(|error| map_version_error(error, &model, &id))
+                    .and_then(model_version_from_wire)
+            })
+            .await
         })
     }
 
@@ -152,9 +152,6 @@ impl ModelOps for ConsoleModelOps {
             let model = model.to_string();
             let id = id.clone();
             let response = self
-                .scope
-                .console
-                .link
                 .call(move |client| {
                     client
                         .presign_model_download(&owner, &project, &model, version)
@@ -179,16 +176,13 @@ impl ModelOps for ConsoleModelOps {
                 name: name.to_string(),
                 description: description.map(str::to_string),
             };
-            self.scope
-                .console
-                .link
-                .call(move |client| {
-                    client
-                        .create_model(&owner, &project, request)
-                        .map(model_from_wire)
-                        .map_err(console_failure)
-                })
-                .await
+            self.call(move |client| {
+                client
+                    .create_model(&owner, &project, request)
+                    .map(model_from_wire)
+                    .map_err(console_failure)
+            })
+            .await
         })
     }
 
@@ -201,7 +195,6 @@ impl ModelOps for ConsoleModelOps {
         observer: &'a mut dyn TransferObserver,
     ) -> DynFuture<'a, Result<ModelVersion, ModelsError>> {
         Box::pin(async move {
-            let link = &self.scope.console.link;
             let (owner, project) = self.location();
             let request = RequestModelVersionUploadRequest {
                 files: files
@@ -216,7 +209,7 @@ impl ModelOps for ConsoleModelOps {
             };
             let planned = {
                 let (owner, project, model) = (owner.clone(), project.clone(), model.to_string());
-                link.call(move |client| {
+                self.call(move |client| {
                     client
                         .request_model_version_upload(&owner, &project, &model, request)
                         .map_err(|error| map_model_error(error, &model))
@@ -249,7 +242,7 @@ impl ModelOps for ConsoleModelOps {
             let version = planned.version;
             {
                 let (owner, project, model) = (owner.clone(), project.clone(), model.to_string());
-                link.call(move |client| {
+                self.call(move |client| {
                     client
                         .complete_model_version_upload(&owner, &project, &model, version)
                         .map_err(|error| map_model_error(error, &model))
@@ -258,7 +251,7 @@ impl ModelOps for ConsoleModelOps {
             }
 
             let model = model.to_string();
-            link.call(move |client| {
+            self.call(move |client| {
                 client
                     .get_model_version(&owner, &project, &model, version)
                     .map_err(|error| map_model_error(error, &model))

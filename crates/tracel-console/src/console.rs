@@ -13,15 +13,13 @@ use url::Url;
 use crate::datasets::ConsoleDatasetOps;
 use crate::experiment::ConsoleExperimentProvider;
 use crate::inference::ConsoleInferenceProvider;
-use crate::link::Link;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
 /// A client rooted at one Tracel console URL.
 ///
 /// The connection owns the executor its work runs on — a runtime of its own on native, the
-/// JavaScript event loop on wasm — and a session actor that every call goes through. Nothing a
-/// caller does requires a runtime of the caller's own.
+/// JavaScript event loop on wasm. Nothing a caller does requires a runtime of the caller's own.
 #[derive(Clone)]
 pub struct Console {
     inner: Arc<ConsoleInner>,
@@ -32,7 +30,6 @@ pub struct ConsoleInner {
     pub client: Client,
     pub transfer_client: ReqwestTransferClient,
     pub spawn: Arc<dyn Spawn>,
-    pub link: Link,
     pub transfer: HttpTransferClient,
 }
 
@@ -48,7 +45,6 @@ impl Console {
     pub fn connect(credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
         let client = Client::connect(crate::env::from_environment(), credentials)?;
         let (spawn, transfer_client) = executor();
-        let link = Link::start(client.clone(), Arc::clone(&spawn));
         let transfer = transfer_client.http().clone();
 
         Ok(Self {
@@ -56,7 +52,6 @@ impl Console {
                 client,
                 transfer_client,
                 spawn,
-                link,
                 transfer,
             }),
         })

@@ -13,7 +13,6 @@ mod env;
 mod error;
 mod experiment;
 mod inference;
-mod link;
 mod login;
 mod models;
 mod wire;

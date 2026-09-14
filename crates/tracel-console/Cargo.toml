@@ -12,7 +12,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-async-channel = { workspace = true }
 reqwest = { workspace = true }
 chrono = { workspace = true }
 crossbeam = { workspace = true }
