@@ -94,6 +94,3 @@ tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
-
-[patch.crates-io]
-tracel-client = { git = "https://github.com/tracel-ai/tracel-client", branch = "feat/device-flow-refresh-token" }
