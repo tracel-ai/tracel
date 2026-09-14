@@ -14,14 +14,20 @@ categories.workspace = true
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true }
-futures-timer = { workspace = true }
-reqwest = { version = "0.13.4", features = ["stream"] }
 serde = { workspace = true, features = ["derive"] }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tracel-task = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures-timer = { workspace = true }
+reqwest = { version = "0.13.4", features = ["stream"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }
-tracel-task = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-timer = { workspace = true, features = ["wasm-bindgen"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["stream"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

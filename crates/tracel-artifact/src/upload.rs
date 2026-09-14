@@ -2,8 +2,10 @@
 //!
 //! The upload process can be customized with any implementation of the TransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::ReqwestTransferClient;
+use crate::TransferClient;
 use crate::transfer::{TransferError, TransferObserver, reader_stream};
-use crate::{ReqwestTransferClient, TransferClient};
 use std::collections::HashSet;
 use std::io::Read;
 
@@ -80,6 +82,7 @@ impl<S: MultipartUploadSource + ?Sized> MultipartUploadSource for &S {
 }
 
 /// Upload multiple files from a multipart source using presigned URLs.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     source: &S,
     files: &[MultipartUploadFile],
@@ -88,6 +91,7 @@ pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     upload_bundle_multipart_with_client(&client, source, files)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Upload multiple files from a multipart source using presigned URLs and a custom client.
 pub fn upload_bundle_multipart_with_client<S: MultipartUploadSource>(
     client: &ReqwestTransferClient,
@@ -97,6 +101,7 @@ pub fn upload_bundle_multipart_with_client<S: MultipartUploadSource>(
     upload_bundle_multipart_with_client_and_observer(client, source, files, &mut ())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Upload multiple files, reporting progress and honouring cancellation through `observer`.
 pub fn upload_bundle_multipart_with_client_and_observer<S, O>(
     client: &ReqwestTransferClient,

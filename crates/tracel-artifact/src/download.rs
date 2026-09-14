@@ -9,10 +9,12 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use sha2::Digest;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::ReqwestTransferClient;
 use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
-use crate::{ReqwestTransferClient, TransferClient, TransferError, TransferObserver};
+use crate::{TransferClient, TransferError, TransferObserver};
 
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
@@ -175,6 +177,7 @@ where
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Download artifact files into any bundle sink implementation.
 pub fn download_artifacts_to_sink<S: BundleSink>(
     sink: &mut S,
@@ -184,6 +187,7 @@ pub fn download_artifacts_to_sink<S: BundleSink>(
     download_artifacts_to_sink_with_client(&client, sink, files)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Download artifact files into any bundle sink implementation using a custom transfer client.
 pub fn download_artifacts_to_sink_with_client<S: BundleSink>(
     client: &ReqwestTransferClient,
@@ -193,6 +197,7 @@ pub fn download_artifacts_to_sink_with_client<S: BundleSink>(
     download_artifacts_to_sink_with_client_and_observer(client, sink, files, &mut ())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Download artifact files into any bundle sink implementation using a custom transfer client,
 /// reporting progress to an observer.
 pub fn download_artifacts_to_sink_with_client_and_observer<

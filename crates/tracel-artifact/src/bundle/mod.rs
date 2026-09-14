@@ -37,9 +37,11 @@
 //! }
 //! ```
 
+#[cfg(not(target_arch = "wasm32"))]
 mod fs;
 mod memory;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use fs::*;
 pub use memory::*;
 
