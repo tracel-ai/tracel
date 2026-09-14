@@ -22,7 +22,7 @@ pub use spawn::{MaybeSend, MaybeSync, Spawn, SpawnedFuture};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};
-pub use task::{Aborted, Reply, Task};
+pub use task::{AbortOnDrop, Aborted, Reply, Task};
 
 /// Holds on every target: handles and their producing halves are `Send + Sync` for `Send`
 /// payloads.
@@ -31,6 +31,7 @@ fn assert_handles_are_send_and_sync() {
     fn assert<T: Send + Sync>() {}
 
     assert::<Task<Vec<u8>, Aborted>>();
+    assert::<AbortOnDrop<Vec<u8>, Aborted>>();
     assert::<Reply<Vec<u8>, Aborted>>();
     assert::<Streaming<Vec<u8>, Aborted>>();
     assert::<StreamingSink<Vec<u8>, Aborted>>();

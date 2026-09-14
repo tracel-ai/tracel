@@ -126,6 +126,12 @@ impl<T, E> Task<T, E> {
     /// Releases the handle and lets the work finish unobserved.
     pub fn detach(self) {}
 
+    /// Makes dropping the handle abort the work, for work that is worthless once nobody waits
+    /// for it.
+    pub fn abort_on_drop(self) -> AbortOnDrop<T, E> {
+        AbortOnDrop { task: self }
+    }
+
     /// Waits for the result on the current thread.
     ///
     /// Native only. Parks the thread on a channel, so it needs no runtime — and would stall an
@@ -164,6 +170,44 @@ impl<T, E> fmt::Debug for Task<T, E> {
             State::Pending(_) => "pending",
         };
         f.debug_struct("Task").field("state", &state).finish()
+    }
+}
+
+/// A [`Task`] whose work is aborted when the handle is dropped; see [`Task::abort_on_drop`].
+#[must_use = "dropping this handle aborts the work"]
+pub struct AbortOnDrop<T, E = Aborted> {
+    task: Task<T, E>,
+}
+
+impl<T, E> AbortOnDrop<T, E> {
+    /// Takes the result if it has arrived, without waiting.
+    pub fn try_get(&mut self) -> Option<Result<T, E>>
+    where
+        E: From<Aborted>,
+    {
+        self.task.try_get()
+    }
+}
+
+impl<T, E: From<Aborted>> Future for AbortOnDrop<T, E> {
+    type Output = Result<T, E>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.get_mut().task).poll(cx)
+    }
+}
+
+impl<T, E> Drop for AbortOnDrop<T, E> {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl<T, E> fmt::Debug for AbortOnDrop<T, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AbortOnDrop")
+            .field("task", &self.task)
+            .finish()
     }
 }
 
@@ -289,6 +333,44 @@ mod tests {
             !done.load(Ordering::SeqCst),
             "aborted work ran to completion"
         );
+    }
+
+    #[test]
+    fn given_abort_on_drop_handle_when_dropped_then_work_stops() {
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let (_release, gate) = gate();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop_flag = stopped.clone();
+        struct DropFlag(Arc<AtomicBool>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let guard = DropFlag(stop_flag);
+        let handle = Task::spawn(&ThreadSpawn, async move {
+            let _guard = guard;
+            gate.await.ok();
+            flag.store(true, Ordering::SeqCst);
+            Ok::<_, Aborted>(())
+        })
+        .abort_on_drop();
+        drop(handle);
+
+        assert!(set_within(&stopped, 5), "the work was not dropped");
+        assert!(
+            !done.load(Ordering::SeqCst),
+            "aborted work ran to completion"
+        );
+    }
+
+    #[test]
+    fn given_abort_on_drop_handle_when_awaited_then_result_arrives_as_usual() {
+        let handle = Task::spawn(&ThreadSpawn, async { Ok::<_, Aborted>(7) }).abort_on_drop();
+
+        assert_eq!(futures::executor::block_on(handle), Ok(7));
     }
 
     #[test]
