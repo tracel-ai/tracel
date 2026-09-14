@@ -57,7 +57,7 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
 /// Every method defaults to doing nothing, so an implementation only has to define the events it
 /// cares about. Callbacks run on the transferring thread and block it, so an implementation that
 /// does real work should hand it off.
-pub trait TransferObserver {
+pub trait TransferObserver: Send {
     /// Returns whether the active transfer should stop.
     ///
     /// Polled at file, part, and reader boundaries. Implementations should make this query cheap
@@ -118,12 +118,8 @@ impl From<tracel_task::Aborted> for TransferError {
     }
 }
 
-/// A downloaded body: `Send` on native targets, thread-local on wasm.
-#[cfg(not(target_arch = "wasm32"))]
-pub type ByteStream = futures::stream::BoxStream<'static, Result<Bytes, TransferError>>;
-/// A downloaded body: `Send` on native targets, thread-local on wasm.
-#[cfg(target_arch = "wasm32")]
-pub type ByteStream = futures::stream::LocalBoxStream<'static, Result<Bytes, TransferError>>;
+/// A downloaded body.
+pub type ByteStream = tracel_task::DynStream<'static, Result<Bytes, TransferError>>;
 
 /// Moves bytes to and from URLs.
 ///

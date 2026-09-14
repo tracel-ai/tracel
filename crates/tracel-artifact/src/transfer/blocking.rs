@@ -34,6 +34,11 @@ impl ReqwestTransferClient {
         &self.http
     }
 
+    /// The executor this client's transfers run on.
+    pub fn spawner(&self) -> Arc<dyn Spawn> {
+        Arc::clone(&self.driver) as Arc<dyn Spawn>
+    }
+
     /// Runs `future` to completion on the calling thread, with its IO driven by the client's
     /// runtime.
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {

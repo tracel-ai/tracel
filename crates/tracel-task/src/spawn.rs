@@ -2,6 +2,10 @@
 use futures::future::BoxFuture;
 #[cfg(target_arch = "wasm32")]
 use futures::future::LocalBoxFuture;
+#[cfg(not(target_arch = "wasm32"))]
+use futures::stream::BoxStream;
+#[cfg(target_arch = "wasm32")]
+use futures::stream::LocalBoxStream;
 
 /// `Send` on native targets, vacuous on wasm.
 ///
@@ -37,12 +41,26 @@ pub trait MaybeSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSync for T {}
 
-/// A boxed future ready to be spawned: `Send` on native targets, thread-local on wasm.
+/// A boxed future: `Send` on native targets, thread-local on wasm.
+///
+/// The return type of an object-safe port method, so a port stays one trait on every target.
 #[cfg(not(target_arch = "wasm32"))]
-pub type SpawnedFuture = BoxFuture<'static, ()>;
-/// A boxed future ready to be spawned: `Send` on native targets, thread-local on wasm.
+pub type DynFuture<'a, T> = BoxFuture<'a, T>;
+/// A boxed future: `Send` on native targets, thread-local on wasm.
+///
+/// The return type of an object-safe port method, so a port stays one trait on every target.
 #[cfg(target_arch = "wasm32")]
-pub type SpawnedFuture = LocalBoxFuture<'static, ()>;
+pub type DynFuture<'a, T> = LocalBoxFuture<'a, T>;
+
+/// A boxed stream: `Send` on native targets, thread-local on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+pub type DynStream<'a, T> = BoxStream<'a, T>;
+/// A boxed stream: `Send` on native targets, thread-local on wasm.
+#[cfg(target_arch = "wasm32")]
+pub type DynStream<'a, T> = LocalBoxStream<'a, T>;
+
+/// A boxed future ready to be spawned.
+pub type SpawnedFuture = DynFuture<'static, ()>;
 
 /// Runs futures to completion in the background.
 ///

@@ -18,7 +18,7 @@ mod task;
 pub use spawn::BrowserSpawn;
 #[cfg(not(target_arch = "wasm32"))]
 pub use spawn::ThreadSpawn;
-pub use spawn::{MaybeSend, MaybeSync, Spawn, SpawnedFuture};
+pub use spawn::{DynFuture, DynStream, MaybeSend, MaybeSync, Spawn, SpawnedFuture};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};
