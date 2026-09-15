@@ -17,7 +17,7 @@ pub enum OutputWriterError {
 /// Communication channel for an inference task, allowing the app to send outputs and errors back to the session.
 pub struct InferenceOutput<O> {
     writer: Box<dyn OutputWriter<O>>,
-    instant: std::time::Instant,
+    instant: web_time::Instant,
     observer: Option<Arc<dyn InferenceOutputObserver>>,
     outputs: AtomicUsize,
     errors: AtomicUsize,
@@ -29,7 +29,7 @@ impl<O> InferenceOutput<O> {
     pub(crate) fn new(writer: Box<dyn OutputWriter<O>>) -> Self {
         Self {
             writer,
-            instant: std::time::Instant::now(),
+            instant: web_time::Instant::now(),
             observer: None,
             outputs: AtomicUsize::new(0),
             errors: AtomicUsize::new(0),

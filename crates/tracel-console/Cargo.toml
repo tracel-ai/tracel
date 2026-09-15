@@ -12,6 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+async-channel = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 reqwest = { workspace = true }
@@ -27,12 +28,14 @@ tracel-client = { workspace = true }
 tracel-datasets = { workspace = true }
 tracel-experiment = { workspace = true }
 tracel-experiment-remote = { workspace = true }
+tracel-inference = { workspace = true }
 tracel-models = { workspace = true }
 url = { workspace = true }
 
-# Capabilities not yet handed back as jobs still bridge into a runtime of their own.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-crossbeam = { workspace = true }
+futures-timer = { workspace = true }
 tracel-artifact = { workspace = true, features = ["fs"] }
 tracel-task = { workspace = true, features = ["tokio"] }
-tracel-inference = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-timer = { workspace = true, features = ["wasm-bindgen"] }

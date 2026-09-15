@@ -12,9 +12,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-channel = { workspace = true, features = ["std"] }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-crossbeam.workspace = true
+tracel-task = { workspace = true }
 tracing.workspace = true
+web-time = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

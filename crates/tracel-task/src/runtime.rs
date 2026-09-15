@@ -16,8 +16,9 @@ mod native {
     /// one of its own on a thread of its own.
     ///
     /// Work that needs tokio — a reqwest call, a tokio socket — is
-    /// [`attach`](Runtime::attach)ed to the runtime and can then be polled by any executor; the
-    /// runtime only drives the IO. An owned runtime shuts down when this is dropped.
+    /// [`attach`](Runtime::attach)ed to the runtime and can then be polled by any executor; a
+    /// loop that owns a resource is [`spawn`](Runtime::spawn)ed on it. The runtime only drives
+    /// the IO; nothing blocks on it. An owned runtime shuts down when this is dropped.
     pub struct Runtime {
         handle: Handle,
         shutdown: Option<oneshot::Sender<()>>,
@@ -86,14 +87,6 @@ mod native {
             F: Future<Output = ()> + Send + 'static,
         {
             self.handle.spawn(future);
-        }
-
-        /// Runs `future` to completion on the calling thread, with its IO driven by the
-        /// runtime.
-        ///
-        /// Must not be called from inside the runtime itself; await there instead.
-        pub fn block_on<F: Future>(&self, future: F) -> F::Output {
-            self.handle.block_on(future)
         }
     }
 

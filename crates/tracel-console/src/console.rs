@@ -16,12 +16,10 @@ use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
 use tracel_experiment::ExperimentModule;
+use tracel_inference::InferenceModule;
 
 use crate::experiment::ConsoleExperimentProvider;
-
-// Inference still bridges through blocking calls.
-#[cfg(not(target_arch = "wasm32"))]
-use {crate::inference::ConsoleInferenceProvider, tracel_inference::InferenceModule};
+use crate::inference::ConsoleInferenceProvider;
 
 /// A client rooted at one Tracel console URL.
 ///
@@ -259,7 +257,6 @@ impl ProjectHandle {
     /// Unlike [`datasets`](Self::datasets)/[`models`](Self::models), the returned module owns a
     /// background worker per inference group: build it once and reuse it, rather than calling
     /// this again for every request.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn inference(&self) -> InferenceModule {
         InferenceModule::new(Arc::new(ConsoleInferenceProvider::new(Arc::clone(
             &self.scope,

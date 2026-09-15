@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracel_inference::sink::NoopSink;
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
+use tracel_task::Job;
 
 /// Local inference provider for offline execution: it ships nothing (sessions record into a
 /// [`NoopSink`], so per-request stats and any metrics/logs are discarded). See
@@ -19,10 +20,12 @@ impl DefaultInferenceProvider {
 }
 
 impl InferenceProvider for DefaultInferenceProvider {
-    fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
+    fn create_session(&self, name: String) -> Job<InferenceSession, InferenceError> {
         let n = self.request_counter.fetch_add(1, Ordering::Relaxed);
         let session_id = format!("{name}/{n}");
-        Ok(InferenceSession::new(session_id, Arc::new(NoopSink))
-            .with_attributes([("inference_name", name.to_string())]))
+        Job::ready(
+            InferenceSession::new(session_id, Arc::new(NoopSink))
+                .with_attributes([("inference_name", name)]),
+        )
     }
 }

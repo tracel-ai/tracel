@@ -6914,10 +6914,11 @@ dependencies = [
 name = "tracel-console"
 version = "0.10.0"
 dependencies = [
+ "async-channel",
  "bytes",
  "chrono",
- "crossbeam",
  "futures",
+ "futures-timer",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -7007,12 +7008,14 @@ dependencies = [
 name = "tracel-inference"
 version = "0.10.0"
 dependencies = [
- "crossbeam",
+ "async-channel",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tracel-task",
  "tracing",
  "tracing-subscriber",
+ "web-time",
 ]
 
 [[package]]

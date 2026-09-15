@@ -161,7 +161,7 @@ where
             // as an SSE error event, consistent with how per-item errors are reported.
             let run_tx = sse_tx.clone();
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = job.run(in_rx, SseChannel { tx: run_tx.clone() }) {
+                if let Err(e) = job.run(in_rx, SseChannel { tx: run_tx.clone() }).block() {
                     let _ = run_tx
                         .blocking_send(Ok(Event::default().event("error").data(e.to_string())));
                 }

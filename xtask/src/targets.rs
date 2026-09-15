@@ -7,7 +7,7 @@ use tracel_xtask::utils::process::run_process;
 const WASM: &str = "wasm32-unknown-unknown";
 const EMBEDDED: &str = "thumbv7m-none-eabi";
 
-/// Crates that build for the browser today; inference joins once its slice lands.
+/// Crates that build for the browser: every SDK crate below the app layer.
 const WASM_CRATES: &[&str] = &[
     "tracel-task",
     "tracel-artifact",
@@ -15,6 +15,7 @@ const WASM_CRATES: &[&str] = &[
     "tracel-datasets",
     "tracel-experiment",
     "tracel-experiment-remote",
+    "tracel-inference",
     "tracel-console",
     "tracel-core",
     "tracel",

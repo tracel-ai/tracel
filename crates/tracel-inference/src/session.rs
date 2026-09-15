@@ -171,9 +171,9 @@ impl InferenceSession {
         crate::context::current_session()
     }
 
-    /// Install this session as the ambient session for the current thread until the guard drops.
-    pub fn enter(&self) -> crate::context::SessionGuard {
-        crate::context::enter(self.clone())
+    /// Run `f` with this session installed as the ambient session for the current thread.
+    pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
+        crate::context::with_session(self.clone(), f)
     }
 
     /// A session backed by a [`NoopSink`](crate::sink::NoopSink): everything recorded is discarded.
@@ -198,13 +198,12 @@ impl InferenceSession {
         It::IntoIter: Send + 'static,
         W: OutputWriter<Inf::Output> + 'static,
     {
-        let _scope = self.enter();
         let input = InferenceInput::from_items(input.into_iter());
         let output =
             InferenceOutput::from_writer(output).with_observer(Arc::new(SessionStatsObserver {
                 session: self.clone(),
             }));
-        inference.infer(self, input, output);
+        self.in_scope(|| inference.infer(self, input, output));
     }
 }
 

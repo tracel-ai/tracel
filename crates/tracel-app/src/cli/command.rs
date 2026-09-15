@@ -90,17 +90,19 @@ where
             .mapper
             .map(config)
             .map_err(CliError::ValidationFailed)?;
-        let stream = self
-            .job
-            .stream_once(input)
-            .map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
-        for item in stream {
+        // The inference computes on a thread of its own so outputs print as they are produced.
+        let (job, outputs) = self.job.stream_once(input);
+        let worker = std::thread::spawn(move || job.block());
+        for item in outputs.blocking_iter() {
             let output = item.map_err(CliError::ExecutionFailed)?;
             let line = serde_json::to_string(&output)
                 .map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
             println!("{line}");
         }
-        Ok(())
+        worker
+            .join()
+            .map_err(|_| CliError::ExecutionFailed("the inference panicked".into()))?
+            .map_err(|e| CliError::ExecutionFailed(Box::new(e)))
     }
 }
 

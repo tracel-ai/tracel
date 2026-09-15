@@ -15,10 +15,8 @@ mod wire;
 
 mod datasets;
 mod experiment;
-mod login;
-// Inference still bridges through blocking calls.
-#[cfg(not(target_arch = "wasm32"))]
 mod inference;
+mod login;
 
 pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};
