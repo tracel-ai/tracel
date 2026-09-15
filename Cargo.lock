@@ -918,7 +918,7 @@ dependencies = [
  "burn-std",
  "bytes",
  "futures-util",
- "gloo-timers",
+ "gloo-timers 0.3.0",
  "log",
  "rand 0.10.2",
  "rmp-serde",
@@ -2880,6 +2880,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "futures"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2894,6 +2909,17 @@ name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
+
+[[package]]
+name = "futures-executor"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
 
 [[package]]
 name = "futures-io"
@@ -2942,6 +2968,10 @@ name = "futures-timer"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af43fadb8a98512d547e37b4e92e0ced13e205c061b87b4623eff01d918d6968"
+dependencies = [
+ "gloo-timers 0.4.0",
+ "send_wrapper",
+]
 
 [[package]]
 name = "futures-util"
@@ -2949,6 +2979,7 @@ version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -3185,6 +3216,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "gloo-net"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6420f887c48417e9e86c6cf61274eb231830cccc100e49613f7952e269a1fe1"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-sink",
+ "gloo-utils",
+ "http",
+ "js-sys",
+ "pin-project",
+ "thiserror 2.0.20",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "gloo-timers"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3194,6 +3244,29 @@ dependencies = [
  "futures-core",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "gloo-timers"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "482ce8a491a501da4cd806bd190275363d674f2845005c6ddbd5d3e1dd54495d"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "gloo-utils"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4202275d95a142fa209a1e35e91c250a710c5600731372cd3464a39ed01573d6"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -4819,6 +4892,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "pin-project"
+version = "1.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
+dependencies = [
+ "pin-project-internal",
+]
+
+[[package]]
+name = "pin-project-internal"
+version = "1.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4840,7 +4933,7 @@ dependencies = [
  "combine",
  "downcast-rs",
  "dyn-clone",
- "hashbrown 0.13.2",
+ "hashbrown 0.17.1",
  "hi_sparse_bitset",
  "indexmap 2.14.0",
  "inventory",
@@ -5868,6 +5961,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
+name = "send_wrapper"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
+
+[[package]]
 name = "seq-macro"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6598,6 +6697,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls",
+ "tungstenite",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6737,6 +6852,7 @@ dependencies = [
  "tracel-models",
  "tracel-runner",
  "tracel-station",
+ "tracel-task",
 ]
 
 [[package]]
@@ -6761,21 +6877,26 @@ dependencies = [
 name = "tracel-artifact"
 version = "0.10.0"
 dependencies = [
- "crossbeam",
+ "bytes",
+ "futures",
+ "futures-timer",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
+ "tracel-task",
 ]
 
 [[package]]
 name = "tracel-client"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "379ac162bfcde1baff7efe2c3f810e5a073c6c8fee459ad617a0c478c31a3ce2"
+version = "0.17.1"
 dependencies = [
+ "futures-timer",
+ "futures-util",
+ "gloo-net",
  "reqwest 0.13.4",
  "rustls",
  "serde",
@@ -6783,8 +6904,9 @@ dependencies = [
  "serde_with",
  "strum 0.27.2",
  "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
  "tracing",
- "tungstenite",
  "uuid",
 ]
 
@@ -6792,6 +6914,7 @@ dependencies = [
 name = "tracel-console"
 version = "0.10.0"
 dependencies = [
+ "bytes",
  "chrono",
  "crossbeam",
  "reqwest 0.13.4",
@@ -6806,6 +6929,7 @@ dependencies = [
  "tracel-experiment-remote",
  "tracel-inference",
  "tracel-models",
+ "tracel-task",
  "tracing",
  "url",
 ]
@@ -6860,13 +6984,16 @@ dependencies = [
 name = "tracel-experiment-remote"
 version = "0.10.0"
 dependencies = [
+ "async-channel",
  "chrono",
- "crossbeam",
+ "futures",
+ "futures-timer",
  "serde",
  "thiserror 2.0.20",
  "tracel-artifact",
  "tracel-client",
  "tracel-experiment",
+ "tracel-task",
  "tracing",
 ]
 
@@ -6907,11 +7034,14 @@ dependencies = [
 name = "tracel-models"
 version = "0.10.0"
 dependencies = [
+ "bytes",
+ "futures",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
  "tracel-artifact",
+ "tracel-task",
 ]
 
 [[package]]
@@ -6935,6 +7065,7 @@ dependencies = [
 name = "tracel-station"
 version = "0.10.0"
 dependencies = [
+ "bytes",
  "chrono",
  "serde",
  "serde_json",
@@ -6946,7 +7077,18 @@ dependencies = [
  "tracel-experiment",
  "tracel-experiment-remote",
  "tracel-models",
+ "tracel-task",
  "url",
+]
+
+[[package]]
+name = "tracel-task"
+version = "0.10.0"
+dependencies = [
+ "async-channel",
+ "futures",
+ "tokio",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -7100,7 +7242,6 @@ dependencies = [
  "sha1",
  "thiserror 2.0.20",
  "utf-8",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]

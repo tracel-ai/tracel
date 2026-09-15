@@ -64,6 +64,11 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "unwrap",
 ] }
 chrono = "0.4.45"
+futures = "0.3.33"
+futures-timer = "3.0.4"
+bytes = "1.12.1"
+async-channel = "2.5.0"
+wasm-bindgen-futures = "0.4.76"
 tracing = "0.1.44"
 tracing-core = "0.1.36"
 tracing-subscriber = "0.3.23"
@@ -76,6 +81,7 @@ tracel-client = { version = "0.17.0", default-features = false, features = [
 ] }
 
 ## Crate
+tracel-task = { path = "crates/tracel-task", version = "0.10.0" }
 tracel-runner = { path = "crates/tracel-runner", version = "0.10.0" }
 tracel-console = { path = "crates/tracel-console", version = "0.10.0" }
 tracel-models = { path = "crates/tracel-models", version = "0.10.0" }
@@ -94,3 +100,6 @@ tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
+
+[patch.crates-io]
+tracel-client = { path = "../burn-central-client/tracel-client" }

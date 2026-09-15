@@ -29,3 +29,4 @@ tracel-console.workspace = true
 tracel-station = { workspace = true, optional = true }
 tracel-datasets.workspace = true
 tracel-models.workspace = true
+tracel-task.workspace = true

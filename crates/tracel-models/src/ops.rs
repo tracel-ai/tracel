@@ -1,12 +1,11 @@
-use std::io::Read;
+use std::sync::Arc;
 
-use tracel_artifact::TransferObserver;
+use bytes::Bytes;
 use tracel_artifact::upload::MultipartUploadSource;
+use tracel_artifact::{TransferError, TransferObserver};
+use tracel_task::{Streaming, Task};
 
 use crate::{Model, ModelVersion, ModelsError, VersionFile, VersionId, VersionSpec};
-
-/// A readable stream for one model-version file.
-pub type VersionFileReader = Box<dyn Read + Send>;
 
 /// One backend-owned file in a model version.
 ///
@@ -17,43 +16,45 @@ pub trait VersionFileSource: Send + Sync + 'static {
     /// Returns the published descriptor that the capability must verify.
     fn file(&self) -> &VersionFile;
 
-    /// Opens the file at byte zero using its capability-validated logical path.
+    /// Starts reading the file from byte zero using its capability-validated logical path.
     ///
     /// The supplied path is the canonical form of [`Self::file`]'s published relative path. It
     /// lets implementations use one stable identity for backend-private concerns without taking
-    /// ownership of path validation.
-    fn open(&self, canonical_path: &str) -> Result<VersionFileReader, ModelsError>;
+    /// ownership of path validation. A failure to open is the stream's first item.
+    fn open(&self, canonical_path: String) -> Streaming<Bytes, TransferError>;
 }
 
 /// Backend primitives required by the model capability.
 ///
-/// An implementation is already scoped to one location, so it is never asked which one.
+/// An implementation is already scoped to one location, so it is never asked which one. Every
+/// operation is handed back as a running [`Task`]: the implementation starts the work on the
+/// executor it owns, so the handle can be awaited from anywhere.
 ///
 /// Implementations should use the dedicated not-found variants for missing models and versions,
 /// and [`ModelsError::Transport`] for communication failures. Backend-specific failures may be
 /// preserved with [`ModelsError::other`].
 pub trait ModelOps: Send + Sync + 'static {
     /// Lists models in the implementation's scope.
-    fn list_models(&self) -> Result<Vec<Model>, ModelsError>;
+    fn list_models(&self) -> Task<Vec<Model>, ModelsError>;
 
     /// Fetches one model by name.
-    fn get_model(&self, name: &str) -> Result<Model, ModelsError>;
+    fn get_model(&self, name: String) -> Task<Model, ModelsError>;
 
     /// Lists published versions of a model.
-    fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError>;
+    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError>;
 
     /// Resolves a version selector against a model.
-    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError>;
+    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError>;
 
     /// Fetches the backend-owned file sources for one version.
     fn fetch_version_files(
         &self,
-        model: &str,
-        id: &VersionId,
-    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError>;
+        model: String,
+        id: VersionId,
+    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError>;
 
     /// Creates a model that can hold versions.
-    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError>;
+    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError>;
 
     /// Publishes a version of `model` containing the files the capability measured.
     ///
@@ -62,10 +63,10 @@ pub trait ModelOps: Send + Sync + 'static {
     /// first, is the implementation's business: a version either becomes visible or it does not.
     fn publish_version(
         &self,
-        model: &str,
-        files: &[VersionFile],
-        contents: &dyn MultipartUploadSource,
-        metadata: Option<&serde_json::Value>,
-        observer: &mut dyn TransferObserver,
-    ) -> Result<ModelVersion, ModelsError>;
+        model: String,
+        files: Vec<VersionFile>,
+        contents: Arc<dyn MultipartUploadSource>,
+        metadata: Option<serde_json::Value>,
+        observer: Box<dyn TransferObserver>,
+    ) -> Task<ModelVersion, ModelsError>;
 }

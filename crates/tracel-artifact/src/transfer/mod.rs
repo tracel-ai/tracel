@@ -1,11 +1,30 @@
-use std::io::Read;
+use std::future::Future;
+use std::io::{self, Read};
 use std::time::Duration;
+
+use bytes::Bytes;
+use futures::{Stream, stream};
+use tracel_task::{MaybeSend, MaybeSync};
+
+#[cfg(not(target_arch = "wasm32"))]
+mod blocking;
+mod http;
+mod ranged;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod test_server;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use blocking::ReqwestTransferClient;
+pub use http::HttpTransferClient;
 
 const TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE: u64 = 10;
 
 const MINIMUM_TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
 
+#[cfg(not(target_arch = "wasm32"))]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+const READ_CHUNK_BYTES: usize = 64 * 1024;
 
 fn timeout_worth_allowing_a_transfer_of(size_bytes: Option<u64>) -> Duration {
     const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
@@ -33,14 +52,12 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
     TransferError::Transport(described)
 }
 
-mod ranged;
-
 /// Watches a transfer as it runs, and can stop it.
 ///
 /// Every method defaults to doing nothing, so an implementation only has to define the events it
 /// cares about. Callbacks run on the transferring thread and block it, so an implementation that
 /// does real work should hand it off.
-pub trait TransferObserver {
+pub trait TransferObserver: Send {
     /// Returns whether the active transfer should stop.
     ///
     /// Polled at file, part, and reader boundaries. Implementations should make this query cheap
@@ -89,116 +106,94 @@ impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
     }
 }
 
+/// So an observer can be handed to a transfer and still be read by whoever started it.
+impl<O: TransferObserver + ?Sized> TransferObserver for std::sync::Arc<std::sync::Mutex<O>> {
+    fn is_cancelled(&self) -> bool {
+        self.lock()
+            .map(|observer| observer.is_cancelled())
+            .unwrap_or(true)
+    }
+
+    fn file_started(&mut self, rel_path: &str, total_bytes: Option<u64>) {
+        if let Ok(mut observer) = self.lock() {
+            observer.file_started(rel_path, total_bytes);
+        }
+    }
+
+    fn file_progress(&mut self, rel_path: &str, transferred_bytes: u64) {
+        if let Ok(mut observer) = self.lock() {
+            observer.file_progress(rel_path, transferred_bytes);
+        }
+    }
+
+    fn file_completed(&mut self, rel_path: &str, transferred_bytes: u64) {
+        if let Ok(mut observer) = self.lock() {
+            observer.file_completed(rel_path, transferred_bytes);
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error("Transport error: {0}")]
     Transport(String),
 }
 
-/// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
-pub trait FileTransferClient: Clone + Send + Sync + 'static {
-    /// Upload data from a reader to the given URL with known size.
-    fn put_reader<R: Read + Send + 'static>(
-        &self,
-        url: &str,
-        reader: R,
-        size_bytes: u64,
-    ) -> Result<(), TransferError>;
+impl From<tracel_task::Aborted> for TransferError {
+    fn from(aborted: tracel_task::Aborted) -> Self {
+        Self::Transport(aborted.to_string())
+    }
+}
 
-    /// Download data from the given URL as a reader.
+/// A downloaded body.
+pub type ByteStream = tracel_task::DynStream<'static, Result<Bytes, TransferError>>;
+
+/// Moves bytes to and from URLs.
+///
+/// Implementations own the transport; callers own what the bytes mean.
+pub trait TransferClient: Clone + MaybeSend + MaybeSync + 'static {
+    /// The body of a download.
+    type Body: Stream<Item = Result<Bytes, TransferError>> + MaybeSend + Unpin + 'static;
+
+    /// Downloads `url`.
     ///
-    /// `expected_size_bytes` is the size declared by the manifest. Implementations may use it to
-    /// select a transfer strategy or timeout. It is `None` when no size was declared.
-    fn get_reader(
+    /// `expected_size_bytes` is the size declared by the manifest, `None` when none was. It
+    /// selects the transfer strategy and the deadline.
+    fn get(
         &self,
         url: &str,
         expected_size_bytes: Option<u64>,
-    ) -> Result<Box<dyn Read + Send>, TransferError>;
-}
+    ) -> impl Future<Output = Result<Self::Body, TransferError>> + MaybeSend;
 
-/// Reqwest-based transfer client.
-#[derive(Clone)]
-pub struct ReqwestTransferClient {
-    http: reqwest::blocking::Client,
-}
-
-impl ReqwestTransferClient {
-    /// A transfer is one request whose duration is set by the caller's
-    /// bandwidth, so the deadline is set per request from the size being moved
-    /// rather than once here. Reqwest's own default is 30 seconds, which no
-    /// model larger than a few megabytes survives.
-    pub fn new() -> Self {
-        let http = reqwest::blocking::Client::builder()
-            .timeout(None)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .expect("failed to build the HTTP transfer client");
-
-        Self { http }
-    }
-
-    pub fn with_client(http: reqwest::blocking::Client) -> Self {
-        Self { http }
-    }
-
-    fn get_whole_reader(
+    /// Uploads `size_bytes` of `body` to `url`.
+    fn put<B>(
         &self,
         url: &str,
-        expected_size_bytes: Option<u64>,
-    ) -> Result<Box<dyn Read + Send>, TransferError> {
-        let response = self
-            .http
-            .get(url)
-            .timeout(timeout_worth_allowing_a_transfer_of(expected_size_bytes))
-            .send()
-            .map_err(|error| transport_failure(&error))?;
-
-        if !response.status().is_success() {
-            return Err(transport_failure(
-                &response.error_for_status().err().unwrap(),
-            ));
-        }
-
-        Ok(Box::new(response))
-    }
-}
-
-impl Default for ReqwestTransferClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl FileTransferClient for ReqwestTransferClient {
-    fn put_reader<R: Read + Send + 'static>(
-        &self,
-        url: &str,
-        reader: R,
+        body: B,
         size_bytes: u64,
-    ) -> Result<(), TransferError> {
-        let body = reqwest::blocking::Body::sized(reader, size_bytes);
-        let response = self
-            .http
-            .put(url)
-            .timeout(timeout_worth_allowing_a_transfer_of(Some(size_bytes)))
-            .body(body)
-            .send()
-            .map_err(|error| transport_failure(&error))?;
+    ) -> impl Future<Output = Result<(), TransferError>> + MaybeSend
+    where
+        B: Stream<Item = Result<Bytes, io::Error>> + MaybeSend + 'static;
+}
 
-        if !response.status().is_success() {
-            return Err(transport_failure(
-                &response.error_for_status().err().unwrap(),
-            ));
+/// Reads `reader` as a stream of chunks. The stream ends at the first error.
+pub fn reader_stream<R>(reader: R) -> impl Stream<Item = Result<Bytes, io::Error>> + MaybeSend
+where
+    R: Read + MaybeSend + 'static,
+{
+    stream::unfold(Some(reader), |reader| async move {
+        let mut reader = reader?;
+        let mut buf = vec![0u8; READ_CHUNK_BYTES];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => return None,
+                Ok(read) => {
+                    buf.truncate(read);
+                    return Some((Ok(Bytes::from(buf)), Some(reader)));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Some((Err(error), None)),
+            }
         }
-
-        Ok(())
-    }
-
-    fn get_reader(
-        &self,
-        url: &str,
-        expected_size_bytes: Option<u64>,
-    ) -> Result<Box<dyn Read + Send>, TransferError> {
-        ranged::open(self, url, expected_size_bytes)
-    }
+    })
 }

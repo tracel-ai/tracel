@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 
-//! Burn-free, blocking SDK for the Tracel console domain.
+//! Burn-free SDK for the Tracel console domain.
 //!
 //! [`Console`] owns one connection to the console. Project handles are cheap
 //! views over that shared client and vend backend-agnostic, project-scoped capabilities without

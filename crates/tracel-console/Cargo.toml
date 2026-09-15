@@ -12,6 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+bytes = { workspace = true }
 reqwest = { workspace = true }
 chrono = { workspace = true }
 crossbeam = { workspace = true }
@@ -21,6 +22,7 @@ serde_with = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracel-artifact = { workspace = true }
+tracel-task = { workspace = true, features = ["tokio"] }
 tracel-client = { workspace = true }
 tracel-datasets = { workspace = true }
 tracel-experiment = { workspace = true }

@@ -1,5 +1,6 @@
+use std::sync::Arc;
+
 use tracel_artifact::bundle::FsBundle;
-use tracel_client::station::StationClient;
 
 use tracel_experiment::{
     ArtifactKind, ExperimentId,
@@ -9,14 +10,15 @@ use tracel_experiment::{
 use tracel_experiment_remote::{ArtifactUploadError, ArtifactUploader};
 
 use super::{ExperimentArtifactClient, ExperimentPath};
+use crate::station::StationInner;
 
 pub struct StationArtifactReader {
-    client: StationClient,
+    station: Arc<StationInner>,
 }
 
 impl StationArtifactReader {
-    pub fn new(client: StationClient) -> Self {
-        Self { client }
+    pub fn new(station: Arc<StationInner>) -> Self {
+        Self { station }
     }
 }
 
@@ -31,7 +33,7 @@ impl ExperimentArtifactReader for StationArtifactReader {
             .ok_or_else(|| ExperimentReaderError::new("Invalid experiment ID format"))?;
 
         let experiment_path = ExperimentPath::new(num);
-        let scope = ExperimentArtifactClient::new(self.client.clone(), experiment_path);
+        let scope = ExperimentArtifactClient::new(Arc::clone(&self.station), experiment_path);
         let artifact = scope.fetch(name).map_err(|err| {
             ExperimentReaderError::with_source("Failed to resolve experiment artifact", err)
         })?;
@@ -58,9 +60,9 @@ pub struct StationArtifactUploader {
 }
 
 impl StationArtifactUploader {
-    pub fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
+    pub fn new(station: Arc<StationInner>, exp_path: ExperimentPath) -> Self {
         Self {
-            client: ExperimentArtifactClient::new(client, exp_path),
+            client: ExperimentArtifactClient::new(station, exp_path),
         }
     }
 }

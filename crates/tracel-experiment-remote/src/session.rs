@@ -1,5 +1,8 @@
 use std::sync::Mutex;
+use std::time::Duration;
 
+use futures::future::{Either, select};
+use futures_timer::Delay;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{
@@ -7,22 +10,15 @@ use tracel_experiment::{
     LogRecord, MetricSpec, MetricValue,
 };
 
-use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
-use tracel_client::WebSocketClient;
 use tracel_client::websocket::{
     ActivityEventRequest, ActivityMeterRequest, ActivityRequest, ActivityStatusRequest,
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, LogEntry,
     LogEntryLevel, MetricLog,
 };
+use tracel_task::Spawn;
 
-use super::socket::ExperimentSocket;
-use super::socket::{SocketCommand, ThreadError};
-
-struct ActiveSession {
-    sender: Sender<SocketCommand>,
-    socket: ExperimentSocket,
-}
+use crate::actor::{ExperimentSocket, SocketHandle};
 
 /// An artifact that could not be handed to the backend.
 #[derive(Debug, thiserror::Error)]
@@ -52,48 +48,46 @@ pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 /// An [`ExperimentSession`] that speaks the Tracel remote experiment protocol over a websocket.
 pub struct RemoteExperimentSession {
     artifact_uploader: BoxedArtifactUploader,
-    active: Mutex<Option<ActiveSession>>,
+    socket: Mutex<Option<SocketHandle>>,
 }
 
 impl RemoteExperimentSession {
-    /// Opens a session over `websocket`, handing artifacts to `artifact_uploader`.
-    pub fn new(
-        artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
-        websocket: WebSocketClient,
+    /// Opens a session over `socket`, driven by an actor on `spawn`, handing artifacts to
+    /// `artifact_uploader`.
+    pub fn new<S: ExperimentSocket>(
+        artifact_uploader: BoxedArtifactUploader,
+        socket: S,
         control: ExperimentRunControl,
+        spawn: &dyn Spawn,
     ) -> Self {
-        let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(websocket, receiver, control);
+        let socket = SocketHandle::spawn(spawn, socket, control);
 
         Self {
             artifact_uploader,
-            active: Mutex::new(Some(ActiveSession { sender, socket })),
+            socket: Mutex::new(Some(socket)),
         }
     }
 
     fn send(&self, message: ExperimentMessage) -> Result<(), ExperimentError> {
-        let guard = self.active.lock().unwrap();
-        let active = guard.as_ref().ok_or_else(|| {
+        let guard = self.socket.lock().unwrap();
+        let socket = guard.as_ref().ok_or_else(|| {
             ExperimentError::new(
                 ExperimentErrorKind::AlreadyFinished,
                 "Experiment run has already finished",
             )
         })?;
 
-        active
-            .sender
-            .send(SocketCommand::Message(message))
-            .map_err(|_| {
-                ExperimentError::new(
-                    ExperimentErrorKind::Internal,
-                    "Failed to send message to experiment session",
-                )
-            })
+        socket.send(message).map_err(|_| {
+            ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "Failed to send message to experiment session",
+            )
+        })
     }
 }
 
-/// Only a dead connection waits this out; the writes themselves are synchronous.
-const FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Only a dead connection waits this out; a live one answers as soon as its queue is written.
+const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl ExperimentSession for RemoteExperimentSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
@@ -101,27 +95,27 @@ impl ExperimentSession for RemoteExperimentSession {
     }
 
     fn flush(&self) -> Result<(), ExperimentError> {
-        let (ack, acked) = crossbeam::channel::bounded(1);
-        {
-            let guard = self.active.lock().unwrap();
-            let Some(active) = guard.as_ref() else {
+        let flushed = {
+            let guard = self.socket.lock().unwrap();
+            let Some(socket) = guard.as_ref() else {
                 // A finished session already drained on the way out.
                 return Ok(());
             };
-            active.sender.send(SocketCommand::Flush(ack)).map_err(|_| {
-                ExperimentError::new(
-                    ExperimentErrorKind::Internal,
-                    "The experiment socket is no longer accepting events",
-                )
-            })?;
-        }
+            socket.flush()
+        };
 
-        acked.recv_timeout(FLUSH_TIMEOUT).map_err(|_| {
-            ExperimentError::new(
+        let outcome = futures::executor::block_on(select(flushed, Delay::new(FLUSH_TIMEOUT)));
+        match outcome {
+            Either::Left((Ok(()), _)) => Ok(()),
+            Either::Left((Err(_), _)) => Err(ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "The experiment socket is no longer accepting events",
+            )),
+            Either::Right(_) => Err(ExperimentError::new(
                 ExperimentErrorKind::Internal,
                 "The experiment socket did not confirm delivery in time",
-            )
-        })
+            )),
+        }
     }
 
     fn save_artifact(
@@ -152,38 +146,29 @@ impl ExperimentSession for RemoteExperimentSession {
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-        let active = self.active.lock().unwrap().take().ok_or_else(|| {
+        let socket = self.socket.lock().unwrap().take().ok_or_else(|| {
             ExperimentError::new(
                 ExperimentErrorKind::AlreadyFinished,
                 "Experiment run has already finished",
             )
         })?;
 
-        let send_result = active.sender.send(SocketCommand::Message(
-            ExperimentMessage::ExperimentComplete(to_remote_completion(completion)),
-        ));
-        drop(active.sender);
+        socket
+            .send(ExperimentMessage::ExperimentComplete(to_remote_completion(
+                completion,
+            )))
+            .map_err(|_| {
+                ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "Failed to send experiment completion to remote session",
+                )
+            })?;
 
-        let join_result = active.socket.join();
-
-        if send_result.is_err() {
-            return Err(ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "Failed to send experiment completion to remote session",
-            ));
+        if let Err(error) = socket.close().block() {
+            tracing::warn!("WebSocket failure during experiment finish: {error}");
         }
 
-        match join_result {
-            Ok(_thread) => Ok(()),
-            Err(ThreadError::WebSocket(err)) => {
-                tracing::warn!("WebSocket failure during experiment finish: {err}");
-                Ok(())
-            }
-            Err(ThreadError::Panic) => Err(ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "Experiment background thread panicked",
-            )),
-        }
+        Ok(())
     }
 }
 

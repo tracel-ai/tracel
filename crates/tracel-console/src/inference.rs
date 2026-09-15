@@ -59,19 +59,24 @@ impl ConsoleInferenceProvider {
     }
 
     fn ensure_group_exists(&self, name: &str) -> Result<(), InferenceError> {
-        match self.scope.console.client.get_inference_group(
+        let console = &self.scope.console;
+        let found = console.runtime.block_on(console.client.get_inference_group(
             &self.scope.owner,
             &self.scope.project,
             name,
-        ) {
+        ));
+        match found {
             Ok(_) => Ok(()),
             Err(err) if err.is_not_found() => {
-                match self.scope.console.client.create_inference_group(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    name.to_string(),
-                    None,
-                ) {
+                let created = console
+                    .runtime
+                    .block_on(console.client.create_inference_group(
+                        &self.scope.owner,
+                        &self.scope.project,
+                        name.to_string(),
+                        None,
+                    ));
+                match created {
                     Ok(_) => Ok(()),
                     // Another creator won the race.
                     Err(ClientError::ApiError { status, .. }) if status.as_u16() == 409 => Ok(()),
@@ -230,12 +235,16 @@ impl Batch {
             logs: std::mem::take(&mut self.logs),
         };
 
-        if let Err(err) = scope.console.client.ingest_inference_telemetry(
-            &scope.owner,
-            &scope.project,
-            group,
-            request,
-        ) {
+        let console = &scope.console;
+        let shipped = console
+            .runtime
+            .block_on(console.client.ingest_inference_telemetry(
+                &scope.owner,
+                &scope.project,
+                group,
+                request,
+            ));
+        if let Err(err) = shipped {
             tracing::warn!(
                 error = %err,
                 group = %group,

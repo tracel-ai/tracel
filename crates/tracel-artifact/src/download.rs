@@ -1,16 +1,21 @@
 //! This module provides utilities for downloading artifact files from any source to any target bundle sink.
 //!
-//! Downloaded files are validated against expected sizes and checksums when provided, and the download process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc).
+//! Downloaded files are validated against expected sizes and checksums when provided, and the download process can be customized with any implementation of the TransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc).
 
 use std::collections::HashSet;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
+use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use sha2::Digest;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::ReqwestTransferClient;
 use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
-use crate::{FileTransferClient, ReqwestTransferClient, TransferObserver};
+use crate::{TransferClient, TransferError, TransferObserver};
+use tracel_task::{DynFuture, MaybeSend};
 
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
@@ -71,8 +76,118 @@ pub struct ArtifactDownloadFile {
     pub checksum: Option<String>,
 }
 
+/// Downloads `files` into `sink`, reporting progress and honouring cancellation through
+/// `observer`.
+///
+/// Every file is validated against its expected size and checksum when they are declared.
+pub async fn download_into<C, S, O>(
+    client: &C,
+    sink: &mut S,
+    files: &[ArtifactDownloadFile],
+    observer: &mut O,
+) -> Result<(), DownloadError>
+where
+    C: TransferClient,
+    S: BundleSink + MaybeSend + ?Sized,
+    O: TransferObserver + ?Sized,
+{
+    let files = validated_download_files(files)?;
+    for (rel_path, file) in files {
+        if observer.is_cancelled() {
+            return Err(DownloadError::Cancelled { rel_path });
+        }
+
+        let body = client
+            .get(&file.url, file.size_bytes)
+            .await
+            .map_err(|source| DownloadError::Transfer {
+                rel_path: rel_path.clone(),
+                source,
+            })?;
+
+        let artifact_file = ArtifactFile {
+            rel_path,
+            size_bytes: file.size_bytes,
+            checksum: file.checksum.clone(),
+        };
+        // Boxed so a caller's `dyn` arguments do not run into rust-lang/rust#100013.
+        let transfer: DynFuture<'_, Result<(), DownloadError>> = Box::pin(transfer_stream_to_sink(
+            body,
+            sink,
+            &artifact_file,
+            observer,
+        ));
+        transfer.await?;
+    }
+
+    Ok(())
+}
+
+/// Writes an already-open artifact body into a bundle sink, reporting progress to an observer.
+pub async fn transfer_stream_to_sink<B, S, O>(
+    mut body: B,
+    sink: &mut S,
+    file: &ArtifactFile,
+    observer: &mut O,
+) -> Result<(), DownloadError>
+where
+    B: Stream<Item = Result<Bytes, TransferError>> + Unpin,
+    S: BundleSink + ?Sized,
+    O: TransferObserver + ?Sized,
+{
+    let rel_path = validated_artifact_path(&file.rel_path)?;
+    if observer.is_cancelled() {
+        return Err(DownloadError::Cancelled { rel_path });
+    }
+
+    observer.file_started(&rel_path, file.size_bytes);
+    let mut writer = sink
+        .begin_file(&rel_path)
+        .map_err(DownloadError::TargetError)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut total = 0u64;
+
+    while let Some(chunk) = body.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(_) if observer.is_cancelled() => {
+                return Err(DownloadError::Cancelled { rel_path });
+            }
+            Err(source) => return Err(DownloadError::Transfer { rel_path, source }),
+        };
+        if observer.is_cancelled() {
+            return Err(DownloadError::Cancelled { rel_path });
+        }
+
+        writer
+            .write_all(&chunk)
+            .map_err(|error| DownloadError::TargetError(error.to_string()))?;
+        hasher.update(&chunk);
+        total += chunk.len() as u64;
+        if !chunk.is_empty() {
+            observer.file_progress(&rel_path, total);
+            if observer.is_cancelled() {
+                return Err(DownloadError::Cancelled { rel_path });
+            }
+        }
+    }
+
+    writer.finish().map_err(DownloadError::TargetError)?;
+    validate_download(
+        &rel_path,
+        total,
+        format!("{:x}", hasher.finalize()),
+        file.size_bytes,
+        file.checksum.as_deref(),
+    )?;
+    observer.file_completed(&rel_path, total);
+
+    Ok(())
+}
+
 /// Download artifact files into any bundle sink implementation.
-pub fn download_artifacts_to_sink<S: BundleSink>(
+#[cfg(not(target_arch = "wasm32"))]
+pub fn download_artifacts_to_sink<S: BundleSink + Send>(
     sink: &mut S,
     files: &[ArtifactDownloadFile],
 ) -> Result<(), DownloadError> {
@@ -81,52 +196,28 @@ pub fn download_artifacts_to_sink<S: BundleSink>(
 }
 
 /// Download artifact files into any bundle sink implementation using a custom transfer client.
-pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: BundleSink>(
-    client: &FTC,
+#[cfg(not(target_arch = "wasm32"))]
+pub fn download_artifacts_to_sink_with_client<S: BundleSink + Send>(
+    client: &ReqwestTransferClient,
     sink: &mut S,
     files: &[ArtifactDownloadFile],
 ) -> Result<(), DownloadError> {
     download_artifacts_to_sink_with_client_and_observer(client, sink, files, &mut ())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Download artifact files into any bundle sink implementation using a custom transfer client,
 /// reporting progress to an observer.
 pub fn download_artifacts_to_sink_with_client_and_observer<
-    FTC: FileTransferClient,
-    S: BundleSink,
+    S: BundleSink + Send,
     O: TransferObserver + ?Sized,
 >(
-    client: &FTC,
+    client: &ReqwestTransferClient,
     sink: &mut S,
     files: &[ArtifactDownloadFile],
     observer: &mut O,
 ) -> Result<(), DownloadError> {
-    let files = validated_download_files(files)?;
-    for (rel_path, file) in files {
-        if observer.is_cancelled() {
-            return Err(DownloadError::Cancelled { rel_path });
-        }
-
-        let reader =
-            client
-                .get_reader(&file.url, file.size_bytes)
-                .map_err(|e| DownloadError::Transfer {
-                    rel_path: rel_path.clone(),
-                    source: e,
-                })?;
-        if observer.is_cancelled() {
-            return Err(DownloadError::Cancelled { rel_path });
-        }
-
-        let artifact_file = ArtifactFile {
-            rel_path,
-            size_bytes: file.size_bytes,
-            checksum: file.checksum.clone(),
-        };
-        transfer_reader_to_sink_with_observer(reader, sink, &artifact_file, observer)?;
-    }
-
-    Ok(())
+    client.block_on(download_into(client.http(), sink, files, observer))
 }
 
 /// Transfer an already-open artifact reader into a bundle sink.
@@ -340,52 +431,99 @@ fn validate_download(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::{BundleSink, InMemoryBundleSources};
-    use crate::transfer::TransferError;
+    use crate::bundle::{BoxFileWriter, BundleSink, FileWriter, InMemoryBundleSources};
     use std::collections::HashMap;
     use std::fmt;
     use std::io::{Cursor, Read};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tracel_task::MaybeSend;
 
     #[derive(Clone)]
     struct MockClient {
         files: Arc<HashMap<String, Vec<u8>>>,
+        chunk: usize,
+        consumed: Arc<AtomicUsize>,
     }
 
     impl MockClient {
         fn new(files: HashMap<String, Vec<u8>>) -> Self {
             Self {
                 files: Arc::new(files),
+                chunk: usize::MAX,
+                consumed: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        /// Serves every file in chunks of `chunk` bytes, counting the bytes handed out.
+        fn chunked(files: HashMap<String, Vec<u8>>, chunk: usize) -> Self {
+            Self {
+                chunk,
+                ..Self::new(files)
             }
         }
     }
 
-    impl FileTransferClient for MockClient {
-        fn put_reader<R: Read + Send + 'static>(
-            &self,
-            _url: &str,
-            mut reader: R,
-            _size_bytes: u64,
-        ) -> Result<(), TransferError> {
-            let mut buf = Vec::new();
-            reader
-                .read_to_end(&mut buf)
-                .map_err(|e| TransferError::Transport(e.to_string()))?;
-            Ok(())
-        }
+    /// Counts the bytes a body yields, so a test can tell how far a transfer got.
+    struct Counted {
+        chunks: std::vec::IntoIter<Bytes>,
+        consumed: Arc<AtomicUsize>,
+    }
 
-        fn get_reader(
+    impl Stream for Counted {
+        type Item = Result<Bytes, TransferError>;
+
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            let this = self.get_mut();
+            let next = this.chunks.next();
+            if let Some(chunk) = &next {
+                this.consumed.fetch_add(chunk.len(), Ordering::SeqCst);
+            }
+            std::task::Poll::Ready(next.map(Ok))
+        }
+    }
+
+    impl TransferClient for MockClient {
+        type Body = Counted;
+
+        async fn get(
             &self,
             url: &str,
             _expected_size_bytes: Option<u64>,
-        ) -> Result<Box<dyn Read + Send>, TransferError> {
+        ) -> Result<Counted, TransferError> {
             let bytes = self
                 .files
                 .get(url)
                 .ok_or_else(|| TransferError::Transport(format!("missing url in mock: {url}")))?;
-            Ok(Box::new(Cursor::new(bytes.clone())))
+            let chunks: Vec<Bytes> = bytes
+                .chunks(self.chunk.min(bytes.len().max(1)))
+                .map(Bytes::copy_from_slice)
+                .collect();
+            Ok(Counted {
+                chunks: chunks.into_iter(),
+                consumed: Arc::clone(&self.consumed),
+            })
         }
+
+        async fn put<B>(&self, _url: &str, body: B, _size_bytes: u64) -> Result<(), TransferError>
+        where
+            B: Stream<Item = Result<Bytes, io::Error>> + MaybeSend + 'static,
+        {
+            body.map(|_| ()).collect::<Vec<()>>().await;
+            Ok(())
+        }
+    }
+
+    fn download<O: TransferObserver + ?Sized>(
+        client: &MockClient,
+        sink: &mut InMemoryBundleSources,
+        files: &[ArtifactDownloadFile],
+        observer: &mut O,
+    ) -> Result<(), DownloadError> {
+        futures::executor::block_on(download_into(client, sink, files, observer))
     }
 
     fn sha256_hex(bytes: &[u8]) -> String {
@@ -407,8 +545,7 @@ mod tests {
             checksum: Some(checksum),
         }];
 
-        download_artifacts_to_sink_with_client(&client, &mut sink, &files)
-            .expect("download should succeed");
+        download(&client, &mut sink, &files, &mut ()).expect("download should succeed");
 
         assert_eq!(sink.len(), 1);
         assert_eq!(sink.files()[0].dest_path(), "weights.bin");
@@ -483,9 +620,32 @@ mod tests {
         }
     }
 
+    /// Discards what it is given.
+    struct Discard;
+
+    impl io::Write for Discard {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl FileWriter for Discard {
+        fn finish(self: Box<Self>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     struct SwallowingSink;
 
     impl BundleSink for SwallowingSink {
+        fn begin_file(&mut self, _path: &str) -> Result<BoxFileWriter<'_>, String> {
+            Ok(Box::new(Discard))
+        }
+
         fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
             let mut byte = [0];
             let _ = reader.read(&mut byte);
@@ -496,6 +656,10 @@ mod tests {
     struct RejectingSink;
 
     impl BundleSink for RejectingSink {
+        fn begin_file(&mut self, _path: &str) -> Result<BoxFileWriter<'_>, String> {
+            Err("target rejected the file".to_string())
+        }
+
         fn put_file<R: Read>(&mut self, _path: &str, reader: &mut R) -> Result<(), String> {
             let mut bytes = Vec::new();
             reader
@@ -611,8 +775,8 @@ mod tests {
             },
         ];
 
-        let err = download_artifacts_to_sink_with_client(&client, &mut sink, &files)
-            .expect_err("duplicate paths should fail");
+        let err =
+            download(&client, &mut sink, &files, &mut ()).expect_err("duplicate paths should fail");
 
         match err {
             DownloadError::InvalidPath(msg) => assert!(msg.contains("duplicate")),
@@ -632,7 +796,7 @@ mod tests {
             checksum: Some("00".repeat(32)),
         }];
 
-        let err = download_artifacts_to_sink_with_client(&client, &mut sink, &files)
+        let err = download(&client, &mut sink, &files, &mut ())
             .expect_err("checksum mismatch should fail");
 
         match err {
@@ -653,8 +817,8 @@ mod tests {
             checksum: None,
         }];
 
-        let err = download_artifacts_to_sink_with_client(&client, &mut sink, &files)
-            .expect_err("size mismatch should fail");
+        let err =
+            download(&client, &mut sink, &files, &mut ()).expect_err("size mismatch should fail");
 
         match err {
             DownloadError::SizeMismatch { path, .. } => assert_eq!(path, "params.bin"),
@@ -709,13 +873,7 @@ mod tests {
         ];
         let mut observer = RecordingObserver::default();
 
-        download_artifacts_to_sink_with_client_and_observer(
-            &client,
-            &mut sink,
-            &files,
-            &mut observer,
-        )
-        .expect("download should succeed");
+        download(&client, &mut sink, &files, &mut observer).expect("download should succeed");
 
         assert_eq!(
             observer.started,
@@ -765,65 +923,10 @@ mod tests {
         }];
         let mut observer = RecordingObserver::default();
 
-        download_artifacts_to_sink_with_client_and_observer(
-            &client,
-            &mut sink,
-            &files,
-            &mut observer,
-        )
-        .expect_err("size mismatch should fail");
+        download(&client, &mut sink, &files, &mut observer).expect_err("size mismatch should fail");
 
         assert_eq!(observer.started.len(), 1);
         assert!(observer.completed.is_empty());
-    }
-
-    #[derive(Clone)]
-    struct ChunkedClient {
-        bytes: Arc<Vec<u8>>,
-        consumed: Arc<AtomicUsize>,
-    }
-
-    impl FileTransferClient for ChunkedClient {
-        fn put_reader<R: Read + Send + 'static>(
-            &self,
-            _url: &str,
-            _reader: R,
-            _size_bytes: u64,
-        ) -> Result<(), TransferError> {
-            unreachable!("the cancellation test only downloads")
-        }
-
-        fn get_reader(
-            &self,
-            _url: &str,
-            _expected_size_bytes: Option<u64>,
-        ) -> Result<Box<dyn Read + Send>, TransferError> {
-            Ok(Box::new(ChunkedReader {
-                bytes: Arc::clone(&self.bytes),
-                consumed: Arc::clone(&self.consumed),
-                offset: 0,
-            }))
-        }
-    }
-
-    struct ChunkedReader {
-        bytes: Arc<Vec<u8>>,
-        consumed: Arc<AtomicUsize>,
-        offset: usize,
-    }
-
-    impl Read for ChunkedReader {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            if self.offset == self.bytes.len() {
-                return Ok(0);
-            }
-
-            let read = 4.min(buffer.len()).min(self.bytes.len() - self.offset);
-            buffer[..read].copy_from_slice(&self.bytes[self.offset..self.offset + read]);
-            self.offset += read;
-            self.consumed.fetch_add(read, Ordering::SeqCst);
-            Ok(read)
-        }
     }
 
     #[derive(Default)]
@@ -848,12 +951,11 @@ mod tests {
 
     #[test]
     fn cancellation_stops_an_active_transfer_before_eof() {
-        let bytes = Arc::new(b"a payload spanning several reads".to_vec());
-        let consumed = Arc::new(AtomicUsize::new(0));
-        let client = ChunkedClient {
-            bytes: Arc::clone(&bytes),
-            consumed: Arc::clone(&consumed),
-        };
+        let bytes = b"a payload spanning several reads".to_vec();
+        let client = MockClient::chunked(
+            HashMap::from([("mock://weights".to_string(), bytes.clone())]),
+            4,
+        );
         let files = [ArtifactDownloadFile {
             rel_path: "weights.bin".to_string(),
             url: "mock://weights".to_string(),
@@ -863,20 +965,14 @@ mod tests {
         let mut sink = InMemoryBundleSources::new();
         let mut observer = CancellingObserver::default();
 
-        let error = download_artifacts_to_sink_with_client_and_observer(
-            &client,
-            &mut sink,
-            &files,
-            &mut observer,
-        )
-        .unwrap_err();
+        let error = download(&client, &mut sink, &files, &mut observer).unwrap_err();
 
         assert!(matches!(
             error,
             DownloadError::Cancelled { rel_path } if rel_path == "weights.bin"
         ));
-        assert_eq!(consumed.load(Ordering::SeqCst), 4);
-        assert!(consumed.load(Ordering::SeqCst) < bytes.len());
+        assert_eq!(client.consumed.load(Ordering::SeqCst), 4);
+        assert!(client.consumed.load(Ordering::SeqCst) < bytes.len());
         assert!(!observer.completed);
         assert!(sink.is_empty());
     }

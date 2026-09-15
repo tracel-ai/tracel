@@ -34,12 +34,21 @@ pub enum ConsoleError {
         /// Human-readable response detail, when one was available.
         message: String,
     },
+    /// The operation was aborted before the console answered.
+    #[error("the console operation was aborted before it produced a result")]
+    Aborted,
 }
 
 impl ConsoleError {
     /// Returns whether the error means the caller must obtain a new session.
     pub fn is_session_expired(&self) -> bool {
         matches!(self, Self::SessionExpired)
+    }
+}
+
+impl From<tracel_task::Aborted> for ConsoleError {
+    fn from(_: tracel_task::Aborted) -> Self {
+        Self::Aborted
     }
 }
 
