@@ -34,6 +34,8 @@ impl Backend for tracel_console::ProjectHandle {
         tracel_console::ProjectHandle::experiments(self)
     }
 
+    // Console inference still bridges through blocking calls.
+    #[cfg(not(target_arch = "wasm32"))]
     fn inference(&self) -> InferenceModule {
         tracel_console::ProjectHandle::inference(self)
     }

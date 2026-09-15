@@ -1,4 +1,6 @@
 mod backend;
+// Discovery reads the environment and the filesystem; a browser is told instead.
+#[cfg(not(target_arch = "wasm32"))]
 mod cloud;
 mod connection;
 mod context;

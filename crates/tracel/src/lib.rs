@@ -93,13 +93,15 @@ pub use tracel_artifact as artifact;
 #[doc(inline)]
 pub use tracel_task as task;
 
-/// App module for job registration, CLI, and config mappers
+/// App module for job registration, CLI, and config mappers. The front-ends block at their
+/// edges or run on tokio, so they are native.
+#[cfg(not(target_arch = "wasm32"))]
 #[doc(inline)]
 pub use tracel_app as app;
 
 /// Station runner front-end: serve registered jobs to a Tracel Station job queue (requires the
 /// `runner` feature).
-#[cfg(feature = "runner")]
+#[cfg(all(feature = "runner", not(target_arch = "wasm32")))]
 #[doc(inline)]
 pub use tracel_runner as runner;
 

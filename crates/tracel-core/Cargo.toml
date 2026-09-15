@@ -27,12 +27,15 @@ url.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-directories = "6.0"
-toml = "1.1.2"
 crossbeam.workspace = true
 futures = { workspace = true, features = ["std"] }
 tracel-task = { workspace = true }
 tracel-artifact = { workspace = true, features = ["fs"] }
+
+# Discovering credentials and the project from the environment.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
