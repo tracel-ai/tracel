@@ -127,7 +127,7 @@ pub async fn open<C: RangeSource>(
     Ok(Box::pin(
         stream::iter(std::iter::once(first))
             .chain(rest)
-            .map(move |range| Task::spawn(&*spawn, range).abort_on_drop())
+            .map(move |range| Task::spawn(&spawn, range))
             .buffered(window)
             .map_ok(Bytes::from),
     ))

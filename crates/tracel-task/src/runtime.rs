@@ -1,4 +1,4 @@
-use std::future::Future;
+use core::future::Future;
 use std::io;
 use std::thread;
 
@@ -27,7 +27,7 @@ impl TokioRuntime {
         let handle = runtime.handle().clone();
         let (shutdown, stopped) = oneshot::channel::<()>();
         thread::Builder::new()
-            .name("tracel-runtime".to_string())
+            .name("tracel-runtime".into())
             .spawn(move || {
                 runtime.block_on(async {
                     let _ = stopped.await;
@@ -56,6 +56,13 @@ impl TokioRuntime {
 impl Spawn for TokioRuntime {
     fn spawn(&self, future: SpawnedFuture) {
         self.handle.spawn(future);
+    }
+}
+
+/// A host that already runs tokio spawns onto it directly.
+impl Spawn for Handle {
+    fn spawn(&self, future: SpawnedFuture) {
+        Handle::spawn(self, future);
     }
 }
 
@@ -93,5 +100,14 @@ mod tests {
             .block_on(async move { Task::spawn(&*inner, async { Ok::<_, Aborted>(7) }).await });
 
         assert_eq!(value, Ok(7));
+    }
+
+    #[test]
+    fn given_a_tokio_handle_when_spawning_on_it_then_the_task_runs_there() {
+        let runtime = TokioRuntime::start().unwrap();
+
+        let task = Task::spawn(runtime.handle(), async { Ok::<_, Aborted>(7) });
+
+        assert_eq!(task.block(), Ok(7));
     }
 }

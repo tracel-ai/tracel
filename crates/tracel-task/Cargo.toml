@@ -12,11 +12,13 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-tokio = ["dep:tokio"]
+default = ["std"]
+std = ["futures/std", "futures/executor", "async-channel/std"]
+tokio = ["std", "dep:tokio"]
 
 [dependencies]
-async-channel = { workspace = true }
-futures = { workspace = true }
+async-channel = { version = "2.5.0", default-features = false }
+futures = { version = "0.3.33", default-features = false, features = ["alloc"] }
 tokio = { version = "1", features = ["rt"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

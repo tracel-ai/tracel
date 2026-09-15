@@ -1,32 +1,46 @@
+#![no_std]
 #![deny(missing_docs)]
 
 //! Effect handles for the Tracel SDK.
 //!
-//! An IO-bound operation returns a [`Task`] (one result) or a [`Streaming`] (many) that is
-//! already running. The caller awaits it, blocks on it at a native sync edge, or polls it from a
-//! loop that must not suspend — none of which requires running, or naming, an async runtime.
-//! Whoever produces the result implements [`Spawn`] with the executor it owns.
+//! An IO-bound operation is handed back as work the caller decides how to drive. A [`Job`] has
+//! not started: await it on any executor, block on it at a native sync edge, or spawn it and get
+//! a [`Task`] — a handle to work already running, which can also be polled from a loop that must
+//! not suspend. [`Streaming`] is the running handle's multi-item twin. None of this requires
+//! running, or naming, an async runtime: whoever produces results implements [`Spawn`] with the
+//! executor it owns.
 //!
 //! Handles are `Send` whenever their payloads are, regardless of the work behind them: only the
 //! result crosses a handle, so a producer may hold state that cannot leave its thread.
+//!
+//! The crate is `no_std` with `alloc`. The `std` feature adds the blocking entry points
+//! ([`Job::block`], [`Task::block`], [`Streaming::blocking_iter`]) and [`ThreadSpawn`], on targets
+//! where another thread can make progress while one is parked; the `tokio` feature adds
+//! [`TokioRuntime`].
 
-#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+extern crate alloc;
+#[cfg(any(feature = "std", test))]
+extern crate std;
+
+mod job;
+#[cfg(feature = "tokio")]
 mod runtime;
 mod spawn;
 mod streaming;
 mod task;
 
-#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+pub use job::Job;
+#[cfg(feature = "tokio")]
 pub use runtime::TokioRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use spawn::BrowserSpawn;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub use spawn::ThreadSpawn;
 pub use spawn::{DynFuture, DynStream, MaybeSend, MaybeSync, Spawn, SpawnedFuture};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};
-pub use task::{AbortOnDrop, Aborted, Reply, Task};
+pub use task::{Aborted, Reply, Task};
 
 /// Holds on every target: handles and their producing halves are `Send + Sync` for `Send`
 /// payloads.
@@ -34,11 +48,10 @@ pub use task::{AbortOnDrop, Aborted, Reply, Task};
 fn assert_handles_are_send_and_sync() {
     fn assert<T: Send + Sync>() {}
 
-    assert::<Task<Vec<u8>, Aborted>>();
-    assert::<AbortOnDrop<Vec<u8>, Aborted>>();
-    assert::<Reply<Vec<u8>, Aborted>>();
-    assert::<Streaming<Vec<u8>, Aborted>>();
-    assert::<StreamingSink<Vec<u8>, Aborted>>();
+    assert::<Task<alloc::vec::Vec<u8>, Aborted>>();
+    assert::<Reply<alloc::vec::Vec<u8>, Aborted>>();
+    assert::<Streaming<alloc::vec::Vec<u8>, Aborted>>();
+    assert::<StreamingSink<alloc::vec::Vec<u8>, Aborted>>();
 }
 
 /// Holds on every target: trait objects borrowed across a suspension point can carry the bounds.
@@ -47,18 +60,19 @@ fn assert_unsized_types_carry_the_bounds() {
     fn send<T: MaybeSend + ?Sized>() {}
     fn sync<T: MaybeSync + ?Sized>() {}
 
-    send::<dyn std::any::Any + Send>();
-    sync::<dyn std::any::Any + Sync>();
+    send::<dyn core::any::Any + Send>();
+    sync::<dyn core::any::Any + Sync>();
 }
 
-/// Holds on wasm: work that cannot leave its thread is still spawnable.
-#[cfg(target_arch = "wasm32")]
+/// Holds on single-threaded targets: work that cannot leave its thread is still spawnable and
+/// still composes into a job.
+#[cfg(any(target_arch = "wasm32", target_os = "none"))]
 #[allow(dead_code)]
 fn assert_thread_local_work_is_spawnable(spawn: &dyn Spawn) {
-    let local = std::rc::Rc::new(());
-    Task::<(), Aborted>::spawn(spawn, async move {
+    let local = alloc::rc::Rc::new(());
+    let job = Job::<(), Aborted>::new(async move {
         drop(local);
         Ok(())
-    })
-    .detach();
+    });
+    job.spawn_on(spawn).detach();
 }

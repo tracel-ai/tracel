@@ -1,8 +1,10 @@
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::vec;
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
 use futures::Stream;
 use futures::future::{AbortHandle, Abortable};
@@ -14,10 +16,11 @@ use crate::task::Aborted;
 ///
 /// Consume it as a [`Stream`], as a blocking iterator at a native sync edge, or by
 /// [`try_next_now`](Streaming::try_next_now) from a loop that must not suspend. Dropping the
-/// handle lets the producer run on; [`cancel`](Streaming::cancel) stops it.
+/// handle stops the producer; [`detach`](Streaming::detach) releases it and lets the producer
+/// run on until it notices the consumer is gone.
 ///
 /// `Streaming<T, E>` is `Send` whenever `T` and `E` are, whatever produces them.
-#[must_use = "the producer is already running; call `detach` to release the handle deliberately"]
+#[must_use = "dropping the handle stops the producer; call `detach` to let it run on"]
 pub struct Streaming<T, E = Aborted> {
     source: Source<T, E>,
 }
@@ -88,8 +91,9 @@ impl<T, E> Streaming<T, E> {
     }
 
     /// Starts the producer returned by `run` on `spawn` and returns the consuming handle.
-    pub fn spawn<F, Fut>(spawn: &dyn Spawn, capacity: usize, run: F) -> Self
+    pub fn spawn<S, F, Fut>(spawn: &S, capacity: usize, run: F) -> Self
     where
+        S: Spawn + ?Sized,
         F: FnOnce(StreamingSink<T, E>) -> Fut,
         Fut: Future<Output = ()> + MaybeSend + 'static,
         T: Send + 'static,
@@ -130,13 +134,17 @@ impl<T, E> Streaming<T, E> {
         }
     }
 
-    /// Releases the handle and lets the producer finish unobserved.
-    pub fn detach(self) {}
+    /// Releases the handle; the producer runs on until it notices the consumer is gone.
+    pub fn detach(mut self) {
+        if let Source::Pending { abort, .. } = &mut self.source {
+            *abort = None;
+        }
+    }
 
     /// Consumes the stream as an iterator that waits for each item on the current thread.
     ///
-    /// Native only, for the same reason as [`Task::block`](crate::Task::block).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Present exactly where [`Task::block`](crate::Task::block) is, for the same reason.
+    #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
     pub fn blocking_iter(self) -> BlockingIter<T, E> {
         BlockingIter { inner: self }
     }
@@ -155,6 +163,12 @@ impl<T, E> Stream for Streaming<T, E> {
     }
 }
 
+impl<T, E> Drop for Streaming<T, E> {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 impl<T, E> fmt::Debug for Streaming<T, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let source = match &self.source {
@@ -168,12 +182,12 @@ impl<T, E> fmt::Debug for Streaming<T, E> {
 }
 
 /// A [`Streaming`] consumed synchronously; see [`Streaming::blocking_iter`].
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub struct BlockingIter<T, E> {
     inner: Streaming<T, E>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 impl<T, E> Iterator for BlockingIter<T, E> {
     type Item = Result<T, E>;
 
@@ -358,6 +372,33 @@ mod tests {
         assert!(
             set_within(&dropped, 5),
             "producer kept running after cancel"
+        );
+    }
+
+    #[test]
+    fn given_dropped_spawned_stream_then_producer_is_dropped_at_its_next_suspension() {
+        struct DropFlag(Arc<AtomicBool>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = DropFlag(dropped.clone());
+        let stream = Streaming::<u8, Aborted>::spawn(&ThreadSpawn, 1, |sink| async move {
+            let _flag = flag;
+            loop {
+                if sink.send(0).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        drop(stream);
+
+        assert!(
+            set_within(&dropped, 5),
+            "producer kept running after the handle was dropped"
         );
     }
 
