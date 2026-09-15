@@ -1,16 +1,22 @@
 //! Signing in from a device that cannot host a browser session.
 
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tracel_client::console::SessionToken;
 use tracel_client::console::auth::{DeviceAuthClient, DeviceFlowError, DevicePollOutcome};
+use tracel_task::TokioRuntime;
 
 use crate::ConsoleError;
 
 /// A pending sign-in, and what to put in front of the user while it is pending.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DeviceLogin {
     client: DeviceAuthClient,
+    /// Drives the client's requests; each call waits on the caller's thread, which is never a
+    /// task on this runtime.
+    runtime: Arc<TokioRuntime>,
     device_code: String,
     /// Code the user types on the verification page.
     pub user_code: String,
@@ -27,11 +33,13 @@ pub struct DeviceLogin {
 impl DeviceLogin {
     /// Asks the console to start a sign-in.
     pub fn start(client_id: impl Into<String>) -> Result<Self, ConsoleError> {
+        let runtime = Arc::new(TokioRuntime::start().expect("failed to start the sign-in runtime"));
         let client = DeviceAuthClient::new(crate::env::from_environment(), client_id);
-        let started = client.start().map_err(login_failure)?;
+        let started = runtime.block_on(client.start()).map_err(login_failure)?;
 
         Ok(Self {
             client,
+            runtime,
             device_code: started.device_code.clone(),
             user_code: started.user_code.clone(),
             verification_uri: started.verification_uri.clone(),
@@ -45,12 +53,26 @@ impl DeviceLogin {
     ///
     /// The caller owns the waiting, so a sign-in stays interruptible.
     pub fn poll(&self) -> Result<DeviceApproval, ConsoleError> {
-        match self.client.poll(&self.device_code) {
+        match self.runtime.block_on(self.client.poll(&self.device_code)) {
             Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
             Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
             Ok(DevicePollOutcome::Approved(token)) => Ok(DeviceApproval::Approved(token)),
             Err(error) => Err(login_failure(error)),
         }
+    }
+}
+
+impl fmt::Debug for DeviceLogin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeviceLogin")
+            .field("client", &self.client)
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &self.verification_uri_complete)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
     }
 }
 

@@ -6,7 +6,6 @@ use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError, upload_multipart,
 };
 use tracel_artifact::{HttpTransferClient, TransferClient, TransferError, TransferObserver};
-use tracel_client::console::Client;
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
@@ -45,49 +44,49 @@ impl ConsoleModelOps {
 }
 
 impl ConsoleModelOps {
-    fn location(&self) -> (String, String) {
-        (self.scope.owner.clone(), self.scope.project.clone())
-    }
-
-    /// Runs one client call on the backend's executor. Until `tracel-client` is asynchronous
-    /// every call blocks, so it goes to the blocking lane rather than the scheduler.
-    fn call<T, E, F>(&self, call: F) -> Task<T, E>
-    where
-        F: FnOnce(&Client) -> Result<T, E> + Send + 'static,
-        T: Send + 'static,
-        E: Send + 'static,
-    {
-        let client = self.scope.console.client.clone();
-        Task::spawn_blocking(&*self.scope.console.spawn, move || call(&client))
+    fn spawn(&self) -> &dyn Spawn {
+        &*self.scope.console.spawn
     }
 }
 
 impl ModelOps for ConsoleModelOps {
     fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
-        let (owner, project) = self.location();
-        self.call(move |client| {
-            client
-                .list_models(&owner, &project)
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .list_models(&scope.owner, &scope.project)
+                .await
                 .map(models_from_wire)
                 .map_err(console_failure)
         })
     }
 
     fn get_model(&self, name: String) -> Task<Model, ModelsError> {
-        let (owner, project) = self.location();
-        self.call(move |client| {
-            client
-                .get_model(&owner, &project, &name)
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .get_model(&scope.owner, &scope.project, &name)
+                .await
                 .map(model_from_wire)
                 .map_err(|error| map_model_error(error, &name))
         })
     }
 
     fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
-        let (owner, project) = self.location();
-        self.call(move |client| {
-            client
-                .list_model_versions(&owner, &project, &model)
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .list_model_versions(&scope.owner, &scope.project, &model)
+                .await
                 .map_err(|error| map_model_error(error, &model))
                 .and_then(model_versions_from_wire)
         })
@@ -95,7 +94,7 @@ impl ModelOps for ConsoleModelOps {
 
     fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
         let this = self.clone();
-        Task::spawn(&*self.scope.console.spawn, async move {
+        Task::spawn(self.spawn(), async move {
             let id = match &spec {
                 VersionSpec::Exact(id) => id.clone(),
                 VersionSpec::Latest => this
@@ -111,14 +110,14 @@ impl ModelOps for ConsoleModelOps {
             };
 
             let route = this.route_version(&model, &id)?;
-            let (owner, project) = this.location();
-            this.call(move |client| {
-                client
-                    .get_model_version(&owner, &project, &model, route)
-                    .map_err(|error| map_version_error(error, &model, &id))
-                    .and_then(model_version_from_wire)
-            })
-            .await
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .get_model_version(&scope.owner, &scope.project, &model, route)
+                .await
+                .map_err(|error| map_version_error(error, &model, &id))
+                .and_then(model_version_from_wire)
         })
     }
 
@@ -131,22 +130,32 @@ impl ModelOps for ConsoleModelOps {
             Ok(route) => route,
             Err(error) => return Task::failed(error),
         };
-        let (owner, project) = self.location();
-        let transfer = self.scope.console.transfer.clone();
-        let spawn = Arc::clone(&self.scope.console.spawn);
-        self.call(move |client| {
-            client
-                .presign_model_download(&owner, &project, &model, route)
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            let scope = &this.scope;
+            let console = &scope.console;
+            console
+                .client
+                .presign_model_download(&scope.owner, &scope.project, &model, route)
+                .await
                 .map_err(|error| map_version_error(error, &model, &id))
-                .map(|response| file_sources_from_wire(&transfer, &spawn, response))
+                .map(|response| file_sources_from_wire(&console.transfer, &console.spawn, response))
         })
     }
 
     fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
-        let (owner, project) = self.location();
-        self.call(move |client| {
-            client
-                .create_model(&owner, &project, CreateModelRequest { name, description })
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .create_model(
+                    &scope.owner,
+                    &scope.project,
+                    CreateModelRequest { name, description },
+                )
+                .await
                 .map(model_from_wire)
                 .map_err(console_failure)
         })
@@ -161,8 +170,10 @@ impl ModelOps for ConsoleModelOps {
         mut observer: Box<dyn TransferObserver>,
     ) -> Task<ModelVersion, ModelsError> {
         let this = self.clone();
-        Task::spawn(&*self.scope.console.spawn, async move {
-            let (owner, project) = this.location();
+        Task::spawn(self.spawn(), async move {
+            let scope = &this.scope;
+            let (owner, project) = (scope.owner.as_str(), scope.project.as_str());
+            let client = &scope.console.client;
             let request = RequestModelVersionUploadRequest {
                 files: files
                     .iter()
@@ -174,15 +185,10 @@ impl ModelOps for ConsoleModelOps {
                     .collect(),
                 metadata,
             };
-            let planned = {
-                let (owner, project, model) = (owner.clone(), project.clone(), model.clone());
-                this.call(move |client| {
-                    client
-                        .request_model_version_upload(&owner, &project, &model, request)
-                        .map_err(|error| map_model_error(error, &model))
-                })
-                .await?
-            };
+            let planned = client
+                .request_model_version_upload(owner, project, &model, request)
+                .await
+                .map_err(|error| map_model_error(error, &model))?;
 
             let uploads = planned
                 .files
@@ -203,7 +209,7 @@ impl ModelOps for ConsoleModelOps {
                 .collect::<Vec<_>>();
 
             upload_multipart(
-                &this.scope.console.transfer,
+                &scope.console.transfer,
                 &*contents,
                 &uploads,
                 &mut *observer,
@@ -212,23 +218,16 @@ impl ModelOps for ConsoleModelOps {
             .map_err(model_upload_failure)?;
 
             let version = planned.version;
-            {
-                let (owner, project, model) = (owner.clone(), project.clone(), model.clone());
-                this.call(move |client| {
-                    client
-                        .complete_model_version_upload(&owner, &project, &model, version)
-                        .map_err(|error| map_model_error(error, &model))
-                })
-                .await?;
-            }
+            client
+                .complete_model_version_upload(owner, project, &model, version)
+                .await
+                .map_err(|error| map_model_error(error, &model))?;
 
-            this.call(move |client| {
-                client
-                    .get_model_version(&owner, &project, &model, version)
-                    .map_err(|error| map_model_error(error, &model))
-                    .and_then(model_version_from_wire)
-            })
-            .await
+            client
+                .get_model_version(owner, project, &model, version)
+                .await
+                .map_err(|error| map_model_error(error, &model))
+                .and_then(model_version_from_wire)
         })
     }
 }

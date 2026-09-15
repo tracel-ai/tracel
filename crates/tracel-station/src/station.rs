@@ -20,6 +20,11 @@ pub struct Station {
 
 pub struct StationInner {
     pub client: StationClient,
+    /// The executor behind [`spawn`](Self::spawn), for the ports whose contract is synchronous:
+    /// each one `block_on`s a client call from the caller's thread, never from a task on the
+    /// runtime itself, which would stall it.
+    // Every such bridge goes away when its capability hands back tasks of its own.
+    pub runtime: Arc<TokioRuntime>,
     pub spawn: Arc<dyn Spawn>,
     pub transfer: HttpTransferClient,
 }
@@ -27,13 +32,14 @@ pub struct StationInner {
 impl Station {
     /// Binds to a Station without performing I/O.
     pub fn connect(url: Url) -> Self {
-        let spawn: Arc<dyn Spawn> =
-            Arc::new(TokioRuntime::start().expect("failed to start the station runtime"));
+        let runtime = Arc::new(TokioRuntime::start().expect("failed to start the station runtime"));
+        let spawn: Arc<dyn Spawn> = runtime.clone();
         let transfer = HttpTransferClient::new(Arc::clone(&spawn));
 
         Self {
             inner: Arc::new(StationInner {
                 client: StationClient::from_url(url),
+                runtime,
                 spawn,
                 transfer,
             }),

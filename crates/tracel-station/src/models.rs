@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use tracel_artifact::{HttpTransferClient, TransferClient, TransferError};
-use tracel_client::station::StationClient;
 use tracel_client::station::model::request::CreateModelRequest;
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
@@ -35,45 +34,46 @@ impl StationModelOps {
 }
 
 impl StationModelOps {
-    /// Runs one client call on the backend's executor. Until `tracel-client` is asynchronous
-    /// every call blocks, so it goes to the blocking lane rather than the scheduler.
-    fn call<T, E, F>(&self, call: F) -> Task<T, E>
-    where
-        F: FnOnce(&StationClient) -> Result<T, E> + Send + 'static,
-        T: Send + 'static,
-        E: Send + 'static,
-    {
-        let client = self.station.client.clone();
-        Task::spawn_blocking(&*self.station.spawn, move || call(&client))
+    fn spawn(&self) -> &dyn Spawn {
+        &*self.station.spawn
     }
 }
 
 impl ModelOps for StationModelOps {
     fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
-        self.call(|client| {
-            client
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            this.station
+                .client
                 .models()
                 .list()
+                .await
                 .map(models_from_wire)
                 .map_err(station_failure)
         })
     }
 
     fn get_model(&self, name: String) -> Task<Model, ModelsError> {
-        self.call(move |client| {
-            client
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            this.station
+                .client
                 .models()
                 .get(&name)
+                .await
                 .map(model_from_wire)
                 .map_err(|error| map_model_error(error, &name))
         })
     }
 
     fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
-        self.call(move |client| {
-            client
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            this.station
+                .client
                 .models()
                 .versions(&model)
+                .await
                 .map(model_versions_from_wire)
                 .map_err(|error| map_model_error(error, &model))
         })
@@ -81,7 +81,7 @@ impl ModelOps for StationModelOps {
 
     fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
         let this = self.clone();
-        Task::spawn(&*self.station.spawn, async move {
+        Task::spawn(self.spawn(), async move {
             let id = match &spec {
                 VersionSpec::Exact(id) => id.clone(),
                 // The Station has no latest-version route, so the listing answers it.
@@ -99,14 +99,13 @@ impl ModelOps for StationModelOps {
             };
 
             let route = this.route_version(&model, &id)?;
-            this.call(move |client| {
-                client
-                    .models()
-                    .version(&model, route)
-                    .map(model_version_from_wire)
-                    .map_err(|error| map_version_error(error, &model, &id))
-            })
-            .await
+            this.station
+                .client
+                .models()
+                .version(&model, route)
+                .await
+                .map(model_version_from_wire)
+                .map_err(|error| map_version_error(error, &model, &id))
         })
     }
 
@@ -119,22 +118,27 @@ impl ModelOps for StationModelOps {
             Ok(route) => route,
             Err(error) => return Task::failed(error),
         };
-        let transfer = self.station.transfer.clone();
-        let spawn = Arc::clone(&self.station.spawn);
-        self.call(move |client| {
-            client
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            let station = &this.station;
+            station
+                .client
                 .models()
                 .download(&model, route)
+                .await
                 .map_err(|error| map_version_error(error, &model, &id))
-                .map(|response| file_sources_from_wire(&transfer, &spawn, response))
+                .map(|response| file_sources_from_wire(&station.transfer, &station.spawn, response))
         })
     }
 
     fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
-        self.call(move |client| {
-            client
+        let this = self.clone();
+        Task::spawn(self.spawn(), async move {
+            this.station
+                .client
                 .models()
                 .create(CreateModelRequest { name, description })
+                .await
                 .map(model_from_wire)
                 .map_err(station_failure)
         })

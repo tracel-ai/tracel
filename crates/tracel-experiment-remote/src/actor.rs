@@ -4,7 +4,8 @@ use std::pin::pin;
 
 use async_channel::{Receiver, Sender};
 use futures::future::{Either, select};
-use tracel_client::websocket::{ExperimentMessage, ServerMessage};
+use tracel_client::WebSocketClient;
+use tracel_client::websocket::{ExperimentMessage, ServerMessage, WebSocketError};
 use tracel_experiment::{ActivityId, ExperimentRunControl};
 use tracel_task::{Aborted, MaybeSend, Reply, Spawn, Task};
 
@@ -22,6 +23,12 @@ pub enum SocketError {
 impl From<Aborted> for SocketError {
     fn from(_: Aborted) -> Self {
         Self::Closed
+    }
+}
+
+impl From<WebSocketError> for SocketError {
+    fn from(error: WebSocketError) -> Self {
+        Self::WebSocket(error.to_string())
     }
 }
 
@@ -49,6 +56,24 @@ pub trait ExperimentSocket: MaybeSend + 'static {
 
     /// Closes the connection, waiting for the closing handshake.
     fn close(&mut self) -> impl Future<Output = Result<(), SocketError>> + MaybeSend;
+}
+
+impl ExperimentSocket for WebSocketClient {
+    async fn send(&mut self, message: ExperimentMessage) -> Result<(), SocketError> {
+        WebSocketClient::send(self, message)
+            .await
+            .map_err(SocketError::from)
+    }
+
+    async fn next(&mut self) -> Result<Option<ServerMessage>, SocketError> {
+        WebSocketClient::next(self).await.map_err(SocketError::from)
+    }
+
+    async fn close(&mut self) -> Result<(), SocketError> {
+        WebSocketClient::close(self)
+            .await
+            .map_err(SocketError::from)
+    }
 }
 
 /// A run's end of the actor that drives its [`ExperimentSocket`].

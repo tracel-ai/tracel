@@ -5,7 +5,6 @@
 
 mod actor;
 mod session;
-mod socket;
 
 pub use actor::{ExperimentSocket, SocketClosed, SocketError, SocketHandle};
 pub use session::{

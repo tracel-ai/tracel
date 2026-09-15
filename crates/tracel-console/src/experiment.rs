@@ -2,6 +2,7 @@
 //! websocket session for events, with artifacts moved over separate REST calls.
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -67,13 +68,14 @@ fn create_run(
     name: String,
     attributes: HashMap<String, Value>,
 ) -> Result<ExperimentRun, CloudError> {
-    let experiment = scope.console.client.create_experiment(
+    let console = &scope.console;
+    let experiment = console.runtime.block_on(console.client.create_experiment(
         &scope.owner,
         &scope.project,
         Some(name),
         None,
         attributes,
-    )?;
+    ))?;
 
     let experiment_num = experiment.experiment_num;
     let cancel_token = CancelToken::new();
@@ -81,13 +83,20 @@ fn create_run(
 
     let artifact_uploader = ConsoleArtifactUploader::new(Arc::clone(scope), experiment_num);
 
-    let ws = scope.console.client.create_experiment_run_websocket(
-        &scope.owner,
-        &scope.project,
-        experiment_num,
-    )?;
+    let ws = console
+        .runtime
+        .block_on(console.client.create_experiment_run_websocket(
+            &scope.owner,
+            &scope.project,
+            experiment_num,
+        ))?;
 
-    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
+    let session = RemoteExperimentSession::new(
+        Box::new(artifact_uploader),
+        ws,
+        control.clone(),
+        &*console.spawn,
+    );
 
     let reader = ConsoleArtifactReader::new(Arc::clone(scope));
     let id = ExperimentId::from(format!("{experiment_num}"));
@@ -105,6 +114,11 @@ struct ExperimentArtifactClient {
 }
 
 impl ExperimentArtifactClient {
+    /// Waits for `call` on the calling thread, with the connection's runtime driving it.
+    fn block_on<F: Future>(&self, call: F) -> F::Output {
+        self.scope.console.runtime.block_on(call)
+    }
+
     fn upload(
         &self,
         name: impl Into<String>,
@@ -128,7 +142,7 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let res = self.scope.console.client.create_artifact(
+        let res = self.block_on(self.scope.console.client.create_artifact(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
@@ -137,7 +151,7 @@ impl ExperimentArtifactClient {
                 kind: artifact_kind_name(kind).to_string(),
                 files: specs,
             },
-        )?;
+        ))?;
 
         let mut multipart_map = BTreeMap::new();
         for f in &res.files {
@@ -170,13 +184,13 @@ impl ExperimentArtifactClient {
         }
         upload_bundle_multipart_with_client(&self.scope.console.transfer_client, bundle, &uploads)?;
 
-        self.scope.console.client.complete_artifact_upload(
+        self.block_on(self.scope.console.client.complete_artifact_upload(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
             &res.id,
             None,
-        )?;
+        ))?;
 
         Ok(res.id)
     }
@@ -184,12 +198,12 @@ impl ExperimentArtifactClient {
     fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
-        let resp = self.scope.console.client.presign_artifact_download(
+        let resp = self.block_on(self.scope.console.client.presign_artifact_download(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
             &artifact.id.to_string(),
-        )?;
+        ))?;
 
         let mut files = Vec::with_capacity(resp.files.len());
         for file in resp.files {
@@ -215,19 +229,16 @@ impl ExperimentArtifactClient {
 
     fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
-        self.scope
-            .console
-            .client
-            .list_artifacts_by_name(
-                &self.scope.owner,
-                &self.scope.project,
-                self.experiment_num,
-                name,
-            )?
-            .items
-            .into_iter()
-            .next()
-            .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
+        self.block_on(self.scope.console.client.list_artifacts_by_name(
+            &self.scope.owner,
+            &self.scope.project,
+            self.experiment_num,
+            name,
+        ))?
+        .items
+        .into_iter()
+        .next()
+        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
     }
 }
 

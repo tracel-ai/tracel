@@ -3,10 +3,10 @@
 use tracel::console::{Console, TracelCredentials};
 
 fn main() -> anyhow::Result<()> {
-    let console = Console::connect(&credentials()?)?;
+    let console = Console::connect(&credentials()?).block()?;
     let (namespace, project) = project()?;
 
-    match console.me()? {
+    match console.me().block()? {
         Some(user) => println!("signed in as {} ({})", user.username, user.namespace.name),
         None => println!("the session is no longer valid; sign in again"),
     }

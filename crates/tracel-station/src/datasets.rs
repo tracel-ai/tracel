@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -20,6 +21,11 @@ pub struct StationDatasetOps {
 }
 
 impl StationDatasetOps {
+    /// Waits for `call` on the calling thread, with the Station's runtime driving it.
+    fn block_on<F: Future>(&self, call: F) -> F::Output {
+        self.station.runtime.block_on(call)
+    }
+
     fn route_version(&self, dataset: &str, id: &VersionId) -> Result<u32, DatasetsError> {
         id.as_str()
             .parse()
@@ -33,10 +39,12 @@ impl StationDatasetOps {
 impl DatasetOps for StationDatasetOps {
     fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
         let response = self
-            .station
-            .client
-            .datasets()
-            .query(QueryDatasetsRequest::default())
+            .block_on(
+                self.station
+                    .client
+                    .datasets()
+                    .query(QueryDatasetsRequest::default()),
+            )
             .map_err(station_failure)?;
         Ok(response.items.into_iter().map(dataset_from_wire).collect())
     }
@@ -53,10 +61,12 @@ impl DatasetOps for StationDatasetOps {
 
     fn list_versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
         let response = self
-            .station
-            .client
-            .datasets()
-            .versions(dataset, QueryDatasetVersionsRequest::default())
+            .block_on(
+                self.station
+                    .client
+                    .datasets()
+                    .versions(dataset, QueryDatasetVersionsRequest::default()),
+            )
             .map_err(|error| map_dataset_error(error, dataset))?;
 
         response
@@ -74,9 +84,10 @@ impl DatasetOps for StationDatasetOps {
         let versions = self.station.client.datasets();
         let response = match &spec {
             VersionSpec::Exact(id) => {
-                versions.get_version(dataset, self.route_version(dataset, id)?)
+                let route = self.route_version(dataset, id)?;
+                self.block_on(versions.get_version(dataset, route))
             }
-            VersionSpec::Latest => versions.get_latest_version(dataset),
+            VersionSpec::Latest => self.block_on(versions.get_latest_version(dataset)),
         };
 
         response
@@ -99,16 +110,13 @@ impl DatasetOps for StationDatasetOps {
         description: Option<&str>,
         metadata: Option<&serde_json::Value>,
     ) -> Result<Dataset, DatasetsError> {
-        self.station
-            .client
-            .datasets()
-            .create(CreateDatasetRequest {
-                name: name.to_string(),
-                description: description.map(str::to_string),
-                metadata: metadata.cloned(),
-            })
-            .map(dataset_from_wire)
-            .map_err(station_failure)
+        self.block_on(self.station.client.datasets().create(CreateDatasetRequest {
+            name: name.to_string(),
+            description: description.map(str::to_string),
+            metadata: metadata.cloned(),
+        }))
+        .map(dataset_from_wire)
+        .map_err(station_failure)
     }
 
     fn start_publication(&self, _dataset: &str) -> Result<Box<dyn Publication>, DatasetsError> {
@@ -130,17 +138,14 @@ impl DatasetOps for StationDatasetOps {
             let mut next = run.start;
             while next < run.end {
                 let page = self
-                    .station
-                    .client
-                    .datasets()
-                    .stream_items(
+                    .block_on(self.station.client.datasets().stream_items(
                         dataset,
                         version,
                         StreamDatasetVersionItemsRequest {
                             index: Some(next),
                             limit: Some((run.end - next).min(u32::MAX as u64) as u32),
                         },
-                    )
+                    ))
                     .map_err(|error| map_version_error(error, dataset, id))?;
 
                 if page.items.is_empty() {

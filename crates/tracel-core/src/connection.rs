@@ -27,7 +27,7 @@ impl Connection {
                 let credentials = crate::cloud::discover_credentials()?;
                 let (namespace, project) = crate::cloud::discover_namespace_project()?;
 
-                let console = Console::connect(&credentials)?;
+                let console = Console::connect(&credentials).block()?;
                 let project = console.project(namespace, project);
 
                 Ok(Arc::new(project))

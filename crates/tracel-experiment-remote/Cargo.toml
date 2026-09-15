@@ -14,8 +14,8 @@ categories.workspace = true
 [dependencies]
 async-channel = { workspace = true }
 chrono = { workspace = true }
-crossbeam = { workspace = true }
 futures = { workspace = true }
+futures-timer = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

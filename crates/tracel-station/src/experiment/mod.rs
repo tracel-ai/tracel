@@ -1,6 +1,7 @@
 mod artifacts;
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -9,12 +10,12 @@ use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_ar
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
 };
+use tracel_client::ClientError;
 use tracel_client::station::experiment::{
     ArtifactFileSpecRequest, ArtifactResponse, CompleteUploadRequest, CreateArtifactRequest,
     CreateExperimentRequest, ListArtifactsQuery,
 };
 use tracel_client::websocket::WebSocketError;
-use tracel_client::{ClientError, station::StationClient};
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::{
     ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
@@ -51,13 +52,18 @@ impl ExperimentPath {
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
 pub struct ExperimentArtifactClient {
-    client: StationClient,
+    station: Arc<StationInner>,
     exp_path: ExperimentPath,
 }
 
 impl ExperimentArtifactClient {
-    pub fn new(client: StationClient, exp_path: ExperimentPath) -> Self {
-        Self { client, exp_path }
+    pub fn new(station: Arc<StationInner>, exp_path: ExperimentPath) -> Self {
+        Self { station, exp_path }
+    }
+
+    /// Waits for `call` on the calling thread, with the Station's runtime driving it.
+    fn block_on<F: Future>(&self, call: F) -> F::Output {
+        self.station.runtime.block_on(call)
     }
 
     pub fn upload(
@@ -66,7 +72,7 @@ impl ExperimentArtifactClient {
         kind: ArtifactKind,
         bundle: &FsBundle,
     ) -> Result<String, ArtifactError> {
-        let client = self.client.experiments();
+        let client = self.station.client.experiments();
 
         let name = name.into();
 
@@ -85,14 +91,14 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let created = client.create_artifact(
+        let created = self.block_on(client.create_artifact(
             self.exp_path.experiment_num(),
             CreateArtifactRequest {
                 name: name.clone(),
                 kind: artifact_kind_name(kind).to_string(),
                 files: specs,
             },
-        )?;
+        ))?;
 
         let mut multipart_map = BTreeMap::new();
         for file in &created.files {
@@ -126,11 +132,11 @@ impl ExperimentArtifactClient {
         }
         upload_bundle_multipart(bundle, &uploads)?;
 
-        client.complete_artifact_upload(
+        self.block_on(client.complete_artifact_upload(
             self.exp_path.experiment_num(),
             &created.id,
             CompleteUploadRequest { file_names: None },
-        )?;
+        ))?;
 
         Ok(created.id)
     }
@@ -139,10 +145,11 @@ impl ExperimentArtifactClient {
     pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
-        let presigned = self
-            .client
-            .experiments()
-            .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string())?;
+        let client = self.station.client.experiments();
+        let presigned = self.block_on(
+            client
+                .presign_artifact_download(self.exp_path.experiment_num(), artifact.id.to_string()),
+        )?;
 
         let mut files = Vec::with_capacity(presigned.files.len());
         for file in presigned.files {
@@ -166,18 +173,16 @@ impl ExperimentArtifactClient {
     /// Fetch information about an artifact by name.
     pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
-        self.client
-            .experiments()
-            .list_artifacts(
-                self.exp_path.experiment_num(),
-                ListArtifactsQuery {
-                    name: Some(name.to_string()),
-                },
-            )?
-            .items
-            .into_iter()
-            .next()
-            .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
+        self.block_on(self.station.client.experiments().list_artifacts(
+            self.exp_path.experiment_num(),
+            ListArtifactsQuery {
+                name: Some(name.to_string()),
+            },
+        ))?
+        .items
+        .into_iter()
+        .next()
+        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
     }
 }
 
@@ -213,7 +218,7 @@ impl ExperimentProvider for StationExperimentProvider {
         name: String,
         attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        create_run(self.station.client.clone(), name, attributes).map_err(|error| ExperimentError {
+        create_run(Arc::clone(&self.station), name, attributes).map_err(|error| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
             source: Some(Box::new(error)),
@@ -222,29 +227,35 @@ impl ExperimentProvider for StationExperimentProvider {
 }
 
 fn create_run(
-    client: StationClient,
+    station: Arc<StationInner>,
     name: String,
     attributes: HashMap<String, Value>,
 ) -> Result<ExperimentRun, RunError> {
-    let experiments_client = client.experiments();
-    let experiment = experiments_client.create(CreateExperimentRequest {
+    let experiments_client = station.client.experiments();
+    let runtime = &station.runtime;
+    let experiment = runtime.block_on(experiments_client.create(CreateExperimentRequest {
         name: Some(name),
         description: None,
         attributes,
-    })?;
+    }))?;
 
     let experiment_num = experiment.experiment_num;
     let path = ExperimentPath::new(experiment_num);
     let cancel_token = CancelToken::new();
     let control = ExperimentRunControl::new(cancel_token.clone());
 
-    let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
+    let artifact_uploader = StationArtifactUploader::new(Arc::clone(&station), path);
 
-    let ws = experiments_client.create_run_websocket(experiment_num)?;
+    let ws = runtime.block_on(experiments_client.create_run_websocket(experiment_num))?;
 
-    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), ws, control.clone());
+    let session = RemoteExperimentSession::new(
+        Box::new(artifact_uploader),
+        ws,
+        control.clone(),
+        &*station.spawn,
+    );
 
-    let reader = StationArtifactReader::new(client);
+    let reader = StationArtifactReader::new(station);
     let id = ExperimentId::from(experiment_num.to_string());
 
     Ok(ExperimentRun::new_with_control(
