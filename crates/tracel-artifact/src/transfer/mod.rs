@@ -6,15 +6,11 @@ use bytes::Bytes;
 use futures::{Stream, stream};
 use tracel_task::{MaybeSend, MaybeSync};
 
-#[cfg(not(target_arch = "wasm32"))]
-mod blocking;
 mod http;
 mod ranged;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod test_server;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use blocking::ReqwestTransferClient;
 pub use http::HttpTransferClient;
 
 const TRANSFER_SECONDS_ALLOWED_PER_MEGABYTE: u64 = 10;

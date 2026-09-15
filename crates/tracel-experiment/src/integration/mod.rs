@@ -6,5 +6,7 @@
 //! Use [`tracing`] to route `tracing` events into the current experiment.
 
 pub mod tracing;
-#[cfg(feature = "burn")]
+// Burn's training traits are synchronous, so these adapters block at each edge and exist only
+// where a thread can.
+#[cfg(all(feature = "burn", not(target_arch = "wasm32")))]
 pub mod training;

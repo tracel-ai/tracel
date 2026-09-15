@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use crate::activity::ActivityEvent;
 use crate::error::ExperimentError;
 use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+use tracel_artifact::bundle::FsBundle;
+use tracel_task::Job;
+
+use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl};
 
 #[derive(Default)]
@@ -33,23 +36,23 @@ impl ExperimentSession for MockSession {
         Ok(())
     }
 
-    fn flush(&self) -> Result<(), ExperimentError> {
+    fn flush(&self) -> Job<(), ExperimentError> {
         *self.flushes.lock().unwrap() += 1;
-        Ok(())
+        Job::ready(())
     }
 
     fn save_artifact(
         &self,
-        _name: &str,
+        _name: String,
         _kind: ArtifactKind,
-        _artifact: Box<BundleFn>,
-    ) -> Result<(), ExperimentError> {
-        Ok(())
+        _bundle: FsBundle,
+    ) -> Job<(), ExperimentError> {
+        Job::ready(())
     }
 
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+    fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {
         self.completions.lock().unwrap().push(completion);
-        Ok(())
+        Job::ready(())
     }
 }
 
@@ -60,9 +63,9 @@ impl ExperimentArtifactReader for NoopExperimentDataReader {
     fn load_artifact_raw(
         &self,
         _experiment_id: ExperimentId,
-        _name: &str,
-    ) -> Result<LoadedArtifact, ExperimentReaderError> {
-        Err(ExperimentReaderError::new("Artifact not found"))
+        _name: String,
+    ) -> Job<LoadedArtifact, ExperimentReaderError> {
+        Job::failed(ExperimentReaderError::new("Artifact not found"))
     }
 }
 

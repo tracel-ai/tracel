@@ -133,7 +133,9 @@ pub fn run(
         model_record: result.model.into_record(),
         config,
     };
-    experiment.save_artifact("model", ArtifactKind::Model, artifact, &())?;
+    experiment
+        .save_artifact("model", ArtifactKind::Model, artifact, &())
+        .block()?;
 
     Ok(())
 }

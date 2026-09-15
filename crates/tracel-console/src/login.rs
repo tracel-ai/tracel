@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tracel_client::console::SessionToken;
 use tracel_client::console::auth::{DeviceAuthClient, DeviceFlowError, DevicePollOutcome};
-use tracel_task::Runtime;
+use tracel_task::{Job, Runtime};
 
 use crate::ConsoleError;
 
@@ -14,8 +14,7 @@ use crate::ConsoleError;
 #[derive(Clone)]
 pub struct DeviceLogin {
     client: DeviceAuthClient,
-    /// Drives the client's requests; each call waits on the caller's thread, which is never a
-    /// task on this runtime.
+    /// Drives the client's requests; there is no connection yet to borrow one from.
     runtime: Arc<Runtime>,
     device_code: String,
     /// Code the user types on the verification page.
@@ -32,33 +31,43 @@ pub struct DeviceLogin {
 
 impl DeviceLogin {
     /// Asks the console to start a sign-in.
-    pub fn start(client_id: impl Into<String>) -> Result<Self, ConsoleError> {
-        let runtime = Arc::new(Runtime::start().expect("failed to start the sign-in runtime"));
+    pub fn start(client_id: impl Into<String>) -> Job<Self, ConsoleError> {
         let client = DeviceAuthClient::new(crate::env::from_environment(), client_id);
-        let started = runtime.block_on(client.start()).map_err(login_failure)?;
+        Job::new(async move {
+            let runtime =
+                Arc::new(Runtime::acquire().expect("failed to start the sign-in runtime"));
+            let started = runtime
+                .attach(client.start())
+                .await
+                .map_err(login_failure)?;
 
-        Ok(Self {
-            client,
-            runtime,
-            device_code: started.device_code.clone(),
-            user_code: started.user_code.clone(),
-            verification_uri: started.verification_uri.clone(),
-            verification_uri_complete: started.verification_uri_complete.clone(),
-            expires_in: started.expires_in(),
-            interval: started.interval(),
+            Ok(Self {
+                client,
+                runtime,
+                device_code: started.device_code.clone(),
+                user_code: started.user_code.clone(),
+                verification_uri: started.verification_uri.clone(),
+                verification_uri_complete: started.verification_uri_complete.clone(),
+                expires_in: started.expires_in(),
+                interval: started.interval(),
+            })
         })
     }
 
-    /// Asks once whether the user has answered, without waiting.
+    /// Asks once whether the user has answered.
     ///
-    /// The caller owns the waiting, so a sign-in stays interruptible.
-    pub fn poll(&self) -> Result<DeviceApproval, ConsoleError> {
-        match self.runtime.block_on(self.client.poll(&self.device_code)) {
-            Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
-            Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
-            Ok(DevicePollOutcome::Approved(token)) => Ok(DeviceApproval::Approved(token)),
-            Err(error) => Err(login_failure(error)),
-        }
+    /// The caller owns the waiting between polls, so a sign-in stays interruptible.
+    pub fn poll(&self) -> Job<DeviceApproval, ConsoleError> {
+        let client = self.client.clone();
+        let device_code = self.device_code.clone();
+        Job::new(self.runtime.attach(async move {
+            match client.poll(&device_code).await {
+                Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
+                Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
+                Ok(DevicePollOutcome::Approved(token)) => Ok(DeviceApproval::Approved(token)),
+                Err(error) => Err(login_failure(error)),
+            }
+        }))
     }
 }
 

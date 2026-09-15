@@ -2,8 +2,6 @@
 //!
 //! The upload process can be customized with any implementation of the TransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::ReqwestTransferClient;
 use crate::TransferClient;
 use crate::transfer::{TransferError, TransferObserver, reader_stream};
 use std::collections::HashSet;
@@ -80,41 +78,6 @@ impl<S: MultipartUploadSource + ?Sized> MultipartUploadSource for &S {
     ) -> Result<Box<dyn Read + Send>, UploadError> {
         (**self).open_part(rel_path, offset, size)
     }
-}
-
-/// Upload multiple files from a multipart source using presigned URLs.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn upload_bundle_multipart<S: MultipartUploadSource>(
-    source: &S,
-    files: &[MultipartUploadFile],
-) -> Result<(), UploadError> {
-    let client = ReqwestTransferClient::new();
-    upload_bundle_multipart_with_client(&client, source, files)
-}
-
-/// Upload multiple files from a multipart source using presigned URLs and a custom client.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn upload_bundle_multipart_with_client<S: MultipartUploadSource>(
-    client: &ReqwestTransferClient,
-    source: &S,
-    files: &[MultipartUploadFile],
-) -> Result<(), UploadError> {
-    upload_bundle_multipart_with_client_and_observer(client, source, files, &mut ())
-}
-
-/// Upload multiple files, reporting progress and honouring cancellation through `observer`.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn upload_bundle_multipart_with_client_and_observer<S, O>(
-    client: &ReqwestTransferClient,
-    source: &S,
-    files: &[MultipartUploadFile],
-    observer: &mut O,
-) -> Result<(), UploadError>
-where
-    S: MultipartUploadSource,
-    O: TransferObserver + ?Sized,
-{
-    client.block_on(upload_multipart(client.http(), source, files, observer))
 }
 
 /// Uploads `files` from `source` part by part to their presigned URLs, reporting progress and

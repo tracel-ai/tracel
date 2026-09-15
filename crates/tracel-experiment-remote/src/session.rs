@@ -4,7 +4,7 @@ use std::time::Duration;
 use futures::future::{Either, select};
 use futures_timer::Delay;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+use tracel_experiment::session::{Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{
     ActivityEvent, ActivityId, ActivityStatus, ArtifactKind, LogLevel, LogRecord, MetricSpec,
     MetricValue,
@@ -16,6 +16,7 @@ use tracel_client::websocket::{
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, LogEntry,
     LogEntryLevel, MetricLog,
 };
+use tracel_task::Job;
 
 use crate::actor::SocketHandle;
 
@@ -35,10 +36,10 @@ pub trait ArtifactUploader {
     /// Uploads one bundle under `name`.
     fn upload(
         &self,
-        name: &str,
+        name: String,
         kind: ArtifactKind,
-        bundle: &FsBundle,
-    ) -> Result<(), ArtifactUploadError>;
+        bundle: FsBundle,
+    ) -> Job<(), ArtifactUploadError>;
 }
 
 /// An [`ArtifactUploader`] a session can own.
@@ -86,81 +87,80 @@ impl ExperimentSession for RemoteExperimentSession {
         self.send(to_remote_message(event))
     }
 
-    fn flush(&self) -> Result<(), ExperimentError> {
+    fn flush(&self) -> Job<(), ExperimentError> {
         let flushed = {
             let guard = self.socket.lock().unwrap();
             let Some(socket) = guard.as_ref() else {
                 // A finished session already drained on the way out.
-                return Ok(());
+                return Job::ready(());
             };
             socket.flush()
         };
 
-        let outcome = futures::executor::block_on(select(flushed, Delay::new(FLUSH_TIMEOUT)));
-        match outcome {
-            Either::Left((Ok(()), _)) => Ok(()),
-            Either::Left((Err(_), _)) => Err(ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "The experiment socket is no longer accepting events",
-            )),
-            Either::Right(_) => Err(ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "The experiment socket did not confirm delivery in time",
-            )),
-        }
+        Job::new(async move {
+            match select(flushed, Delay::new(FLUSH_TIMEOUT)).await {
+                Either::Left((Ok(()), _)) => Ok(()),
+                Either::Left((Err(_), _)) => Err(ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "The experiment socket is no longer accepting events",
+                )),
+                Either::Right(_) => Err(ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "The experiment socket did not confirm delivery in time",
+                )),
+            }
+        })
     }
 
     fn save_artifact(
         &self,
-        name: &str,
+        name: String,
         kind: ArtifactKind,
-        artifact: Box<BundleFn>,
-    ) -> Result<(), ExperimentError> {
-        let mut bundle = FsBundle::temp().map_err(|err| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Artifact,
-                "Failed to create temporary bundle for artifact upload",
-                err,
-            )
-        })?;
-
-        artifact(&mut bundle)?;
-
-        self.artifact_uploader
-            .upload(name, kind, &bundle)
-            .map_err(|err| {
+        bundle: FsBundle,
+    ) -> Job<(), ExperimentError> {
+        let upload = self.artifact_uploader.upload(name, kind, bundle);
+        Job::new(async move {
+            upload.await.map_err(|err| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Artifact,
                     "Failed to upload experiment artifact",
                     err,
                 )
             })
+        })
     }
 
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-        let socket = self.socket.lock().unwrap().take().ok_or_else(|| {
-            ExperimentError::new(
-                ExperimentErrorKind::AlreadyFinished,
-                "Experiment run has already finished",
-            )
-        })?;
+    fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {
+        let socket = match self.socket.lock().unwrap().take() {
+            Some(socket) => socket,
+            None => {
+                return Job::failed(ExperimentError::new(
+                    ExperimentErrorKind::AlreadyFinished,
+                    "Experiment run has already finished",
+                ));
+            }
+        };
 
-        socket
+        if socket
             .send(ExperimentMessage::ExperimentComplete(to_remote_completion(
                 completion,
             )))
-            .map_err(|_| {
-                ExperimentError::new(
-                    ExperimentErrorKind::Internal,
-                    "Failed to send experiment completion to remote session",
-                )
-            })?;
-
-        if let Err(error) = socket.close().block() {
-            tracing::warn!("WebSocket failure during experiment finish: {error}");
+            .is_err()
+        {
+            return Job::failed(ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "Failed to send experiment completion to remote session",
+            ));
         }
 
-        Ok(())
+        // Queued behind the completion, so the reply means the socket closed after it was written.
+        let closed = socket.close();
+        Job::new(async move {
+            if let Err(error) = closed.await {
+                tracing::warn!("WebSocket failure during experiment finish: {error}");
+            }
+            Ok(())
+        })
     }
 }
 

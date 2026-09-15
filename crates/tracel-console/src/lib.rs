@@ -14,17 +14,14 @@ mod models;
 mod wire;
 
 mod datasets;
-// Capabilities not yet handed back as jobs still bridge through blocking calls.
-#[cfg(not(target_arch = "wasm32"))]
 mod experiment;
+mod login;
+// Inference still bridges through blocking calls.
 #[cfg(not(target_arch = "wasm32"))]
 mod inference;
-#[cfg(not(target_arch = "wasm32"))]
-mod login;
 
 pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};
 pub use error::ConsoleError;
-#[cfg(not(target_arch = "wasm32"))]
 pub use login::{DeviceApproval, DeviceLogin};
 pub use tracel_client::console::{SessionToken, TracelCredentials};

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tracel_artifact::bundle::FsBundle;
+use tracel_task::Job;
 
 use crate::{
     ArtifactKind, ExperimentId, MetricSpec, MetricValue,
@@ -59,24 +60,32 @@ pub enum ExperimentCompletion {
     Cancelled,
 }
 
-pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError> + 'a;
-
 /// Session-level implementation for the active experiment run.
+///
+/// A session is a synchronous producer with asynchronous drains: [`record_event`](Self::record_event)
+/// never waits, and [`flush`](Self::flush) and [`finish`](Self::finish) hand their request to the
+/// backend before returning, so a run dropped mid-way still completes without anyone driving the
+/// job they return.
 pub trait ExperimentSession: Send + Sync {
+    /// Queues `event`; never waits.
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
 
-    /// Block until every event recorded so far has left the process.
-    fn flush(&self) -> Result<(), ExperimentError> {
-        Ok(())
+    /// Resolves once every event recorded so far has left the process.
+    fn flush(&self) -> Job<(), ExperimentError> {
+        Job::ready(())
     }
 
+    /// Ships an artifact already encoded into `bundle`.
     fn save_artifact(
         &self,
-        name: &str,
+        name: String,
         kind: ArtifactKind,
-        artifact: Box<BundleFn>,
-    ) -> Result<(), ExperimentError>;
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError>;
+        bundle: FsBundle,
+    ) -> Job<(), ExperimentError>;
+
+    /// Hands the completion to the backend before returning; the job resolves once the backend
+    /// has acknowledged it.
+    fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError>;
 }
 
 impl<T> ExperimentSession for Arc<T>
@@ -87,20 +96,20 @@ where
         self.as_ref().record_event(event)
     }
 
-    fn flush(&self) -> Result<(), ExperimentError> {
+    fn flush(&self) -> Job<(), ExperimentError> {
         self.as_ref().flush()
     }
 
     fn save_artifact(
         &self,
-        name: &str,
+        name: String,
         kind: ArtifactKind,
-        artifact: Box<BundleFn>,
-    ) -> Result<(), ExperimentError> {
-        self.as_ref().save_artifact(name, kind, artifact)
+        bundle: FsBundle,
+    ) -> Job<(), ExperimentError> {
+        self.as_ref().save_artifact(name, kind, bundle)
     }
 
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+    fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {
         self.as_ref().finish(completion)
     }
 }

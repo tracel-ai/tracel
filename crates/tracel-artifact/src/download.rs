@@ -9,8 +9,6 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use sha2::Digest;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::ReqwestTransferClient;
 use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
@@ -183,41 +181,6 @@ where
     observer.file_completed(&rel_path, total);
 
     Ok(())
-}
-
-/// Download artifact files into any bundle sink implementation.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn download_artifacts_to_sink<S: BundleSink + Send>(
-    sink: &mut S,
-    files: &[ArtifactDownloadFile],
-) -> Result<(), DownloadError> {
-    let client = ReqwestTransferClient::new();
-    download_artifacts_to_sink_with_client(&client, sink, files)
-}
-
-/// Download artifact files into any bundle sink implementation using a custom transfer client.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn download_artifacts_to_sink_with_client<S: BundleSink + Send>(
-    client: &ReqwestTransferClient,
-    sink: &mut S,
-    files: &[ArtifactDownloadFile],
-) -> Result<(), DownloadError> {
-    download_artifacts_to_sink_with_client_and_observer(client, sink, files, &mut ())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-/// Download artifact files into any bundle sink implementation using a custom transfer client,
-/// reporting progress to an observer.
-pub fn download_artifacts_to_sink_with_client_and_observer<
-    S: BundleSink + Send,
-    O: TransferObserver + ?Sized,
->(
-    client: &ReqwestTransferClient,
-    sink: &mut S,
-    files: &[ArtifactDownloadFile],
-    observer: &mut O,
-) -> Result<(), DownloadError> {
-    client.block_on(download_into(client.http(), sink, files, observer))
 }
 
 /// Transfer an already-open artifact reader into a bundle sink.

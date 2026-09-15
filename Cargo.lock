@@ -6941,6 +6941,7 @@ version = "0.10.0"
 dependencies = [
  "crossbeam",
  "directories",
+ "futures",
  "serde",
  "serde_json",
  "tempfile",
@@ -6954,6 +6955,7 @@ dependencies = [
  "tracel-inference",
  "tracel-models",
  "tracel-station",
+ "tracel-task",
  "url",
 ]
 
@@ -6979,6 +6981,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracel-artifact",
+ "tracel-task",
  "tracing",
  "tracing-subscriber",
 ]

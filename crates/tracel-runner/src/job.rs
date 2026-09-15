@@ -52,7 +52,7 @@ struct ExperimentRunnerJob<I, O, M> {
 impl<I, O, M> RunnerJob for ExperimentRunnerJob<I, O, M>
 where
     I: Send + 'static,
-    O: 'static,
+    O: Send + 'static,
     M: InputMapper<I> + Send + Sync,
 {
     fn definition(&self) -> JobDefinition {
@@ -69,14 +69,14 @@ where
             .mapper
             .map(input)
             .map_err(|e| BoxError::from(format!("invalid input: {e}")))?;
-        self.job.run(input).map(|_| ())
+        self.job.run(input).block().map(|_| ())
     }
 }
 
 impl<I, O, M> IntoRunnerJob<M> for ExperimentJob<I, O>
 where
     I: Send + 'static,
-    O: 'static,
+    O: Send + 'static,
     M: InputMapper<I> + Send + Sync + 'static,
 {
     fn into_runner_job(self, mapper: M) -> Box<dyn RunnerJob> {

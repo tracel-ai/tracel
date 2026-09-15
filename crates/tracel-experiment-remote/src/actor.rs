@@ -231,11 +231,12 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use futures::channel::oneshot;
+    use tracel_artifact::bundle::FsBundle;
     use tracel_experiment::error::ExperimentError;
     use tracel_experiment::reader::{
         ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact,
     };
-    use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+    use tracel_experiment::session::{Event, ExperimentCompletion, ExperimentSession};
     use tracel_experiment::{ArtifactKind, ExperimentId, ExperimentRun};
 
     use super::*;
@@ -373,15 +374,15 @@ mod tests {
 
         fn save_artifact(
             &self,
-            _name: &str,
+            _name: String,
             _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            Ok(())
+            _bundle: FsBundle,
+        ) -> Job<(), ExperimentError> {
+            Job::ready(())
         }
 
-        fn finish(&self, _completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            Ok(())
+        fn finish(&self, _completion: ExperimentCompletion) -> Job<(), ExperimentError> {
+            Job::ready(())
         }
     }
 
@@ -391,9 +392,9 @@ mod tests {
         fn load_artifact_raw(
             &self,
             _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("no artifacts"))
+            _name: String,
+        ) -> Job<LoadedArtifact, ExperimentReaderError> {
+            Job::failed(ExperimentReaderError::new("no artifacts"))
         }
     }
 

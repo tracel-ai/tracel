@@ -13,8 +13,9 @@ const WASM_CRATES: &[&str] = &[
     "tracel-artifact",
     "tracel-models",
     "tracel-datasets",
-    "tracel-console",
+    "tracel-experiment",
     "tracel-experiment-remote",
+    "tracel-console",
 ];
 
 pub fn handle_command() -> anyhow::Result<()> {

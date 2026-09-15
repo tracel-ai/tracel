@@ -14,6 +14,7 @@ fn main() -> anyhow::Result<()> {
         })
         .attribute("kind", "example")?
         .run(TrainingConfig::default())
+        .block()
         .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
 
     Ok(())

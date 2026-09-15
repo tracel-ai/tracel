@@ -50,7 +50,7 @@ pub trait IntoServerRoute<I> {
 impl<I, O> IntoServerRoute<I> for ExperimentJob<I, O>
 where
     I: DeserializeOwned + Send + 'static,
-    O: 'static,
+    O: Send + 'static,
 {
     fn into_server_route(self, mapper: Arc<dyn BodyMapper<I>>) -> Box<dyn ServerRoute> {
         Box::new(ExperimentRoute::new(self, mapper))
@@ -83,7 +83,7 @@ impl<I, O> ExperimentRoute<I, O> {
 impl<I, O> ServerRoute for ExperimentRoute<I, O>
 where
     I: DeserializeOwned + Send + 'static,
-    O: 'static,
+    O: Send + 'static,
 {
     fn name(&self) -> &str {
         self.job.name()
@@ -106,7 +106,7 @@ where
                 Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
             };
 
-            let handle = tokio::task::spawn_blocking(move || job.run(input).map(|_| ()));
+            let handle = tokio::task::spawn_blocking(move || job.run(input).block().map(|_| ()));
             tokio::spawn(async move {
                 match handle.await {
                     Ok(Ok(())) => {}

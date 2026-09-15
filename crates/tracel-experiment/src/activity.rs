@@ -14,6 +14,7 @@ use std::{
 
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode};
+use tracel_task::Job;
 
 use crate::cancellation::CancelToken;
 use crate::context::CurrentExperimentGuard;
@@ -439,21 +440,25 @@ impl Activity {
     /// Encode and persist an artifact.
     pub fn save_artifact<E: BundleEncode>(
         &self,
-        name: impl AsRef<str>,
+        name: impl Into<String>,
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
-    ) -> Result<(), ExperimentError> {
+    ) -> Job<(), ExperimentError> {
         self.handle.save_artifact(name, kind, artifact, settings)
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
-    pub fn use_artifact<D: BundleDecode>(
+    pub fn use_artifact<D>(
         &self,
         experiment_id: impl Into<ExperimentId>,
-        name: impl AsRef<str>,
-        settings: &D::Settings,
-    ) -> Result<D, ExperimentError> {
+        name: impl Into<String>,
+        settings: D::Settings,
+    ) -> Job<D, ExperimentError>
+    where
+        D: BundleDecode + Send + 'static,
+        D::Settings: Send + 'static,
+    {
         self.handle.use_artifact(experiment_id, name, settings)
     }
 

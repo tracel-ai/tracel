@@ -15,13 +15,13 @@ use crate::datasets::ConsoleDatasetOps;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
-// Capabilities not yet handed back as jobs still bridge through blocking calls.
+use tracel_experiment::ExperimentModule;
+
+use crate::experiment::ConsoleExperimentProvider;
+
+// Inference still bridges through blocking calls.
 #[cfg(not(target_arch = "wasm32"))]
-use {
-    crate::experiment::ConsoleExperimentProvider, crate::inference::ConsoleInferenceProvider,
-    tracel_artifact::ReqwestTransferClient, tracel_experiment::ExperimentModule,
-    tracel_inference::InferenceModule,
-};
+use {crate::inference::ConsoleInferenceProvider, tracel_inference::InferenceModule};
 
 /// A client rooted at one Tracel console URL.
 ///
@@ -40,9 +40,6 @@ pub struct ConsoleInner {
     pub transfer: HttpTransferClient,
     /// Drives the transport's IO and runs the connection's actors.
     pub runtime: Arc<Runtime>,
-    /// The blocking facade the ports whose contract is still synchronous go through.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub transfer_client: ReqwestTransferClient,
 }
 
 impl ConsoleInner {
@@ -54,8 +51,6 @@ impl ConsoleInner {
         Ok(Self {
             client,
             transfer: HttpTransferClient::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            transfer_client: ReqwestTransferClient::with_runtime(Arc::clone(&runtime)),
             runtime,
         })
     }
@@ -253,7 +248,6 @@ impl ProjectHandle {
     }
 
     /// Builds an experiment provider scoped to this project.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn experiments(&self) -> ExperimentModule {
         ExperimentModule::new(Arc::new(ConsoleExperimentProvider::new(Arc::clone(
             &self.scope,

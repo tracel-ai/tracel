@@ -37,7 +37,7 @@ struct ExperimentCliCommand<I, O, M> {
 impl<I, O, M> CliCommand for ExperimentCliCommand<I, O, M>
 where
     I: Send + 'static,
-    O: 'static,
+    O: Send + 'static,
     M: Mapper<I> + Send + Sync,
 {
     fn name(&self) -> &str {
@@ -51,6 +51,7 @@ where
             .map_err(CliError::ValidationFailed)?;
         self.job
             .run(input)
+            .block()
             .map(|_| ())
             .map_err(CliError::ExecutionFailed)
     }
@@ -59,7 +60,7 @@ where
 impl<I, O, M> IntoCliCommand<M> for ExperimentJob<I, O>
 where
     I: Send + 'static,
-    O: 'static,
+    O: Send + 'static,
     M: Mapper<I> + Send + Sync + 'static,
 {
     fn into_cli_command(self, mapper: M) -> Box<dyn CliCommand> {
