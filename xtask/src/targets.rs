@@ -12,6 +12,7 @@ const WASM_CRATES: &[&str] = &[
     "tracel-task",
     "tracel-artifact",
     "tracel-models",
+    "tracel-datasets",
     "tracel-console",
     "tracel-experiment-remote",
 ];

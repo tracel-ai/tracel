@@ -13,9 +13,8 @@ mod error;
 mod models;
 mod wire;
 
-// Capabilities not yet handed back as jobs still bridge into a runtime of their own.
-#[cfg(not(target_arch = "wasm32"))]
 mod datasets;
+// Capabilities not yet handed back as jobs still bridge through blocking calls.
 #[cfg(not(target_arch = "wasm32"))]
 mod experiment;
 #[cfg(not(target_arch = "wasm32"))]

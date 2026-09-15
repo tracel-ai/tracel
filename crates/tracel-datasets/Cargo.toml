@@ -19,6 +19,8 @@ burn = ["dep:burn"]
 
 [dependencies]
 burn = { workspace = true, optional = true }
+futures = { workspace = true, features = ["std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracel-task = { workspace = true }

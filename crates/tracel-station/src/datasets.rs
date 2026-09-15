@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -11,21 +10,18 @@ use tracel_client::station::dataset::response::{DatasetResponse, DatasetVersionR
 use tracel_datasets::{
     Dataset, DatasetOps, DatasetVersion, DatasetsError, Item, Publication, VersionId, VersionSpec,
 };
+use tracel_task::Job;
 
 use crate::StationError;
 use crate::station::StationInner;
 use crate::wire::station_timestamp;
 
+#[derive(Clone)]
 pub struct StationDatasetOps {
     pub station: Arc<StationInner>,
 }
 
 impl StationDatasetOps {
-    /// Waits for `call` on the calling thread, with the Station's runtime driving it.
-    fn block_on<F: Future>(&self, call: F) -> F::Output {
-        self.station.runtime.block_on(call)
-    }
-
     fn route_version(&self, dataset: &str, id: &VersionId) -> Result<u32, DatasetsError> {
         id.as_str()
             .parse()
@@ -34,98 +30,19 @@ impl StationDatasetOps {
                 version: VersionSpec::Exact(id.clone()),
             })
     }
-}
 
-impl DatasetOps for StationDatasetOps {
-    fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
+    async fn datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
         let response = self
-            .block_on(
-                self.station
-                    .client
-                    .datasets()
-                    .query(QueryDatasetsRequest::default()),
-            )
+            .station
+            .client
+            .datasets()
+            .query(QueryDatasetsRequest::default())
+            .await
             .map_err(station_failure)?;
         Ok(response.items.into_iter().map(dataset_from_wire).collect())
     }
 
-    /// The Station has no route for one dataset by name, so this reads the listing.
-    fn get_dataset(&self, name: &str) -> Result<Dataset, DatasetsError> {
-        self.list_datasets()?
-            .into_iter()
-            .find(|dataset| dataset.name == name)
-            .ok_or_else(|| DatasetsError::DatasetNotFound {
-                name: name.to_string(),
-            })
-    }
-
-    fn list_versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
-        let response = self
-            .block_on(
-                self.station
-                    .client
-                    .datasets()
-                    .versions(dataset, QueryDatasetVersionsRequest::default()),
-            )
-            .map_err(|error| map_dataset_error(error, dataset))?;
-
-        response
-            .items
-            .into_iter()
-            .map(|version| version_from_wire(dataset, version))
-            .collect()
-    }
-
-    fn get_version(
-        &self,
-        dataset: &str,
-        spec: VersionSpec,
-    ) -> Result<DatasetVersion, DatasetsError> {
-        let versions = self.station.client.datasets();
-        let response = match &spec {
-            VersionSpec::Exact(id) => {
-                let route = self.route_version(dataset, id)?;
-                self.block_on(versions.get_version(dataset, route))
-            }
-            VersionSpec::Latest => self.block_on(versions.get_latest_version(dataset)),
-        };
-
-        response
-            .map_err(|error| {
-                if error.is_not_found() {
-                    DatasetsError::VersionNotFound {
-                        dataset: dataset.to_string(),
-                        version: spec.clone(),
-                    }
-                } else {
-                    station_failure(error)
-                }
-            })
-            .and_then(|version| version_from_wire(dataset, version))
-    }
-
-    fn create_dataset(
-        &self,
-        name: &str,
-        description: Option<&str>,
-        metadata: Option<&serde_json::Value>,
-    ) -> Result<Dataset, DatasetsError> {
-        self.block_on(self.station.client.datasets().create(CreateDatasetRequest {
-            name: name.to_string(),
-            description: description.map(str::to_string),
-            metadata: metadata.cloned(),
-        }))
-        .map(dataset_from_wire)
-        .map_err(station_failure)
-    }
-
-    fn start_publication(&self, _dataset: &str) -> Result<Box<dyn Publication>, DatasetsError> {
-        Err(DatasetsError::other(
-            "publishing a dataset version is not implemented for the station yet",
-        ))
-    }
-
-    fn read_items(
+    async fn items(
         &self,
         dataset: &str,
         id: &VersionId,
@@ -138,14 +55,18 @@ impl DatasetOps for StationDatasetOps {
             let mut next = run.start;
             while next < run.end {
                 let page = self
-                    .block_on(self.station.client.datasets().stream_items(
+                    .station
+                    .client
+                    .datasets()
+                    .stream_items(
                         dataset,
                         version,
                         StreamDatasetVersionItemsRequest {
                             index: Some(next),
                             limit: Some((run.end - next).min(u32::MAX as u64) as u32),
                         },
-                    ))
+                    )
+                    .await
                     .map_err(|error| map_version_error(error, dataset, id))?;
 
                 if page.items.is_empty() {
@@ -174,6 +95,114 @@ impl DatasetOps for StationDatasetOps {
             expected: indexes.len() as u64,
             actual: found,
         })
+    }
+}
+
+impl DatasetOps for StationDatasetOps {
+    fn list_datasets(&self) -> Job<Vec<Dataset>, DatasetsError> {
+        let this = self.clone();
+        self.station.attach(async move { this.datasets().await })
+    }
+
+    /// The Station has no route for one dataset by name, so this reads the listing.
+    fn get_dataset(&self, name: String) -> Job<Dataset, DatasetsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            this.datasets()
+                .await?
+                .into_iter()
+                .find(|dataset| dataset.name == name)
+                .ok_or(DatasetsError::DatasetNotFound { name })
+        })
+    }
+
+    fn list_versions(&self, dataset: String) -> Job<Vec<DatasetVersion>, DatasetsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            let response = this
+                .station
+                .client
+                .datasets()
+                .versions(&dataset, QueryDatasetVersionsRequest::default())
+                .await
+                .map_err(|error| map_dataset_error(error, &dataset))?;
+
+            response
+                .items
+                .into_iter()
+                .map(|version| version_from_wire(&dataset, version))
+                .collect()
+        })
+    }
+
+    fn get_version(
+        &self,
+        dataset: String,
+        spec: VersionSpec,
+    ) -> Job<DatasetVersion, DatasetsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            let versions = this.station.client.datasets();
+            let response = match &spec {
+                VersionSpec::Exact(id) => {
+                    let route = this.route_version(&dataset, id)?;
+                    versions.get_version(&dataset, route).await
+                }
+                VersionSpec::Latest => versions.get_latest_version(&dataset).await,
+            };
+
+            response
+                .map_err(|error| {
+                    if error.is_not_found() {
+                        DatasetsError::VersionNotFound {
+                            dataset: dataset.clone(),
+                            version: spec.clone(),
+                        }
+                    } else {
+                        station_failure(error)
+                    }
+                })
+                .and_then(|version| version_from_wire(&dataset, version))
+        })
+    }
+
+    fn create_dataset(
+        &self,
+        name: String,
+        description: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Job<Dataset, DatasetsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            this.station
+                .client
+                .datasets()
+                .create(CreateDatasetRequest {
+                    name,
+                    description,
+                    metadata,
+                })
+                .await
+                .map(dataset_from_wire)
+                .map_err(station_failure)
+        })
+    }
+
+    fn start_publication(&self, _dataset: String) -> Job<Box<dyn Publication>, DatasetsError> {
+        Job::failed(DatasetsError::other(
+            "publishing a dataset version is not implemented for the station yet",
+        ))
+    }
+
+    fn read_items(
+        &self,
+        dataset: String,
+        id: VersionId,
+        indexes: Vec<u64>,
+    ) -> Job<Vec<Item>, DatasetsError> {
+        let this = self.clone();
+        self.station
+            .attach(async move { this.items(&dataset, &id, &indexes).await })
     }
 }
 

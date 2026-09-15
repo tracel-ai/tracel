@@ -1,12 +1,13 @@
-use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use futures::{TryStreamExt, stream};
 use serde::de::DeserializeOwned;
+use tracel_task::{Job, Streaming};
 
 use crate::{DatasetOps, DatasetVersion, DatasetsError, Item};
 
-/// Items [`Items`] reads per request where the caller does not say.
+/// Items one read asks for where the caller does not say.
 const ITEMS_PER_READ: u64 = 64;
 
 /// One item of a dataset version, with its annotation decoded into the caller's type.
@@ -68,30 +69,35 @@ impl<A> DatasetHandle<A> {
 
 impl<A> DatasetHandle<A>
 where
-    A: DeserializeOwned,
+    A: DeserializeOwned + Send + 'static,
 {
     /// Reads the item at `index`.
-    pub fn item(&self, index: u64) -> Result<DatasetItem<A>, DatasetsError> {
-        self.items(&[index])?
-            .into_iter()
-            .next()
-            .ok_or(DatasetsError::Incomplete {
-                dataset: self.version.dataset.clone(),
-                version: self.version.id.clone(),
-                expected: 1,
-                actual: 0,
-            })
+    pub fn item(&self, index: u64) -> Job<DatasetItem<A>, DatasetsError> {
+        let version = self.version.clone();
+        let items = self.items(&[index]);
+        Job::new(async move {
+            items
+                .await?
+                .into_iter()
+                .next()
+                .ok_or(DatasetsError::Incomplete {
+                    dataset: version.dataset,
+                    version: version.id,
+                    expected: 1,
+                    actual: 0,
+                })
+        })
     }
 
     /// Reads the items at `indexes`, in the order asked for.
     ///
     /// Indexes need not be contiguous or sorted, so a shuffled batch is one call.
-    pub fn items(&self, indexes: &[u64]) -> Result<Vec<DatasetItem<A>>, DatasetsError> {
+    pub fn items(&self, indexes: &[u64]) -> Job<Vec<DatasetItem<A>>, DatasetsError> {
         if let Some(past_end) = indexes
             .iter()
             .find(|index| **index >= self.version.item_count)
         {
-            return Err(DatasetsError::Item {
+            return Job::failed(DatasetsError::Item {
                 dataset: self.version.dataset.clone(),
                 version: self.version.id.clone(),
                 index: *past_end,
@@ -99,123 +105,103 @@ where
             });
         }
 
-        let items = self
-            .ops
-            .read_items(&self.version.dataset, &self.version.id, indexes)?;
-        if items.len() != indexes.len() {
-            return Err(DatasetsError::Incomplete {
-                dataset: self.version.dataset.clone(),
-                version: self.version.id.clone(),
-                expected: indexes.len() as u64,
-                actual: items.len() as u64,
-            });
-        }
+        let version = self.version.clone();
+        let indexes = indexes.to_vec();
+        let read =
+            self.ops
+                .read_items(version.dataset.clone(), version.id.clone(), indexes.clone());
+        Job::new(async move {
+            let items = read.await?;
+            if items.len() != indexes.len() {
+                return Err(DatasetsError::Incomplete {
+                    dataset: version.dataset,
+                    version: version.id,
+                    expected: indexes.len() as u64,
+                    actual: items.len() as u64,
+                });
+            }
 
-        items
-            .into_iter()
-            .zip(indexes)
-            .map(|(item, index)| self.decode(item, *index))
-            .collect()
-    }
-
-    /// Iterates from `from` to the end of the version, reading in batches.
-    ///
-    /// Each read asks for [`ITEMS_PER_READ`] items unless
-    /// [`Items::with_items_per_read`] says otherwise.
-    pub fn iter(&self, from: u64) -> Items<A> {
-        Items {
-            handle: self.clone(),
-            next: from,
-            buffer: VecDeque::new(),
-            items_per_read: ITEMS_PER_READ,
-        }
-    }
-
-    fn decode(&self, item: Item, index: u64) -> Result<DatasetItem<A>, DatasetsError> {
-        let Item {
-            example,
-            annotation,
-            source_item_id,
-            metadata,
-        } = item;
-
-        let annotation =
-            match annotation {
-                None => None,
-                Some(value) => Some(serde_json::from_value(value).map_err(|error| {
-                    DatasetsError::Annotation {
-                        dataset: self.version.dataset.clone(),
-                        version: self.version.id.clone(),
-                        index,
-                        problem: error.to_string(),
-                    }
-                })?),
-            };
-
-        Ok(DatasetItem {
-            example,
-            annotation,
-            source_item_id,
-            metadata,
+            items
+                .into_iter()
+                .zip(indexes)
+                .map(|(item, index)| decode(&version, item, index))
+                .collect()
         })
     }
-}
 
-/// A version's items, in published order, with annotations decoded into `A`.
-///
-/// Reads a batch at a time.
-pub struct Items<A> {
-    handle: DatasetHandle<A>,
-    next: u64,
-    buffer: VecDeque<DatasetItem<A>>,
-    items_per_read: u64,
-}
+    /// Streams the items from `from` to the end of the version, reading
+    /// [`ITEMS_PER_READ`] at a time.
+    pub fn iter(&self, from: u64) -> Streaming<DatasetItem<A>, DatasetsError> {
+        self.iter_by(from, ITEMS_PER_READ)
+    }
 
-impl<A> Items<A> {
-    /// Asks for `items` per read.
-    pub fn with_items_per_read(mut self, items: u64) -> Self {
-        self.items_per_read = items.max(1);
-        self
+    /// Streams the items from `from` to the end of the version, reading `items_per_read` at a
+    /// time.
+    pub fn iter_by(
+        &self,
+        from: u64,
+        items_per_read: u64,
+    ) -> Streaming<DatasetItem<A>, DatasetsError> {
+        let handle = self.clone();
+        let count = self.version.item_count;
+        let items_per_read = items_per_read.max(1);
+        let batches = stream::try_unfold(from, move |next| {
+            let handle = handle.clone();
+            async move {
+                if next >= count {
+                    return Ok(None);
+                }
+                let end = (next + items_per_read).min(count);
+                let indexes: Vec<u64> = (next..end).collect();
+                let batch = handle.items(&indexes).await?;
+                Ok(Some((stream::iter(batch.into_iter().map(Ok)), end)))
+            }
+        });
+
+        Streaming::new(batches.try_flatten())
     }
 }
 
-impl<A> Iterator for Items<A>
-where
-    A: DeserializeOwned,
-{
-    type Item = Result<DatasetItem<A>, DatasetsError>;
+fn decode<A: DeserializeOwned>(
+    version: &DatasetVersion,
+    item: Item,
+    index: u64,
+) -> Result<DatasetItem<A>, DatasetsError> {
+    let Item {
+        example,
+        annotation,
+        source_item_id,
+        metadata,
+    } = item;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let item_count = self.handle.version.item_count;
-
-        if self.buffer.is_empty() {
-            if self.next >= item_count {
-                return None;
-            }
-
-            let end = (self.next + self.items_per_read).min(item_count);
-            let indexes: Vec<u64> = (self.next..end).collect();
-
-            match self.handle.items(&indexes) {
-                Ok(batch) => {
-                    self.next = end;
-                    self.buffer.extend(batch);
-                }
-                Err(error) => {
-                    self.next = item_count;
-                    return Some(Err(error));
-                }
-            }
+    let annotation = match annotation {
+        None => None,
+        Some(value) => {
+            Some(
+                serde_json::from_value(value).map_err(|error| DatasetsError::Annotation {
+                    dataset: version.dataset.clone(),
+                    version: version.id.clone(),
+                    index,
+                    problem: error.to_string(),
+                })?,
+            )
         }
+    };
 
-        self.buffer.pop_front().map(Ok)
-    }
+    Ok(DatasetItem {
+        example,
+        annotation,
+        source_item_id,
+        metadata,
+    })
 }
 
-#[cfg(feature = "burn")]
+// Burn's `Dataset` is a synchronous contract, so this adapter blocks on each read and exists
+// only where a thread can.
+#[cfg(all(feature = "burn", not(target_arch = "wasm32")))]
 impl<A> burn::data::dataset::Dataset<DatasetItem<A>, DatasetsError> for DatasetHandle<A>
 where
-    A: DeserializeOwned + Send + Sync,
+    A: DeserializeOwned + Send + Sync + 'static,
 {
     fn get(&self, index: usize) -> Result<DatasetItem<A>, DatasetsError> {
         let len = self.len();
@@ -224,7 +210,7 @@ where
             "Index out of bounds for dataset: {index} >= {len}"
         );
 
-        self.item(index as u64)
+        self.item(index as u64).block()
     }
 
     fn get_many(&self, indexes: Vec<usize>) -> Result<Vec<DatasetItem<A>>, DatasetsError> {
@@ -240,7 +226,7 @@ where
             })
             .collect();
 
-        self.items(&indexes)
+        self.items(&indexes).block()
     }
 
     fn len(&self) -> usize {
@@ -266,7 +252,7 @@ mod tests {
         let ops = Arc::new(FakeOps::new());
         let data = handle(ops.clone(), 100);
 
-        let items = data.items(&[92, 3, 17]).unwrap();
+        let items = data.items(&[92, 3, 17]).block().unwrap();
 
         assert_eq!(ops.reads(), 1);
         let examples: Vec<_> = items
@@ -281,7 +267,7 @@ mod tests {
         let ops = Arc::new(FakeOps::new());
         let data = handle(ops, 10);
 
-        let item = data.item(4).unwrap();
+        let item = data.item(4).block().unwrap();
 
         assert_eq!(item.source_item_id.as_deref(), Some("source-4"));
         assert_eq!(item.metadata, Some(serde_json::json!({ "split": "train" })));
@@ -292,7 +278,11 @@ mod tests {
         let ops = Arc::new(FakeOps::new());
         let data = handle(ops.clone(), 600);
 
-        let items: Vec<_> = data.iter(0).collect::<Result<Vec<_>, _>>().unwrap();
+        let items: Vec<_> = data
+            .iter(0)
+            .blocking_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         assert_eq!(items.len(), 600);
         assert_eq!(
@@ -308,8 +298,8 @@ mod tests {
         let data = handle(ops.clone(), 600);
 
         let items: Vec<_> = data
-            .iter(0)
-            .with_items_per_read(256)
+            .iter_by(0, 256)
+            .blocking_iter()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
@@ -325,8 +315,8 @@ mod tests {
         let data = handle(ops.clone(), 5);
 
         let items: Vec<_> = data
-            .iter(0)
-            .with_items_per_read(0)
+            .iter_by(0, 0)
+            .blocking_iter()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
@@ -341,6 +331,7 @@ mod tests {
 
         let error = data
             .items(&[3, 10])
+            .block()
             .expect_err("index 10 is past the end of a 10 item version");
 
         assert!(matches!(error, DatasetsError::Item { index: 10, .. }));
@@ -355,6 +346,7 @@ mod tests {
 
         let error = data
             .items(&[1, 2, 3])
+            .block()
             .expect_err("the backend answered two of three indexes");
 
         assert!(matches!(
@@ -375,6 +367,7 @@ mod tests {
 
         let error = data
             .items(&[4])
+            .block()
             .expect_err("the annotation does not match Label");
 
         match error {
@@ -388,7 +381,10 @@ mod tests {
         let ops = Arc::new(FakeOps::new());
         let datasets = Datasets::new(ops.clone());
 
-        let data = datasets.open::<Label>("ds", VersionId::new("v1")).unwrap();
+        let data = datasets
+            .open::<Label>("ds", VersionId::new("v1"))
+            .block()
+            .unwrap();
 
         assert_eq!(data.len(), 10);
         assert_eq!(data.version().id, VersionId::new("v1"));
@@ -450,11 +446,11 @@ mod tests {
             let ops = Arc::new(FakeOps::new());
             let datasets = Datasets::new(ops.clone());
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(item("a")).unwrap();
             draft.add(item("b")).unwrap();
             assert_eq!(draft.len(), 2);
-            draft.commit(None).unwrap();
+            draft.commit(None).block().unwrap();
 
             assert_eq!(ops.received().len(), 2);
             assert_eq!(ops.commits(), 1);
@@ -467,18 +463,24 @@ mod tests {
             let ops = Arc::new(ops);
             let datasets = Datasets::new(ops.clone());
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft
                 .extend((0..250).map(|index| item(&index.to_string())))
                 .unwrap();
+            assert_eq!(
+                ops.batch_count(),
+                0,
+                "adding queues uploads, it does not drive them"
+            );
 
+            draft.flush().block().unwrap();
             assert_eq!(
                 ops.batch_count(),
                 2,
                 "the backend's own batch size decides, not the capability's"
             );
 
-            draft.commit(None).unwrap();
+            draft.commit(None).block().unwrap();
             assert_eq!(ops.batch_count(), 3, "the remainder goes on commit");
             assert_eq!(ops.received().len(), 250);
         }
@@ -488,7 +490,7 @@ mod tests {
             let ops = Arc::new(FakeOps::new());
             let datasets = Datasets::new(ops.clone());
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(item("a")).unwrap();
             drop(draft);
 
@@ -501,9 +503,9 @@ mod tests {
             let ops = Arc::new(FakeOps::new());
             let datasets = Datasets::new(ops.clone());
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(item("a")).unwrap();
-            draft.cancel().unwrap();
+            draft.cancel().block().unwrap();
 
             assert_eq!(ops.cancels(), 1);
             assert_eq!(ops.commits(), 0);
@@ -514,9 +516,9 @@ mod tests {
             let ops = Arc::new(FakeOps::new());
             let datasets = Datasets::new(ops.clone());
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(item("a")).unwrap();
-            draft.commit(None).unwrap();
+            draft.commit(None).block().unwrap();
 
             assert_eq!(ops.commits(), 1);
             assert_eq!(ops.cancels(), 0);
@@ -529,9 +531,9 @@ mod tests {
             let ops = Arc::new(ops);
             let datasets = Datasets::new(ops.clone());
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(item("a")).unwrap();
-            draft.commit(None).expect_err("the backend refused");
+            draft.commit(None).block().expect_err("the backend refused");
 
             assert_eq!(
                 ops.cancels(),
@@ -552,10 +554,10 @@ mod tests {
                 metadata: None,
             };
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(anonymous()).unwrap();
             draft.add(anonymous()).unwrap();
-            draft.commit(None).unwrap();
+            draft.commit(None).block().unwrap();
 
             assert_eq!(ops.received().len(), 2);
         }
@@ -565,7 +567,7 @@ mod tests {
             let ops = Arc::new(FakeOps::new());
             let datasets = Datasets::new(ops);
 
-            let mut draft = datasets.draft("ds").unwrap();
+            let mut draft = datasets.draft("ds").block().unwrap();
             draft.add(item("a")).unwrap();
             let error = draft
                 .add(item("a"))

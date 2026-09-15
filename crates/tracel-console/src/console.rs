@@ -9,15 +9,17 @@ use tracel_models::Models;
 use tracel_task::{Job, MaybeSend, Runtime, Streaming};
 use url::Url;
 
+use tracel_datasets::Datasets;
+
+use crate::datasets::ConsoleDatasetOps;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
 
 // Capabilities not yet handed back as jobs still bridge through blocking calls.
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    crate::datasets::ConsoleDatasetOps, crate::experiment::ConsoleExperimentProvider,
-    crate::inference::ConsoleInferenceProvider, tracel_artifact::ReqwestTransferClient,
-    tracel_datasets::Datasets, tracel_experiment::ExperimentModule,
+    crate::experiment::ConsoleExperimentProvider, crate::inference::ConsoleInferenceProvider,
+    tracel_artifact::ReqwestTransferClient, tracel_experiment::ExperimentModule,
     tracel_inference::InferenceModule,
 };
 
@@ -237,7 +239,6 @@ impl ProjectHandle {
     }
 
     /// Returns dataset operations already scoped to this project without performing I/O.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn datasets(&self) -> Datasets {
         Datasets::new(Arc::new(ConsoleDatasetOps {
             scope: Arc::clone(&self.scope),

@@ -24,6 +24,7 @@ tracing = { workspace = true }
 tracel-artifact = { workspace = true }
 tracel-task = { workspace = true }
 tracel-client = { workspace = true }
+tracel-datasets = { workspace = true }
 tracel-models = { workspace = true }
 url = { workspace = true }
 
@@ -32,7 +33,6 @@ url = { workspace = true }
 crossbeam = { workspace = true }
 tracel-artifact = { workspace = true, features = ["fs"] }
 tracel-task = { workspace = true, features = ["tokio"] }
-tracel-datasets = { workspace = true }
 tracel-experiment = { workspace = true }
 tracel-experiment-remote = { workspace = true }
 tracel-inference = { workspace = true }

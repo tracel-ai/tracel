@@ -1,10 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
-
-use std::sync::Mutex;
-
-use std::sync::Arc;
+use tracel_task::Job;
 
 use crate::{
     Dataset, DatasetOps, DatasetVersion, DatasetsError, Item, NewItem, Publication, VersionId,
@@ -66,7 +64,7 @@ impl FakeOps {
     }
 }
 
-/// A publication that records what it is given.
+/// A publication that records what it is given; a batch travels only when its upload is driven.
 struct FakePublication {
     batches: Arc<Mutex<Vec<Vec<NewItem>>>>,
     commits: Arc<Mutex<u32>>,
@@ -74,43 +72,60 @@ struct FakePublication {
     pending: Vec<NewItem>,
     flush_every: usize,
     commit_fails: bool,
+    settled: bool,
+}
+
+impl FakePublication {
+    fn upload(&mut self) -> Job<(), DatasetsError> {
+        let batch = std::mem::take(&mut self.pending);
+        let batches = Arc::clone(&self.batches);
+        Job::new(async move {
+            batches.lock().unwrap().push(batch);
+            Ok(())
+        })
+    }
 }
 
 impl Publication for FakePublication {
-    fn add_item(&mut self, item: NewItem) -> Result<(), DatasetsError> {
+    fn add_item(&mut self, item: NewItem) -> Result<Option<Job<(), DatasetsError>>, DatasetsError> {
         self.pending.push(item);
-        if self.pending.len() >= self.flush_every {
-            self.batches
-                .lock()
-                .unwrap()
-                .push(std::mem::take(&mut self.pending));
-        }
-        Ok(())
+        Ok((self.pending.len() >= self.flush_every).then(|| self.upload()))
     }
 
     fn commit(
-        &mut self,
-        _metadata: Option<&serde_json::Value>,
-    ) -> Result<DatasetVersion, DatasetsError> {
+        mut self: Box<Self>,
+        _metadata: Option<serde_json::Value>,
+    ) -> Job<DatasetVersion, DatasetsError> {
+        self.settled = true;
         if self.commit_fails {
-            return Err(DatasetsError::other("the backend refused the commit"));
+            return Job::failed(DatasetsError::other("the backend refused the commit"));
         }
 
-        if !self.pending.is_empty() {
-            self.batches
-                .lock()
-                .unwrap()
-                .push(std::mem::take(&mut self.pending));
-        }
-        *self.commits.lock().unwrap() += 1;
-        let count = self.batches.lock().unwrap().iter().flatten().count() as u64;
-        Ok(version(count))
+        let upload = (!self.pending.is_empty()).then(|| self.upload());
+        let commits = Arc::clone(&self.commits);
+        let batches = Arc::clone(&self.batches);
+        Job::new(async move {
+            if let Some(upload) = upload {
+                upload.await?;
+            }
+            *commits.lock().unwrap() += 1;
+            let count = batches.lock().unwrap().iter().flatten().count() as u64;
+            Ok(version(count))
+        })
     }
 
-    fn cancel(&mut self) -> Result<(), DatasetsError> {
+    fn cancel(mut self: Box<Self>) -> Job<(), DatasetsError> {
+        self.settled = true;
         *self.cancels.lock().unwrap() += 1;
-        self.pending.clear();
-        Ok(())
+        Job::ready(())
+    }
+}
+
+impl Drop for FakePublication {
+    fn drop(&mut self) {
+        if !self.settled {
+            *self.cancels.lock().unwrap() += 1;
+        }
     }
 }
 
@@ -136,74 +151,77 @@ impl FakeOps {
 }
 
 impl DatasetOps for FakeOps {
-    fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
+    fn list_datasets(&self) -> Job<Vec<Dataset>, DatasetsError> {
         unimplemented!()
     }
 
     fn create_dataset(
         &self,
-        name: &str,
-        description: Option<&str>,
-        metadata: Option<&serde_json::Value>,
-    ) -> Result<Dataset, DatasetsError> {
-        Ok(Dataset {
-            name: name.to_string(),
-            description: description.map(str::to_string),
-            metadata: metadata.cloned(),
+        name: String,
+        description: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Job<Dataset, DatasetsError> {
+        Job::ready(Dataset {
+            name,
+            description,
+            metadata,
         })
     }
 
-    fn start_publication(&self, _dataset: &str) -> Result<Box<dyn Publication>, DatasetsError> {
-        Ok(Box::new(FakePublication {
+    fn start_publication(&self, _dataset: String) -> Job<Box<dyn Publication>, DatasetsError> {
+        Job::ready(Box::new(FakePublication {
             batches: self.batches.clone(),
             commits: self.commits.clone(),
             cancels: self.cancels.clone(),
             pending: Vec::new(),
             flush_every: self.flush_every,
             commit_fails: self.commit_fails,
+            settled: false,
         }))
     }
 
-    fn get_dataset(&self, _name: &str) -> Result<Dataset, DatasetsError> {
+    fn get_dataset(&self, _name: String) -> Job<Dataset, DatasetsError> {
         unimplemented!()
     }
 
-    fn list_versions(&self, _dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
+    fn list_versions(&self, _dataset: String) -> Job<Vec<DatasetVersion>, DatasetsError> {
         unimplemented!()
     }
 
     fn get_version(
         &self,
-        dataset: &str,
+        dataset: String,
         spec: VersionSpec,
-    ) -> Result<DatasetVersion, DatasetsError> {
+    ) -> Job<DatasetVersion, DatasetsError> {
         let mut resolved = version(self.item_count);
-        resolved.dataset = dataset.to_string();
+        resolved.dataset = dataset;
         if let VersionSpec::Exact(id) = spec {
             resolved.id = id;
         }
-        Ok(resolved)
+        Job::ready(resolved)
     }
 
     fn read_items(
         &self,
-        _dataset: &str,
-        _id: &VersionId,
-        indexes: &[u64],
-    ) -> Result<Vec<Item>, DatasetsError> {
+        _dataset: String,
+        _id: VersionId,
+        indexes: Vec<u64>,
+    ) -> Job<Vec<Item>, DatasetsError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
 
         let answered = indexes.len().saturating_sub(self.short_by);
-        Ok(indexes
-            .iter()
-            .take(answered)
-            .map(|index| Item {
-                example: index.to_string().into_bytes(),
-                annotation: Some(self.annotation.clone()),
-                source_item_id: Some(format!("source-{index}")),
-                metadata: Some(serde_json::json!({ "split": "train" })),
-            })
-            .collect())
+        Job::ready(
+            indexes
+                .iter()
+                .take(answered)
+                .map(|index| Item {
+                    example: index.to_string().into_bytes(),
+                    annotation: Some(self.annotation.clone()),
+                    source_item_id: Some(format!("source-{index}")),
+                    metadata: Some(serde_json::json!({ "split": "train" })),
+                })
+                .collect(),
+        )
     }
 }
 
