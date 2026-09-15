@@ -12,6 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+futures = { workspace = true }
 bytes = { workspace = true }
 reqwest = { workspace = true }
 chrono = { workspace = true }

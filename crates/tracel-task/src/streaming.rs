@@ -2,35 +2,29 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
-use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll};
+use core::task::{Context, Poll, Waker};
 
 use futures::Stream;
-use futures::future::{AbortHandle, Abortable};
 
-use crate::spawn::{MaybeSend, Spawn};
-use crate::task::Aborted;
+use crate::bounds::{DynStream, MaybeSend};
 
-/// A handle to a producer that is already running.
+/// Items the caller pulls.
 ///
 /// Consume it as a [`Stream`], as a blocking iterator at a native sync edge, or by
-/// [`try_next_now`](Streaming::try_next_now) from a loop that must not suspend. Dropping the
-/// handle stops the producer; [`detach`](Streaming::detach) releases it and lets the producer
-/// run on until it notices the consumer is gone.
+/// [`try_next_now`](Streaming::try_next_now) from a loop that must not suspend. It is a plain
+/// stream: a producer that should run on its own is spawned by whoever owns an executor and
+/// feeds a [`channel`](Streaming::channel). Dropping the stream tells that producer to stop.
 ///
-/// `Streaming<T, E>` is `Send` whenever `T` and `E` are, whatever produces them.
-#[must_use = "dropping the handle stops the producer; call `detach` to let it run on"]
-pub struct Streaming<T, E = Aborted> {
+/// Like a [`Job`](crate::Job), it holds only what any executor can poll, so it can be consumed
+/// from anywhere.
+pub struct Streaming<T, E> {
     source: Source<T, E>,
 }
 
 enum Source<T, E> {
     Ready(vec::IntoIter<Result<T, E>>),
-    Pending {
-        rx: Pin<Box<async_channel::Receiver<Result<T, E>>>>,
-        abort: Option<AbortHandle>,
-    },
+    Pending(DynStream<'static, Result<T, E>>),
 }
 
 /// The producing half of [`Streaming::channel`].
@@ -54,7 +48,17 @@ pub enum TrySendError<T> {
 }
 
 impl<T, E> Streaming<T, E> {
-    /// Creates a stream that already holds `items`. Allocates no channel and spawns nothing.
+    /// Wraps `stream` as items to be pulled.
+    pub fn new<S>(stream: S) -> Self
+    where
+        S: Stream<Item = Result<T, E>> + MaybeSend + 'static,
+    {
+        Self {
+            source: Source::Pending(Box::pin(stream)),
+        }
+    }
+
+    /// Creates a stream that already holds `items`. Allocates no channel.
     pub fn ready(items: Vec<T>) -> Self {
         Self::from_result(Ok(items))
     }
@@ -77,73 +81,37 @@ impl<T, E> Streaming<T, E> {
 
     /// Creates a pending stream and the [`StreamingSink`] that feeds it.
     ///
-    /// `capacity` bounds how far the producer may run ahead of the consumer. Dropping the sink
-    /// ends the stream.
-    pub fn channel(capacity: usize) -> (StreamingSink<T, E>, Self) {
-        let (tx, rx) = async_channel::bounded(capacity);
-        let stream = Self {
-            source: Source::Pending {
-                rx: Box::pin(rx),
-                abort: None,
-            },
-        };
-        (StreamingSink { tx }, stream)
-    }
-
-    /// Starts the producer returned by `run` on `spawn` and returns the consuming handle.
-    pub fn spawn<S, F, Fut>(spawn: &S, capacity: usize, run: F) -> Self
+    /// For a producer that runs on its own, such as an actor. `capacity` bounds how far it may
+    /// run ahead of the consumer. Dropping the sink ends the stream.
+    pub fn channel(capacity: usize) -> (StreamingSink<T, E>, Self)
     where
-        S: Spawn + ?Sized,
-        F: FnOnce(StreamingSink<T, E>) -> Fut,
-        Fut: Future<Output = ()> + MaybeSend + 'static,
         T: Send + 'static,
         E: Send + 'static,
     {
-        let (sink, mut stream) = Self::channel(capacity);
-        let (handle, registration) = AbortHandle::new_pair();
-        let work = Abortable::new(run(sink), registration);
-
-        spawn.spawn(Box::pin(async move {
-            let _ = work.await;
-        }));
-
-        if let Source::Pending { abort, .. } = &mut stream.source {
-            *abort = Some(handle);
-        }
-        stream
+        let (tx, rx) = async_channel::bounded(capacity);
+        (StreamingSink { tx }, Self::new(rx))
     }
 
-    /// Takes the next item if one has arrived, without waiting.
+    /// Takes the next item if pulling once yields one, without waiting.
     ///
     /// `None` means nothing is ready *or* the stream has ended; poll it as a [`Stream`] to tell
     /// the two apart.
     pub fn try_next_now(&mut self) -> Option<Result<T, E>> {
         match &mut self.source {
             Source::Ready(items) => items.next(),
-            Source::Pending { rx, .. } => rx.try_recv().ok(),
-        }
-    }
-
-    /// Stops the producer and closes the channel. Items already buffered can still be taken.
-    pub fn cancel(&mut self) {
-        if let Source::Pending { rx, abort } = &mut self.source {
-            if let Some(abort) = abort.take() {
-                abort.abort();
+            Source::Pending(stream) => {
+                let mut cx = Context::from_waker(Waker::noop());
+                match stream.as_mut().poll_next(&mut cx) {
+                    Poll::Ready(item) => item,
+                    Poll::Pending => None,
+                }
             }
-            rx.close();
-        }
-    }
-
-    /// Releases the handle; the producer runs on until it notices the consumer is gone.
-    pub fn detach(mut self) {
-        if let Source::Pending { abort, .. } = &mut self.source {
-            *abort = None;
         }
     }
 
     /// Consumes the stream as an iterator that waits for each item on the current thread.
     ///
-    /// Present exactly where [`Task::block`](crate::Task::block) is, for the same reason.
+    /// Present exactly where [`Job::block`](crate::Job::block) is, for the same reason.
     #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
     pub fn blocking_iter(self) -> BlockingIter<T, E> {
         BlockingIter { inner: self }
@@ -158,14 +126,8 @@ impl<T, E> Stream for Streaming<T, E> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match &mut self.get_mut().source {
             Source::Ready(items) => Poll::Ready(items.next()),
-            Source::Pending { rx, .. } => rx.as_mut().poll_next(cx),
+            Source::Pending(stream) => stream.as_mut().poll_next(cx),
         }
-    }
-}
-
-impl<T, E> Drop for Streaming<T, E> {
-    fn drop(&mut self) {
-        self.cancel();
     }
 }
 
@@ -173,7 +135,7 @@ impl<T, E> fmt::Debug for Streaming<T, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let source = match &self.source {
             Source::Ready(_) => "ready",
-            Source::Pending { .. } => "pending",
+            Source::Pending(_) => "pending",
         };
         f.debug_struct("Streaming")
             .field("source", &source)
@@ -254,27 +216,17 @@ impl<T, E> fmt::Debug for StreamingSink<T, E> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use futures::executor::block_on;
+    use futures::{StreamExt, stream};
 
     use super::*;
-    use crate::spawn::ThreadSpawn;
 
-    fn set_within(flag: &AtomicBool, secs: u64) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(secs);
-        while Instant::now() < deadline {
-            if flag.load(Ordering::SeqCst) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        false
-    }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Failed;
 
     #[test]
     fn given_ready_stream_when_probed_then_items_come_out_in_order_then_none() {
-        let mut stream = Streaming::<_, Aborted>::ready(vec![1, 2]);
+        let mut stream = Streaming::<_, Failed>::ready(vec![1, 2]);
 
         assert_eq!(stream.try_next_now(), Some(Ok(1)));
         assert_eq!(stream.try_next_now(), Some(Ok(2)));
@@ -283,16 +235,35 @@ mod tests {
 
     #[test]
     fn given_failed_stream_when_iterated_then_the_error_is_its_only_item() {
-        let items: Vec<_> = Streaming::<u8, Aborted>::failed(Aborted)
+        let items: Vec<_> = Streaming::<u8, Failed>::failed(Failed)
             .blocking_iter()
             .collect();
 
-        assert_eq!(items, vec![Err(Aborted)]);
+        assert_eq!(items, vec![Err(Failed)]);
+    }
+
+    #[test]
+    fn given_wrapped_stream_when_probed_per_tick_then_ready_items_come_out_and_pending_is_none() {
+        let (release, gate) = futures::channel::oneshot::channel::<()>();
+        let mut stream = Streaming::<u8, Failed>::new(
+            stream::once(async move {
+                gate.await.ok();
+                Ok(1)
+            })
+            .chain(stream::iter([Ok(2)])),
+        );
+
+        assert_eq!(stream.try_next_now(), None);
+        release.send(()).unwrap();
+
+        assert_eq!(stream.try_next_now(), Some(Ok(1)));
+        assert_eq!(stream.try_next_now(), Some(Ok(2)));
+        assert_eq!(stream.try_next_now(), None);
     }
 
     #[test]
     fn given_sink_when_fed_and_dropped_then_blocking_iter_drains_and_ends() {
-        let (sink, stream) = Streaming::<u8, Aborted>::channel(4);
+        let (sink, stream) = Streaming::<u8, Failed>::channel(4);
 
         sink.try_send(1).unwrap();
         sink.try_send(2).unwrap();
@@ -304,7 +275,7 @@ mod tests {
 
     #[test]
     fn given_full_channel_when_sending_without_waiting_then_item_comes_back() {
-        let (sink, _stream) = Streaming::<u8, Aborted>::channel(1);
+        let (sink, _stream) = Streaming::<u8, Failed>::channel(1);
 
         sink.try_send(1).unwrap();
 
@@ -313,23 +284,18 @@ mod tests {
 
     #[test]
     fn given_dropped_consumer_when_sending_then_sink_reports_closed() {
-        let (sink, stream) = Streaming::<u8, Aborted>::channel(1);
+        let (sink, stream) = Streaming::<u8, Failed>::channel(1);
 
         drop(stream);
 
         assert_eq!(sink.try_send(1), Err(TrySendError::Closed(1)));
-        assert_eq!(futures::executor::block_on(sink.send(2)), Err(Closed));
+        assert_eq!(block_on(sink.send(2)), Err(Closed));
     }
 
     #[test]
-    fn given_producer_faster_than_capacity_when_consumed_then_every_item_arrives_in_order() {
-        let stream = Streaming::<u8, Aborted>::spawn(&ThreadSpawn, 1, |sink| async move {
-            for item in 0..5 {
-                if sink.send(item).await.is_err() {
-                    return;
-                }
-            }
-        });
+    fn given_producer_faster_than_capacity_on_its_own_thread_then_every_item_arrives_in_order() {
+        let (sink, stream) = Streaming::<u8, Failed>::channel(1);
+        std::thread::spawn(move || block_on(sink.forward(stream::iter((0..5).map(Ok)))));
 
         let items: Vec<_> = stream.blocking_iter().collect::<Result<_, _>>().unwrap();
 
@@ -337,91 +303,27 @@ mod tests {
     }
 
     #[test]
-    fn given_producer_that_fails_when_consumed_then_items_precede_the_error() {
-        let stream = Streaming::<u8, Aborted>::spawn(&ThreadSpawn, 4, |sink| async move {
-            sink.send(1).await.ok();
-            sink.fail(Aborted).await;
+    fn given_producer_that_fails_then_items_precede_the_error() {
+        let (sink, stream) = Streaming::<u8, Failed>::channel(4);
+        std::thread::spawn(move || {
+            block_on(sink.forward(stream::iter([Ok(1), Err(Failed), Ok(3)])))
         });
 
         let items: Vec<_> = stream.blocking_iter().collect();
 
-        assert_eq!(items, vec![Ok(1), Err(Aborted)]);
+        assert_eq!(items, vec![Ok(1), Err(Failed)]);
     }
 
     #[test]
-    fn given_cancelled_spawned_stream_then_producer_is_dropped_at_its_next_suspension() {
-        struct DropFlag(Arc<AtomicBool>);
-        impl Drop for DropFlag {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-        let dropped = Arc::new(AtomicBool::new(false));
-        let flag = DropFlag(dropped.clone());
-        let mut stream = Streaming::<u8, Aborted>::spawn(&ThreadSpawn, 1, |sink| async move {
-            let _flag = flag;
-            loop {
-                if sink.send(0).await.is_err() {
-                    return;
-                }
-            }
-        });
-
-        stream.cancel();
-
-        assert!(
-            set_within(&dropped, 5),
-            "producer kept running after cancel"
-        );
-    }
-
-    #[test]
-    fn given_dropped_spawned_stream_then_producer_is_dropped_at_its_next_suspension() {
-        struct DropFlag(Arc<AtomicBool>);
-        impl Drop for DropFlag {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-        let dropped = Arc::new(AtomicBool::new(false));
-        let flag = DropFlag(dropped.clone());
-        let stream = Streaming::<u8, Aborted>::spawn(&ThreadSpawn, 1, |sink| async move {
-            let _flag = flag;
-            loop {
-                if sink.send(0).await.is_err() {
-                    return;
-                }
-            }
-        });
+    fn given_dropped_stream_then_a_producer_on_its_own_thread_sees_the_channel_close() {
+        let (sink, stream) = Streaming::<u8, Failed>::channel(1);
+        let producer =
+            std::thread::spawn(move || block_on(async { while sink.send(0).await.is_ok() {} }));
 
         drop(stream);
 
-        assert!(
-            set_within(&dropped, 5),
-            "producer kept running after the handle was dropped"
-        );
-    }
-
-    #[test]
-    fn given_forwarded_stream_when_it_ends_with_an_error_then_items_precede_it() {
-        let (sink, stream) = Streaming::<u8, Aborted>::channel(1);
-        let source = futures::stream::iter(vec![Ok(1), Ok(2), Err(Aborted), Ok(3)]);
-
-        std::thread::spawn(move || futures::executor::block_on(sink.forward(source)));
-        let items: Vec<_> = stream.blocking_iter().collect();
-
-        assert_eq!(items, vec![Ok(1), Ok(2), Err(Aborted)]);
-    }
-
-    #[test]
-    fn given_cancelled_channel_stream_then_buffered_items_drain_and_new_sends_are_refused() {
-        let (sink, mut stream) = Streaming::<u8, Aborted>::channel(2);
-        sink.try_send(1).unwrap();
-
-        stream.cancel();
-
-        assert_eq!(sink.try_send(2), Err(TrySendError::Closed(2)));
-        assert_eq!(stream.try_next_now(), Some(Ok(1)));
-        assert_eq!(stream.try_next_now(), None);
+        producer
+            .join()
+            .expect("the producer stopped once the consumer was gone");
     }
 }

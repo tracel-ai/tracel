@@ -6,8 +6,8 @@ use futures_timer::Delay;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use tracel_experiment::{
-    ActivityEvent, ActivityId, ActivityStatus, ArtifactKind, ExperimentRunControl, LogLevel,
-    LogRecord, MetricSpec, MetricValue,
+    ActivityEvent, ActivityId, ActivityStatus, ArtifactKind, LogLevel, LogRecord, MetricSpec,
+    MetricValue,
 };
 
 use tracel_artifact::bundle::FsBundle;
@@ -16,9 +16,8 @@ use tracel_client::websocket::{
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, LogEntry,
     LogEntryLevel, MetricLog,
 };
-use tracel_task::Spawn;
 
-use crate::actor::{ExperimentSocket, SocketHandle};
+use crate::actor::SocketHandle;
 
 /// An artifact that could not be handed to the backend.
 #[derive(Debug, thiserror::Error)]
@@ -52,16 +51,9 @@ pub struct RemoteExperimentSession {
 }
 
 impl RemoteExperimentSession {
-    /// Opens a session over `socket`, driven by an actor on `spawn`, handing artifacts to
+    /// Opens a session over an already-running socket actor, handing artifacts to
     /// `artifact_uploader`.
-    pub fn new<S: ExperimentSocket>(
-        artifact_uploader: BoxedArtifactUploader,
-        socket: S,
-        control: ExperimentRunControl,
-        spawn: &dyn Spawn,
-    ) -> Self {
-        let socket = SocketHandle::spawn(spawn, socket, control);
-
+    pub fn new(artifact_uploader: BoxedArtifactUploader, socket: SocketHandle) -> Self {
         Self {
             artifact_uploader,
             socket: Mutex::new(Some(socket)),

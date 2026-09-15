@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
+use futures::{TryStreamExt, stream};
 use serde::Deserialize;
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError, upload_multipart,
 };
-use tracel_artifact::{HttpTransferClient, TransferClient, TransferError, TransferObserver};
+use tracel_artifact::{TransferClient, TransferError, TransferObserver};
 use tracel_client::{
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
@@ -20,10 +21,10 @@ use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
     VersionManifest, VersionSpec,
 };
-use tracel_task::{Spawn, Streaming, Task};
+use tracel_task::{Job, Streaming};
 
 use crate::ConsoleError;
-use crate::console::ProjectScope;
+use crate::console::{ConsoleInner, ProjectScope};
 use crate::error::client_error_is_not_found;
 use crate::wire::console_timestamp;
 
@@ -43,16 +44,10 @@ impl ConsoleModelOps {
     }
 }
 
-impl ConsoleModelOps {
-    fn spawn(&self) -> &dyn Spawn {
-        &*self.scope.console.spawn
-    }
-}
-
 impl ModelOps for ConsoleModelOps {
-    fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
+    fn list_models(&self) -> Job<Vec<Model>, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let scope = &this.scope;
             scope
                 .console
@@ -64,9 +59,9 @@ impl ModelOps for ConsoleModelOps {
         })
     }
 
-    fn get_model(&self, name: String) -> Task<Model, ModelsError> {
+    fn get_model(&self, name: String) -> Job<Model, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let scope = &this.scope;
             scope
                 .console
@@ -78,9 +73,9 @@ impl ModelOps for ConsoleModelOps {
         })
     }
 
-    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
+    fn list_versions(&self, model: String) -> Job<Vec<ModelVersion>, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let scope = &this.scope;
             scope
                 .console
@@ -92,9 +87,9 @@ impl ModelOps for ConsoleModelOps {
         })
     }
 
-    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
+    fn get_version(&self, model: String, spec: VersionSpec) -> Job<ModelVersion, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let id = match &spec {
                 VersionSpec::Exact(id) => id.clone(),
                 VersionSpec::Latest => this
@@ -125,13 +120,13 @@ impl ModelOps for ConsoleModelOps {
         &self,
         model: String,
         id: VersionId,
-    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError> {
+    ) -> Job<Vec<Box<dyn VersionFileSource>>, ModelsError> {
         let route = match self.route_version(&model, &id) {
             Ok(route) => route,
-            Err(error) => return Task::failed(error),
+            Err(error) => return Job::failed(error),
         };
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let scope = &this.scope;
             let console = &scope.console;
             console
@@ -139,13 +134,13 @@ impl ModelOps for ConsoleModelOps {
                 .presign_model_download(&scope.owner, &scope.project, &model, route)
                 .await
                 .map_err(|error| map_version_error(error, &model, &id))
-                .map(|response| file_sources_from_wire(&console.transfer, &console.spawn, response))
+                .map(|response| file_sources_from_wire(console, response))
         })
     }
 
-    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
+    fn create_model(&self, name: String, description: Option<String>) -> Job<Model, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let scope = &this.scope;
             scope
                 .console
@@ -168,9 +163,9 @@ impl ModelOps for ConsoleModelOps {
         contents: Arc<dyn MultipartUploadSource>,
         metadata: Option<serde_json::Value>,
         mut observer: Box<dyn TransferObserver>,
-    ) -> Task<ModelVersion, ModelsError> {
+    ) -> Job<ModelVersion, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.scope.console.attach(async move {
             let scope = &this.scope;
             let (owner, project) = (scope.owner.as_str(), scope.project.as_str());
             let client = &scope.console.client;
@@ -305,8 +300,7 @@ impl From<WireManifest> for VersionManifest {
 }
 
 fn file_sources_from_wire(
-    transfer: &HttpTransferClient,
-    spawn: &Arc<dyn Spawn>,
+    console: &Arc<ConsoleInner>,
     response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
@@ -320,8 +314,7 @@ fn file_sources_from_wire(
                     checksum: file.checksum,
                 },
                 url: file.url,
-                transfer: transfer.clone(),
-                spawn: Arc::clone(spawn),
+                console: Arc::clone(console),
             }) as Box<dyn VersionFileSource>
         })
         .collect()
@@ -330,8 +323,7 @@ fn file_sources_from_wire(
 struct ConsoleVersionFileSource {
     file: VersionFile,
     url: String,
-    transfer: HttpTransferClient,
-    spawn: Arc<dyn Spawn>,
+    console: Arc<ConsoleInner>,
 }
 
 impl VersionFileSource for ConsoleVersionFileSource {
@@ -340,15 +332,12 @@ impl VersionFileSource for ConsoleVersionFileSource {
     }
 
     fn open(&self, _canonical_path: String) -> Streaming<Bytes, TransferError> {
-        let transfer = self.transfer.clone();
+        let transfer = self.console.transfer.clone();
         let url = self.url.clone();
         let size = self.file.size_bytes;
-        Streaming::spawn(&*self.spawn, 1, |sink| async move {
-            match transfer.get(&url, Some(size)).await {
-                Ok(body) => sink.forward(body).await,
-                Err(error) => sink.fail(error).await,
-            }
-        })
+        self.console.attach_stream(
+            stream::once(async move { transfer.get(&url, Some(size)).await }).try_flatten(),
+        )
     }
 }
 

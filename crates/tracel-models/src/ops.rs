@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tracel_artifact::upload::MultipartUploadSource;
 use tracel_artifact::{TransferError, TransferObserver};
-use tracel_task::{Streaming, Task};
+use tracel_task::{Job, Streaming};
 
 use crate::{Model, ModelVersion, ModelsError, VersionFile, VersionId, VersionSpec};
 
@@ -27,34 +27,34 @@ pub trait VersionFileSource: Send + Sync + 'static {
 /// Backend primitives required by the model capability.
 ///
 /// An implementation is already scoped to one location, so it is never asked which one. Every
-/// operation is handed back as a running [`Task`]: the implementation starts the work on the
-/// executor it owns, so the handle can be awaited from anywhere.
+/// operation is handed back as a [`Job`] that any executor can drive: an implementation whose
+/// transport needs a runtime attaches the work to the one it owns before handing it back.
 ///
 /// Implementations should use the dedicated not-found variants for missing models and versions,
 /// and [`ModelsError::Transport`] for communication failures. Backend-specific failures may be
 /// preserved with [`ModelsError::other`].
 pub trait ModelOps: Send + Sync + 'static {
     /// Lists models in the implementation's scope.
-    fn list_models(&self) -> Task<Vec<Model>, ModelsError>;
+    fn list_models(&self) -> Job<Vec<Model>, ModelsError>;
 
     /// Fetches one model by name.
-    fn get_model(&self, name: String) -> Task<Model, ModelsError>;
+    fn get_model(&self, name: String) -> Job<Model, ModelsError>;
 
     /// Lists published versions of a model.
-    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError>;
+    fn list_versions(&self, model: String) -> Job<Vec<ModelVersion>, ModelsError>;
 
     /// Resolves a version selector against a model.
-    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError>;
+    fn get_version(&self, model: String, spec: VersionSpec) -> Job<ModelVersion, ModelsError>;
 
     /// Fetches the backend-owned file sources for one version.
     fn fetch_version_files(
         &self,
         model: String,
         id: VersionId,
-    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError>;
+    ) -> Job<Vec<Box<dyn VersionFileSource>>, ModelsError>;
 
     /// Creates a model that can hold versions.
-    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError>;
+    fn create_model(&self, name: String, description: Option<String>) -> Job<Model, ModelsError>;
 
     /// Publishes a version of `model` containing the files the capability measured.
     ///
@@ -68,5 +68,5 @@ pub trait ModelOps: Send + Sync + 'static {
         contents: Arc<dyn MultipartUploadSource>,
         metadata: Option<serde_json::Value>,
         observer: Box<dyn TransferObserver>,
-    ) -> Task<ModelVersion, ModelsError>;
+    ) -> Job<ModelVersion, ModelsError>;
 }

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tracel_artifact::{HttpTransferClient, TransferClient, TransferError};
+use futures::{TryStreamExt, stream};
+use tracel_artifact::{TransferClient, TransferError};
 use tracel_client::station::model::request::CreateModelRequest;
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
@@ -11,7 +12,7 @@ use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
     VersionManifest, VersionSpec,
 };
-use tracel_task::{Spawn, Streaming, Task};
+use tracel_task::{Job, Streaming};
 
 use crate::StationError;
 use crate::station::StationInner;
@@ -33,16 +34,10 @@ impl StationModelOps {
     }
 }
 
-impl StationModelOps {
-    fn spawn(&self) -> &dyn Spawn {
-        &*self.station.spawn
-    }
-}
-
 impl ModelOps for StationModelOps {
-    fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
+    fn list_models(&self) -> Job<Vec<Model>, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.station.attach(async move {
             this.station
                 .client
                 .models()
@@ -53,9 +48,9 @@ impl ModelOps for StationModelOps {
         })
     }
 
-    fn get_model(&self, name: String) -> Task<Model, ModelsError> {
+    fn get_model(&self, name: String) -> Job<Model, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.station.attach(async move {
             this.station
                 .client
                 .models()
@@ -66,9 +61,9 @@ impl ModelOps for StationModelOps {
         })
     }
 
-    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
+    fn list_versions(&self, model: String) -> Job<Vec<ModelVersion>, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.station.attach(async move {
             this.station
                 .client
                 .models()
@@ -79,9 +74,9 @@ impl ModelOps for StationModelOps {
         })
     }
 
-    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
+    fn get_version(&self, model: String, spec: VersionSpec) -> Job<ModelVersion, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.station.attach(async move {
             let id = match &spec {
                 VersionSpec::Exact(id) => id.clone(),
                 // The Station has no latest-version route, so the listing answers it.
@@ -113,13 +108,13 @@ impl ModelOps for StationModelOps {
         &self,
         model: String,
         id: VersionId,
-    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError> {
+    ) -> Job<Vec<Box<dyn VersionFileSource>>, ModelsError> {
         let route = match self.route_version(&model, &id) {
             Ok(route) => route,
-            Err(error) => return Task::failed(error),
+            Err(error) => return Job::failed(error),
         };
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.station.attach(async move {
             let station = &this.station;
             station
                 .client
@@ -127,13 +122,13 @@ impl ModelOps for StationModelOps {
                 .download(&model, route)
                 .await
                 .map_err(|error| map_version_error(error, &model, &id))
-                .map(|response| file_sources_from_wire(&station.transfer, &station.spawn, response))
+                .map(|response| file_sources_from_wire(station, response))
         })
     }
 
-    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
+    fn create_model(&self, name: String, description: Option<String>) -> Job<Model, ModelsError> {
         let this = self.clone();
-        Task::spawn(self.spawn(), async move {
+        self.station.attach(async move {
             this.station
                 .client
                 .models()
@@ -151,8 +146,8 @@ impl ModelOps for StationModelOps {
         _contents: Arc<dyn tracel_artifact::upload::MultipartUploadSource>,
         _metadata: Option<serde_json::Value>,
         _observer: Box<dyn tracel_artifact::TransferObserver>,
-    ) -> Task<ModelVersion, ModelsError> {
-        Task::failed(ModelsError::other(
+    ) -> Job<ModelVersion, ModelsError> {
+        Job::failed(ModelsError::other(
             "publishing a model version is not implemented for the station yet",
         ))
     }
@@ -161,8 +156,7 @@ impl ModelOps for StationModelOps {
 struct StationVersionFileSource {
     file: VersionFile,
     url: String,
-    transfer: HttpTransferClient,
-    spawn: Arc<dyn Spawn>,
+    station: Arc<StationInner>,
 }
 
 impl VersionFileSource for StationVersionFileSource {
@@ -171,21 +165,17 @@ impl VersionFileSource for StationVersionFileSource {
     }
 
     fn open(&self, _canonical_path: String) -> Streaming<Bytes, TransferError> {
-        let transfer = self.transfer.clone();
+        let transfer = self.station.transfer.clone();
         let url = self.url.clone();
         let size = self.file.size_bytes;
-        Streaming::spawn(&*self.spawn, 1, |sink| async move {
-            match transfer.get(&url, Some(size)).await {
-                Ok(body) => sink.forward(body).await,
-                Err(error) => sink.fail(error).await,
-            }
-        })
+        self.station.attach_stream(
+            stream::once(async move { transfer.get(&url, Some(size)).await }).try_flatten(),
+        )
     }
 }
 
 fn file_sources_from_wire(
-    transfer: &HttpTransferClient,
-    spawn: &Arc<dyn Spawn>,
+    station: &Arc<StationInner>,
     response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
@@ -199,8 +189,7 @@ fn file_sources_from_wire(
                     checksum: file.checksum,
                 },
                 url: file.url,
-                transfer: transfer.clone(),
-                spawn: Arc::clone(spawn),
+                station: Arc::clone(station),
             }) as Box<dyn VersionFileSource>
         })
         .collect()

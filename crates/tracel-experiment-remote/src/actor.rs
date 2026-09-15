@@ -3,11 +3,12 @@ use std::num::NonZeroU64;
 use std::pin::pin;
 
 use async_channel::{Receiver, Sender};
+use futures::channel::oneshot;
 use futures::future::{Either, select};
 use tracel_client::WebSocketClient;
 use tracel_client::websocket::{ExperimentMessage, ServerMessage, WebSocketError};
 use tracel_experiment::{ActivityId, ExperimentRunControl};
-use tracel_task::{Aborted, MaybeSend, Reply, Spawn, Task};
+use tracel_task::{Job, MaybeSend};
 
 /// Why the experiment socket could not carry out an operation.
 #[derive(Debug, thiserror::Error)]
@@ -18,12 +19,6 @@ pub enum SocketError {
     /// The actor driving the socket stopped before it could answer.
     #[error("the experiment socket is closed")]
     Closed,
-}
-
-impl From<Aborted> for SocketError {
-    fn from(_: Aborted) -> Self {
-        Self::Closed
-    }
 }
 
 impl From<WebSocketError> for SocketError {
@@ -87,20 +82,18 @@ pub struct SocketHandle {
 }
 
 impl SocketHandle {
-    /// Starts an actor on `spawn` that owns `socket`, writes what the handle queues, and applies
-    /// the server's cancellation requests to `control`.
+    /// Creates the handle and the actor loop that owns `socket`, writes what the handle queues,
+    /// and applies the server's cancellation requests to `control`. The caller runs the loop
+    /// wherever its loops run.
     ///
-    /// The actor stops once the socket is closed, the peer hangs up, a write fails, or every
+    /// The loop ends once the socket is closed, the peer hangs up, a write fails, or every
     /// handle is dropped.
-    pub fn spawn<S: ExperimentSocket>(
-        spawn: &dyn Spawn,
+    pub fn start<S: ExperimentSocket>(
         socket: S,
         control: ExperimentRunControl,
-    ) -> Self {
+    ) -> (Self, impl Future<Output = ()> + MaybeSend + 'static) {
         let (mailbox, commands) = async_channel::unbounded();
-        spawn.spawn(Box::pin(run(socket, control, commands)));
-
-        Self { mailbox }
+        (Self { mailbox }, run(socket, control, commands))
     }
 
     /// Queues `message` for the socket without waiting.
@@ -111,29 +104,32 @@ impl SocketHandle {
     }
 
     /// Resolves once every message queued before it has been written to the socket.
-    pub fn flush(&self) -> Task<(), SocketError> {
+    pub fn flush(&self) -> Job<(), SocketError> {
         self.ask(Command::Flush)
     }
 
     /// Closes the socket once every message queued before it has been written, and stops the
     /// actor.
-    pub fn close(&self) -> Task<(), SocketError> {
+    pub fn close(&self) -> Job<(), SocketError> {
         self.ask(Command::Close)
     }
 
-    fn ask(&self, command: fn(Reply<(), SocketError>) -> Command) -> Task<(), SocketError> {
-        let (reply, task) = Task::channel();
+    /// Queues a command carrying a reply slot; an actor that stops first answers `Closed`.
+    fn ask(&self, command: fn(Reply) -> Command) -> Job<(), SocketError> {
+        let (reply, answer) = oneshot::channel();
         match self.mailbox.try_send(command(reply)) {
-            Ok(()) => task,
-            Err(_) => Task::failed(SocketError::Closed),
+            Ok(()) => Job::new(async move { answer.await.unwrap_or(Err(SocketError::Closed)) }),
+            Err(_) => Job::failed(SocketError::Closed),
         }
     }
 }
 
+type Reply = oneshot::Sender<Result<(), SocketError>>;
+
 enum Command {
     Send(ExperimentMessage),
-    Flush(Reply<(), SocketError>),
-    Close(Reply<(), SocketError>),
+    Flush(Reply),
+    Close(Reply),
 }
 
 impl Command {
@@ -141,7 +137,7 @@ impl Command {
         match self {
             Command::Send(_) => {}
             Command::Flush(reply) | Command::Close(reply) => {
-                reply.send(Err(SocketError::Closed));
+                let _ = reply.send(Err(SocketError::Closed));
             }
         }
     }
@@ -189,9 +185,11 @@ async fn drive<S: ExperimentSocket>(
                 tracing::error!(error = ?error, "WebSocket receive error");
             }
             Step::Command(Some(Command::Send(message))) => socket.send(message).await?,
-            Step::Command(Some(Command::Flush(reply))) => reply.send(Ok(())),
+            Step::Command(Some(Command::Flush(reply))) => {
+                let _ = reply.send(Ok(()));
+            }
             Step::Command(Some(Command::Close(reply))) => {
-                reply.send(socket.close().await);
+                let _ = reply.send(socket.close().await);
                 return Ok(());
             }
             Step::Command(None) => return socket.close().await,
@@ -239,9 +237,15 @@ mod tests {
     };
     use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
     use tracel_experiment::{ArtifactKind, ExperimentId, ExperimentRun};
-    use tracel_task::ThreadSpawn;
 
     use super::*;
+
+    /// Starts the actor with its loop driven on a thread of its own.
+    fn started<S: ExperimentSocket>(socket: S, control: ExperimentRunControl) -> SocketHandle {
+        let (handle, run) = SocketHandle::start(socket, control);
+        std::thread::spawn(move || futures::executor::block_on(run));
+        handle
+    }
 
     /// A socket whose peer is the test.
     struct FakeSocket {
@@ -396,7 +400,7 @@ mod tests {
     #[test]
     fn queued_messages_reach_the_socket_in_order() {
         let (socket, peer) = fake_socket(None);
-        let handle = SocketHandle::spawn(&ThreadSpawn, socket, ExperimentRunControl::default());
+        let handle = started(socket, ExperimentRunControl::default());
 
         handle.send(definition("one")).unwrap();
         handle.send(definition("two")).unwrap();
@@ -409,7 +413,7 @@ mod tests {
     #[test]
     fn everything_queued_before_close_is_written_before_the_socket_closes() {
         let (socket, peer) = fake_socket(None);
-        let handle = SocketHandle::spawn(&ThreadSpawn, socket, ExperimentRunControl::default());
+        let handle = started(socket, ExperimentRunControl::default());
 
         handle.send(definition("one")).unwrap();
         handle.send(definition("two")).unwrap();
@@ -423,7 +427,7 @@ mod tests {
     fn a_server_cancel_request_cancels_the_run() {
         let (socket, peer) = fake_socket(None);
         let control = ExperimentRunControl::default();
-        let _handle = SocketHandle::spawn(&ThreadSpawn, socket, control.clone());
+        let _handle = started(socket, control.clone());
 
         peer.push(ServerMessage::CancelRequested);
 
@@ -437,7 +441,7 @@ mod tests {
         let run =
             ExperimentRun::new_with_control("remote/1", NullSession, NullReader, control.clone());
         let activity = run.activity("node").cancellable().start();
-        let _handle = SocketHandle::spawn(&ThreadSpawn, socket, control.clone());
+        let _handle = started(socket, control.clone());
 
         peer.push(ServerMessage::ActivityCancelRequested {
             id: activity.id().as_u64(),
@@ -451,11 +455,11 @@ mod tests {
     fn close_resolves_only_once_the_socket_has_closed() {
         let (open, gate) = oneshot::channel();
         let (socket, peer) = fake_socket(Some(gate));
-        let handle = SocketHandle::spawn(&ThreadSpawn, socket, ExperimentRunControl::default());
+        let handle = started(socket, ExperimentRunControl::default());
 
         let mut closing = handle.close();
         assert!(holds_within(5, || peer.closing()));
-        assert!(closing.try_get().is_none());
+        assert!(closing.try_poll().is_none());
 
         open.send(()).unwrap();
 
@@ -466,7 +470,7 @@ mod tests {
     #[test]
     fn the_actor_stops_when_the_peer_hangs_up() {
         let (socket, peer) = fake_socket(None);
-        let handle = SocketHandle::spawn(&ThreadSpawn, socket, ExperimentRunControl::default());
+        let handle = started(socket, ExperimentRunControl::default());
 
         peer.hang_up();
 

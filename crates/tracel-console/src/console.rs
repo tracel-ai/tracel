@@ -2,13 +2,14 @@ use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 
+use futures::Stream;
 use tracel_artifact::{HttpTransferClient, ReqwestTransferClient};
 use tracel_client::console::{Client, TracelCredentials};
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
 use tracel_models::Models;
-use tracel_task::{Job, MaybeSend, Spawn, Task, TokioRuntime};
+use tracel_task::{Job, MaybeSend, Streaming, TokioRuntime};
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
@@ -19,9 +20,10 @@ use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User}
 
 /// A client rooted at one Tracel console URL.
 ///
-/// The connection owns the executor its work runs on — a runtime of its own on native, the
-/// JavaScript event loop on wasm. Nothing a caller does requires a runtime of the caller's own:
-/// every operation is a [`Job`] the caller awaits, blocks on, or spawns where they choose.
+/// Every operation is a [`Job`] the caller awaits, blocks on, polls, or spawns where they
+/// choose. The transport's runtime is the connection's business: natively it borrows the tokio
+/// runtime the caller connected from, or starts one of its own, and attaches each call to it so
+/// that any executor can drive the result.
 #[derive(Clone)]
 pub struct Console {
     inner: Arc<ConsoleInner>,
@@ -31,13 +33,28 @@ pub struct Console {
 pub struct ConsoleInner {
     pub client: Client,
     pub transfer_client: ReqwestTransferClient,
-    /// The executor behind [`spawn`](Self::spawn), for the ports whose contract is synchronous:
-    /// each one `block_on`s a client call from the caller's thread, never from a task on the
-    /// runtime itself, which would stall it.
-    // Every such bridge goes away when its capability hands back tasks of its own.
+    /// Drives the transport's IO and runs the connection's actors. Ports whose contract is still
+    /// synchronous `block_on` it from the caller's thread; the rest attach their work to it.
     pub runtime: Arc<TokioRuntime>,
-    pub spawn: Arc<dyn Spawn>,
     pub transfer: HttpTransferClient,
+}
+
+impl ConsoleInner {
+    /// Hands `call` back as a job any executor can drive, its IO driven by the runtime.
+    pub fn attach<T, E, F>(&self, call: F) -> Job<T, E>
+    where
+        F: Future<Output = Result<T, E>> + MaybeSend + 'static,
+    {
+        Job::new(self.runtime.attach(call))
+    }
+
+    /// Hands `stream` back as items any executor can pull, its IO driven by the runtime.
+    pub fn attach_stream<T, E, S>(&self, stream: S) -> Streaming<T, E>
+    where
+        S: Stream<Item = Result<T, E>> + MaybeSend + 'static,
+    {
+        Streaming::new(self.runtime.attach_stream(stream))
+    }
 }
 
 /// A project location bound to a console connection.
@@ -50,39 +67,27 @@ pub struct ProjectScope {
 impl Console {
     /// Connects to the console and verifies the credentials.
     ///
-    /// The connection's executor starts when the job is first driven, not before.
+    /// The runtime is chosen when the job is first driven: the tokio runtime the caller is inside
+    /// at that moment, or one of the connection's own.
     pub fn connect(credentials: &TracelCredentials) -> Job<Self, ConsoleError> {
         let credentials = credentials.clone();
         Job::new(async move {
             let runtime = executor();
-            let spawn: Arc<dyn Spawn> = runtime.clone();
             let transfer_client = ReqwestTransferClient::with_runtime(Arc::clone(&runtime));
             let transfer = transfer_client.http().clone();
             let env = crate::env::from_environment();
 
-            let client = Task::spawn(&spawn, async move {
-                Client::connect(env, &credentials)
-                    .await
-                    .map_err(ConsoleError::from)
-            })
-            .await?;
+            let client = runtime.attach(Client::connect(env, &credentials)).await?;
 
             Ok(Self {
                 inner: Arc::new(ConsoleInner {
                     client,
                     transfer_client,
                     runtime,
-                    spawn,
                     transfer,
                 }),
             })
         })
-    }
-
-    /// The executor this connection's work runs on, for a caller who wants to
-    /// [`spawn_on`](Job::spawn_on) it.
-    pub fn spawner(&self) -> &Arc<dyn Spawn> {
-        &self.inner.spawn
     }
 
     /// Logs out and consumes this console connection.
@@ -156,16 +161,13 @@ impl Console {
         })
     }
 
-    /// Runs one client call on the connection's executor, as a job.
+    /// Hands one client call back as a job.
     fn call<T, F, Fut>(&self, call: F) -> Job<T, ConsoleError>
     where
-        T: Send + 'static,
-        F: FnOnce(Arc<ConsoleInner>) -> Fut + MaybeSend + 'static,
+        F: FnOnce(Arc<ConsoleInner>) -> Fut,
         Fut: Future<Output = Result<T, ConsoleError>> + MaybeSend + 'static,
     {
-        let inner = Arc::clone(&self.inner);
-        let spawn = Arc::clone(&inner.spawn);
-        Job::new(async move { Task::spawn(&spawn, call(inner)).await })
+        self.inner.attach(call(Arc::clone(&self.inner)))
     }
 
     /// Creates a project handle without performing I/O.
@@ -216,18 +218,14 @@ impl ProjectHandle {
     /// console intentionally does not reveal which case applies.
     pub fn get(&self) -> Job<Project, ConsoleError> {
         let scope = Arc::clone(&self.scope);
-        let spawn = Arc::clone(&scope.console.spawn);
-        Job::new(async move {
-            Task::spawn(&spawn, async move {
-                scope
-                    .console
-                    .client
-                    .get_project(&scope.owner, &scope.project)
-                    .await
-                    .map_err(ConsoleError::from)
-                    .and_then(Project::try_from)
-            })
-            .await
+        self.scope.console.attach(async move {
+            scope
+                .console
+                .client
+                .get_project(&scope.owner, &scope.project)
+                .await
+                .map_err(ConsoleError::from)
+                .and_then(Project::try_from)
         })
     }
 
@@ -274,8 +272,9 @@ impl fmt::Debug for ProjectHandle {
     }
 }
 
-/// The one place the target decides how work runs: a runtime of the connection's own, shared by
-/// its executor, its transfer clients, and the ports that bridge into it.
+/// The one place the target decides how work runs: the tokio runtime the caller is inside, or
+/// one of the connection's own, driving its transport, running its actors, and serving the
+/// ports that still bridge into it.
 fn executor() -> Arc<TokioRuntime> {
-    Arc::new(TokioRuntime::start().expect("failed to start the console runtime"))
+    Arc::new(TokioRuntime::current_or_start().expect("failed to start the console runtime"))
 }

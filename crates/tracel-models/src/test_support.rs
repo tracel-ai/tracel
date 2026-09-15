@@ -8,7 +8,7 @@ use sha2::Digest;
 
 use tracel_artifact::upload::MultipartUploadSource;
 use tracel_artifact::{TransferError, TransferObserver, reader_stream};
-use tracel_task::{Streaming, Task, ThreadSpawn};
+use tracel_task::{Job, Streaming};
 
 use crate::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileSource, VersionId,
@@ -65,11 +65,9 @@ impl VersionFileSource for TestSource {
             offset: 0,
             consumed: Arc::clone(&self.0.consumed),
         };
-        Streaming::spawn(&ThreadSpawn, 1, |sink| async move {
-            let chunks =
-                reader_stream(reader).map_err(|error| TransferError::Transport(error.to_string()));
-            sink.forward(std::pin::pin!(chunks)).await;
-        })
+        Streaming::new(
+            reader_stream(reader).map_err(|error| TransferError::Transport(error.to_string())),
+        )
     }
 }
 
@@ -153,10 +151,10 @@ impl FakeOps {
 }
 
 impl ModelOps for FakeOps {
-    fn create_model(&self, name: String, description: Option<String>) -> Task<Model, ModelsError> {
+    fn create_model(&self, name: String, description: Option<String>) -> Job<Model, ModelsError> {
         let mut created = model(&name);
         created.description = description;
-        Task::ready(created)
+        Job::ready(created)
     }
 
     fn publish_version(
@@ -166,17 +164,17 @@ impl ModelOps for FakeOps {
         contents: Arc<dyn MultipartUploadSource>,
         metadata: Option<serde_json::Value>,
         mut observer: Box<dyn TransferObserver>,
-    ) -> Task<ModelVersion, ModelsError> {
+    ) -> Job<ModelVersion, ModelsError> {
         if let Err(error) = self.find_model(&model) {
-            return Task::failed(error);
+            return Job::failed(error);
         }
         for file in &files {
             let len = match contents.file_len(&file.rel_path) {
                 Ok(len) => len,
-                Err(error) => return Task::failed(ModelsError::other(error)),
+                Err(error) => return Job::failed(ModelsError::other(error)),
             };
             if len != file.size_bytes {
-                return Task::failed(ModelsError::other(
+                return Job::failed(ModelsError::other(
                     "the measured size does not match the source",
                 ));
             }
@@ -192,23 +190,23 @@ impl ModelOps for FakeOps {
         record.files = files;
         record.metadata = metadata;
 
-        Task::ready(version(VersionId::new("published-id")))
+        Job::ready(version(VersionId::new("published-id")))
     }
 
-    fn list_models(&self) -> Task<Vec<Model>, ModelsError> {
-        Task::ready(self.models.clone())
+    fn list_models(&self) -> Job<Vec<Model>, ModelsError> {
+        Job::ready(self.models.clone())
     }
 
-    fn get_model(&self, name: String) -> Task<Model, ModelsError> {
-        Task::from_result(self.find_model(&name))
+    fn get_model(&self, name: String) -> Job<Model, ModelsError> {
+        Job::from_result(self.find_model(&name))
     }
 
-    fn list_versions(&self, model: String) -> Task<Vec<ModelVersion>, ModelsError> {
-        Task::from_result(self.find_model(&model).map(|_| Vec::new()))
+    fn list_versions(&self, model: String) -> Job<Vec<ModelVersion>, ModelsError> {
+        Job::from_result(self.find_model(&model).map(|_| Vec::new()))
     }
 
-    fn get_version(&self, model: String, spec: VersionSpec) -> Task<ModelVersion, ModelsError> {
-        Task::from_result(self.find_model(&model).and_then(|_| {
+    fn get_version(&self, model: String, spec: VersionSpec) -> Job<ModelVersion, ModelsError> {
+        Job::from_result(self.find_model(&model).and_then(|_| {
             Err(ModelsError::VersionNotFound {
                 model,
                 version: spec,
@@ -220,18 +218,18 @@ impl ModelOps for FakeOps {
         &self,
         model: String,
         id: VersionId,
-    ) -> Task<Vec<Box<dyn VersionFileSource>>, ModelsError> {
+    ) -> Job<Vec<Box<dyn VersionFileSource>>, ModelsError> {
         if let Err(error) = self.find_model(&model) {
-            return Task::failed(error);
+            return Job::failed(error);
         }
         if id.as_str() != "version-id" {
-            return Task::failed(ModelsError::VersionNotFound {
+            return Job::failed(ModelsError::VersionNotFound {
                 model,
                 version: VersionSpec::Exact(id),
             });
         }
 
-        Task::ready(self.sources.iter().map(SourceSpec::source).collect())
+        Job::ready(self.sources.iter().map(SourceSpec::source).collect())
     }
 }
 

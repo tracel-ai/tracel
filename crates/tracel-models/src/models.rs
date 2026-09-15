@@ -21,10 +21,11 @@ use crate::{
 
 /// Backend-independent model operations and verified transfer orchestration.
 ///
-/// Every operation is handed back as a [`Job`]: await it, block on it at a native edge, or spawn
-/// it on an executor of the caller's choice. Nothing runs until the job is driven. The bytes of a
-/// version land in whatever [`BundleSink`] the caller supplies, so where they are staged — a
-/// directory, memory — is the caller's decision rather than the capability's.
+/// Every operation is handed back as a [`Job`]: await it, block on it at a native edge, poll it
+/// per tick, or spawn it on an executor of the caller's choice. Nothing runs until the job is
+/// driven. The bytes of a version land in whatever [`BundleSink`] the caller supplies, so where
+/// they are staged — a directory, memory — is the caller's decision rather than the
+/// capability's.
 #[derive(Clone)]
 pub struct Models {
     ops: Arc<dyn ModelOps>,
@@ -38,22 +39,17 @@ impl Models {
 
     /// Lists models in this capability's scope.
     pub fn list(&self) -> Job<Vec<Model>, ModelsError> {
-        let ops = Arc::clone(&self.ops);
-        Job::new(async move { ops.list_models().await })
+        self.ops.list_models()
     }
 
     /// Fetches one model by name.
     pub fn get(&self, name: impl Into<String>) -> Job<Model, ModelsError> {
-        let ops = Arc::clone(&self.ops);
-        let name = name.into();
-        Job::new(async move { ops.get_model(name).await })
+        self.ops.get_model(name.into())
     }
 
     /// Lists published versions of a model.
     pub fn list_versions(&self, model: impl Into<String>) -> Job<Vec<ModelVersion>, ModelsError> {
-        let ops = Arc::clone(&self.ops);
-        let model = model.into();
-        Job::new(async move { ops.list_versions(model).await })
+        self.ops.list_versions(model.into())
     }
 
     /// Fetches one version using its opaque identity.
@@ -62,10 +58,7 @@ impl Models {
         model: impl Into<String>,
         spec: impl Into<VersionSpec>,
     ) -> Job<ModelVersion, ModelsError> {
-        let ops = Arc::clone(&self.ops);
-        let model = model.into();
-        let spec = spec.into();
-        Job::new(async move { ops.get_version(model, spec).await })
+        self.ops.get_version(model.into(), spec.into())
     }
 
     /// Downloads and verifies a version into `sink`.
@@ -157,9 +150,7 @@ impl Models {
         name: impl Into<String>,
         description: Option<String>,
     ) -> Job<Model, ModelsError> {
-        let ops = Arc::clone(&self.ops);
-        let name = name.into();
-        Job::new(async move { ops.create_model(name, description).await })
+        self.ops.create_model(name.into(), description)
     }
 
     /// Publishes every file in `source` as a new version of `model`.

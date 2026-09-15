@@ -139,12 +139,6 @@ pub enum TransferError {
     Transport(String),
 }
 
-impl From<tracel_task::Aborted> for TransferError {
-    fn from(aborted: tracel_task::Aborted) -> Self {
-        Self::Transport(aborted.to_string())
-    }
-}
-
 /// A downloaded body.
 pub type ByteStream = tracel_task::DynStream<'static, Result<Bytes, TransferError>>;
 

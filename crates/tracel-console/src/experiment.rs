@@ -27,7 +27,9 @@ use tracel_experiment::{
     ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
     ExperimentRunControl,
 };
-use tracel_experiment_remote::{ArtifactUploadError, ArtifactUploader, RemoteExperimentSession};
+use tracel_experiment_remote::{
+    ArtifactUploadError, ArtifactUploader, RemoteExperimentSession, SocketHandle,
+};
 
 use crate::console::ProjectScope;
 
@@ -91,12 +93,9 @@ fn create_run(
             experiment_num,
         ))?;
 
-    let session = RemoteExperimentSession::new(
-        Box::new(artifact_uploader),
-        ws,
-        control.clone(),
-        &*console.spawn,
-    );
+    let (socket, run) = SocketHandle::start(ws, control.clone());
+    console.runtime.spawn(run);
+    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), socket);
 
     let reader = ConsoleArtifactReader::new(Arc::clone(scope));
     let id = ExperimentId::from(format!("{experiment_num}"));

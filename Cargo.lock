@@ -6917,6 +6917,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crossbeam",
+ "futures",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -7067,6 +7068,7 @@ version = "0.10.0"
 dependencies = [
  "bytes",
  "chrono",
+ "futures",
  "serde",
  "serde_json",
  "serde_with",
@@ -7087,8 +7089,8 @@ version = "0.10.0"
 dependencies = [
  "async-channel",
  "futures",
+ "pin-project-lite",
  "tokio",
- "wasm-bindgen-futures",
 ]
 
 [[package]]

@@ -21,7 +21,7 @@ use tracel_experiment::{
     ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
     ExperimentRunControl,
 };
-use tracel_experiment_remote::RemoteExperimentSession;
+use tracel_experiment_remote::{RemoteExperimentSession, SocketHandle};
 
 use self::artifacts::{StationArtifactReader, StationArtifactUploader};
 use crate::station::StationInner;
@@ -248,12 +248,9 @@ fn create_run(
 
     let ws = runtime.block_on(experiments_client.create_run_websocket(experiment_num))?;
 
-    let session = RemoteExperimentSession::new(
-        Box::new(artifact_uploader),
-        ws,
-        control.clone(),
-        &*station.spawn,
-    );
+    let (socket, run) = SocketHandle::start(ws, control.clone());
+    runtime.spawn(run);
+    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), socket);
 
     let reader = StationArtifactReader::new(station);
     let id = ExperimentId::from(experiment_num.to_string());

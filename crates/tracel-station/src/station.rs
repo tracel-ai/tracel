@@ -1,18 +1,21 @@
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 
+use futures::Stream;
 use tracel_artifact::HttpTransferClient;
 use tracel_client::station::StationClient;
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_models::Models;
-use tracel_task::{Spawn, TokioRuntime};
+use tracel_task::{Job, MaybeSend, Streaming, TokioRuntime};
 use url::Url;
 
 /// A client rooted at one Station URL.
 ///
-/// The connection owns the runtime its work runs on; nothing a caller does requires one of the
-/// caller's own.
+/// Every operation is a [`Job`] the caller drives where they choose. The transport's runtime is
+/// the connection's business: it borrows the tokio runtime the caller connected from, or starts
+/// one of its own, and attaches each call to it so that any executor can drive the result.
 #[derive(Clone)]
 pub struct Station {
     inner: Arc<StationInner>,
@@ -20,27 +23,44 @@ pub struct Station {
 
 pub struct StationInner {
     pub client: StationClient,
-    /// The executor behind [`spawn`](Self::spawn), for the ports whose contract is synchronous:
-    /// each one `block_on`s a client call from the caller's thread, never from a task on the
-    /// runtime itself, which would stall it.
-    // Every such bridge goes away when its capability hands back tasks of its own.
+    /// Drives the transport's IO and runs the connection's actors. Ports whose contract is still
+    /// synchronous `block_on` it from the caller's thread; the rest attach their work to it.
     pub runtime: Arc<TokioRuntime>,
-    pub spawn: Arc<dyn Spawn>,
     pub transfer: HttpTransferClient,
+}
+
+impl StationInner {
+    /// Hands `call` back as a job any executor can drive, its IO driven by the runtime.
+    pub fn attach<T, E, F>(&self, call: F) -> Job<T, E>
+    where
+        F: Future<Output = Result<T, E>> + MaybeSend + 'static,
+    {
+        Job::new(self.runtime.attach(call))
+    }
+
+    /// Hands `stream` back as items any executor can pull, its IO driven by the runtime.
+    pub fn attach_stream<T, E, S>(&self, stream: S) -> Streaming<T, E>
+    where
+        S: Stream<Item = Result<T, E>> + MaybeSend + 'static,
+    {
+        Streaming::new(self.runtime.attach_stream(stream))
+    }
 }
 
 impl Station {
     /// Binds to a Station without performing I/O.
+    ///
+    /// The runtime is the tokio runtime the caller is inside, or one of the connection's own.
     pub fn connect(url: Url) -> Self {
-        let runtime = Arc::new(TokioRuntime::start().expect("failed to start the station runtime"));
-        let spawn: Arc<dyn Spawn> = runtime.clone();
-        let transfer = HttpTransferClient::new(Arc::clone(&spawn));
+        let runtime = Arc::new(
+            TokioRuntime::current_or_start().expect("failed to start the station runtime"),
+        );
+        let transfer = HttpTransferClient::new();
 
         Self {
             inner: Arc::new(StationInner {
                 client: StationClient::from_url(url),
                 runtime,
-                spawn,
                 transfer,
             }),
         }

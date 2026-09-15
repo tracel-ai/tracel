@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tracel_task::{BlockingIter, Spawn, Streaming, TokioRuntime};
+use tracel_task::{BlockingIter, Streaming, TokioRuntime};
 
 use super::{HttpTransferClient, TransferClient, TransferError, reader_stream};
 
@@ -27,7 +27,7 @@ impl ReqwestTransferClient {
 
     /// Runs on a runtime someone else owns, typically the backend the client belongs to.
     pub fn with_runtime(runtime: Arc<TokioRuntime>) -> Self {
-        let http = HttpTransferClient::new(Arc::clone(&runtime) as Arc<dyn Spawn>);
+        let http = HttpTransferClient::new();
 
         Self { http, runtime }
     }
@@ -72,7 +72,8 @@ impl ReqwestTransferClient {
         expected_size_bytes: Option<u64>,
     ) -> Result<Box<dyn Read + Send>, TransferError> {
         let body = self.block_on(self.http.get(url, expected_size_bytes))?;
-        let chunks = Streaming::spawn(&*self.runtime, 1, |sink| sink.forward(body));
+        let (sink, chunks) = Streaming::channel(1);
+        self.runtime.spawn(sink.forward(body));
 
         Ok(Box::new(ByteReader {
             chunks: chunks.blocking_iter(),

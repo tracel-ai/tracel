@@ -49,12 +49,6 @@ pub enum ModelsError {
     Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
-impl From<tracel_task::Aborted> for ModelsError {
-    fn from(_: tracel_task::Aborted) -> Self {
-        Self::Cancelled
-    }
-}
-
 impl ModelsError {
     /// Wraps a failure the model domain has no meaning for.
     pub fn other(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
