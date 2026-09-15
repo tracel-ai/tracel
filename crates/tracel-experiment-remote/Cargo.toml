@@ -12,11 +12,14 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+async-channel = { workspace = true }
 chrono = { workspace = true }
 crossbeam = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracel-artifact = { workspace = true }
 tracel-client = { workspace = true }
 tracel-experiment = { workspace = true }
+tracel-task = { workspace = true }
