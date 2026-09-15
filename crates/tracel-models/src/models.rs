@@ -1,62 +1,59 @@
 use std::collections::HashSet;
 use std::fmt;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "fs")]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tracel_artifact::bundle::BundleSource;
-#[cfg(not(target_arch = "wasm32"))]
-use tracel_artifact::bundle::{BundleDecode, FsBundle};
-#[cfg(not(target_arch = "wasm32"))]
-use tracel_artifact::download::DownloadError;
-#[cfg(not(target_arch = "wasm32"))]
-use tracel_artifact::download::{ArtifactFile, transfer_stream_to_sink};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "fs")]
+use tracel_artifact::bundle::FsBundle;
+use tracel_artifact::bundle::{BundleDecode, BundleSink, BundleSource};
+use tracel_artifact::download::{ArtifactFile, DownloadError, transfer_stream_to_sink};
 use tracel_artifact::normalize_checksum;
 use tracel_artifact::{TransferObserver, upload::MultipartUploadSource};
-use tracel_task::{Spawn, Task};
+use tracel_task::{Job, MaybeSend};
 
 use sha2::{Digest, Sha256};
 
-use crate::{Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionSpec};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{VersionFileSource, VersionId};
+use crate::{
+    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
+    VersionSpec,
+};
 
 /// Backend-independent model operations and verified transfer orchestration.
 ///
-/// Every operation starts as soon as it is called and is handed back as a [`Task`]: await it,
-/// block on it at a native edge, or poll it. The work runs on the executor the backend provided.
+/// Every operation is handed back as a [`Job`]: await it, block on it at a native edge, or spawn
+/// it on an executor of the caller's choice. Nothing runs until the job is driven. The bytes of a
+/// version land in whatever [`BundleSink`] the caller supplies, so where they are staged — a
+/// directory, memory — is the caller's decision rather than the capability's.
 #[derive(Clone)]
 pub struct Models {
     ops: Arc<dyn ModelOps>,
-    spawn: Arc<dyn Spawn>,
 }
 
 impl Models {
-    /// Creates a capability over backend primitives that are already scoped to their location,
-    /// running its operations on `spawn`.
-    pub fn new(ops: Arc<dyn ModelOps>, spawn: Arc<dyn Spawn>) -> Self {
-        Self { ops, spawn }
+    /// Creates a capability over backend primitives that are already scoped to their location.
+    pub fn new(ops: Arc<dyn ModelOps>) -> Self {
+        Self { ops }
     }
 
     /// Lists models in this capability's scope.
-    pub fn list(&self) -> Task<Vec<Model>, ModelsError> {
+    pub fn list(&self) -> Job<Vec<Model>, ModelsError> {
         let ops = Arc::clone(&self.ops);
-        Task::spawn(&*self.spawn, async move { ops.list_models().await })
+        Job::new(async move { ops.list_models().await })
     }
 
     /// Fetches one model by name.
-    pub fn get(&self, name: impl Into<String>) -> Task<Model, ModelsError> {
+    pub fn get(&self, name: impl Into<String>) -> Job<Model, ModelsError> {
         let ops = Arc::clone(&self.ops);
         let name = name.into();
-        Task::spawn(&*self.spawn, async move { ops.get_model(name).await })
+        Job::new(async move { ops.get_model(name).await })
     }
 
     /// Lists published versions of a model.
-    pub fn list_versions(&self, model: impl Into<String>) -> Task<Vec<ModelVersion>, ModelsError> {
+    pub fn list_versions(&self, model: impl Into<String>) -> Job<Vec<ModelVersion>, ModelsError> {
         let ops = Arc::clone(&self.ops);
         let model = model.into();
-        Task::spawn(&*self.spawn, async move { ops.list_versions(model).await })
+        Job::new(async move { ops.list_versions(model).await })
     }
 
     /// Fetches one version using its opaque identity.
@@ -64,36 +61,53 @@ impl Models {
         &self,
         model: impl Into<String>,
         spec: impl Into<VersionSpec>,
-    ) -> Task<ModelVersion, ModelsError> {
+    ) -> Job<ModelVersion, ModelsError> {
         let ops = Arc::clone(&self.ops);
         let model = model.into();
         let spec = spec.into();
-        Task::spawn(
-            &*self.spawn,
-            async move { ops.get_version(model, spec).await },
-        )
+        Job::new(async move { ops.get_version(model, spec).await })
+    }
+
+    /// Downloads and verifies a version into `sink`.
+    ///
+    /// Every path is validated before a byte is written, and every file is checked against its
+    /// published size and checksum as it lands. The sink comes back once every file has passed,
+    /// so a caller staging somewhere temporary can then move the files into place.
+    pub fn download<S, O>(
+        &self,
+        model: impl Into<String>,
+        id: VersionId,
+        sink: S,
+        mut observer: O,
+    ) -> Job<S, ModelsError>
+    where
+        S: BundleSink + MaybeSend + 'static,
+        O: TransferObserver + 'static,
+    {
+        let ops = Arc::clone(&self.ops);
+        let model = model.into();
+        Job::new(async move { stage(&*ops, &model, &id, sink, &mut observer).await })
     }
 
     /// Downloads and verifies a version into `directory`.
     ///
-    /// Files are downloaded to a temporary sibling of `directory`. No destination files are
-    /// changed until every path, size, and checksum has been verified.
-    ///
-    /// The verified files are then moved into `directory`. Existing files at published paths are
-    /// replaced, while other entries are unchanged. This final move is not transactional; an
-    /// output error may leave some files replaced.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Files are staged in a temporary sibling of `directory`, so that moving them in is a rename
+    /// on the same filesystem. No destination file is changed until every path, size, and
+    /// checksum has been verified. Existing files at published paths are then replaced and other
+    /// entries left alone; this final move is not transactional, so an output error may leave
+    /// some files replaced.
+    #[cfg(feature = "fs")]
     pub fn download_into(
         &self,
         model: impl Into<String>,
         id: VersionId,
         directory: impl Into<PathBuf>,
         mut observer: impl TransferObserver + 'static,
-    ) -> Task<FsBundle, ModelsError> {
+    ) -> Job<FsBundle, ModelsError> {
         let ops = Arc::clone(&self.ops);
         let model = model.into();
         let directory = directory.into();
-        Task::spawn(&*self.spawn, async move {
+        Job::new(async move {
             if observer.is_cancelled() {
                 return Err(ModelsError::Cancelled);
             }
@@ -110,25 +124,25 @@ impl Models {
         })
     }
 
-    /// Downloads, verifies, and decodes a model version using `settings`.
+    /// Downloads, verifies, and decodes a version, staging its files in `staging`.
     ///
-    /// The decoder sees the complete staged bundle only after every backend file has passed path,
-    /// size, and checksum verification. Decoding runs on the backend's executor.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load<D>(
+    /// The decoder sees the staged bundle only after every backend file has passed path, size,
+    /// and checksum verification. Decoding runs wherever the job is driven.
+    pub fn load<D, S>(
         &self,
         model: impl Into<String>,
         id: VersionId,
+        staging: S,
         settings: D::Settings,
-    ) -> Task<D, ModelsError>
+    ) -> Job<D, ModelsError>
     where
         D: BundleDecode + Send + 'static,
-        D::Settings: Send + 'static,
+        D::Settings: MaybeSend + 'static,
+        S: BundleSink + BundleSource + MaybeSend + 'static,
     {
         let ops = Arc::clone(&self.ops);
         let model = model.into();
-        Task::spawn(&*self.spawn, async move {
-            let staging = FsBundle::temp().map_err(ModelsError::other)?;
+        Job::new(async move {
             let bundle = stage(&*ops, &model, &id, staging, &mut ()).await?;
             D::decode(&bundle, &settings).map_err(|error| {
                 let error: Box<dyn std::error::Error + Send + Sync> = error.into();
@@ -142,12 +156,10 @@ impl Models {
         &self,
         name: impl Into<String>,
         description: Option<String>,
-    ) -> Task<Model, ModelsError> {
+    ) -> Job<Model, ModelsError> {
         let ops = Arc::clone(&self.ops);
         let name = name.into();
-        Task::spawn(&*self.spawn, async move {
-            ops.create_model(name, description).await
-        })
+        Job::new(async move { ops.create_model(name, description).await })
     }
 
     /// Publishes every file in `source` as a new version of `model`.
@@ -161,14 +173,14 @@ impl Models {
         source: S,
         metadata: Option<serde_json::Value>,
         mut observer: O,
-    ) -> Task<ModelVersion, ModelsError>
+    ) -> Job<ModelVersion, ModelsError>
     where
         S: BundleSource + MultipartUploadSource + 'static,
         O: TransferObserver + 'static,
     {
         let ops = Arc::clone(&self.ops);
         let model = model.into();
-        Task::spawn(&*self.spawn, async move {
+        Job::new(async move {
             let files = measured_files(&source, &mut observer)?;
             if observer.is_cancelled() {
                 return Err(ModelsError::Cancelled);
@@ -185,14 +197,17 @@ impl fmt::Debug for Models {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-async fn stage<O: TransferObserver + ?Sized>(
+async fn stage<S, O>(
     ops: &dyn ModelOps,
     model: &str,
     id: &VersionId,
-    mut bundle: FsBundle,
+    mut sink: S,
     observer: &mut O,
-) -> Result<FsBundle, ModelsError> {
+) -> Result<S, ModelsError>
+where
+    S: BundleSink,
+    O: TransferObserver + ?Sized,
+{
     if observer.is_cancelled() {
         return Err(ModelsError::Cancelled);
     }
@@ -203,19 +218,22 @@ async fn stage<O: TransferObserver + ?Sized>(
     let paths = validated_source_paths(&sources)?;
 
     for (source, path) in sources.iter().zip(paths) {
-        stage_source(source.as_ref(), path, &mut bundle, observer).await?;
+        stage_source(source.as_ref(), path, &mut sink, observer).await?;
     }
 
-    Ok(bundle)
+    Ok(sink)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-async fn stage_source<O: TransferObserver + ?Sized>(
+async fn stage_source<S, O>(
     source: &dyn VersionFileSource,
     path: String,
-    bundle: &mut FsBundle,
+    sink: &mut S,
     observer: &mut O,
-) -> Result<(), ModelsError> {
+) -> Result<(), ModelsError>
+where
+    S: BundleSink,
+    O: TransferObserver + ?Sized,
+{
     let body = source.open(path.clone());
     let file = ArtifactFile {
         rel_path: path,
@@ -223,13 +241,12 @@ async fn stage_source<O: TransferObserver + ?Sized>(
         checksum: Some(source.file().checksum.clone()),
     };
 
-    transfer_stream_to_sink(body, bundle, &file, observer)
+    transfer_stream_to_sink(body, sink, &file, observer)
         .await
         .map_err(map_download_error)
 }
 
 /// Reads a transfer failure as the model problem it stands for.
-#[cfg(not(target_arch = "wasm32"))]
 fn map_download_error(error: DownloadError) -> ModelsError {
     match error {
         DownloadError::Cancelled { .. } => ModelsError::Cancelled,
@@ -309,7 +326,6 @@ fn measured_files<S: BundleSource, O: TransferObserver>(
     Ok(files)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn validated_source_paths(
     sources: &[Box<dyn VersionFileSource>],
 ) -> Result<Vec<String>, ModelsError> {
@@ -422,7 +438,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use tempfile::TempDir;
-    use tracel_artifact::bundle::BundleSink;
+    use tracel_artifact::bundle::{BundleSink, InMemoryBundleSources};
 
     use super::*;
     use crate::test_support::{FakeOps, SourceSpec, checksum, models_over, models_with_sources};
@@ -757,7 +773,12 @@ mod tests {
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"decoded")]);
 
         let decoded = models
-            .load::<Decoded>("alpha", VersionId::new("version-id"), ())
+            .load::<Decoded, _>(
+                "alpha",
+                VersionId::new("version-id"),
+                FsBundle::temp().unwrap(),
+                (),
+            )
             .block()
             .unwrap();
 
@@ -800,6 +821,26 @@ mod tests {
             opened_paths.lock().unwrap().as_slice(),
             &["weights/model.bin"]
         );
+    }
+
+    #[test]
+    fn download_lands_verified_files_in_whatever_sink_the_caller_supplies() {
+        let models = models_with_sources(vec![SourceSpec::new("weights/model.bin", b"bytes")]);
+
+        let sink = models
+            .download(
+                "alpha",
+                VersionId::new("version-id"),
+                InMemoryBundleSources::new(),
+                (),
+            )
+            .block()
+            .unwrap();
+
+        let files = sink.files();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].dest_path(), "weights/model.bin");
+        assert_eq!(files[0].source(), b"bytes");
     }
 
     #[test]

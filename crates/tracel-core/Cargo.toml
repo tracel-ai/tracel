@@ -19,7 +19,7 @@ station = ["dep:tracel-station", "tracel-client/station"]
 tracel-client.workspace = true
 tracel-console.workspace = true
 tracel-datasets.workspace = true
-tracel-models.workspace = true
+tracel-models = { workspace = true, features = ["fs"] }
 tracel-station = { workspace = true, optional = true }
 tracel-experiment.workspace = true
 tracel-inference.workspace = true
@@ -30,7 +30,7 @@ serde_json.workspace = true
 directories = "6.0"
 toml = "1.1.2"
 crossbeam.workspace = true
-tracel-artifact.workspace = true
+tracel-artifact = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
 tempfile.workspace = true

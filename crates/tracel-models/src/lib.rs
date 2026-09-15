@@ -3,8 +3,9 @@
 //! Backend-independent model operations.
 //!
 //! [`Models`] validates, transfers, stages, and loads model versions, handing each operation
-//! back as a [`tracel_task::Task`]. Backends implement the operations in [`ModelOps`] for a
-//! specific scope.
+//! back as a [`tracel_task::Job`] the caller drives where they choose. Backends implement the
+//! operations in [`ModelOps`] for a specific scope; the `fs` feature adds downloading straight
+//! into a directory.
 
 mod domain;
 mod error;

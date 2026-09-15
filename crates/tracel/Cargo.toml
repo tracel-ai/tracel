@@ -24,9 +24,9 @@ tracel-app.workspace = true
 tracel-runner = { workspace = true, optional = true }
 tracel-experiment.workspace = true
 tracel-inference.workspace = true
-tracel-artifact.workspace = true
+tracel-artifact = { workspace = true, features = ["fs"] }
 tracel-console.workspace = true
 tracel-station = { workspace = true, optional = true }
 tracel-datasets.workspace = true
-tracel-models.workspace = true
+tracel-models = { workspace = true, features = ["fs"] }
 tracel-task.workspace = true

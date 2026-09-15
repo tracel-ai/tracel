@@ -220,12 +220,9 @@ impl ProjectHandle {
 
     /// Returns model operations already scoped to this project without performing I/O.
     pub fn models(&self) -> Models {
-        Models::new(
-            Arc::new(ConsoleModelOps {
-                scope: Arc::clone(&self.scope),
-            }),
-            Arc::clone(&self.scope.console.spawn),
-        )
+        Models::new(Arc::new(ConsoleModelOps {
+            scope: Arc::clone(&self.scope),
+        }))
     }
 
     /// Builds an experiment provider scoped to this project.

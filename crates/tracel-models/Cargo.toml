@@ -11,6 +11,11 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["fs"]
+# Downloading straight into a directory.
+fs = ["tracel-artifact/fs"]
+
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true }

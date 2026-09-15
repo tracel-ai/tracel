@@ -11,18 +11,23 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["fs"]
+# Bundles on the local filesystem.
+fs = ["dep:tempfile"]
+
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 sha2 = { workspace = true }
+tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracel-task = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures-timer = { workspace = true }
 reqwest = { version = "0.13.4", features = ["stream"] }
-tempfile = { workspace = true }
 tokio = { workspace = true }
 tracel-task = { workspace = true, features = ["tokio"] }
 

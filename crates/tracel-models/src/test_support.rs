@@ -265,7 +265,7 @@ pub fn models_with_sources(sources: Vec<SourceSpec>) -> Models {
 }
 
 pub fn models_over(ops: FakeOps) -> Models {
-    Models::new(Arc::new(ops), Arc::new(ThreadSpawn))
+    Models::new(Arc::new(ops))
 }
 
 pub fn checksum(bytes: &[u8]) -> String {

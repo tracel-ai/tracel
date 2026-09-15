@@ -17,7 +17,7 @@ burn = ["dep:burn"]
 
 [dependencies]
 thiserror.workspace = true
-tracel-artifact.workspace = true
+tracel-artifact = { workspace = true, features = ["fs"] }
 serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true

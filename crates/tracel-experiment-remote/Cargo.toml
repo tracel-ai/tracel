@@ -19,7 +19,7 @@ futures-timer = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracel-artifact = { workspace = true }
+tracel-artifact = { workspace = true, features = ["fs"] }
 tracel-client = { workspace = true }
 tracel-experiment = { workspace = true }
 tracel-task = { workspace = true }
