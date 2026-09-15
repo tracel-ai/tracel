@@ -1,4 +1,5 @@
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 
 use tracel_artifact::{HttpTransferClient, ReqwestTransferClient};
@@ -7,7 +8,7 @@ use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
 use tracel_models::Models;
-use tracel_task::{Spawn, Task, TokioRuntime};
+use tracel_task::{Job, MaybeSend, Spawn, Task, TokioRuntime};
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
@@ -19,7 +20,8 @@ use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User}
 /// A client rooted at one Tracel console URL.
 ///
 /// The connection owns the executor its work runs on — a runtime of its own on native, the
-/// JavaScript event loop on wasm. Nothing a caller does requires a runtime of the caller's own.
+/// JavaScript event loop on wasm. Nothing a caller does requires a runtime of the caller's own:
+/// every operation is a [`Job`] the caller awaits, blocks on, or spawns where they choose.
 #[derive(Clone)]
 pub struct Console {
     inner: Arc<ConsoleInner>,
@@ -47,17 +49,23 @@ pub struct ProjectScope {
 
 impl Console {
     /// Connects to the console and verifies the credentials.
-    pub fn connect(credentials: &TracelCredentials) -> Task<Self, ConsoleError> {
-        let runtime = executor();
-        let spawn: Arc<dyn Spawn> = runtime.clone();
-        let transfer_client = ReqwestTransferClient::with_runtime(Arc::clone(&runtime));
-        let transfer = transfer_client.http().clone();
-        let env = crate::env::from_environment();
+    ///
+    /// The connection's executor starts when the job is first driven, not before.
+    pub fn connect(credentials: &TracelCredentials) -> Job<Self, ConsoleError> {
         let credentials = credentials.clone();
-        let executor = Arc::clone(&spawn);
+        Job::new(async move {
+            let runtime = executor();
+            let spawn: Arc<dyn Spawn> = runtime.clone();
+            let transfer_client = ReqwestTransferClient::with_runtime(Arc::clone(&runtime));
+            let transfer = transfer_client.http().clone();
+            let env = crate::env::from_environment();
 
-        Task::spawn(&*executor, async move {
-            let client = Client::connect(env, &credentials).await?;
+            let client = Task::spawn(&spawn, async move {
+                Client::connect(env, &credentials)
+                    .await
+                    .map_err(ConsoleError::from)
+            })
+            .await?;
 
             Ok(Self {
                 inner: Arc::new(ConsoleInner {
@@ -71,15 +79,17 @@ impl Console {
         })
     }
 
+    /// The executor this connection's work runs on, for a caller who wants to
+    /// [`spawn_on`](Job::spawn_on) it.
+    pub fn spawner(&self) -> &Arc<dyn Spawn> {
+        &self.inner.spawn
+    }
+
     /// Logs out and consumes this console connection.
     ///
     /// This revokes the remote session used by this connection and its derived handles.
-    pub fn logout(self) -> Task<(), ConsoleError> {
-        let spawn = Arc::clone(&self.inner.spawn);
-        let inner = self.inner;
-        Task::spawn(&*spawn, async move {
-            inner.client.clone().logout().await.map_err(Into::into)
-        })
+    pub fn logout(self) -> Job<(), ConsoleError> {
+        self.call(|inner| async move { inner.client.clone().logout().await.map_err(Into::into) })
     }
 
     /// Returns the normalized console API base URL.
@@ -91,9 +101,8 @@ impl Console {
     ///
     /// A dead session is represented by the console as a successful `null` response and remains a
     /// value rather than [`ConsoleError::SessionExpired`].
-    pub fn me(&self) -> Task<Option<User>, ConsoleError> {
-        let inner = Arc::clone(&self.inner);
-        Task::spawn(&*self.inner.spawn, async move {
+    pub fn me(&self) -> Job<Option<User>, ConsoleError> {
+        self.call(|inner| async move {
             inner
                 .client
                 .get_current_user()
@@ -111,9 +120,8 @@ impl Console {
     }
 
     /// Lists organizations available to the current session.
-    pub fn organizations(&self) -> Task<Vec<Organization>, ConsoleError> {
-        let inner = Arc::clone(&self.inner);
-        Task::spawn(&*self.inner.spawn, async move {
+    pub fn organizations(&self) -> Job<Vec<Organization>, ConsoleError> {
+        self.call(|inner| async move {
             inner
                 .client
                 .get_user_organizations()
@@ -133,13 +141,9 @@ impl Console {
     }
 
     /// Lists visible projects owned by a user or organization namespace.
-    pub fn projects_of(
-        &self,
-        namespace: impl AsRef<Namespace>,
-    ) -> Task<Vec<Project>, ConsoleError> {
+    pub fn projects_of(&self, namespace: impl AsRef<Namespace>) -> Job<Vec<Project>, ConsoleError> {
         let namespace = namespace.as_ref().clone();
-        let inner = Arc::clone(&self.inner);
-        Task::spawn(&*self.inner.spawn, async move {
+        self.call(move |inner| async move {
             let client = &inner.client;
             let projects = match namespace.kind {
                 NamespaceKind::User => client.list_user_projects(&namespace.name).await,
@@ -150,6 +154,18 @@ impl Console {
 
             projects.into_iter().map(Project::try_from).collect()
         })
+    }
+
+    /// Runs one client call on the connection's executor, as a job.
+    fn call<T, F, Fut>(&self, call: F) -> Job<T, ConsoleError>
+    where
+        T: Send + 'static,
+        F: FnOnce(Arc<ConsoleInner>) -> Fut + MaybeSend + 'static,
+        Fut: Future<Output = Result<T, ConsoleError>> + MaybeSend + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        let spawn = Arc::clone(&inner.spawn);
+        Job::new(async move { Task::spawn(&spawn, call(inner)).await })
     }
 
     /// Creates a project handle without performing I/O.
@@ -198,16 +214,20 @@ impl ProjectHandle {
     ///
     /// Private and nonexistent projects both return [`ConsoleError::NotFound`] because the
     /// console intentionally does not reveal which case applies.
-    pub fn get(&self) -> Task<Project, ConsoleError> {
+    pub fn get(&self) -> Job<Project, ConsoleError> {
         let scope = Arc::clone(&self.scope);
-        Task::spawn(&*self.scope.console.spawn, async move {
-            scope
-                .console
-                .client
-                .get_project(&scope.owner, &scope.project)
-                .await
-                .map_err(ConsoleError::from)
-                .and_then(Project::try_from)
+        let spawn = Arc::clone(&scope.console.spawn);
+        Job::new(async move {
+            Task::spawn(&spawn, async move {
+                scope
+                    .console
+                    .client
+                    .get_project(&scope.owner, &scope.project)
+                    .await
+                    .map_err(ConsoleError::from)
+                    .and_then(Project::try_from)
+            })
+            .await
         })
     }
 
