@@ -98,20 +98,6 @@ impl<T, E> Task<T, E> {
         task
     }
 
-    /// Runs `work` on `spawn` where blocking is allowed and returns the handle to its result.
-    ///
-    /// Blocking work cannot be aborted; [`Task::abort`] has no effect on it.
-    pub fn spawn_blocking<F>(spawn: &dyn Spawn, work: F) -> Self
-    where
-        F: FnOnce() -> Result<T, E> + Send + 'static,
-        T: Send + 'static,
-        E: Send + 'static,
-    {
-        let (reply, task) = Self::channel();
-        spawn.spawn_blocking(Box::new(move || reply.send(work())));
-        task
-    }
-
     /// Takes the result if it has arrived, without waiting.
     pub fn try_get(&mut self) -> Option<Result<T, E>>
     where
@@ -385,13 +371,6 @@ mod tests {
         let handle = Task::spawn(&ThreadSpawn, async { Ok::<_, Aborted>(7) }).abort_on_drop();
 
         assert_eq!(futures::executor::block_on(handle), Ok(7));
-    }
-
-    #[test]
-    fn given_blocking_work_when_spawned_then_its_result_arrives() {
-        let task = Task::spawn_blocking(&ThreadSpawn, || Ok::<_, Aborted>(7));
-
-        assert_eq!(task.block(), Ok(7));
     }
 
     #[test]

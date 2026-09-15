@@ -5,13 +5,13 @@ use std::thread;
 use futures::channel::oneshot;
 use tokio::runtime::{Builder, Handle};
 
-use crate::spawn::{BlockingWork, Spawn, SpawnedFuture};
+use crate::spawn::{Spawn, SpawnedFuture};
 
 /// A single-threaded tokio runtime on a thread of its own, owned by whoever started it.
 ///
-/// Spawned futures run on that thread; blocking work goes to tokio's blocking pool; and
-/// [`block_on`](TokioRuntime::block_on) lets a synchronous caller wait on a future with the
-/// runtime driving its IO. The runtime shuts down when this is dropped.
+/// Spawned futures run on that thread, and [`block_on`](TokioRuntime::block_on) lets a
+/// synchronous caller wait on a future with the runtime driving its IO. The runtime shuts down
+/// when this is dropped.
 pub struct TokioRuntime {
     handle: Handle,
     shutdown: Option<oneshot::Sender<()>>,
@@ -57,10 +57,6 @@ impl Spawn for TokioRuntime {
     fn spawn(&self, future: SpawnedFuture) {
         self.handle.spawn(future);
     }
-
-    fn spawn_blocking(&self, work: BlockingWork) {
-        self.handle.spawn_blocking(work);
-    }
 }
 
 impl Drop for TokioRuntime {
@@ -85,16 +81,6 @@ mod tests {
         let task = Task::spawn(&runtime, async { Ok::<_, Aborted>(7) });
 
         assert_eq!(task.block(), Ok(7));
-    }
-
-    #[test]
-    fn given_owned_runtime_when_blocking_work_is_spawned_then_it_runs_off_the_scheduler() {
-        let runtime = TokioRuntime::start().unwrap();
-
-        let task =
-            Task::spawn_blocking(&runtime, || Ok::<_, Aborted>(Handle::try_current().is_ok()));
-
-        assert_eq!(task.block(), Ok(true));
     }
 
     #[test]
