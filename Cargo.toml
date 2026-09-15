@@ -50,10 +50,10 @@ crossbeam = { version = "0.8.4", default-features = false, features = [
 ] }
 json-patch = { version = "4.1.0", default-features = false }
 schemars = "1.2.2"
-reqwest = { version = "0.13.4", features = ["blocking", "json"] }
+reqwest = { version = "0.13.4", default-features = false }
 uuid = { version = "1.23.4", features = ["serde"] }
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", default-features = false }
 tokio-stream = "0.1"
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
@@ -64,10 +64,11 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "unwrap",
 ] }
 chrono = "0.4.45"
-futures = "0.3.33"
+futures = { version = "0.3.33", default-features = false }
 futures-timer = "3.0.4"
 bytes = "1.12.1"
-async-channel = "2.5.0"
+async-channel = { version = "2.5.0", default-features = false }
+pin-project-lite = "0.2"
 wasm-bindgen-futures = "0.4.76"
 tracing = "0.1.44"
 tracing-core = "0.1.36"

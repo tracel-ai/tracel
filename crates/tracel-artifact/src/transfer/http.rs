@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn an_attached_download_is_driven_by_a_thread_with_no_runtime() {
         let server = TestServer::serve(file(3 * 1024 + 100), true);
-        let runtime = tracel_task::TokioRuntime::start().unwrap();
+        let runtime = tracel_task::Runtime::start().unwrap();
         let client = client(1024);
 
         let read = futures::executor::block_on(runtime.attach(async {
@@ -252,6 +252,30 @@ mod tests {
 
         assert_eq!(read, file(3 * 1024 + 100));
         assert!(server.received().len() > 1, "expected ranged requests");
+    }
+
+    #[test]
+    fn a_download_attached_inside_a_host_runtime_borrows_it_and_starts_no_thread() {
+        let server = TestServer::serve(file(3 * 1024 + 100), true);
+        let host = runtime();
+        let client = client(1024);
+
+        let (read, owned) = host.block_on(async {
+            let runtime = tracel_task::Runtime::acquire().unwrap();
+            let read = runtime
+                .attach(async {
+                    let body = client
+                        .get(&server.url("/file"), Some(3 * 1024 + 100))
+                        .await
+                        .unwrap();
+                    read_all(body).await
+                })
+                .await;
+            (read, runtime.handle().id() != host.handle().id())
+        });
+
+        assert_eq!(read, file(3 * 1024 + 100));
+        assert!(!owned, "a second runtime was started inside the host's");
     }
 
     #[test]

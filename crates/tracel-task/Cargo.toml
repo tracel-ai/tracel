@@ -17,10 +17,13 @@ std = ["futures/std", "futures/executor", "async-channel/std"]
 tokio = ["std", "dep:tokio", "dep:pin-project-lite"]
 
 [dependencies]
-async-channel = { version = "2.5.0", default-features = false }
-futures = { version = "0.3.33", default-features = false, features = ["alloc"] }
-pin-project-lite = { version = "0.2", optional = true }
-tokio = { version = "1", features = ["rt"], optional = true }
+async-channel = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+pin-project-lite = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["time"] }
+tokio = { workspace = true, features = ["rt", "time"] }

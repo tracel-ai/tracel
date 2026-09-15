@@ -3,27 +3,30 @@ use std::future::Future;
 use std::sync::Arc;
 
 use futures::Stream;
-use tracel_artifact::{HttpTransferClient, ReqwestTransferClient};
+use tracel_artifact::HttpTransferClient;
 use tracel_client::console::{Client, TracelCredentials};
-use tracel_datasets::Datasets;
-use tracel_experiment::ExperimentModule;
-use tracel_inference::InferenceModule;
 use tracel_models::Models;
-use tracel_task::{Job, MaybeSend, Streaming, TokioRuntime};
+use tracel_task::{Job, MaybeSend, Runtime, Streaming};
 use url::Url;
 
-use crate::datasets::ConsoleDatasetOps;
-use crate::experiment::ConsoleExperimentProvider;
-use crate::inference::ConsoleInferenceProvider;
 use crate::models::ConsoleModelOps;
 use crate::{ConsoleError, Namespace, NamespaceKind, Organization, Project, User};
+
+// Capabilities not yet handed back as jobs still bridge through blocking calls.
+#[cfg(not(target_arch = "wasm32"))]
+use {
+    crate::datasets::ConsoleDatasetOps, crate::experiment::ConsoleExperimentProvider,
+    crate::inference::ConsoleInferenceProvider, tracel_artifact::ReqwestTransferClient,
+    tracel_datasets::Datasets, tracel_experiment::ExperimentModule,
+    tracel_inference::InferenceModule,
+};
 
 /// A client rooted at one Tracel console URL.
 ///
 /// Every operation is a [`Job`] the caller awaits, blocks on, polls, or spawns where they
-/// choose. The transport's runtime is the connection's business: natively it borrows the tokio
-/// runtime the caller connected from, or starts one of its own, and attaches each call to it so
-/// that any executor can drive the result.
+/// choose. How the transport runs is the connection's [`Runtime`]: natively the tokio runtime
+/// the caller connected from, or one of the connection's own, with each call attached to it so
+/// that any executor can drive the result; in the browser, the event loop.
 #[derive(Clone)]
 pub struct Console {
     inner: Arc<ConsoleInner>,
@@ -32,14 +35,29 @@ pub struct Console {
 /// Resources shared by every handle derived from a console connection.
 pub struct ConsoleInner {
     pub client: Client,
-    pub transfer_client: ReqwestTransferClient,
-    /// Drives the transport's IO and runs the connection's actors. Ports whose contract is still
-    /// synchronous `block_on` it from the caller's thread; the rest attach their work to it.
-    pub runtime: Arc<TokioRuntime>,
     pub transfer: HttpTransferClient,
+    /// Drives the transport's IO and runs the connection's actors.
+    pub runtime: Arc<Runtime>,
+    /// The blocking facade the ports whose contract is still synchronous go through.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub transfer_client: ReqwestTransferClient,
 }
 
 impl ConsoleInner {
+    async fn connect(credentials: TracelCredentials) -> Result<Self, ConsoleError> {
+        let runtime = Arc::new(Runtime::acquire().expect("failed to start the console runtime"));
+        let env = crate::env::from_environment();
+        let client = runtime.attach(Client::connect(env, &credentials)).await?;
+
+        Ok(Self {
+            client,
+            transfer: HttpTransferClient::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            transfer_client: ReqwestTransferClient::with_runtime(Arc::clone(&runtime)),
+            runtime,
+        })
+    }
+
     /// Hands `call` back as a job any executor can drive, its IO driven by the runtime.
     pub fn attach<T, E, F>(&self, call: F) -> Job<T, E>
     where
@@ -67,25 +85,14 @@ pub struct ProjectScope {
 impl Console {
     /// Connects to the console and verifies the credentials.
     ///
-    /// The runtime is chosen when the job is first driven: the tokio runtime the caller is inside
-    /// at that moment, or one of the connection's own.
+    /// The runtime is acquired when the job is first driven: natively, the tokio runtime the
+    /// caller is inside at that moment, or one of the connection's own.
     pub fn connect(credentials: &TracelCredentials) -> Job<Self, ConsoleError> {
         let credentials = credentials.clone();
         Job::new(async move {
-            let runtime = executor();
-            let transfer_client = ReqwestTransferClient::with_runtime(Arc::clone(&runtime));
-            let transfer = transfer_client.http().clone();
-            let env = crate::env::from_environment();
-
-            let client = runtime.attach(Client::connect(env, &credentials)).await?;
-
+            let inner = ConsoleInner::connect(credentials).await?;
             Ok(Self {
-                inner: Arc::new(ConsoleInner {
-                    client,
-                    transfer_client,
-                    runtime,
-                    transfer,
-                }),
+                inner: Arc::new(inner),
             })
         })
     }
@@ -230,6 +237,7 @@ impl ProjectHandle {
     }
 
     /// Returns dataset operations already scoped to this project without performing I/O.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn datasets(&self) -> Datasets {
         Datasets::new(Arc::new(ConsoleDatasetOps {
             scope: Arc::clone(&self.scope),
@@ -244,6 +252,7 @@ impl ProjectHandle {
     }
 
     /// Builds an experiment provider scoped to this project.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn experiments(&self) -> ExperimentModule {
         ExperimentModule::new(Arc::new(ConsoleExperimentProvider::new(Arc::clone(
             &self.scope,
@@ -255,6 +264,7 @@ impl ProjectHandle {
     /// Unlike [`datasets`](Self::datasets)/[`models`](Self::models), the returned module owns a
     /// background worker per inference group: build it once and reuse it, rather than calling
     /// this again for every request.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn inference(&self) -> InferenceModule {
         InferenceModule::new(Arc::new(ConsoleInferenceProvider::new(Arc::clone(
             &self.scope,
@@ -270,11 +280,4 @@ impl fmt::Debug for ProjectHandle {
             .field("project", &self.scope.project)
             .finish()
     }
-}
-
-/// The one place the target decides how work runs: the tokio runtime the caller is inside, or
-/// one of the connection's own, driving its transport, running its actors, and serving the
-/// ports that still bridge into it.
-fn executor() -> Arc<TokioRuntime> {
-    Arc::new(TokioRuntime::current_or_start().expect("failed to start the console runtime"))
 }

@@ -481,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn fetching_stays_within_the_read_window() {
+    fn a_window_of_ranges_is_in_flight_at_once_and_no_more() {
         // Ten ranges; every one past the first stays pending.
         let source = Source::new(10 * TEST_RANGE_BYTES as usize, Ranges::Served)
             .stagger(|index| if index == 0 { 0 } else { usize::MAX });

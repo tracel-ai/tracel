@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tracel_client::console::SessionToken;
 use tracel_client::console::auth::{DeviceAuthClient, DeviceFlowError, DevicePollOutcome};
-use tracel_task::TokioRuntime;
+use tracel_task::Runtime;
 
 use crate::ConsoleError;
 
@@ -16,7 +16,7 @@ pub struct DeviceLogin {
     client: DeviceAuthClient,
     /// Drives the client's requests; each call waits on the caller's thread, which is never a
     /// task on this runtime.
-    runtime: Arc<TokioRuntime>,
+    runtime: Arc<Runtime>,
     device_code: String,
     /// Code the user types on the verification page.
     pub user_code: String,
@@ -33,7 +33,7 @@ pub struct DeviceLogin {
 impl DeviceLogin {
     /// Asks the console to start a sign-in.
     pub fn start(client_id: impl Into<String>) -> Result<Self, ConsoleError> {
-        let runtime = Arc::new(TokioRuntime::start().expect("failed to start the sign-in runtime"));
+        let runtime = Arc::new(Runtime::start().expect("failed to start the sign-in runtime"));
         let client = DeviceAuthClient::new(crate::env::from_environment(), client_id);
         let started = runtime.block_on(client.start()).map_err(login_failure)?;
 

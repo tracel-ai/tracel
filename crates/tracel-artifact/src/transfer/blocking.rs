@@ -3,30 +3,30 @@ use std::io::{self, Read};
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tracel_task::{BlockingIter, Streaming, TokioRuntime};
+use tracel_task::{BlockingIter, Runtime, Streaming};
 
 use super::{HttpTransferClient, TransferClient, TransferError, reader_stream};
 
 /// A transfer client for callers that block.
 ///
-/// Drives an [`HttpTransferClient`] on a [`TokioRuntime`], so a caller needs neither a runtime
+/// Drives an [`HttpTransferClient`] on a [`Runtime`], so a caller needs neither a runtime
 /// nor an executor of its own. Clones share the runtime.
 #[derive(Clone)]
 pub struct ReqwestTransferClient {
     http: HttpTransferClient,
-    runtime: Arc<TokioRuntime>,
+    runtime: Arc<Runtime>,
 }
 
 impl ReqwestTransferClient {
     /// Starts a runtime of its own.
     pub fn new() -> Self {
         Self::with_runtime(Arc::new(
-            TokioRuntime::start().expect("failed to start the transfer runtime"),
+            Runtime::start().expect("failed to start the transfer runtime"),
         ))
     }
 
     /// Runs on a runtime someone else owns, typically the backend the client belongs to.
-    pub fn with_runtime(runtime: Arc<TokioRuntime>) -> Self {
+    pub fn with_runtime(runtime: Arc<Runtime>) -> Self {
         let http = HttpTransferClient::new();
 
         Self { http, runtime }
@@ -87,7 +87,7 @@ impl ReqwestTransferClient {
 struct ByteReader {
     chunks: BlockingIter<Bytes, TransferError>,
     current: Bytes,
-    _runtime: Arc<TokioRuntime>,
+    _runtime: Arc<Runtime>,
 }
 
 impl Read for ByteReader {

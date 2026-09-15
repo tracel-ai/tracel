@@ -8,10 +8,11 @@
 //! suspend, or spawn it on whatever the caller already has. [`Streaming`] is its multi-item
 //! twin. None of this requires running, or naming, an async runtime.
 //!
-//! A backend whose transport needs one keeps it to itself: under the `tokio` feature,
-//! [`TokioRuntime`] borrows the runtime the caller is already inside or starts one of its own,
-//! and work [`attach`](TokioRuntime::attach)ed to it can be polled from anywhere while the
-//! runtime drives the IO.
+//! How IO is driven is the environment's business, and [`Runtime`] is that environment, one
+//! definition per target: natively (under the `tokio` feature) a tokio runtime borrowed from
+//! the caller or owned on a thread, to which a backend [`attach`](Runtime::attach)es work so
+//! that any executor can poll it; in the browser, the event loop, where attaching is the
+//! identity. An embedded backend brings its own.
 //!
 //! The crate is `no_std` with `alloc`. The `std` feature adds the blocking entry points
 //! ([`Job::block`], [`Streaming::blocking_iter`]) on targets where another thread can make
@@ -23,14 +24,14 @@ extern crate std;
 
 mod bounds;
 mod job;
-#[cfg(feature = "tokio")]
+#[cfg(any(feature = "tokio", target_arch = "wasm32"))]
 mod runtime;
 mod streaming;
 
 pub use bounds::{DynFuture, DynStream, MaybeSend, MaybeSync};
 pub use job::Job;
-#[cfg(feature = "tokio")]
-pub use runtime::{Attached, AttachedStream, TokioRuntime};
+#[cfg(any(feature = "tokio", target_arch = "wasm32"))]
+pub use runtime::{Attached, AttachedStream, Runtime};
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};

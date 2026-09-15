@@ -12,7 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-futures = { workspace = true }
+futures = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }

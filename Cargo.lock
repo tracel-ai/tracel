@@ -7091,6 +7091,7 @@ dependencies = [
  "futures",
  "pin-project-lite",
  "tokio",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

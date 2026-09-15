@@ -12,9 +12,9 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-async-channel = { workspace = true }
+async-channel = { workspace = true, features = ["std"] }
 chrono = { workspace = true }
-futures = { workspace = true }
+futures = { workspace = true, features = ["std", "executor"] }
 futures-timer = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

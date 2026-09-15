@@ -25,4 +25,4 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 burn = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

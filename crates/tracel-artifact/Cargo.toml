@@ -18,7 +18,7 @@ fs = ["dep:tempfile"]
 
 [dependencies]
 bytes = { workspace = true }
-futures = { workspace = true }
+futures = { workspace = true, features = ["std", "executor"] }
 serde = { workspace = true, features = ["derive"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true, optional = true }
@@ -27,13 +27,15 @@ tracel-task = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures-timer = { workspace = true }
-reqwest = { version = "0.13.4", features = ["stream"] }
-tokio = { workspace = true }
+reqwest = { workspace = true, features = ["stream", "default-tls"] }
 tracel-task = { workspace = true, features = ["tokio"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["stream"] }
+reqwest = { workspace = true, features = ["stream"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }

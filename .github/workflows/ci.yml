@@ -46,3 +46,22 @@ jobs:
       # --------------------------------------------------------------------------------
       - name: Documentation Tests
         run: cargo xtask doc tests
+  # ----------------------------------------------------------------------------------
+  # Every other way the SDK is built beyond the host: feature corners, the browser, no_std.
+  targets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      # --------------------------------------------------------------------------------
+      - name: Install Rust
+        uses: tracel-ai/github-actions/install-rust@v11
+        with:
+          rust-toolchain: stable
+          cache-key: stable-linux-targets
+      # --------------------------------------------------------------------------------
+      - name: Install targets
+        run: rustup target add wasm32-unknown-unknown thumbv7m-none-eabi
+      # --------------------------------------------------------------------------------
+      - name: Targets
+        run: cargo xtask targets

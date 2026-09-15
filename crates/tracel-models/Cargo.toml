@@ -18,7 +18,7 @@ fs = ["tracel-artifact/fs"]
 
 [dependencies]
 bytes = { workspace = true }
-futures = { workspace = true }
+futures = { workspace = true, features = ["std"] }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -8,7 +8,7 @@ use tracel_client::station::StationClient;
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_models::Models;
-use tracel_task::{Job, MaybeSend, Streaming, TokioRuntime};
+use tracel_task::{Job, MaybeSend, Runtime, Streaming};
 use url::Url;
 
 /// A client rooted at one Station URL.
@@ -23,9 +23,8 @@ pub struct Station {
 
 pub struct StationInner {
     pub client: StationClient,
-    /// Drives the transport's IO and runs the connection's actors. Ports whose contract is still
-    /// synchronous `block_on` it from the caller's thread; the rest attach their work to it.
-    pub runtime: Arc<TokioRuntime>,
+    /// Drives the transport's IO and runs the connection's actors.
+    pub runtime: Arc<Runtime>,
     pub transfer: HttpTransferClient,
 }
 
@@ -52,9 +51,7 @@ impl Station {
     ///
     /// The runtime is the tokio runtime the caller is inside, or one of the connection's own.
     pub fn connect(url: Url) -> Self {
-        let runtime = Arc::new(
-            TokioRuntime::current_or_start().expect("failed to start the station runtime"),
-        );
+        let runtime = Arc::new(Runtime::acquire().expect("failed to start the station runtime"));
         let transfer = HttpTransferClient::new();
 
         Self {
