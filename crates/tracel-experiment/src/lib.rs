@@ -53,9 +53,7 @@ pub use activity::{
     ActivitySpec, ActivityStatus,
 };
 pub use cancellation::{CancelToken, Cancellable};
-pub use context::{
-    CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
-};
+pub use context::{ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment};
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;

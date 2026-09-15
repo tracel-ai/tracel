@@ -17,7 +17,6 @@ use tracel_artifact::bundle::{BundleDecode, BundleEncode};
 use tracel_task::Job;
 
 use crate::cancellation::CancelToken;
-use crate::context::CurrentExperimentGuard;
 use crate::control::ExperimentRunControl;
 use crate::error::ExperimentError;
 use crate::session::Event;
@@ -523,11 +522,6 @@ impl Activity {
             id: self.id(),
             message: message.into(),
         }));
-    }
-
-    /// Enter this activity as the ambient telemetry context on the current thread.
-    pub fn enter(&self) -> CurrentExperimentGuard {
-        self.handle.enter()
     }
 
     /// Run a closure with this activity installed as the ambient telemetry context.
