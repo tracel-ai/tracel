@@ -43,6 +43,8 @@ pub fn handle_command() -> anyhow::Result<()> {
     clippy(&args)?;
     clippy(&[
         "-p",
+        "tracel-task",
+        "-p",
         "tracel-artifact",
         "-p",
         "tracel-models",

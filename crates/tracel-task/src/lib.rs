@@ -31,7 +31,7 @@ mod streaming;
 pub use bounds::{DynFuture, DynStream, MaybeSend, MaybeSync};
 pub use job::Job;
 #[cfg(any(feature = "tokio", target_arch = "wasm32"))]
-pub use runtime::{Attached, AttachedStream, Runtime};
+pub use runtime::{Attached, AttachedStream, Runtime, RuntimeError};
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub use streaming::BlockingIter;
 pub use streaming::{Closed, Streaming, StreamingSink, TrySendError};

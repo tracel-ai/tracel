@@ -1,12 +1,31 @@
 //! How this environment drives the SDK's IO, one definition per target.
 
+use alloc::string::String;
+use core::fmt;
+
+/// The environment could not start driving IO.
+#[derive(Debug)]
+pub struct RuntimeError {
+    reason: String,
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "could not start the runtime: {}", self.reason)
+    }
+}
+
+impl core::error::Error for RuntimeError {}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use alloc::string::ToString;
     use core::future::Future;
     use core::pin::Pin;
     use core::task::{Context, Poll};
-    use std::io;
     use std::thread;
+
+    use super::RuntimeError;
 
     use futures::Stream;
     use futures::channel::oneshot;
@@ -26,7 +45,7 @@ mod native {
 
     impl Runtime {
         /// Borrows the runtime the calling thread is inside, or starts one of its own.
-        pub fn acquire() -> io::Result<Self> {
+        pub fn acquire() -> Result<Self, RuntimeError> {
             match Handle::try_current() {
                 Ok(handle) => Ok(Self {
                     handle,
@@ -41,8 +60,13 @@ mod native {
         /// Only the scheduler is enabled here; IO and timer drivers come with whichever tokio
         /// features the transports in the build turn on. The thread sits in `block_on`, which
         /// is what drives those drivers for work attached from other threads.
-        pub fn start() -> io::Result<Self> {
-            let runtime = Builder::new_current_thread().enable_all().build()?;
+        pub fn start() -> Result<Self, RuntimeError> {
+            let runtime = Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| RuntimeError {
+                    reason: error.to_string(),
+                })?;
             let handle = runtime.handle().clone();
             let (shutdown, stopped) = oneshot::channel::<()>();
             thread::Builder::new()
@@ -51,6 +75,9 @@ mod native {
                     runtime.block_on(async {
                         let _ = stopped.await;
                     });
+                })
+                .map_err(|error| RuntimeError {
+                    reason: error.to_string(),
                 })?;
 
             Ok(Self {
@@ -211,9 +238,10 @@ mod native {
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use core::future::Future;
-    use std::io;
 
     use futures::Stream;
+
+    use super::RuntimeError;
 
     /// The browser's event loop, which drives every future and needs nothing owned.
     ///
@@ -228,7 +256,7 @@ mod browser {
 
     impl Runtime {
         /// There is nothing to acquire; the event loop is always there.
-        pub fn acquire() -> io::Result<Self> {
+        pub fn acquire() -> Result<Self, RuntimeError> {
             Ok(Self)
         }
 
