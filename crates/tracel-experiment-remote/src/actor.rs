@@ -226,10 +226,6 @@ fn apply(control: &ExperimentRunControl, message: ServerMessage) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
-
     use futures::channel::oneshot;
     use tracel_artifact::bundle::FsBundle;
     use tracel_experiment::error::ExperimentError;
@@ -240,130 +236,7 @@ mod tests {
     use tracel_experiment::{ArtifactKind, ExperimentId, ExperimentRun};
 
     use super::*;
-
-    /// Starts the actor with its loop driven on a thread of its own.
-    fn started<S: ExperimentSocket>(socket: S, control: ExperimentRunControl) -> SocketHandle {
-        let (handle, run) = SocketHandle::start(socket, control);
-        std::thread::spawn(move || futures::executor::block_on(run));
-        handle
-    }
-
-    /// A socket whose peer is the test.
-    struct FakeSocket {
-        incoming: Receiver<ServerMessage>,
-        state: Arc<PeerState>,
-        close_gate: Option<oneshot::Receiver<()>>,
-    }
-
-    #[derive(Default)]
-    struct PeerState {
-        sent: Mutex<Vec<ExperimentMessage>>,
-        closing: AtomicBool,
-        closed: AtomicBool,
-        released: AtomicBool,
-    }
-
-    /// The test's end of a [`FakeSocket`].
-    struct Peer {
-        incoming: Sender<ServerMessage>,
-        state: Arc<PeerState>,
-    }
-
-    impl Peer {
-        fn push(&self, message: ServerMessage) {
-            self.incoming.try_send(message).unwrap();
-        }
-
-        fn hang_up(&self) {
-            self.incoming.close();
-        }
-
-        fn sent_names(&self) -> Vec<String> {
-            self.state
-                .sent
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|message| match message {
-                    ExperimentMessage::MetricDefinitionLog { name, .. } => name.clone(),
-                    other => panic!("unexpected message {other:?}"),
-                })
-                .collect()
-        }
-
-        fn closing(&self) -> bool {
-            self.state.closing.load(Ordering::SeqCst)
-        }
-
-        fn closed(&self) -> bool {
-            self.state.closed.load(Ordering::SeqCst)
-        }
-
-        fn released(&self) -> bool {
-            self.state.released.load(Ordering::SeqCst)
-        }
-    }
-
-    impl ExperimentSocket for FakeSocket {
-        async fn send(&mut self, message: ExperimentMessage) -> Result<(), SocketError> {
-            self.state.sent.lock().unwrap().push(message);
-            Ok(())
-        }
-
-        async fn next(&mut self) -> Result<Option<ServerMessage>, SocketError> {
-            Ok(self.incoming.recv().await.ok())
-        }
-
-        async fn close(&mut self) -> Result<(), SocketError> {
-            self.state.closing.store(true, Ordering::SeqCst);
-            if let Some(gate) = self.close_gate.take() {
-                let _ = gate.await;
-            }
-            self.state.closed.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    impl Drop for FakeSocket {
-        fn drop(&mut self) {
-            self.state.released.store(true, Ordering::SeqCst);
-        }
-    }
-
-    fn fake_socket(close_gate: Option<oneshot::Receiver<()>>) -> (FakeSocket, Peer) {
-        let (sender, receiver) = async_channel::unbounded();
-        let state = Arc::new(PeerState::default());
-        let socket = FakeSocket {
-            incoming: receiver,
-            state: Arc::clone(&state),
-            close_gate,
-        };
-        let peer = Peer {
-            incoming: sender,
-            state,
-        };
-        (socket, peer)
-    }
-
-    fn definition(name: &str) -> ExperimentMessage {
-        ExperimentMessage::MetricDefinitionLog {
-            name: name.to_string(),
-            description: None,
-            unit: None,
-            higher_is_better: true,
-        }
-    }
-
-    fn holds_within(secs: u64, condition: impl Fn() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(secs);
-        while Instant::now() < deadline {
-            if condition() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        false
-    }
+    use crate::test_support::{definition, fake_socket, holds_within, started};
 
     struct NullSession;
 
@@ -377,8 +250,8 @@ mod tests {
             _name: String,
             _kind: ArtifactKind,
             _bundle: FsBundle,
-        ) -> Job<(), ExperimentError> {
-            Job::ready(())
+        ) -> Result<(), ExperimentError> {
+            Ok(())
         }
 
         fn finish(&self, _completion: ExperimentCompletion) -> Job<(), ExperimentError> {
@@ -408,7 +281,7 @@ mod tests {
         handle.send(definition("three")).unwrap();
         handle.flush().block().unwrap();
 
-        assert_eq!(peer.sent_names(), ["one", "two", "three"]);
+        assert_eq!(peer.sent(), ["one", "two", "three"]);
     }
 
     #[test]
@@ -420,7 +293,7 @@ mod tests {
         handle.send(definition("two")).unwrap();
         handle.close().block().unwrap();
 
-        assert_eq!(peer.sent_names(), ["one", "two"]);
+        assert_eq!(peer.sent(), ["one", "two"]);
         assert!(peer.closed());
     }
 

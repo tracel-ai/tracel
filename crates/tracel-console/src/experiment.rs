@@ -90,10 +90,11 @@ async fn create_run(
         .create_experiment_run_websocket(&scope.owner, &scope.project, experiment_num)
         .await?;
 
-    // The socket loop runs on the connection's runtime; the run only ever touches its mailbox.
+    // Both loops run on the connection's runtime; the run only ever touches their mailboxes.
     let (socket, run) = SocketHandle::start(ws, control.clone());
     console.runtime.spawn(run);
-    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), socket);
+    let (session, ship) = RemoteExperimentSession::start(Box::new(artifact_uploader), socket);
+    console.runtime.spawn(ship);
 
     let reader = ConsoleArtifactReader::new(Arc::clone(scope));
     let id = ExperimentId::from(format!("{experiment_num}"));

@@ -111,26 +111,25 @@ impl ExperimentSession for LocalExperimentSession {
         name: String,
         _kind: ArtifactKind,
         bundle: FsBundle,
-    ) -> Job<(), ExperimentError> {
+    ) -> Result<(), ExperimentError> {
+        self.writer()?;
         let artifact_root = self.root.join("artifacts").join(name);
-        Job::from_result((|| {
-            if artifact_root.exists() {
-                fs::remove_dir_all(&artifact_root).map_err(|err| {
-                    ExperimentError::with_source(
-                        ExperimentErrorKind::Artifact,
-                        "Failed to replace existing local artifact",
-                        err,
-                    )
-                })?;
-            }
-            bundle.move_into(&artifact_root).map(drop).map_err(|err| {
+        if artifact_root.exists() {
+            fs::remove_dir_all(&artifact_root).map_err(|err| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Artifact,
-                    "Failed to store local artifact bundle",
+                    "Failed to replace existing local artifact",
                     err,
                 )
-            })
-        })())
+            })?;
+        }
+        bundle.move_into(&artifact_root).map(drop).map_err(|err| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to store local artifact bundle",
+                err,
+            )
+        })
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {

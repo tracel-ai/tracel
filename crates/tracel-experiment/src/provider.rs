@@ -182,8 +182,8 @@ mod tests {
             _name: String,
             _kind: ArtifactKind,
             _bundle: FsBundle,
-        ) -> Job<(), ExperimentError> {
-            Job::ready(())
+        ) -> Result<(), ExperimentError> {
+            Ok(())
         }
 
         fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {

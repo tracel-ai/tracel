@@ -256,10 +256,11 @@ async fn create_run(
         .create_run_websocket(experiment_num)
         .await?;
 
-    // The socket loop runs on the Station's runtime; the run only ever touches its mailbox.
+    // Both loops run on the Station's runtime; the run only ever touches their mailboxes.
     let (socket, run) = SocketHandle::start(ws, control.clone());
     station.runtime.spawn(run);
-    let session = RemoteExperimentSession::new(Box::new(artifact_uploader), socket);
+    let (session, ship) = RemoteExperimentSession::start(Box::new(artifact_uploader), socket);
+    station.runtime.spawn(ship);
 
     let reader = StationArtifactReader::new(station);
     let id = ExperimentId::from(experiment_num.to_string());

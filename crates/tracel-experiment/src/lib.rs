@@ -14,6 +14,10 @@
 //! to serialize, or an artifact that could not be encoded, stored, or loaded — never that the
 //! telemetry sink was unavailable. Use [`ExperimentRunHandle::is_active`] to branch on liveness.
 //!
+//! Saving an artifact encodes it on the calling thread and hands it to the backend, which ships
+//! it while the run goes on; nothing inside a run waits on the network. Loading one is a
+//! [`Job`](tracel_task::Job), since the caller needs its value.
+//!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - `integration::training::ExperimentTrainingExt` for Burn `train` adapters (behind the `burn`
@@ -429,14 +433,14 @@ impl ExperimentRun {
         self.handle.log_summary(items);
     }
 
-    /// Encode and persist an artifact.
+    /// Encode an artifact on this thread and queue it for the backend.
     pub fn save_artifact<E: BundleEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
-    ) -> Job<(), ExperimentError> {
+    ) -> Result<(), ExperimentError> {
         self.handle.save_artifact(name, kind, artifact, settings)
     }
 
@@ -539,10 +543,9 @@ impl ExperimentRunHandle {
         self.log(LogRecord::error(message));
     }
 
-    /// Block, briefly and best effort, until everything recorded has left the
-    /// process.
-    /// Resolves once every event recorded so far has left the process. Ready at once for a
-    /// run that has already finished.
+    /// Resolves once every event recorded and every artifact saved so far has left the
+    /// process; fails if an artifact could not be shipped. Ready at once for a run that has
+    /// already finished.
     pub fn flush(&self) -> Job<(), ExperimentError> {
         match self.inner.upgrade() {
             Some(inner) => inner.session.flush(),
@@ -637,7 +640,12 @@ impl ExperimentRunHandle {
         });
     }
 
-    /// Encode and persist an artifact.
+    /// Encode an artifact on this thread and queue it for the backend.
+    ///
+    /// Encoding runs to completion here; shipping does not. The backend uploads artifacts in
+    /// the order they were saved while the run goes on, and an upload that fails is reported by
+    /// the next [`flush`](Self::flush) or by the run's `finish`. An error here means the
+    /// artifact could not be encoded or the run is no longer accepting artifacts.
     ///
     /// Artifacts are run-scoped: they are addressed by name within the experiment and the
     /// emitting stage is not recorded, so saving through an activity is equivalent to saving
@@ -648,30 +656,24 @@ impl ExperimentRunHandle {
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
-    ) -> Job<(), ExperimentError> {
-        let encoded = self.upgrade().and_then(|inner| {
-            inner.ensure_active()?;
-            let mut bundle = FsBundle::temp().map_err(|error| {
-                ExperimentError::with_source(
-                    ExperimentErrorKind::Artifact,
-                    "Failed to create temporary bundle for artifact",
-                    error,
-                )
-            })?;
-            artifact.encode(&mut bundle, settings).map_err(|error| {
-                ExperimentError::with_source(
-                    ExperimentErrorKind::Artifact,
-                    "Failed to encode artifact into bundle",
-                    error,
-                )
-            })?;
-            Ok((inner, bundle))
-        });
-
-        match encoded {
-            Ok((inner, bundle)) => inner.session.save_artifact(name.into(), kind, bundle),
-            Err(error) => Job::failed(error),
-        }
+    ) -> Result<(), ExperimentError> {
+        let inner = self.upgrade()?;
+        inner.ensure_active()?;
+        let mut bundle = FsBundle::temp().map_err(|error| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to create temporary bundle for artifact",
+                error,
+            )
+        })?;
+        artifact.encode(&mut bundle, settings).map_err(|error| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to encode artifact into bundle",
+                error,
+            )
+        })?;
+        inner.session.save_artifact(name.into(), kind, bundle)
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.

@@ -144,7 +144,6 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
                 CheckpointRecordSources::new(record),
                 &settings,
             )
-            .block()
             .map_err(|e| {
                 burn::train::checkpoint::CheckpointerError::Unknown(format!(
                     "Failed to save artifact: {e}"

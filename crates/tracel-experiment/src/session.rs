@@ -63,28 +63,30 @@ pub enum ExperimentCompletion {
 /// Session-level implementation for the active experiment run.
 ///
 /// A session is a synchronous producer with asynchronous drains: [`record_event`](Self::record_event)
-/// never waits, and [`flush`](Self::flush) and [`finish`](Self::finish) hand their request to the
-/// backend before returning, so a run dropped mid-way still completes without anyone driving the
-/// job they return.
+/// and [`save_artifact`](Self::save_artifact) never wait, and [`flush`](Self::flush) and
+/// [`finish`](Self::finish) hand their request to the backend before returning, so a run dropped
+/// mid-way still completes without anyone driving the job they return. An artifact that fails to
+/// ship is reported by the first `flush` or `finish` after it, not by `save_artifact`.
 pub trait ExperimentSession: Send + Sync {
     /// Queues `event`; never waits.
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
 
-    /// Resolves once every event recorded so far has left the process.
+    /// Resolves once every event recorded and every artifact saved so far has left the process.
     fn flush(&self) -> Job<(), ExperimentError> {
         Job::ready(())
     }
 
-    /// Ships an artifact already encoded into `bundle`.
+    /// Queues an artifact already encoded into `bundle`; never waits. The backend ships it in
+    /// the order it was saved.
     fn save_artifact(
         &self,
         name: String,
         kind: ArtifactKind,
         bundle: FsBundle,
-    ) -> Job<(), ExperimentError>;
+    ) -> Result<(), ExperimentError>;
 
-    /// Hands the completion to the backend before returning; the job resolves once the backend
-    /// has acknowledged it.
+    /// Hands the completion to the backend before returning; the job resolves once every
+    /// artifact saved before it has shipped and the backend has acknowledged the completion.
     fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError>;
 }
 
@@ -105,7 +107,7 @@ where
         name: String,
         kind: ArtifactKind,
         bundle: FsBundle,
-    ) -> Job<(), ExperimentError> {
+    ) -> Result<(), ExperimentError> {
         self.as_ref().save_artifact(name, kind, bundle)
     }
 

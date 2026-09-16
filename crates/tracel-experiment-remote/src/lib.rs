@@ -5,6 +5,8 @@
 
 mod actor;
 mod session;
+#[cfg(test)]
+mod test_support;
 
 pub use actor::{ExperimentSocket, SocketClosed, SocketError, SocketHandle};
 pub use session::{

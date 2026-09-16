@@ -436,14 +436,14 @@ impl Activity {
         self.handle.log_summary(items);
     }
 
-    /// Encode and persist an artifact.
+    /// Encode an artifact on this thread and queue it for the backend.
     pub fn save_artifact<E: BundleEncode>(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
-    ) -> Job<(), ExperimentError> {
+    ) -> Result<(), ExperimentError> {
         self.handle.save_artifact(name, kind, artifact, settings)
     }
 
