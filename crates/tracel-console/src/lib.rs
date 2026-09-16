@@ -21,5 +21,6 @@ mod login;
 pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};
 pub use error::ConsoleError;
-pub use login::{DeviceApproval, DeviceLogin};
-pub use tracel_client::console::{SessionToken, TracelCredentials};
+pub use login::{DeviceApproval, DeviceLogin, refresh_session};
+pub use tracel_client::console::auth::{IssuedSession, RefreshGrant};
+pub use tracel_client::console::{RefreshToken, SessionToken, TracelCredentials};

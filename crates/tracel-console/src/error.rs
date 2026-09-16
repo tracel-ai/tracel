@@ -23,6 +23,9 @@ pub enum ConsoleError {
     /// The user did not answer before the codes expired.
     #[error("the sign-in expired before it was approved")]
     LoginExpired,
+    /// The stored refresh token was refused, so the session cannot be renewed.
+    #[error("the refresh token was rejected; sign in again")]
+    RefreshRejected,
     /// The console response did not match its documented contract.
     #[error("invalid console response: {0}")]
     InvalidResponse(String),
