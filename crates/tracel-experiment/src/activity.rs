@@ -14,9 +14,9 @@ use std::{
 
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode};
+use tracel_task::Job;
 
 use crate::cancellation::CancelToken;
-use crate::context::CurrentExperimentGuard;
 use crate::control::ExperimentRunControl;
 use crate::error::ExperimentError;
 use crate::session::Event;
@@ -436,10 +436,10 @@ impl Activity {
         self.handle.log_summary(items);
     }
 
-    /// Encode and persist an artifact.
+    /// Encode an artifact on this thread and queue it for the backend.
     pub fn save_artifact<E: BundleEncode>(
         &self,
-        name: impl AsRef<str>,
+        name: impl Into<String>,
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
@@ -448,12 +448,16 @@ impl Activity {
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
-    pub fn use_artifact<D: BundleDecode>(
+    pub fn use_artifact<D>(
         &self,
         experiment_id: impl Into<ExperimentId>,
-        name: impl AsRef<str>,
-        settings: &D::Settings,
-    ) -> Result<D, ExperimentError> {
+        name: impl Into<String>,
+        settings: D::Settings,
+    ) -> Job<D, ExperimentError>
+    where
+        D: BundleDecode + Send + 'static,
+        D::Settings: Send + 'static,
+    {
         self.handle.use_artifact(experiment_id, name, settings)
     }
 
@@ -518,11 +522,6 @@ impl Activity {
             id: self.id(),
             message: message.into(),
         }));
-    }
-
-    /// Enter this activity as the ambient telemetry context on the current thread.
-    pub fn enter(&self) -> CurrentExperimentGuard {
-        self.handle.enter()
     }
 
     /// Run a closure with this activity installed as the ambient telemetry context.

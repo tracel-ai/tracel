@@ -50,7 +50,7 @@ pub trait IntoServerRoute<I> {
 impl<I, O> IntoServerRoute<I> for ExperimentJob<I, O>
 where
     I: DeserializeOwned + Send + 'static,
-    O: 'static,
+    O: Send + 'static,
 {
     fn into_server_route(self, mapper: Arc<dyn BodyMapper<I>>) -> Box<dyn ServerRoute> {
         Box::new(ExperimentRoute::new(self, mapper))
@@ -83,7 +83,7 @@ impl<I, O> ExperimentRoute<I, O> {
 impl<I, O> ServerRoute for ExperimentRoute<I, O>
 where
     I: DeserializeOwned + Send + 'static,
-    O: 'static,
+    O: Send + 'static,
 {
     fn name(&self) -> &str {
         self.job.name()
@@ -106,7 +106,7 @@ where
                 Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
             };
 
-            let handle = tokio::task::spawn_blocking(move || job.run(input).map(|_| ()));
+            let handle = tokio::task::spawn_blocking(move || job.run(input).block().map(|_| ()));
             tokio::spawn(async move {
                 match handle.await {
                     Ok(Ok(())) => {}
@@ -161,7 +161,7 @@ where
             // as an SSE error event, consistent with how per-item errors are reported.
             let run_tx = sse_tx.clone();
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = job.run(in_rx, SseChannel { tx: run_tx.clone() }) {
+                if let Err(e) = job.run(in_rx, SseChannel { tx: run_tx.clone() }).block() {
                     let _ = run_tx
                         .blocking_send(Ok(Event::default().event("error").data(e.to_string())));
                 }

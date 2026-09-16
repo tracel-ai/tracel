@@ -14,6 +14,10 @@
 //! to serialize, or an artifact that could not be encoded, stored, or loaded — never that the
 //! telemetry sink was unavailable. Use [`ExperimentRunHandle::is_active`] to branch on liveness.
 //!
+//! Saving an artifact encodes it on the calling thread and hands it to the backend, which ships
+//! it while the run goes on; nothing inside a run waits on the network. Loading one is a
+//! [`Job`](tracel_task::Job), since the caller needs its value.
+//!
 //! Optional capabilities are exposed through extension traits:
 //! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
 //! - `integration::training::ExperimentTrainingExt` for Burn `train` adapters (behind the `burn`
@@ -31,6 +35,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
+use tracel_task::Job;
 
 mod activity;
 mod cancellation;
@@ -52,9 +57,7 @@ pub use activity::{
     ActivitySpec, ActivityStatus,
 };
 pub use cancellation::{CancelToken, Cancellable};
-pub use context::{
-    CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
-};
+pub use context::{ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment};
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;
@@ -323,16 +326,18 @@ impl ExperimentRun {
 
     /// Mark the run as successful and finalize the backend session.
     ///
-    /// If the run is dropped without calling [`Self::finish`] or [`Self::fail`], it is finalized
-    /// as successful by default. Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
-    pub fn finish(self) -> Result<(), ExperimentError> {
+    /// The completion is handed to the backend before this returns; the job resolves once the
+    /// backend has acknowledged it. If the run is dropped without calling [`Self::finish`] or
+    /// [`Self::fail`], it is finalized as successful by default. Any cloned
+    /// [`ExperimentRunHandle`] becomes inactive afterwards.
+    pub fn finish(self) -> Job<(), ExperimentError> {
         self.inner.finish_once(ExperimentCompletion::Success)
     }
 
     /// Mark the run as failed and finalize the backend session.
     ///
     /// Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
-    pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
+    pub fn fail(self, reason: impl Into<String>) -> Job<(), ExperimentError> {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
     }
@@ -428,10 +433,10 @@ impl ExperimentRun {
         self.handle.log_summary(items);
     }
 
-    /// Encode and persist an artifact.
+    /// Encode an artifact on this thread and queue it for the backend.
     pub fn save_artifact<E: BundleEncode>(
         &self,
-        name: impl AsRef<str>,
+        name: impl Into<String>,
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
@@ -440,12 +445,16 @@ impl ExperimentRun {
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
-    pub fn use_artifact<D: BundleDecode>(
+    pub fn use_artifact<D>(
         &self,
         experiment_id: impl Into<ExperimentId>,
-        name: impl AsRef<str>,
-        settings: &D::Settings,
-    ) -> Result<D, ExperimentError> {
+        name: impl Into<String>,
+        settings: D::Settings,
+    ) -> Job<D, ExperimentError>
+    where
+        D: BundleDecode + Send + 'static,
+        D::Settings: Send + 'static,
+    {
         self.handle.use_artifact(experiment_id, name, settings)
     }
 
@@ -534,11 +543,13 @@ impl ExperimentRunHandle {
         self.log(LogRecord::error(message));
     }
 
-    /// Block, briefly and best effort, until everything recorded has left the
-    /// process.
-    pub fn flush(&self) {
-        if let Some(inner) = self.inner.upgrade() {
-            let _ = inner.session.flush();
+    /// Resolves once every event recorded and every artifact saved so far has left the
+    /// process; fails if an artifact could not be shipped. Ready at once for a run that has
+    /// already finished.
+    pub fn flush(&self) -> Job<(), ExperimentError> {
+        match self.inner.upgrade() {
+            Some(inner) => inner.session.flush(),
+            None => Job::ready(()),
         }
     }
 
@@ -629,51 +640,68 @@ impl ExperimentRunHandle {
         });
     }
 
-    /// Encode and persist an artifact.
+    /// Encode an artifact on this thread and queue it for the backend.
+    ///
+    /// Encoding runs to completion here; shipping does not. The backend uploads artifacts in
+    /// the order they were saved while the run goes on, and an upload that fails is reported by
+    /// the next [`flush`](Self::flush) or by the run's `finish`. An error here means the
+    /// artifact could not be encoded or the run is no longer accepting artifacts.
     ///
     /// Artifacts are run-scoped: they are addressed by name within the experiment and the
     /// emitting stage is not recorded, so saving through an activity is equivalent to saving
     /// at the run root.
     pub fn save_artifact<E: BundleEncode>(
         &self,
-        name: impl AsRef<str>,
+        name: impl Into<String>,
         kind: ArtifactKind,
         artifact: E,
         settings: &E::Settings,
     ) -> Result<(), ExperimentError> {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
-
-        let artifact_fn = |bundle: &mut FsBundle| {
-            artifact.encode(bundle, settings).map_err(|error| {
-                ExperimentError::with_source(
-                    ExperimentErrorKind::Artifact,
-                    "Failed to encode artifact into bundle",
-                    error,
-                )
-            })
-        };
-
-        inner
-            .session
-            .save_artifact(name.as_ref(), kind, Box::new(artifact_fn))
+        let mut bundle = FsBundle::temp().map_err(|error| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to create temporary bundle for artifact",
+                error,
+            )
+        })?;
+        artifact.encode(&mut bundle, settings).map_err(|error| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to encode artifact into bundle",
+                error,
+            )
+        })?;
+        inner.session.save_artifact(name.into(), kind, bundle)
     }
 
     /// Load and decode an artifact from a compatible experiment identifier.
-    pub fn use_artifact<D: BundleDecode>(
+    pub fn use_artifact<D>(
         &self,
         experiment_id: impl Into<ExperimentId>,
-        name: impl AsRef<str>,
-        settings: &D::Settings,
-    ) -> Result<D, ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.ensure_active()?;
-        let name = name.as_ref();
+        name: impl Into<String>,
+        settings: D::Settings,
+    ) -> Job<D, ExperimentError>
+    where
+        D: BundleDecode + Send + 'static,
+        D::Settings: Send + 'static,
+    {
+        let inner = match self
+            .upgrade()
+            .and_then(|inner| inner.ensure_active().map(|_| inner))
+        {
+            Ok(inner) => inner,
+            Err(error) => return Job::failed(error),
+        };
+        let name = name.into();
         let experiment_id = experiment_id.into();
-        let artifact = inner
+        let loaded = inner
             .reader
-            .load_artifact_raw(experiment_id.clone(), name)
-            .map_err(|error| {
+            .load_artifact_raw(experiment_id.clone(), name.clone());
+        let handle = self.clone();
+        Job::new(async move {
+            let artifact = loaded.await.map_err(|error| {
                 ExperimentError::with_source(
                     ExperimentErrorKind::Artifact,
                     format!("Failed to load artifact bundle for {name}"),
@@ -681,20 +709,21 @@ impl ExperimentRunHandle {
                 )
             })?;
 
-        let decoded = D::decode(&artifact.bundle, settings).map_err(|error| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Artifact,
-                format!("Failed to decode artifact: {name}"),
-                error,
-            )
-        })?;
+            let decoded = D::decode(&artifact.bundle, &settings).map_err(|error| {
+                ExperimentError::with_source(
+                    ExperimentErrorKind::Artifact,
+                    format!("Failed to decode artifact: {name}"),
+                    error,
+                )
+            })?;
 
-        self.emit(Event::ArtifactUsed {
-            experiment_id,
-            reference: artifact.reference,
-        });
+            handle.emit(Event::ArtifactUsed {
+                experiment_id,
+                reference: artifact.reference,
+            });
 
-        Ok(decoded)
+            Ok(decoded)
+        })
     }
 
     /// Create a child activity builder.
@@ -757,10 +786,10 @@ impl RunInner {
         }
     }
 
-    fn finish_once(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+    fn finish_once(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {
         let mut state = self.state.lock().unwrap();
         match *state {
-            RunState::Finished => Err(ExperimentError::new(
+            RunState::Finished => Job::failed(ExperimentError::new(
                 ExperimentErrorKind::AlreadyFinished,
                 "Experiment run has already finished",
             )),
@@ -774,6 +803,8 @@ impl RunInner {
 }
 
 /// Finalize the run on drop if it has not already been completed.
+///
+/// The completion is handed to the backend synchronously; its acknowledgement is not waited for.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
         let completion = if std::thread::panicking() {
@@ -786,7 +817,7 @@ impl Drop for ExperimentRun {
             ExperimentCompletion::Success
         };
 
-        let _ = self.inner.finish_once(completion);
+        drop(self.inner.finish_once(completion));
     }
 }
 
@@ -1095,7 +1126,7 @@ mod tests {
         let run = create_run(session.clone());
         let handle = run.handle();
 
-        run.finish().unwrap();
+        run.finish().block().unwrap();
 
         assert!(!handle.is_active());
         handle.log_info("after-finish");

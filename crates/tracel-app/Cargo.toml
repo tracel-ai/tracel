@@ -24,7 +24,7 @@ serde_json.workspace = true
 json-patch.workspace = true
 thiserror.workspace = true
 axum = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["sync"] }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "net", "sync"] }
 tokio-stream = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true

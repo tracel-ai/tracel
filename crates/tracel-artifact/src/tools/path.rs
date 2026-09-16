@@ -1,3 +1,4 @@
+#[cfg(feature = "fs")]
 use std::path::{Path, PathBuf};
 
 /// Normalize a path within a bundle (use forward slashes, remove leading slash)
@@ -9,6 +10,7 @@ pub fn normalize_bundle_path<S: AsRef<str>>(s: S) -> String {
 }
 
 /// Sanitize a relative path to prevent directory traversal attacks.
+#[cfg(feature = "fs")]
 pub fn sanitize_rel_path(path: &str) -> Result<PathBuf, String> {
     let normalized = normalize_bundle_path(path);
     if normalized.is_empty() {
@@ -32,6 +34,7 @@ pub fn sanitize_rel_path(path: &str) -> Result<PathBuf, String> {
 }
 
 /// Safely join a root path with a relative path.
+#[cfg(feature = "fs")]
 pub fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let rel = sanitize_rel_path(rel)?;
     Ok(root.join(rel))

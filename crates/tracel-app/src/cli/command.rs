@@ -37,7 +37,7 @@ struct ExperimentCliCommand<I, O, M> {
 impl<I, O, M> CliCommand for ExperimentCliCommand<I, O, M>
 where
     I: Send + 'static,
-    O: 'static,
+    O: Send + 'static,
     M: Mapper<I> + Send + Sync,
 {
     fn name(&self) -> &str {
@@ -51,6 +51,7 @@ where
             .map_err(CliError::ValidationFailed)?;
         self.job
             .run(input)
+            .block()
             .map(|_| ())
             .map_err(CliError::ExecutionFailed)
     }
@@ -59,7 +60,7 @@ where
 impl<I, O, M> IntoCliCommand<M> for ExperimentJob<I, O>
 where
     I: Send + 'static,
-    O: 'static,
+    O: Send + 'static,
     M: Mapper<I> + Send + Sync + 'static,
 {
     fn into_cli_command(self, mapper: M) -> Box<dyn CliCommand> {
@@ -89,17 +90,19 @@ where
             .mapper
             .map(config)
             .map_err(CliError::ValidationFailed)?;
-        let stream = self
-            .job
-            .stream_once(input)
-            .map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
-        for item in stream {
+        // The inference computes on a thread of its own so outputs print as they are produced.
+        let (job, outputs) = self.job.stream_once(input);
+        let worker = std::thread::spawn(move || job.block());
+        for item in outputs.blocking_iter() {
             let output = item.map_err(CliError::ExecutionFailed)?;
             let line = serde_json::to_string(&output)
                 .map_err(|e| CliError::ExecutionFailed(Box::new(e)))?;
             println!("{line}");
         }
-        Ok(())
+        worker
+            .join()
+            .map_err(|_| CliError::ExecutionFailed("the inference panicked".into()))?
+            .map_err(|e| CliError::ExecutionFailed(Box::new(e)))
     }
 }
 

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tracel_artifact::bundle::FsBundle;
+use tracel_task::Job;
 
 use crate::{
     ArtifactKind, ExperimentId, MetricSpec, MetricValue,
@@ -59,24 +60,34 @@ pub enum ExperimentCompletion {
     Cancelled,
 }
 
-pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError> + 'a;
-
 /// Session-level implementation for the active experiment run.
+///
+/// A session is a synchronous producer with asynchronous drains: [`record_event`](Self::record_event)
+/// and [`save_artifact`](Self::save_artifact) never wait, and [`flush`](Self::flush) and
+/// [`finish`](Self::finish) hand their request to the backend before returning, so a run dropped
+/// mid-way still completes without anyone driving the job they return. An artifact that fails to
+/// ship is reported by the first `flush` or `finish` after it, not by `save_artifact`.
 pub trait ExperimentSession: Send + Sync {
+    /// Queues `event`; never waits.
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
 
-    /// Block until every event recorded so far has left the process.
-    fn flush(&self) -> Result<(), ExperimentError> {
-        Ok(())
+    /// Resolves once every event recorded and every artifact saved so far has left the process.
+    fn flush(&self) -> Job<(), ExperimentError> {
+        Job::ready(())
     }
 
+    /// Queues an artifact already encoded into `bundle`; never waits. The backend ships it in
+    /// the order it was saved.
     fn save_artifact(
         &self,
-        name: &str,
+        name: String,
         kind: ArtifactKind,
-        artifact: Box<BundleFn>,
+        bundle: FsBundle,
     ) -> Result<(), ExperimentError>;
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError>;
+
+    /// Hands the completion to the backend before returning; the job resolves once every
+    /// artifact saved before it has shipped and the backend has acknowledged the completion.
+    fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError>;
 }
 
 impl<T> ExperimentSession for Arc<T>
@@ -87,20 +98,20 @@ where
         self.as_ref().record_event(event)
     }
 
-    fn flush(&self) -> Result<(), ExperimentError> {
+    fn flush(&self) -> Job<(), ExperimentError> {
         self.as_ref().flush()
     }
 
     fn save_artifact(
         &self,
-        name: &str,
+        name: String,
         kind: ArtifactKind,
-        artifact: Box<BundleFn>,
+        bundle: FsBundle,
     ) -> Result<(), ExperimentError> {
-        self.as_ref().save_artifact(name, kind, artifact)
+        self.as_ref().save_artifact(name, kind, bundle)
     }
 
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+    fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {
         self.as_ref().finish(completion)
     }
 }

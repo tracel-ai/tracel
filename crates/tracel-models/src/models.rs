@@ -1,17 +1,18 @@
 use std::collections::HashSet;
 use std::fmt;
-use std::path::Path;
+#[cfg(feature = "fs")]
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tracel_artifact::TransferObserver;
-use tracel_artifact::bundle::{BundleDecode, BundleSource, FsBundle};
-use tracel_artifact::download::{
-    ArtifactFile, DownloadError, transfer_reader_to_sink_with_observer,
-};
+#[cfg(feature = "fs")]
+use tracel_artifact::bundle::FsBundle;
+use tracel_artifact::bundle::{BundleDecode, BundleSink, BundleSource};
+use tracel_artifact::download::{ArtifactFile, DownloadError, transfer_stream_to_sink};
 use tracel_artifact::normalize_checksum;
+use tracel_artifact::{TransferObserver, upload::MultipartUploadSource};
+use tracel_task::{Job, MaybeSend};
 
 use sha2::{Digest, Sha256};
-use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
@@ -19,6 +20,12 @@ use crate::{
 };
 
 /// Backend-independent model operations and verified transfer orchestration.
+///
+/// Every operation is handed back as a [`Job`]: await it, block on it at a native edge, poll it
+/// per tick, or spawn it on an executor of the caller's choice. Nothing runs until the job is
+/// driven. The bytes of a version land in whatever [`BundleSink`] the caller supplies, so where
+/// they are staged — a directory, memory — is the caller's decision rather than the
+/// capability's.
 #[derive(Clone)]
 pub struct Models {
     ops: Arc<dyn ModelOps>,
@@ -31,80 +38,119 @@ impl Models {
     }
 
     /// Lists models in this capability's scope.
-    pub fn list(&self) -> Result<Vec<Model>, ModelsError> {
+    pub fn list(&self) -> Job<Vec<Model>, ModelsError> {
         self.ops.list_models()
     }
 
     /// Fetches one model by name.
-    pub fn get(&self, name: &str) -> Result<Model, ModelsError> {
-        self.ops.get_model(name)
+    pub fn get(&self, name: impl Into<String>) -> Job<Model, ModelsError> {
+        self.ops.get_model(name.into())
     }
 
     /// Lists published versions of a model.
-    pub fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
-        self.ops.list_versions(model)
+    pub fn list_versions(&self, model: impl Into<String>) -> Job<Vec<ModelVersion>, ModelsError> {
+        self.ops.list_versions(model.into())
     }
 
     /// Fetches one version using its opaque identity.
     pub fn get_version(
         &self,
-        model: &str,
+        model: impl Into<String>,
         spec: impl Into<VersionSpec>,
-    ) -> Result<ModelVersion, ModelsError> {
-        self.ops.get_version(model, spec.into())
+    ) -> Job<ModelVersion, ModelsError> {
+        self.ops.get_version(model.into(), spec.into())
+    }
+
+    /// Downloads and verifies a version into `sink`.
+    ///
+    /// Every path is validated before a byte is written, and every file is checked against its
+    /// published size and checksum as it lands. The sink comes back once every file has passed,
+    /// so a caller staging somewhere temporary can then move the files into place.
+    pub fn download<S, O>(
+        &self,
+        model: impl Into<String>,
+        id: VersionId,
+        sink: S,
+        mut observer: O,
+    ) -> Job<S, ModelsError>
+    where
+        S: BundleSink + MaybeSend + 'static,
+        O: TransferObserver + 'static,
+    {
+        let ops = Arc::clone(&self.ops);
+        let model = model.into();
+        Job::new(async move { stage(&*ops, &model, &id, sink, &mut observer).await })
     }
 
     /// Downloads and verifies a version into `directory`.
     ///
-    /// Files are downloaded to a temporary sibling of `directory`. No destination files are
-    /// changed until every path, size, and checksum has been verified.
-    ///
-    /// The verified files are then moved into `directory`. Existing files at published paths are
-    /// replaced, while other entries are unchanged. This final move is not transactional; an
-    /// output error may leave some files replaced.
-    pub fn download_into<O: TransferObserver>(
+    /// Files are staged in a temporary sibling of `directory`, so that moving them in is a rename
+    /// on the same filesystem. No destination file is changed until every path, size, and
+    /// checksum has been verified. Existing files at published paths are then replaced and other
+    /// entries left alone; this final move is not transactional, so an output error may leave
+    /// some files replaced.
+    #[cfg(feature = "fs")]
+    pub fn download_into(
         &self,
-        model: &str,
-        id: &VersionId,
-        directory: &Path,
-        observer: &mut O,
-    ) -> Result<FsBundle, ModelsError> {
-        if observer.is_cancelled() {
-            return Err(ModelsError::Cancelled);
-        }
-        let parent = directory
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let staging = FsBundle::temp_in(parent, ".staging-")
-            .map_err(|error| ModelsError::Output(error.to_string()))?;
-        let bundle = self.stage(model, id, staging, observer)?;
-        bundle
-            .move_into(directory)
-            .map_err(|error| ModelsError::Output(error.to_string()))
+        model: impl Into<String>,
+        id: VersionId,
+        directory: impl Into<PathBuf>,
+        mut observer: impl TransferObserver + 'static,
+    ) -> Job<FsBundle, ModelsError> {
+        let ops = Arc::clone(&self.ops);
+        let model = model.into();
+        let directory = directory.into();
+        Job::new(async move {
+            if observer.is_cancelled() {
+                return Err(ModelsError::Cancelled);
+            }
+            let parent = directory
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let staging = FsBundle::temp_in(parent, ".staging-")
+                .map_err(|error| ModelsError::Output(error.to_string()))?;
+            let bundle = stage(&*ops, &model, &id, staging, &mut observer).await?;
+            bundle
+                .move_into(&directory)
+                .map_err(|error| ModelsError::Output(error.to_string()))
+        })
     }
 
-    /// Downloads, verifies, and decodes a model version using `settings`.
+    /// Downloads, verifies, and decodes a version, staging its files in `staging`.
     ///
-    /// The decoder sees the complete staged bundle only after every backend file has passed path,
-    /// size, and checksum verification.
-    pub fn load<D: BundleDecode>(
+    /// The decoder sees the staged bundle only after every backend file has passed path, size,
+    /// and checksum verification. Decoding runs wherever the job is driven.
+    pub fn load<D, S>(
         &self,
-        model: &str,
-        id: &VersionId,
-        settings: &D::Settings,
-    ) -> Result<D, ModelsError> {
-        let staging = FsBundle::temp().map_err(ModelsError::other)?;
-        let bundle = self.stage(model, id, staging, &mut ())?;
-        D::decode(&bundle, settings).map_err(|error| {
-            let error: Box<dyn std::error::Error + Send + Sync> = error.into();
-            ModelsError::Decode(error.to_string())
+        model: impl Into<String>,
+        id: VersionId,
+        staging: S,
+        settings: D::Settings,
+    ) -> Job<D, ModelsError>
+    where
+        D: BundleDecode + Send + 'static,
+        D::Settings: MaybeSend + 'static,
+        S: BundleSink + BundleSource + MaybeSend + 'static,
+    {
+        let ops = Arc::clone(&self.ops);
+        let model = model.into();
+        Job::new(async move {
+            let bundle = stage(&*ops, &model, &id, staging, &mut ()).await?;
+            D::decode(&bundle, &settings).map_err(|error| {
+                let error: Box<dyn std::error::Error + Send + Sync> = error.into();
+                ModelsError::Decode(error.to_string())
+            })
         })
     }
 
     /// Creates a model that versions can be published under.
-    pub fn create(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        self.ops.create_model(name, description)
+    pub fn create(
+        &self,
+        name: impl Into<String>,
+        description: Option<String>,
+    ) -> Job<Model, ModelsError> {
+        self.ops.create_model(name.into(), description)
     }
 
     /// Publishes every file in `source` as a new version of `model`.
@@ -114,42 +160,25 @@ impl Models {
     /// written. The version only becomes visible once every file has been uploaded.
     pub fn publish<S, O>(
         &self,
-        model: &str,
-        source: &S,
+        model: impl Into<String>,
+        source: S,
         metadata: Option<serde_json::Value>,
-        observer: &mut O,
-    ) -> Result<ModelVersion, ModelsError>
+        mut observer: O,
+    ) -> Job<ModelVersion, ModelsError>
     where
-        S: BundleSource + MultipartUploadSource,
-        O: TransferObserver,
+        S: BundleSource + MultipartUploadSource + 'static,
+        O: TransferObserver + 'static,
     {
-        let files = measured_files(source, observer)?;
-        if observer.is_cancelled() {
-            return Err(ModelsError::Cancelled);
-        }
-        self.ops
-            .publish_version(model, &files, source, metadata.as_ref(), observer)
-    }
-
-    fn stage<O: TransferObserver>(
-        &self,
-        model: &str,
-        id: &VersionId,
-        mut bundle: FsBundle,
-        observer: &mut O,
-    ) -> Result<FsBundle, ModelsError> {
-        if observer.is_cancelled() {
-            return Err(ModelsError::Cancelled);
-        }
-
-        let sources = self.ops.fetch_version_files(model, id)?;
-        let paths = validated_source_paths(&sources)?;
-
-        for (source, path) in sources.iter().zip(paths) {
-            stage_source(source.as_ref(), path, &mut bundle, observer)?;
-        }
-
-        Ok(bundle)
+        let ops = Arc::clone(&self.ops);
+        let model = model.into();
+        Job::new(async move {
+            let files = measured_files(&source, &mut observer)?;
+            if observer.is_cancelled() {
+                return Err(ModelsError::Cancelled);
+            }
+            ops.publish_version(model, files, Arc::new(source), metadata, Box::new(observer))
+                .await
+        })
     }
 }
 
@@ -159,20 +188,52 @@ impl fmt::Debug for Models {
     }
 }
 
-fn stage_source<O: TransferObserver>(
+async fn stage<S, O>(
+    ops: &dyn ModelOps,
+    model: &str,
+    id: &VersionId,
+    mut sink: S,
+    observer: &mut O,
+) -> Result<S, ModelsError>
+where
+    S: BundleSink,
+    O: TransferObserver + ?Sized,
+{
+    if observer.is_cancelled() {
+        return Err(ModelsError::Cancelled);
+    }
+
+    let sources = ops
+        .fetch_version_files(model.to_string(), id.clone())
+        .await?;
+    let paths = validated_source_paths(&sources)?;
+
+    for (source, path) in sources.iter().zip(paths) {
+        stage_source(source.as_ref(), path, &mut sink, observer).await?;
+    }
+
+    Ok(sink)
+}
+
+async fn stage_source<S, O>(
     source: &dyn VersionFileSource,
     path: String,
-    bundle: &mut FsBundle,
+    sink: &mut S,
     observer: &mut O,
-) -> Result<(), ModelsError> {
-    let reader = source.open(&path)?;
+) -> Result<(), ModelsError>
+where
+    S: BundleSink,
+    O: TransferObserver + ?Sized,
+{
+    let body = source.open(path.clone());
     let file = ArtifactFile {
         rel_path: path,
         size_bytes: Some(source.file().size_bytes),
         checksum: Some(source.file().checksum.clone()),
     };
 
-    transfer_reader_to_sink_with_observer(reader, bundle, &file, observer)
+    transfer_stream_to_sink(body, sink, &file, observer)
+        .await
         .map_err(map_download_error)
 }
 
@@ -364,14 +425,18 @@ mod tests {
     use std::fs;
     use std::io::Read;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
 
     use tempfile::TempDir;
-    use tracel_artifact::bundle::BundleSink;
+    use tracel_artifact::bundle::{BundleSink, InMemoryBundleSources};
 
     use super::*;
-    use crate::test_support::{FakeOps, SourceSpec, checksum, models_with_sources};
+    use crate::test_support::{FakeOps, SourceSpec, checksum, models_over, models_with_sources};
+
+    fn shared<O: TransferObserver>(observer: O) -> Arc<Mutex<O>> {
+        Arc::new(Mutex::new(observer))
+    }
 
     #[derive(Default)]
     struct RecordingObserver {
@@ -396,14 +461,15 @@ mod tests {
         }
     }
 
-    fn download_into_temp<O: TransferObserver>(
+    fn download_into_temp(
         models: &Models,
-        observer: &mut O,
+        observer: impl TransferObserver + 'static,
     ) -> (TempDir, PathBuf, Result<FsBundle, ModelsError>) {
         let home = TempDir::new().unwrap();
         let directory = home.path().join("landed");
-        let result =
-            models.download_into("alpha", &VersionId::new("version-id"), &directory, observer);
+        let result = models
+            .download_into("alpha", VersionId::new("version-id"), &directory, observer)
+            .block();
         (home, directory, result)
     }
 
@@ -411,7 +477,7 @@ mod tests {
     fn publish_measures_the_bytes_it_sends() {
         let ops = FakeOps::new(Vec::new());
         let record = ops.publish_record();
-        let models = Models::new(Arc::new(ops));
+        let models = models_over(ops);
         let mut bundle = FsBundle::temp().unwrap();
         bundle
             .put_file("weights.bin", &mut &b"payload"[..])
@@ -420,10 +486,11 @@ mod tests {
         models
             .publish(
                 "alpha",
-                &bundle,
+                bundle,
                 Some(serde_json::json!({"format": "burnpack"})),
-                &mut (),
+                (),
             )
+            .block()
             .unwrap();
 
         let record = record.lock().unwrap();
@@ -438,7 +505,7 @@ mod tests {
     fn a_cancelled_publish_sends_nothing() {
         let ops = FakeOps::new(Vec::new());
         let record = ops.publish_record();
-        let models = Models::new(Arc::new(ops));
+        let models = models_over(ops);
         let mut bundle = FsBundle::temp().unwrap();
         bundle
             .put_file("weights.bin", &mut &b"payload"[..])
@@ -452,7 +519,8 @@ mod tests {
         }
 
         let error = models
-            .publish("alpha", &bundle, None, &mut Cancelled)
+            .publish("alpha", bundle, None, Cancelled)
+            .block()
             .unwrap_err();
 
         assert!(error.is_cancelled());
@@ -463,10 +531,11 @@ mod tests {
     fn download_into_reports_verified_progress() {
         let bytes = b"verified payload";
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", bytes)]);
-        let mut observer = RecordingObserver::default();
+        let observer = shared(RecordingObserver::default());
 
-        let (_home, directory, result) = download_into_temp(&models, &mut observer);
+        let (_home, directory, result) = download_into_temp(&models, Arc::clone(&observer));
         result.unwrap();
+        let observer = observer.lock().unwrap();
 
         assert_eq!(observer.progress.last(), Some(&(bytes.len() as u64)));
         assert_eq!(observer.completed, vec![bytes.len() as u64]);
@@ -483,7 +552,8 @@ mod tests {
         ]);
 
         let bundle = models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into("alpha", VersionId::new("version-id"), &directory, ())
+            .block()
             .unwrap();
 
         assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), b"weights");
@@ -528,22 +598,23 @@ mod tests {
             SourceSpec::new("first.bin", b"first"),
             SourceSpec::new("second.bin", b"second"),
         ]);
-        let mut observer = ObserveStaging {
+        let observer = shared(ObserveStaging {
             home: home.path().to_path_buf(),
             directory: directory.clone(),
             observed: None,
-        };
+        });
 
         models
             .download_into(
                 "alpha",
-                &VersionId::new("version-id"),
+                VersionId::new("version-id"),
                 &directory,
-                &mut observer,
+                Arc::clone(&observer),
             )
+            .block()
             .unwrap();
 
-        let (entries, directory_existed) = observer.observed.unwrap();
+        let (entries, directory_existed) = observer.lock().unwrap().observed.take().unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].starts_with(".staging-"), "{entries:?}");
         assert!(!directory_existed);
@@ -562,7 +633,8 @@ mod tests {
         ]);
 
         let error = models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into("alpha", VersionId::new("version-id"), &directory, ())
+            .block()
             .unwrap_err();
 
         assert!(error.to_string().contains("mid-stream"), "{error}");
@@ -597,10 +669,11 @@ mod tests {
         let error = models
             .download_into(
                 "alpha",
-                &VersionId::new("version-id"),
+                VersionId::new("version-id"),
                 &directory,
-                &mut CancelAfterFirst::default(),
+                CancelAfterFirst::default(),
             )
+            .block()
             .unwrap_err();
 
         assert!(matches!(error, ModelsError::Cancelled));
@@ -618,7 +691,8 @@ mod tests {
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"new weights")]);
 
         models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into("alpha", VersionId::new("version-id"), &directory, ())
+            .block()
             .unwrap();
 
         assert_eq!(
@@ -638,10 +712,11 @@ mod tests {
         let error = models
             .download_into(
                 "alpha",
-                &VersionId::new("version-id"),
-                &parent.join("landed"),
-                &mut (),
+                VersionId::new("version-id"),
+                parent.join("landed"),
+                (),
             )
+            .block()
             .unwrap_err();
 
         assert!(matches!(error, ModelsError::Output(_)));
@@ -653,15 +728,15 @@ mod tests {
         let mut invalid = SourceSpec::new("second.bin", b"untrusted");
         invalid.file.size_bytes += 1;
         let models = models_with_sources(vec![valid, invalid]);
-        let mut observer = RecordingObserver::default();
+        let observer = shared(RecordingObserver::default());
 
-        let (home, directory, result) = download_into_temp(&models, &mut observer);
+        let (home, directory, result) = download_into_temp(&models, Arc::clone(&observer));
         let error = result.unwrap_err();
 
         assert!(error.is_verification());
         assert!(!directory.exists());
         assert_eq!(home.path().read_dir().unwrap().count(), 0);
-        assert_eq!(observer.completed_paths, vec!["first.bin"]);
+        assert_eq!(observer.lock().unwrap().completed_paths, vec!["first.bin"]);
     }
 
     #[derive(Debug, PartialEq)]
@@ -689,7 +764,13 @@ mod tests {
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"decoded")]);
 
         let decoded = models
-            .load::<Decoded>("alpha", &VersionId::new("version-id"), &())
+            .load::<Decoded, _>(
+                "alpha",
+                VersionId::new("version-id"),
+                FsBundle::temp().unwrap(),
+                (),
+            )
+            .block()
             .unwrap();
 
         assert_eq!(decoded, Decoded("decoded".to_string()));
@@ -705,7 +786,7 @@ mod tests {
             source,
         ]);
 
-        let (home, directory, result) = download_into_temp(&models, &mut ());
+        let (home, directory, result) = download_into_temp(&models, ());
         let error = result.unwrap_err();
 
         assert!(matches!(&error, ModelsError::Transport(reason) if reason.contains("mid-stream")));
@@ -719,7 +800,7 @@ mod tests {
         let opened_paths = Arc::clone(&source.opened_paths);
         let models = models_with_sources(vec![source]);
 
-        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let (_home, directory, result) = download_into_temp(&models, ());
         let bundle = result.unwrap();
 
         assert_eq!(bundle.file_paths(), vec!["weights/model.bin".to_string()]);
@@ -734,6 +815,26 @@ mod tests {
     }
 
     #[test]
+    fn download_lands_verified_files_in_whatever_sink_the_caller_supplies() {
+        let models = models_with_sources(vec![SourceSpec::new("weights/model.bin", b"bytes")]);
+
+        let sink = models
+            .download(
+                "alpha",
+                VersionId::new("version-id"),
+                InMemoryBundleSources::new(),
+                (),
+            )
+            .block()
+            .unwrap();
+
+        let files = sink.files();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].dest_path(), "weights/model.bin");
+        assert_eq!(files[0].source(), b"bytes");
+    }
+
+    #[test]
     fn paths_differing_only_in_case_are_rejected_before_any_source_is_opened() {
         let sources = vec![
             SourceSpec::new("Weights.bin", b"upper"),
@@ -742,7 +843,7 @@ mod tests {
         let opens = Arc::clone(&sources[0].opens);
         let models = models_with_sources(sources);
 
-        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let (_home, directory, result) = download_into_temp(&models, ());
         let error = result.unwrap_err();
 
         assert!(matches!(error, ModelsError::InvalidPath(_)));
@@ -757,7 +858,7 @@ mod tests {
         let opens = [Arc::clone(&first.opens), Arc::clone(&second.opens)];
         let models = models_with_sources(vec![first, second]);
 
-        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let (_home, directory, result) = download_into_temp(&models, ());
         let error = result.unwrap_err();
 
         assert!(error.is_verification());
@@ -776,7 +877,7 @@ mod tests {
             let opens = [Arc::clone(&first.opens), Arc::clone(&second.opens)];
             let models = models_with_sources(vec![first, second]);
 
-            let (_home, directory, result) = download_into_temp(&models, &mut ());
+            let (_home, directory, result) = download_into_temp(&models, ());
             let error = result.unwrap_err();
 
             assert!(error.is_verification());
@@ -799,7 +900,7 @@ mod tests {
         ] {
             let models = models_with_sources(vec![SourceSpec::new(path, b"payload")]);
 
-            let (_home, directory, result) = download_into_temp(&models, &mut ());
+            let (_home, directory, result) = download_into_temp(&models, ());
             let error = result.unwrap_err();
 
             assert!(
@@ -817,7 +918,7 @@ mod tests {
         let opens = Arc::clone(&source.opens);
         let models = models_with_sources(vec![source]);
 
-        let (_home, directory, result) = download_into_temp(&models, &mut ());
+        let (_home, directory, result) = download_into_temp(&models, ());
         let error = result.unwrap_err();
 
         assert!(matches!(error, ModelsError::InvalidChecksum(_)));
@@ -852,15 +953,15 @@ mod tests {
         let consumed = Arc::clone(&source.consumed);
         let total = source.bytes.len();
         let models = models_with_sources(vec![source]);
-        let mut observer = CancellingObserver::default();
+        let observer = shared(CancellingObserver::default());
 
-        let (home, directory, result) = download_into_temp(&models, &mut observer);
+        let (home, directory, result) = download_into_temp(&models, Arc::clone(&observer));
         let error = result.unwrap_err();
 
         assert!(error.is_cancelled());
-        assert_eq!(consumed.load(Ordering::SeqCst), 4);
+        assert!(consumed.load(Ordering::SeqCst) >= 4);
         assert!(consumed.load(Ordering::SeqCst) < total);
-        assert!(!observer.completed);
+        assert!(!observer.lock().unwrap().completed);
         assert!(!directory.exists());
         assert_eq!(home.path().read_dir().unwrap().count(), 0);
     }

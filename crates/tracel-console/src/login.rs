@@ -1,19 +1,24 @@
 //! Signing in from a device that cannot host a browser session, and renewing that
 //! session afterwards without signing in again.
 
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tracel_client::console::RefreshToken;
 use tracel_client::console::auth::{
     DeviceAuthClient, DeviceFlowError, DevicePollOutcome, IssuedSession,
 };
+use tracel_task::{Job, Runtime};
 
 use crate::ConsoleError;
 
 /// A pending sign-in, and what to put in front of the user while it is pending.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DeviceLogin {
     client: DeviceAuthClient,
+    /// Drives the client's requests; there is no connection yet to borrow one from.
+    runtime: Arc<Runtime>,
     device_code: String,
     /// Code the user types on the verification page.
     pub user_code: String,
@@ -29,31 +34,57 @@ pub struct DeviceLogin {
 
 impl DeviceLogin {
     /// Asks the console to start a sign-in.
-    pub fn start(client_id: impl Into<String>) -> Result<Self, ConsoleError> {
+    pub fn start(client_id: impl Into<String>) -> Job<Self, ConsoleError> {
         let client = DeviceAuthClient::new(crate::env::from_environment(), client_id);
-        let started = client.start().map_err(login_failure)?;
+        Job::new(async move {
+            let runtime =
+                Arc::new(Runtime::acquire().expect("failed to start the sign-in runtime"));
+            let started = runtime
+                .attach(client.start())
+                .await
+                .map_err(login_failure)?;
 
-        Ok(Self {
-            client,
-            device_code: started.device_code.clone(),
-            user_code: started.user_code.clone(),
-            verification_uri: started.verification_uri.clone(),
-            verification_uri_complete: started.verification_uri_complete.clone(),
-            expires_in: started.expires_in(),
-            interval: started.interval(),
+            Ok(Self {
+                client,
+                runtime,
+                device_code: started.device_code.clone(),
+                user_code: started.user_code.clone(),
+                verification_uri: started.verification_uri.clone(),
+                verification_uri_complete: started.verification_uri_complete.clone(),
+                expires_in: started.expires_in(),
+                interval: started.interval(),
+            })
         })
     }
 
-    /// Asks once whether the user has answered, without waiting.
+    /// Asks once whether the user has answered.
     ///
-    /// The caller owns the waiting, so a sign-in stays interruptible.
-    pub fn poll(&self) -> Result<DeviceApproval, ConsoleError> {
-        match self.client.poll(&self.device_code) {
-            Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
-            Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
-            Ok(DevicePollOutcome::Approved(session)) => Ok(DeviceApproval::Approved(session)),
-            Err(error) => Err(login_failure(error)),
-        }
+    /// The caller owns the waiting between polls, so a sign-in stays interruptible.
+    pub fn poll(&self) -> Job<DeviceApproval, ConsoleError> {
+        let client = self.client.clone();
+        let device_code = self.device_code.clone();
+        Job::new(self.runtime.attach(async move {
+            match client.poll(&device_code).await {
+                Ok(DevicePollOutcome::Pending) => Ok(DeviceApproval::Waiting),
+                Ok(DevicePollOutcome::SlowDown) => Ok(DeviceApproval::PollLessOften),
+                Ok(DevicePollOutcome::Approved(session)) => Ok(DeviceApproval::Approved(session)),
+                Err(error) => Err(login_failure(error)),
+            }
+        }))
+    }
+}
+
+impl fmt::Debug for DeviceLogin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeviceLogin")
+            .field("client", &self.client)
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &self.verification_uri_complete)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
     }
 }
 
@@ -78,10 +109,16 @@ pub enum DeviceApproval {
 pub fn refresh_session(
     client_id: impl Into<String>,
     refresh_token: &RefreshToken,
-) -> Result<IssuedSession, ConsoleError> {
-    DeviceAuthClient::new(crate::env::from_environment(), client_id)
-        .refresh_session(refresh_token)
-        .map_err(login_failure)
+) -> Job<IssuedSession, ConsoleError> {
+    let client = DeviceAuthClient::new(crate::env::from_environment(), client_id);
+    let refresh_token = refresh_token.clone();
+    Job::new(async move {
+        let runtime = Runtime::acquire().expect("failed to start the sign-in runtime");
+        runtime
+            .attach(client.refresh_session(&refresh_token))
+            .await
+            .map_err(login_failure)
+    })
 }
 
 /// Reads a sign-in failure without exposing the protocol it was spoken in.

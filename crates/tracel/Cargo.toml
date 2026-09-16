@@ -20,12 +20,16 @@ burn = ["tracel-experiment/burn", "tracel-datasets/burn"]
 
 [dependencies]
 tracel-core.workspace = true
-tracel-app.workspace = true
-tracel-runner = { workspace = true, optional = true }
 tracel-experiment.workspace = true
 tracel-inference.workspace = true
-tracel-artifact.workspace = true
+tracel-artifact = { workspace = true, features = ["fs"] }
 tracel-console.workspace = true
 tracel-station = { workspace = true, optional = true }
 tracel-datasets.workspace = true
-tracel-models.workspace = true
+tracel-models = { workspace = true, features = ["fs"] }
+tracel-task.workspace = true
+
+# The CLI, server, and runner front-ends block at their edges or run on tokio.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracel-app.workspace = true
+tracel-runner = { workspace = true, optional = true }

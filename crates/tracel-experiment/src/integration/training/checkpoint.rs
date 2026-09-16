@@ -168,8 +168,9 @@ impl<C: Checkpoint> Checkpointer<C> for ExperimentCheckpointer {
             .use_artifact::<CheckpointRecordSources<C>>(
                 source_id,
                 self.full_path_name(epoch),
-                &settings,
+                settings,
             )
+            .block()
             .map_err(|e| CheckpointerError::Unknown(format!("Failed to load artifact: {e}")))?;
         Ok(artifact.checkpoint)
     }

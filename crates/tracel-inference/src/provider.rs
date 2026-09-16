@@ -1,17 +1,23 @@
 use std::sync::Arc;
 
+use tracel_task::{Job, Streaming};
+
 use crate::OutputWriter;
 use crate::error::InferenceError;
 use crate::inference::{Inference, IntoInference};
 use crate::session::InferenceSession;
-use crate::stream::InferenceStream;
+use crate::stream::channel;
+
+type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Backend port that creates per-request [`InferenceSession`]s.
 ///
-/// Implementations decide how a request's telemetry is observed and shipped.
+/// Implementations decide how a request's telemetry is observed and shipped. The session is
+/// handed back as a [`Job`] any executor can drive: an implementation whose transport needs a
+/// runtime attaches the work to the one it owns.
 pub trait InferenceProvider: Send + Sync + 'static {
     /// Create a session for one request of the inference named `name`.
-    fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError>;
+    fn create_session(&self, name: String) -> Job<InferenceSession, InferenceError>;
 }
 
 /// Entry point for building inference jobs against a backend.
@@ -40,9 +46,10 @@ impl InferenceModule {
 
 /// A named inference bound to a backend provider.
 ///
-/// Run it inline on the calling thread with [`run`](Self::run), or spawn a worker and pull outputs
-/// back as an iterator with [`stream`](Self::stream) / [`stream_once`](Self::stream_once). Each call
-/// opens a fresh per-request [`InferenceSession`] for telemetry.
+/// [`run`](Self::run) hands back the request as a [`Job`] whose outputs go to a writer of the
+/// caller's; [`stream`](Self::stream) / [`stream_once`](Self::stream_once) pair that job with a
+/// [`Streaming`] of its outputs. The inference itself is synchronous compute and runs wherever
+/// the job is driven. Each call opens a fresh per-request [`InferenceSession`] for telemetry.
 pub struct InferenceJob<I, O> {
     provider: Arc<dyn InferenceProvider>,
     name: String,
@@ -83,41 +90,43 @@ where
     I: Send + 'static,
     O: Send + Sync + 'static,
 {
-    /// Run the inference inline on the calling thread, blocking until it completes.
+    /// The request as a job: opens a session from the provider, then drives the inference under
+    /// it via [`InferenceSession::run`], writing outputs to `output`.
     ///
-    /// Opens a fresh session from the provider and drives the inference under it via
-    /// [`InferenceSession::run`]. The returned error covers only a failure to open the session.
-    pub fn run<It, W>(&self, input: It, output: W) -> Result<(), InferenceError>
+    /// The inference is synchronous compute and runs inline wherever the job is driven; a caller
+    /// that must not stall its executor for the duration hands the job to a blocking thread. The
+    /// job's error covers only a failure to open the session.
+    pub fn run<It, W>(&self, input: It, output: W) -> Job<(), InferenceError>
     where
         It: IntoIterator<Item = I>,
         It::IntoIter: Send + 'static,
-        W: OutputWriter<O> + 'static,
+        W: OutputWriter<O> + Send + 'static,
     {
-        let session = self.provider.create_session(&self.name)?;
-        session.run(self.inference.as_ref(), input, output);
-        Ok(())
-    }
-
-    /// Run the inference on a spawned worker, returning its outputs as a pull-based iterator.
-    ///
-    /// Convenience over [`run`](Self::run) for callers that want to consume outputs directly rather
-    /// than supply their own writer. Dropping the returned [`InferenceStream`] cancels the request
-    /// and joins the worker.
-    pub fn stream<It>(&self, input: It) -> Result<InferenceStream<O>, InferenceError>
-    where
-        It: IntoIterator<Item = I>,
-        It::IntoIter: Send + 'static,
-    {
-        let session = self.provider.create_session(&self.name)?;
+        let session = self.provider.create_session(self.name.clone());
         let inference = self.inference.clone();
         let input = input.into_iter();
-        Ok(InferenceStream::spawn(move |channel| {
-            session.run(inference.as_ref(), input, channel);
-        }))
+        Job::new(async move {
+            session.await?.run(inference.as_ref(), input, output);
+            Ok(())
+        })
     }
 
-    /// Run the inference against a single input on a spawned worker.
-    pub fn stream_once(&self, input: I) -> Result<InferenceStream<O>, InferenceError> {
+    /// The request as a job paired with a stream of its outputs.
+    ///
+    /// Drive the job wherever the compute should run and pull the outputs from anywhere; the
+    /// channel between them is unbounded, so neither waits on the other. Dropping the stream
+    /// cancels the request.
+    pub fn stream<It>(&self, input: It) -> (Job<(), InferenceError>, Streaming<O, BoxError>)
+    where
+        It: IntoIterator<Item = I>,
+        It::IntoIter: Send + 'static,
+    {
+        let (writer, outputs) = channel();
+        (self.run(input, writer), outputs)
+    }
+
+    /// [`stream`](Self::stream) for a single input.
+    pub fn stream_once(&self, input: I) -> (Job<(), InferenceError>, Streaming<O, BoxError>) {
         self.stream(std::iter::once(input))
     }
 }
@@ -129,7 +138,7 @@ mod tests {
 
     struct TestProvider;
     impl InferenceProvider for TestProvider {
-        fn create_session(&self, _name: &str) -> Result<InferenceSession, InferenceError> {
+        fn create_session(&self, _name: String) -> Job<InferenceSession, InferenceError> {
             unimplemented!()
         }
     }

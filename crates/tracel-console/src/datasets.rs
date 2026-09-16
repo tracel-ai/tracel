@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::ops::Range;
 use std::sync::Arc;
 
 use crate::error::client_error_is_not_found;
+use tracel_client::console::Client;
 use tracel_client::console::dataset::request::{
     AddDatasetVersionUploadItemsRequest, CompleteDatasetVersionUploadRequest, CreateDatasetRequest,
     DatasetVersionUploadItemRequest, QueryDatasetVersionsRequest, QueryDatasetsRequest,
@@ -12,6 +14,7 @@ use tracel_datasets::{
     Dataset, DatasetOps, DatasetVersion, DatasetsError, Item, NewItem, Publication, VersionId,
     VersionSpec,
 };
+use tracel_task::{Job, MaybeSend};
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
@@ -29,147 +32,58 @@ pub struct ConsoleDatasetOps {
 }
 
 impl ConsoleDatasetOps {
-    fn versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
-        collect_pages(|page| {
-            self.scope
+    async fn versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
+        let scope = &self.scope;
+        let versions = collect_pages(|page| async move {
+            scope
                 .console
                 .client
                 .query_dataset_versions(
-                    &self.scope.owner,
-                    &self.scope.project,
+                    &scope.owner,
+                    &scope.project,
                     dataset,
                     QueryDatasetVersionsRequest {
                         page: Some(page),
                         per_page: Some(PAGE_SIZE),
                     },
                 )
+                .await
                 .map(|response| (response.items, response.total_count))
                 .map_err(|error| map_dataset_error(error, dataset))
         })
-        .map(|versions| {
-            versions
-                .into_iter()
-                .map(|version| version_from_wire(dataset, version))
-                .collect()
-        })
-    }
-}
+        .await?;
 
-impl DatasetOps for ConsoleDatasetOps {
-    fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
-        collect_pages(|page| {
-            self.scope
-                .console
-                .client
-                .query_datasets(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    QueryDatasetsRequest {
-                        page: Some(page),
-                        per_page: Some(PAGE_SIZE),
-                    },
-                )
-                .map(|response| (response.items, response.total_count))
-                .map_err(console_failure)
-        })
-        .map(|datasets| datasets.into_iter().map(dataset_from_wire).collect())
+        Ok(versions
+            .into_iter()
+            .map(|version| version_from_wire(dataset, version))
+            .collect())
     }
 
-    fn get_dataset(&self, name: &str) -> Result<Dataset, DatasetsError> {
-        self.scope
-            .console
-            .client
-            .get_dataset(&self.scope.owner, &self.scope.project, name)
-            .map(dataset_from_wire)
-            .map_err(|error| map_dataset_error(error, name))
-    }
-
-    fn list_versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
-        self.versions(dataset)
-    }
-
-    fn get_version(
-        &self,
-        dataset: &str,
-        spec: VersionSpec,
-    ) -> Result<DatasetVersion, DatasetsError> {
-        let versions = self.versions(dataset)?;
-        let found = match &spec {
-            VersionSpec::Exact(wanted) => {
-                versions.into_iter().find(|version| &version.id == wanted)
-            }
-            VersionSpec::Latest => versions.into_iter().max_by_key(|version| version.version),
-        };
-
-        found.ok_or(DatasetsError::VersionNotFound {
-            dataset: dataset.to_string(),
-            version: spec,
-        })
-    }
-
-    fn create_dataset(
-        &self,
-        name: &str,
-        description: Option<&str>,
-        metadata: Option<&serde_json::Value>,
-    ) -> Result<Dataset, DatasetsError> {
-        self.scope
-            .console
-            .client
-            .create_dataset(
-                &self.scope.owner,
-                &self.scope.project,
-                CreateDatasetRequest {
-                    name: name.to_string(),
-                    description: description.map(str::to_string),
-                    metadata: metadata.cloned(),
-                },
-            )
-            .map(dataset_from_wire)
-            .map_err(console_failure)
-    }
-
-    fn start_publication(&self, dataset: &str) -> Result<Box<dyn Publication>, DatasetsError> {
-        let started = self
-            .scope
-            .console
-            .client
-            .start_dataset_version_upload(&self.scope.owner, &self.scope.project, dataset)
-            .map_err(|error| map_dataset_error(error, dataset))?;
-
-        Ok(Box::new(ConsolePublication {
-            ops: self.clone(),
-            dataset: dataset.to_string(),
-            upload_id: started.upload_id,
-            pending: Vec::new(),
-            pending_bytes: 0,
-        }))
-    }
-
-    fn read_items(
+    async fn items(
         &self,
         dataset: &str,
         id: &VersionId,
         indexes: &[u64],
     ) -> Result<Vec<Item>, DatasetsError> {
+        let scope = &self.scope;
         let version = route_version(dataset, id)?;
         let mut read = HashMap::with_capacity(indexes.len());
 
         for run in contiguous_runs(indexes) {
             let mut next = run.start;
             while next < run.end {
-                let page = self
-                    .scope
+                let page = scope
                     .console
                     .client
                     .stream_dataset_version_items(
-                        &self.scope.owner,
-                        &self.scope.project,
+                        &scope.owner,
+                        &scope.project,
                         dataset,
                         version,
                         Some(next),
                         Some((run.end - next).min(u32::MAX as u64) as u32),
                     )
+                    .await
                     .map_err(|error| map_version_error(error, dataset, id))?;
 
                 if page.items.is_empty() {
@@ -201,42 +115,200 @@ impl DatasetOps for ConsoleDatasetOps {
     }
 }
 
+impl DatasetOps for ConsoleDatasetOps {
+    fn list_datasets(&self) -> Job<Vec<Dataset>, DatasetsError> {
+        let this = self.clone();
+        self.scope.console.attach(async move {
+            let scope = &this.scope;
+            let datasets = collect_pages(|page| async move {
+                scope
+                    .console
+                    .client
+                    .query_datasets(
+                        &scope.owner,
+                        &scope.project,
+                        QueryDatasetsRequest {
+                            page: Some(page),
+                            per_page: Some(PAGE_SIZE),
+                        },
+                    )
+                    .await
+                    .map(|response| (response.items, response.total_count))
+                    .map_err(console_failure)
+            })
+            .await?;
+
+            Ok(datasets.into_iter().map(dataset_from_wire).collect())
+        })
+    }
+
+    fn get_dataset(&self, name: String) -> Job<Dataset, DatasetsError> {
+        let this = self.clone();
+        self.scope.console.attach(async move {
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .get_dataset(&scope.owner, &scope.project, &name)
+                .await
+                .map(dataset_from_wire)
+                .map_err(|error| map_dataset_error(error, &name))
+        })
+    }
+
+    fn list_versions(&self, dataset: String) -> Job<Vec<DatasetVersion>, DatasetsError> {
+        let this = self.clone();
+        self.scope
+            .console
+            .attach(async move { this.versions(&dataset).await })
+    }
+
+    fn get_version(
+        &self,
+        dataset: String,
+        spec: VersionSpec,
+    ) -> Job<DatasetVersion, DatasetsError> {
+        let this = self.clone();
+        self.scope.console.attach(async move {
+            let versions = this.versions(&dataset).await?;
+            let found = match &spec {
+                VersionSpec::Exact(wanted) => {
+                    versions.into_iter().find(|version| &version.id == wanted)
+                }
+                VersionSpec::Latest => versions.into_iter().max_by_key(|version| version.version),
+            };
+
+            found.ok_or(DatasetsError::VersionNotFound {
+                dataset,
+                version: spec,
+            })
+        })
+    }
+
+    fn create_dataset(
+        &self,
+        name: String,
+        description: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Job<Dataset, DatasetsError> {
+        let this = self.clone();
+        self.scope.console.attach(async move {
+            let scope = &this.scope;
+            scope
+                .console
+                .client
+                .create_dataset(
+                    &scope.owner,
+                    &scope.project,
+                    CreateDatasetRequest {
+                        name,
+                        description,
+                        metadata,
+                    },
+                )
+                .await
+                .map(dataset_from_wire)
+                .map_err(console_failure)
+        })
+    }
+
+    fn start_publication(&self, dataset: String) -> Job<Box<dyn Publication>, DatasetsError> {
+        let this = self.clone();
+        self.scope.console.attach(async move {
+            let scope = &this.scope;
+            let started = scope
+                .console
+                .client
+                .start_dataset_version_upload(&scope.owner, &scope.project, &dataset)
+                .await
+                .map_err(|error| map_dataset_error(error, &dataset))?;
+
+            Ok(Box::new(ConsolePublication {
+                scope: Arc::clone(&this.scope),
+                dataset,
+                upload_id: started.upload_id,
+                pending: Vec::new(),
+                pending_bytes: 0,
+                settled: false,
+            }) as Box<dyn Publication>)
+        })
+    }
+
+    fn read_items(
+        &self,
+        dataset: String,
+        id: VersionId,
+        indexes: Vec<u64>,
+    ) -> Job<Vec<Item>, DatasetsError> {
+        let this = self.clone();
+        self.scope
+            .console
+            .attach(async move { this.items(&dataset, &id, &indexes).await })
+    }
+}
+
 /// One upload, sending items in batches.
+///
+/// Dropped before it is committed or cancelled, it asks the console to cancel the upload on the
+/// connection's runtime, without waiting for the answer.
 struct ConsolePublication {
-    ops: ConsoleDatasetOps,
+    scope: Arc<ProjectScope>,
     dataset: String,
     upload_id: String,
     pending: Vec<DatasetVersionUploadItemRequest>,
     pending_bytes: usize,
+    settled: bool,
 }
 
 impl ConsolePublication {
-    fn flush(&mut self) -> Result<(), DatasetsError> {
+    /// Hands back the upload of everything held, or nothing when nothing is held.
+    fn upload(&mut self) -> Option<Job<(), DatasetsError>> {
         if self.pending.is_empty() {
-            return Ok(());
+            return None;
         }
 
         let items = std::mem::take(&mut self.pending);
         self.pending_bytes = 0;
+        let scope = Arc::clone(&self.scope);
+        let dataset = self.dataset.clone();
+        let upload_id = self.upload_id.clone();
+        Some(self.scope.console.attach(async move {
+            scope
+                .console
+                .client
+                .add_dataset_version_upload_items(
+                    &scope.owner,
+                    &scope.project,
+                    &dataset,
+                    &upload_id,
+                    AddDatasetVersionUploadItemsRequest { items },
+                )
+                .await
+                .map(drop)
+                .map_err(console_failure)
+        }))
+    }
 
-        self.ops
-            .scope
-            .console
-            .client
-            .add_dataset_version_upload_items(
-                &self.ops.scope.owner,
-                &self.ops.scope.project,
-                &self.dataset,
-                &self.upload_id,
-                AddDatasetVersionUploadItemsRequest { items },
-            )
-            .map_err(console_failure)?;
-        Ok(())
+    /// Asks the console to cancel the upload, owning everything the request needs.
+    fn cancel_request(
+        &self,
+    ) -> impl Future<Output = Result<(), DatasetsError>> + MaybeSend + 'static {
+        let client: Client = self.scope.console.client.clone();
+        let owner = self.scope.owner.clone();
+        let project = self.scope.project.clone();
+        let dataset = self.dataset.clone();
+        let upload_id = self.upload_id.clone();
+        async move {
+            client
+                .cancel_dataset_version_upload(&owner, &project, &dataset, &upload_id)
+                .await
+                .map_err(console_failure)
+        }
     }
 }
 
 impl Publication for ConsolePublication {
-    fn add_item(&mut self, item: NewItem) -> Result<(), DatasetsError> {
+    fn add_item(&mut self, item: NewItem) -> Result<Option<Job<(), DatasetsError>>, DatasetsError> {
         let item = DatasetVersionUploadItemRequest {
             source_item_id: item.source_item_id,
             example_payload: item.example,
@@ -251,53 +323,58 @@ impl Publication for ConsolePublication {
             )));
         }
 
-        if !self.pending.is_empty() && self.pending_bytes + size > BATCH_BYTES {
-            self.flush()?;
-        }
-
+        let upload = (self.pending_bytes + size > BATCH_BYTES)
+            .then(|| self.upload())
+            .flatten();
         self.pending_bytes += size;
         self.pending.push(item);
 
-        Ok(())
+        Ok(upload)
     }
 
     fn commit(
-        &mut self,
-        metadata: Option<&serde_json::Value>,
-    ) -> Result<DatasetVersion, DatasetsError> {
-        self.flush()?;
-
-        self.ops
-            .scope
-            .console
-            .client
-            .complete_dataset_version_upload(
-                &self.ops.scope.owner,
-                &self.ops.scope.project,
-                &self.dataset,
-                &self.upload_id,
-                CompleteDatasetVersionUploadRequest {
-                    metadata: metadata.cloned(),
-                },
-            )
-            .map(|version| version_from_wire(&self.dataset, version))
-            .map_err(console_failure)
+        mut self: Box<Self>,
+        metadata: Option<serde_json::Value>,
+    ) -> Job<DatasetVersion, DatasetsError> {
+        self.settled = true;
+        let upload = self.upload();
+        let scope = Arc::clone(&self.scope);
+        let dataset = self.dataset.clone();
+        let upload_id = self.upload_id.clone();
+        self.scope.console.attach(async move {
+            if let Some(upload) = upload {
+                upload.await?;
+            }
+            scope
+                .console
+                .client
+                .complete_dataset_version_upload(
+                    &scope.owner,
+                    &scope.project,
+                    &dataset,
+                    &upload_id,
+                    CompleteDatasetVersionUploadRequest { metadata },
+                )
+                .await
+                .map(|version| version_from_wire(&dataset, version))
+                .map_err(console_failure)
+        })
     }
 
-    fn cancel(&mut self) -> Result<(), DatasetsError> {
-        self.pending.clear();
-        self.pending_bytes = 0;
-        self.ops
-            .scope
-            .console
-            .client
-            .cancel_dataset_version_upload(
-                &self.ops.scope.owner,
-                &self.ops.scope.project,
-                &self.dataset,
-                &self.upload_id,
-            )
-            .map_err(console_failure)
+    fn cancel(mut self: Box<Self>) -> Job<(), DatasetsError> {
+        self.settled = true;
+        self.scope.console.attach(self.cancel_request())
+    }
+}
+
+impl Drop for ConsolePublication {
+    fn drop(&mut self) {
+        if !self.settled {
+            let cancel = self.cancel_request();
+            self.scope.console.runtime.spawn(async move {
+                let _ = cancel.await;
+            });
+        }
     }
 }
 
@@ -380,14 +457,16 @@ fn ordered_items(indexes: &[u64], items: &HashMap<u64, Item>) -> Option<Vec<Item
 }
 
 /// Reads every page of one console query.
-fn collect_pages<T>(
-    mut fetch: impl FnMut(u32) -> Result<(Vec<T>, u64), DatasetsError>,
-) -> Result<Vec<T>, DatasetsError> {
+async fn collect_pages<T, F, Fut>(mut fetch: F) -> Result<Vec<T>, DatasetsError>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: Future<Output = Result<(Vec<T>, u64), DatasetsError>>,
+{
     let mut all = Vec::new();
     let mut page = 0;
 
     loop {
-        let (items, total) = fetch(page)?;
+        let (items, total) = fetch(page).await?;
         let count = items.len();
         all.extend(items);
 
@@ -633,10 +712,10 @@ mod tests {
         ]
         .into_iter();
 
-        let values = collect_pages(|page| {
+        let values = futures::executor::block_on(collect_pages(|page| {
             fetched.push(page);
-            Ok(pages.next().expect("the test provided this page"))
-        })
+            std::future::ready(Ok(pages.next().expect("the test provided this page")))
+        }))
         .unwrap();
 
         assert_eq!(fetched, [0, 1]);

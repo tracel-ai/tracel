@@ -1,7 +1,9 @@
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::{
-    bundle::BundleSink, tools::path::normalize_bundle_path, upload::MultipartUploadSource,
+    bundle::{BoxFileWriter, BundleSink, FileWriter},
+    tools::path::normalize_bundle_path,
+    upload::MultipartUploadSource,
 };
 
 /// A builder for creating bundles with multiple files
@@ -58,14 +60,38 @@ impl InMemoryBundleSources {
 }
 
 impl BundleSink for InMemoryBundleSources {
-    fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String> {
-        let mut buf = Vec::new();
-        reader
-            .read_to_end(&mut buf)
-            .map_err(|e| format!("Failed to read from source: {}", e))?;
-        self.files.push(PendingFile {
+    fn begin_file(&mut self, path: &str) -> Result<BoxFileWriter<'_>, String> {
+        Ok(Box::new(MemoryFileWriter {
+            files: &mut self.files,
             dest_path: normalize_bundle_path(path),
-            source: buf,
+            bytes: Vec::new(),
+        }))
+    }
+}
+
+/// Buffers one file and adds it to the bundle on finish.
+struct MemoryFileWriter<'a> {
+    files: &'a mut Vec<PendingFile>,
+    dest_path: String,
+    bytes: Vec<u8>,
+}
+
+impl Write for MemoryFileWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl FileWriter for MemoryFileWriter<'_> {
+    fn finish(self: Box<Self>) -> Result<(), String> {
+        self.files.push(PendingFile {
+            dest_path: self.dest_path,
+            source: self.bytes,
         });
         Ok(())
     }

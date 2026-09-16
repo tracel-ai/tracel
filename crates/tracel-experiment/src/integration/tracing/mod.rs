@@ -2,8 +2,7 @@
 //!
 //! Install [`tracing_log_layer`] or call [`try_init_tracing_subscriber`] to enable forwarding.
 //! Once installed, you can choose between two routing styles:
-//! - ambient routing with [`crate::ExperimentGlobalExt::enter`],
-//!   [`crate::ExperimentGlobalExt::in_scope`], or
+//! - ambient routing with [`crate::ExperimentGlobalExt::in_scope`] or
 //!   [`crate::ExperimentInstrument::in_experiment`]
 //! - explicit span routing with [`ExperimentTracingExt::tracing_span`]
 //!

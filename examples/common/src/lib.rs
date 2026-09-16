@@ -15,7 +15,7 @@ use url::Url;
 /// This is the pattern to copy into a real application: resolve the [`Connection`] once, from the
 /// environment or your own config, then share the [`Context`] across the program.
 pub fn context() -> anyhow::Result<Context> {
-    Ok(Context::new(connection()?)?)
+    Ok(Context::new(connection()?).block()?)
 }
 
 /// The Tracel Station base URL, from `TRACEL_STATION_URL` (default `http://localhost:8000`).

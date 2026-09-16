@@ -30,10 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    for item in job.stream(rx)? {
+    // The inference computes on its own thread; tokens are pulled here as they are produced.
+    let (job, tokens) = job.stream(rx);
+    let inference = thread::spawn(move || job.block());
+    for item in tokens.blocking_iter() {
         let token = item?;
         println!("[{:>5}ms] {}", start.elapsed().as_millis(), token.token);
     }
+    inference.join().expect("the inference thread panicked")?;
 
     Ok(())
 }

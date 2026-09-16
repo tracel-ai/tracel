@@ -5,18 +5,25 @@ use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
 use tracel_models::Models;
 
+use tracel_task::Job;
+
 use crate::backend::Backend;
 use crate::connection::{Connection, ContextError};
 
+/// One connection's capabilities, shared across a program.
 #[derive(Clone)]
 pub struct Context {
     backend: Arc<dyn Backend>,
 }
 
 impl Context {
-    pub fn new(connection: Connection) -> Result<Self, ContextError> {
-        Ok(Self {
-            backend: connection.into_backend()?,
+    /// Opens `connection`; the console is reached when the job is driven.
+    pub fn new(connection: Connection) -> Job<Self, ContextError> {
+        let backend = connection.into_backend();
+        Job::new(async move {
+            Ok(Self {
+                backend: backend.await?,
+            })
         })
     }
 

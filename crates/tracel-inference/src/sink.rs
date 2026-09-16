@@ -4,9 +4,11 @@
 use serde_json::Value;
 
 /// Current wall-clock time as Unix epoch milliseconds.
+///
+/// The one place this crate reads the clock; `web-time` answers on the browser too.
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }

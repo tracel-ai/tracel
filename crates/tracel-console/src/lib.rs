@@ -1,21 +1,22 @@
 #![deny(missing_docs)]
 
-//! Burn-free, blocking SDK for the Tracel console domain.
+//! Burn-free SDK for the Tracel console domain.
 //!
 //! [`Console`] owns one connection to the console. Project handles are cheap
 //! views over that shared client and vend backend-agnostic, project-scoped capabilities without
 //! performing I/O when created.
 
 mod console;
-mod datasets;
 mod domain;
 mod env;
 mod error;
+mod models;
+mod wire;
+
+mod datasets;
 mod experiment;
 mod inference;
 mod login;
-mod models;
-mod wire;
 
 pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};

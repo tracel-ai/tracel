@@ -1,4 +1,5 @@
 use tracel_artifact::bundle::FsBundle;
+use tracel_task::Job;
 
 use crate::ExperimentId;
 
@@ -50,6 +51,6 @@ pub trait ExperimentArtifactReader: Send + Sync {
     fn load_artifact_raw(
         &self,
         experiment_id: ExperimentId,
-        name: &str,
-    ) -> Result<LoadedArtifact, ExperimentReaderError>;
+        name: String,
+    ) -> Job<LoadedArtifact, ExperimentReaderError>;
 }

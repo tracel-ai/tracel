@@ -1,20 +1,24 @@
 use std::sync::Arc;
 
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
+use bytes::Bytes;
+use futures::{TryStreamExt, stream};
+use tracel_artifact::{TransferClient, TransferError};
 use tracel_client::station::model::request::CreateModelRequest;
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
     ModelVersionResponse,
 };
 use tracel_models::{
-    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
+    VersionManifest, VersionSpec,
 };
+use tracel_task::{Job, Streaming};
 
 use crate::StationError;
 use crate::station::StationInner;
 use crate::wire::station_timestamp;
 
+#[derive(Clone)]
 pub struct StationModelOps {
     pub station: Arc<StationInner>,
 }
@@ -31,99 +35,119 @@ impl StationModelOps {
 }
 
 impl ModelOps for StationModelOps {
-    fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
-        let response = self
-            .station
-            .client
-            .models()
-            .list()
-            .map_err(station_failure)?;
-        Ok(models_from_wire(response))
+    fn list_models(&self) -> Job<Vec<Model>, ModelsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            this.station
+                .client
+                .models()
+                .list()
+                .await
+                .map(models_from_wire)
+                .map_err(station_failure)
+        })
     }
 
-    fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
-        self.station
-            .client
-            .models()
-            .get(name)
-            .map(model_from_wire)
-            .map_err(|error| map_model_error(error, name))
+    fn get_model(&self, name: String) -> Job<Model, ModelsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            this.station
+                .client
+                .models()
+                .get(&name)
+                .await
+                .map(model_from_wire)
+                .map_err(|error| map_model_error(error, &name))
+        })
     }
 
-    fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
-        let response = self
-            .station
-            .client
-            .models()
-            .versions(model)
-            .map_err(|error| map_model_error(error, model))?;
-        Ok(model_versions_from_wire(response))
+    fn list_versions(&self, model: String) -> Job<Vec<ModelVersion>, ModelsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            this.station
+                .client
+                .models()
+                .versions(&model)
+                .await
+                .map(model_versions_from_wire)
+                .map_err(|error| map_model_error(error, &model))
+        })
     }
 
-    fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            // The Station has no latest-version route, so the listing answers it.
-            VersionSpec::Latest => {
-                return self
-                    .list_versions(model)?
-                    .into_iter()
-                    .max_by_key(|version| version.version)
-                    .ok_or_else(|| ModelsError::VersionNotFound {
-                        model: model.to_string(),
-                        version: spec,
-                    });
-            }
-        };
+    fn get_version(&self, model: String, spec: VersionSpec) -> Job<ModelVersion, ModelsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            let id = match &spec {
+                VersionSpec::Exact(id) => id.clone(),
+                // The Station has no latest-version route, so the listing answers it.
+                VersionSpec::Latest => {
+                    return this
+                        .list_versions(model.clone())
+                        .await?
+                        .into_iter()
+                        .max_by_key(|version| version.version)
+                        .ok_or(ModelsError::VersionNotFound {
+                            model,
+                            version: spec,
+                        });
+                }
+            };
 
-        let route = self.route_version(model, &id)?;
-        self.station
-            .client
-            .models()
-            .version(model, route)
-            .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &id))
+            let route = this.route_version(&model, &id)?;
+            this.station
+                .client
+                .models()
+                .version(&model, route)
+                .await
+                .map(model_version_from_wire)
+                .map_err(|error| map_version_error(error, &model, &id))
+        })
     }
 
     fn fetch_version_files(
         &self,
-        model: &str,
-        id: &VersionId,
-    ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
-        let route = self.route_version(model, id)?;
-        let response = self
-            .station
-            .client
-            .models()
-            .download(model, route)
-            .map_err(|error| map_version_error(error, model, id))?;
-        Ok(file_sources_from_wire(
-            &self.station.transfer_client,
-            response,
-        ))
+        model: String,
+        id: VersionId,
+    ) -> Job<Vec<Box<dyn VersionFileSource>>, ModelsError> {
+        let route = match self.route_version(&model, &id) {
+            Ok(route) => route,
+            Err(error) => return Job::failed(error),
+        };
+        let this = self.clone();
+        self.station.attach(async move {
+            let station = &this.station;
+            station
+                .client
+                .models()
+                .download(&model, route)
+                .await
+                .map_err(|error| map_version_error(error, &model, &id))
+                .map(|response| file_sources_from_wire(station, response))
+        })
     }
 
-    fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        self.station
-            .client
-            .models()
-            .create(CreateModelRequest {
-                name: name.to_string(),
-                description: description.map(str::to_string),
-            })
-            .map(model_from_wire)
-            .map_err(station_failure)
+    fn create_model(&self, name: String, description: Option<String>) -> Job<Model, ModelsError> {
+        let this = self.clone();
+        self.station.attach(async move {
+            this.station
+                .client
+                .models()
+                .create(CreateModelRequest { name, description })
+                .await
+                .map(model_from_wire)
+                .map_err(station_failure)
+        })
     }
 
     fn publish_version(
         &self,
-        _model: &str,
-        _files: &[VersionFile],
-        _contents: &dyn tracel_artifact::upload::MultipartUploadSource,
-        _metadata: Option<&serde_json::Value>,
-        _observer: &mut dyn tracel_artifact::TransferObserver,
-    ) -> Result<ModelVersion, ModelsError> {
-        Err(ModelsError::other(
+        _model: String,
+        _files: Vec<VersionFile>,
+        _contents: Arc<dyn tracel_artifact::upload::MultipartUploadSource>,
+        _metadata: Option<serde_json::Value>,
+        _observer: Box<dyn tracel_artifact::TransferObserver>,
+    ) -> Job<ModelVersion, ModelsError> {
+        Job::failed(ModelsError::other(
             "publishing a model version is not implemented for the station yet",
         ))
     }
@@ -132,7 +156,7 @@ impl ModelOps for StationModelOps {
 struct StationVersionFileSource {
     file: VersionFile,
     url: String,
-    transfer_client: ReqwestTransferClient,
+    station: Arc<StationInner>,
 }
 
 impl VersionFileSource for StationVersionFileSource {
@@ -140,15 +164,18 @@ impl VersionFileSource for StationVersionFileSource {
         &self.file
     }
 
-    fn open(&self, _canonical_path: &str) -> Result<VersionFileReader, ModelsError> {
-        self.transfer_client
-            .get_reader(&self.url, Some(self.file.size_bytes))
-            .map_err(|error| ModelsError::Transport(error.to_string()))
+    fn open(&self, _canonical_path: String) -> Streaming<Bytes, TransferError> {
+        let transfer = self.station.transfer.clone();
+        let url = self.url.clone();
+        let size = self.file.size_bytes;
+        self.station.attach_stream(
+            stream::once(async move { transfer.get(&url, Some(size)).await }).try_flatten(),
+        )
     }
 }
 
 fn file_sources_from_wire(
-    transfer_client: &ReqwestTransferClient,
+    station: &Arc<StationInner>,
     response: ModelDownloadResponse,
 ) -> Vec<Box<dyn VersionFileSource>> {
     response
@@ -162,7 +189,7 @@ fn file_sources_from_wire(
                     checksum: file.checksum,
                 },
                 url: file.url,
-                transfer_client: transfer_client.clone(),
+                station: Arc::clone(station),
             }) as Box<dyn VersionFileSource>
         })
         .collect()

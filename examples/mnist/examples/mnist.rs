@@ -22,6 +22,7 @@ fn main() -> anyhow::Result<()> {
             )
         })
         .run(MnistTrainingConfig::small())
+        .block()
         .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
 
     Ok(())

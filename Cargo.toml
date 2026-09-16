@@ -26,6 +26,8 @@ rand = "0.9.2"
 ctrlc = "3.5.2"
 dotenvy = "0.15"
 tempfile = "3.27.0"
+directories = "6.0"
+toml = "1.1.2"
 
 url = "2.5.8"
 anyhow = "1.0.103"
@@ -50,10 +52,10 @@ crossbeam = { version = "0.8.4", default-features = false, features = [
 ] }
 json-patch = { version = "4.1.0", default-features = false }
 schemars = "1.2.2"
-reqwest = { version = "0.13.4", features = ["blocking", "json"] }
+reqwest = { version = "0.13.4", default-features = false }
 uuid = { version = "1.23.4", features = ["serde"] }
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", default-features = false }
 tokio-stream = "0.1"
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
@@ -64,6 +66,13 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "unwrap",
 ] }
 chrono = "0.4.45"
+futures = { version = "0.3.33", default-features = false }
+futures-timer = "3.0.4"
+bytes = "1.12.1"
+async-channel = { version = "2.5.0", default-features = false }
+pin-project-lite = "0.2"
+wasm-bindgen-futures = "0.4.76"
+web-time = "1.1"
 tracing = "0.1.44"
 tracing-core = "0.1.36"
 tracing-subscriber = "0.3.23"
@@ -76,14 +85,15 @@ tracel-client = { version = "0.18.0", default-features = false, features = [
 ] }
 
 ## Crate
+tracel-task = { path = "crates/tracel-task", version = "0.10.0" }
 tracel-runner = { path = "crates/tracel-runner", version = "0.10.0" }
 tracel-console = { path = "crates/tracel-console", version = "0.10.0" }
-tracel-models = { path = "crates/tracel-models", version = "0.10.0" }
+tracel-models = { path = "crates/tracel-models", version = "0.10.0", default-features = false }
 tracel-station = { path = "crates/tracel-station", version = "0.10.0" }
 tracel-datasets = { path = "crates/tracel-datasets", version = "0.10.0" }
 tracel-app = { path = "crates/tracel-app", version = "0.10.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.10.0" }
-tracel-artifact = { path = "crates/tracel-artifact", version = "0.10.0" }
+tracel-artifact = { path = "crates/tracel-artifact", version = "0.10.0", default-features = false }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.10.0" }
 tracel-experiment-remote = { path = "crates/tracel-experiment-remote", version = "0.10.0" }
 tracel-core = { path = "crates/tracel-core", version = "0.10.0" }
@@ -94,3 +104,6 @@ tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
+
+[patch.crates-io]
+tracel-client = { path = "../burn-central-client/tracel-client" }

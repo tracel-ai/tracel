@@ -30,10 +30,13 @@ struct AmbientExperiment {
 /// Ambient scopes are thread-local and stack-based. When the guard is dropped, the previous
 /// ambient experiment on that thread is restored.
 ///
-/// This is returned by [`ExperimentRunHandle::enter`] and [`ExperimentGlobalExt::enter`].
+/// Private on purpose: a guard held across an `.await` would leave the run in scope for whatever
+/// else the executor runs meanwhile. [`in_scope`](ExperimentGlobalExt::in_scope) bounds the
+/// scope to a closure and [`ExperimentInstrument`] re-enters it on every poll, and those are the
+/// only two ways in.
 #[derive(Debug)]
 #[must_use = "ambient experiment guards must be kept alive to maintain the experiment scope"]
-pub struct CurrentExperimentGuard {
+struct CurrentExperimentGuard {
     token: u64,
     not_send: PhantomData<Rc<()>>,
 }
@@ -94,11 +97,11 @@ impl<F> WithCurrentExperiment<F> {
 /// Extension trait providing methods for entering and propagating an ambient experiment context.
 ///
 /// Ambient context is thread-local and stack-based. Nested scopes temporarily override the current
-/// experiment and restore the previous one when their guard is dropped.
+/// experiment and restore the previous one when they end. A scope is bounded by a closure here,
+/// or re-entered on every poll by [`ExperimentInstrument`], so it can never outlive an `.await`.
 ///
-/// This trait is implemented for [`ExperimentRun`]. [`ExperimentRunHandle`] provides matching
-/// [`ExperimentRunHandle::enter`] and [`ExperimentRunHandle::in_scope`] methods when you only have
-/// a cloned handle.
+/// This trait is implemented for [`ExperimentRun`]. [`ExperimentRunHandle`] provides a matching
+/// [`ExperimentRunHandle::in_scope`] method when you only have a cloned handle.
 ///
 /// # Example
 ///
@@ -113,10 +116,10 @@ impl<F> WithCurrentExperiment<F> {
 /// });
 /// ```
 pub trait ExperimentGlobalExt {
-    /// Enter an ambient scope for this run until the returned guard is dropped.
-    fn enter(&self) -> CurrentExperimentGuard;
-
     /// Run a closure with this run installed as the ambient experiment.
+    ///
+    /// For a future, use [`ExperimentInstrument::in_experiment`] instead, which re-enters the
+    /// scope on every poll.
     fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T;
 
     /// Return the current ambient experiment handle for this thread, if any.
@@ -124,11 +127,6 @@ pub trait ExperimentGlobalExt {
 }
 
 impl ExperimentRunHandle {
-    /// See [`ExperimentGlobalExt::enter`].
-    pub fn enter(&self) -> CurrentExperimentGuard {
-        enter_experiment_handle(self.clone())
-    }
-
     /// See [`ExperimentGlobalExt::in_scope`].
     pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
         with_experiment_handle(self.clone(), f)
@@ -136,10 +134,6 @@ impl ExperimentRunHandle {
 }
 
 impl ExperimentGlobalExt for ExperimentRun {
-    fn enter(&self) -> CurrentExperimentGuard {
-        enter_experiment_handle(self.handle.clone())
-    }
-
     fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
         with_experiment_handle(self.handle.clone(), f)
     }
@@ -212,7 +206,7 @@ mod tests {
     use crate::context::ExperimentGlobalExt as _;
     use crate::test_support::create_run_with_id;
 
-    use super::ExperimentInstrument;
+    use super::{ExperimentInstrument, enter_experiment_handle};
 
     fn create_run(id: &str) -> ExperimentRun {
         create_run_with_id(id, Default::default())
@@ -225,12 +219,12 @@ mod tests {
 
         assert!(ExperimentRun::current().is_none());
         {
-            let _outer = run_a.enter();
+            let _outer = enter_experiment_handle(run_a.handle());
             let current = ExperimentRun::current().expect("current experiment should be set");
             assert_eq!(current.id(), run_a.id());
 
             {
-                let _inner = run_b.enter();
+                let _inner = enter_experiment_handle(run_b.handle());
                 let current =
                     ExperimentRun::current().expect("inner experiment should override outer scope");
                 assert_eq!(current.id(), run_b.id());
@@ -246,8 +240,8 @@ mod tests {
     fn dropping_an_outer_scope_does_not_remove_the_inner_scope() {
         let run_a = create_run("ambient-test-out-of-order-a");
         let run_b = create_run("ambient-test-out-of-order-b");
-        let outer = run_a.enter();
-        let inner = run_b.enter();
+        let outer = enter_experiment_handle(run_a.handle());
+        let inner = enter_experiment_handle(run_b.handle());
 
         drop(outer);
 

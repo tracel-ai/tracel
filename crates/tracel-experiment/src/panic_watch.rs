@@ -88,9 +88,14 @@ fn record(info: &PanicHookInfo<'_>) {
     for handle in &watchers {
         handle.log_error(line.clone());
     }
-    // An aborting teardown never reaches the finishing drain.
+    // An aborting teardown never reaches the finishing drain, so the line is waited for here,
+    // where a thread can wait at all; elsewhere the queued event is the best that can be done.
     for handle in &watchers {
-        handle.flush();
+        let flushed = handle.flush();
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = flushed.block();
+        #[cfg(target_arch = "wasm32")]
+        drop(flushed);
     }
 }
 

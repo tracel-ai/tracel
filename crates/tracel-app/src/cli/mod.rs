@@ -65,10 +65,10 @@ impl Cli {
     pub fn default_job<I, O>(mut self, job: ExperimentJob<I, O>, config: I) -> Self
     where
         I: Send + 'static,
-        O: 'static,
+        O: Send + 'static,
     {
         self.default = Some(DefaultCommand {
-            runner: Box::new(move || job.run(config).map(|_| ())),
+            runner: Box::new(move || job.run(config).block().map(|_| ())),
         });
         self
     }

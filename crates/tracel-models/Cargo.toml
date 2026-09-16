@@ -11,11 +11,19 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["fs"]
+# Downloading straight into a directory.
+fs = ["tracel-artifact/fs"]
+
 [dependencies]
+bytes = { workspace = true }
+futures = { workspace = true, features = ["std"] }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracel-artifact = { workspace = true }
+tracel-task = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true

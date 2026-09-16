@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
+use tracel_task::Job;
 
 use crate::ExperimentRun;
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -14,7 +15,7 @@ pub trait ExperimentProvider: Send + Sync + 'static {
         &self,
         name: String,
         attributes: HashMap<String, Value>,
-    ) -> Result<ExperimentRun, ExperimentError>;
+    ) -> Job<ExperimentRun, ExperimentError>;
 }
 
 pub trait ExperimentFn<I, O>: Send + Sync {
@@ -108,38 +109,50 @@ impl<I, O> ExperimentJob<I, O> {
         self
     }
 
-    pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
+    /// Creates a run, calls the experiment function inside it, and completes the run.
+    ///
+    /// The function is synchronous and runs wherever the job is driven: a caller that must not
+    /// stall its executor for the duration hands the job to a blocking thread.
+    pub fn run(&self, input: I) -> Job<O, Box<dyn std::error::Error + Send + Sync>>
+    where
+        I: Send + 'static,
+        O: Send + 'static,
+    {
         let _ = try_init_tracing_subscriber();
 
-        let experiment = self
+        let created = self
             .provider
-            .create_experiment(self.name.clone(), self.attributes.clone())?;
-        let handle = experiment.handle();
-        // Worker-thread panics (a kernel compiler, a data loader) land in the
-        // run's log even when they never unwind the run itself.
-        let _panic_watch = experiment.capture_panics();
-        let result = handle.in_scope(|| self.f.call(&experiment, input));
+            .create_experiment(self.name.clone(), self.attributes.clone());
+        let f = Arc::clone(&self.f);
+        Job::new(async move {
+            let experiment = created.await?;
+            let handle = experiment.handle();
+            // Worker-thread panics (a kernel compiler, a data loader) land in the
+            // run's log even when they never unwind the run itself.
+            let _panic_watch = experiment.capture_panics();
+            let result = handle.in_scope(|| f.call(&experiment, input));
 
-        match result {
-            Ok(output) => {
-                if experiment.cancel_token().is_cancelled() {
-                    // Dropping without an explicit completion finalizes the run as cancelled.
-                    drop(experiment);
-                } else {
-                    experiment.finish()?;
+            match result {
+                Ok(output) => {
+                    if experiment.cancel_token().is_cancelled() {
+                        // Dropping without an explicit completion finalizes the run as cancelled.
+                        drop(experiment);
+                    } else {
+                        experiment.finish().await?;
+                    }
+                    Ok(output)
                 }
-                Ok(output)
+                Err(e) if experiment.cancel_token().is_cancelled() => {
+                    drop(experiment);
+                    Err(e)
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let _ = experiment.fail(msg).await;
+                    Err(e)
+                }
             }
-            Err(e) if experiment.cancel_token().is_cancelled() => {
-                drop(experiment);
-                Err(e)
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = experiment.fail(msg);
-                Err(e)
-            }
-        }
+        })
     }
 }
 
@@ -148,8 +161,10 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use tracel_artifact::bundle::FsBundle;
+
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-    use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
+    use crate::session::{ExperimentCompletion, ExperimentSession};
     use crate::{ArtifactKind, CancelToken, ExperimentId};
 
     #[derive(Default)]
@@ -164,16 +179,16 @@ mod tests {
 
         fn save_artifact(
             &self,
-            _name: &str,
+            _name: String,
             _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
+            _bundle: FsBundle,
         ) -> Result<(), ExperimentError> {
             Ok(())
         }
 
-        fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        fn finish(&self, completion: ExperimentCompletion) -> Job<(), ExperimentError> {
             self.completions.lock().unwrap().push(completion);
-            Ok(())
+            Job::ready(())
         }
     }
 
@@ -184,9 +199,9 @@ mod tests {
         fn load_artifact_raw(
             &self,
             _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
+            _name: String,
+        ) -> Job<LoadedArtifact, ExperimentReaderError> {
+            Job::failed(ExperimentReaderError::new("Artifact not found"))
         }
     }
 
@@ -199,8 +214,8 @@ mod tests {
             &self,
             _name: String,
             _attributes: HashMap<String, Value>,
-        ) -> Result<ExperimentRun, ExperimentError> {
-            Ok(ExperimentRun::new(
+        ) -> Job<ExperimentRun, ExperimentError> {
+            Job::ready(ExperimentRun::new(
                 "test/experiment/1",
                 self.session.clone(),
                 NoopExperimentDataReader,
@@ -218,7 +233,7 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
 
-        job.run(()).unwrap();
+        job.run(()).block().unwrap();
 
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
@@ -233,7 +248,7 @@ mod tests {
             Ok(())
         });
 
-        job.run(()).unwrap();
+        job.run(()).block().unwrap();
 
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
@@ -247,7 +262,7 @@ mod tests {
             Err::<(), _>("interrupted".into())
         });
 
-        let result = job.run(());
+        let result = job.run(()).block();
 
         assert!(result.is_err());
         let completions = session.completions.lock().unwrap();
@@ -261,7 +276,7 @@ mod tests {
             Err::<(), _>("boom".into())
         });
 
-        let result = job.run(());
+        let result = job.run(()).block();
 
         assert!(result.is_err());
         let completions = session.completions.lock().unwrap();

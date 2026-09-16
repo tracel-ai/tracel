@@ -22,7 +22,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["blocking", "json", "default-tls"] }
 
 [dev-dependencies]
 uuid = { workspace = true, features = ["v4"] }

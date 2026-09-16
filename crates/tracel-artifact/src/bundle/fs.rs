@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use sha2::Digest;
 use tempfile::TempDir;
 
-use crate::bundle::{BundleSink, BundleSource};
+use crate::bundle::{BoxFileWriter, BundleSink, BundleSource, FileWriter};
 use crate::tools::path::{safe_join, sanitize_rel_path};
 use crate::upload::{MultipartUploadSource, UploadError};
 
@@ -180,7 +180,7 @@ impl Drop for FsBundle {
 }
 
 impl BundleSink for FsBundle {
-    fn put_file<R: Read>(&mut self, path: &str, reader: &mut R) -> Result<(), String> {
+    fn begin_file(&mut self, path: &str) -> Result<BoxFileWriter<'_>, String> {
         let rel = sanitize_rel_path(path).map_err(|e| e.to_string())?;
         let rel = rel.to_string_lossy().to_string();
 
@@ -188,61 +188,96 @@ impl BundleSink for FsBundle {
             return Err(format!("Duplicate bundle path: {rel}"));
         }
 
-        let dest = safe_join(&self.root, &rel).map_err(|e| e.to_string())?;
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-
-        let tmp = temp_path(&dest).map_err(|e| e.to_string())?;
-        let mut file = match File::create(&tmp) {
-            Ok(file) => file,
+        let dest = match safe_join(&self.root, &rel) {
+            Ok(dest) => dest,
+            Err(e) => {
+                self.seen.remove(&rel);
+                return Err(e.to_string());
+            }
+        };
+        let opened = dest
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| temp_path(&dest))
+            .and_then(|tmp| File::create(&tmp).map(|file| (tmp, file)));
+        let (tmp, file) = match opened {
+            Ok(opened) => opened,
             Err(e) => {
                 self.seen.remove(&rel);
                 return Err(e.to_string());
             }
         };
 
-        let mut hasher = sha2::Sha256::new();
-        let mut buf = [0u8; 1024 * 64];
-        let mut total = 0u64;
+        Ok(Box::new(FsFileWriter {
+            bundle: self,
+            rel,
+            dest,
+            tmp,
+            file,
+            hasher: sha2::Sha256::new(),
+            total: 0,
+            finished: false,
+        }))
+    }
+}
 
-        loop {
-            let read = match reader.read(&mut buf) {
-                Ok(read) => read,
-                Err(e) => {
-                    let _ = fs::remove_file(&tmp);
-                    self.seen.remove(&rel);
-                    return Err(e.to_string());
-                }
-            };
-            if read == 0 {
-                break;
-            }
-            if let Err(e) = file.write_all(&buf[..read]) {
-                let _ = fs::remove_file(&tmp);
-                self.seen.remove(&rel);
-                return Err(e.to_string());
-            }
-            hasher.update(&buf[..read]);
-            total += read as u64;
-        }
+/// Writes one file to its temporary path, then renames it into place on finish.
+struct FsFileWriter<'a> {
+    bundle: &'a mut FsBundle,
+    rel: String,
+    dest: PathBuf,
+    tmp: PathBuf,
+    file: File,
+    hasher: sha2::Sha256,
+    total: u64,
+    finished: bool,
+}
 
-        let checksum = format!("{:x}", hasher.finalize());
+impl FsFileWriter<'_> {
+    fn discard(&mut self) {
+        let _ = fs::remove_file(&self.tmp);
+        self.bundle.seen.remove(&self.rel);
+    }
+}
 
-        if let Err(err) = finalize_temp_file(&tmp, &dest) {
-            self.seen.remove(&rel);
-            let _ = fs::remove_file(&tmp);
+impl Write for FsFileWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.file.write(buf)?;
+        self.hasher.update(&buf[..written]);
+        self.total += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl FileWriter for FsFileWriter<'_> {
+    fn finish(mut self: Box<Self>) -> Result<(), String> {
+        if let Err(err) = finalize_temp_file(&self.tmp, &self.dest) {
+            self.discard();
             return Err(err.to_string());
         }
+        self.finished = true;
 
-        self.files.push(FsBundleFile {
-            rel_path: rel,
-            abs_path: dest,
-            size_bytes: Some(total),
+        let checksum = format!("{:x}", std::mem::take(&mut self.hasher).finalize());
+        self.bundle.files.push(FsBundleFile {
+            rel_path: std::mem::take(&mut self.rel),
+            abs_path: std::mem::take(&mut self.dest),
+            size_bytes: Some(self.total),
             checksum: Some(checksum),
         });
 
         Ok(())
+    }
+}
+
+impl Drop for FsFileWriter<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.discard();
+        }
     }
 }
 
@@ -369,6 +404,41 @@ impl MultipartUploadSource for FsBundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_dropped_before_finish_leaves_nothing_behind_and_frees_its_path() {
+        let mut bundle = FsBundle::temp().unwrap();
+        let root = bundle.root().to_path_buf();
+
+        let mut writer = bundle.begin_file("weights.bin").unwrap();
+        writer.write_all(b"partial").unwrap();
+        drop(writer);
+
+        assert_eq!(root.read_dir().unwrap().count(), 0);
+        assert!(bundle.files().is_empty());
+        bundle.put_bytes("weights.bin", b"complete").unwrap();
+        assert_eq!(fs::read(root.join("weights.bin")).unwrap(), b"complete");
+    }
+
+    #[test]
+    fn a_finished_file_is_recorded_with_its_size_and_checksum() {
+        let mut bundle = FsBundle::temp().unwrap();
+
+        let mut writer = bundle.begin_file("weights.bin").unwrap();
+        writer.write_all(b"pay").unwrap();
+        writer.write_all(b"load").unwrap();
+        writer.finish().unwrap();
+
+        let file = &bundle.files()[0];
+        assert_eq!(file.rel_path, "weights.bin");
+        assert_eq!(file.size_bytes, Some(7));
+        assert_eq!(
+            file.checksum.as_deref(),
+            Some("239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5")
+        );
+        assert_eq!(fs::read(&file.abs_path).unwrap(), b"payload");
+        assert!(bundle.begin_file("weights.bin").is_err());
+    }
 
     #[test]
     fn a_temp_bundle_in_a_parent_lives_there_and_leaves_on_drop() {

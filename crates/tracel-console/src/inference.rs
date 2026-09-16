@@ -1,14 +1,15 @@
 //! Ships inference session telemetry to the console's inference-group endpoint. One long-lived
-//! worker per group batches events from all its requests and flushes them over the client.
+//! actor per group batches events from all its requests and flushes them over the client.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 use std::time::Duration;
 
+use async_channel::{Receiver, Sender};
 use chrono::SecondsFormat;
-use crossbeam::channel::{self, Receiver, RecvTimeoutError, Sender};
+use futures::future::{Either, select};
+use futures_timer::Delay;
 use tracel_client::ClientError;
 use tracel_client::console::inference::request::{
     IngestTelemetryRequest, LogIngestionEvent, LogLevel as WireLogLevel,
@@ -19,6 +20,7 @@ use tracel_inference::sink::{
     InferenceSink, LogLevel, LogSample, MetricData, MetricDescriptor, MetricKind, MetricSample,
 };
 use tracel_inference::{InferenceError, InferenceProvider, InferenceSession};
+use tracel_task::Job;
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
@@ -29,72 +31,83 @@ const MAX_BATCH: usize = 512;
 /// Inference provider that ships session telemetry to the console.
 pub struct ConsoleInferenceProvider {
     scope: Arc<ProjectScope>,
-    groups: Mutex<HashMap<String, Arc<GroupTelemetryWorker>>>,
-    request_counter: AtomicU64,
+    groups: Arc<Mutex<HashMap<String, Arc<GroupTelemetryWorker>>>>,
+    request_counter: Arc<AtomicU64>,
 }
 
 impl ConsoleInferenceProvider {
     pub fn new(scope: Arc<ProjectScope>) -> Self {
         Self {
             scope,
-            groups: Mutex::new(HashMap::new()),
-            request_counter: AtomicU64::new(0),
-        }
-    }
-
-    fn ensure_group(&self, name: &str) -> Result<Arc<GroupTelemetryWorker>, InferenceError> {
-        let mut groups = self.groups.lock().unwrap();
-        if let Some(worker) = groups.get(name) {
-            return Ok(worker.clone());
-        }
-
-        self.ensure_group_exists(name)?;
-
-        let worker = Arc::new(GroupTelemetryWorker::spawn(
-            Arc::clone(&self.scope),
-            name.to_string(),
-        ));
-        groups.insert(name.to_string(), worker.clone());
-        Ok(worker)
-    }
-
-    fn ensure_group_exists(&self, name: &str) -> Result<(), InferenceError> {
-        match self.scope.console.client.get_inference_group(
-            &self.scope.owner,
-            &self.scope.project,
-            name,
-        ) {
-            Ok(_) => Ok(()),
-            Err(err) if err.is_not_found() => {
-                match self.scope.console.client.create_inference_group(
-                    &self.scope.owner,
-                    &self.scope.project,
-                    name.to_string(),
-                    None,
-                ) {
-                    Ok(_) => Ok(()),
-                    // Another creator won the race.
-                    Err(ClientError::ApiError { status, .. }) if status.as_u16() == 409 => Ok(()),
-                    Err(err) => Err(client_error(name, err)),
-                }
-            }
-            Err(err) => Err(client_error(name, err)),
+            groups: Arc::new(Mutex::new(HashMap::new())),
+            request_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
 impl InferenceProvider for ConsoleInferenceProvider {
-    fn create_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
-        let worker = self.ensure_group(name)?;
-        let n = self.request_counter.fetch_add(1, Ordering::Relaxed);
-        let request_id = format!("{name}/{n}");
+    fn create_session(&self, name: String) -> Job<InferenceSession, InferenceError> {
+        let scope = Arc::clone(&self.scope);
+        let groups = Arc::clone(&self.groups);
+        let counter = Arc::clone(&self.request_counter);
+        self.scope.console.attach(async move {
+            let worker = ensure_group(&scope, &groups, &name).await?;
+            let n = counter.fetch_add(1, Ordering::Relaxed);
+            let request_id = format!("{name}/{n}");
 
-        let sink: Arc<dyn InferenceSink> = Arc::new(ChannelSink {
-            tx: worker.sender(),
-        });
+            let sink: Arc<dyn InferenceSink> = Arc::new(ChannelSink {
+                tx: worker.sender(),
+            });
 
-        Ok(InferenceSession::new(request_id, sink)
-            .with_attributes([("inference_name", name.to_string())]))
+            Ok(InferenceSession::new(request_id, sink).with_attributes([("inference_name", name)]))
+        })
+    }
+}
+
+/// The group's worker, started on first use once the console knows the group.
+async fn ensure_group(
+    scope: &Arc<ProjectScope>,
+    groups: &Mutex<HashMap<String, Arc<GroupTelemetryWorker>>>,
+    name: &str,
+) -> Result<Arc<GroupTelemetryWorker>, InferenceError> {
+    if let Some(worker) = groups.lock().unwrap().get(name) {
+        return Ok(Arc::clone(worker));
+    }
+
+    ensure_group_exists(scope, name).await?;
+
+    let mut groups = groups.lock().unwrap();
+    Ok(Arc::clone(groups.entry(name.to_string()).or_insert_with(
+        || {
+            Arc::new(GroupTelemetryWorker::start(
+                Arc::clone(scope),
+                name.to_string(),
+            ))
+        },
+    )))
+}
+
+async fn ensure_group_exists(scope: &ProjectScope, name: &str) -> Result<(), InferenceError> {
+    let console = &scope.console;
+    let found = console
+        .client
+        .get_inference_group(&scope.owner, &scope.project, name)
+        .await;
+    match found {
+        Ok(_) => Ok(()),
+        Err(err) if err.is_not_found() => {
+            let created = console
+                .client
+                .create_inference_group(&scope.owner, &scope.project, name.to_string(), None)
+                .await;
+            match created {
+                Ok(_) => Ok(()),
+                // Another creator won the race.
+                Err(ClientError::ApiError { status, .. }) if status.as_u16() == 409 => Ok(()),
+                Err(err) => Err(client_error(name, err)),
+            }
+        }
+        Err(err) => Err(client_error(name, err)),
     }
 }
 
@@ -103,21 +116,22 @@ fn client_error(group: &str, error: ClientError) -> InferenceError {
     InferenceError::with_source(message, ConsoleError::from(error))
 }
 
+/// Queues telemetry for the group's worker without waiting; the channel is unbounded.
 struct ChannelSink {
     tx: Sender<TelemetryMsg>,
 }
 
 impl InferenceSink for ChannelSink {
     fn record_metric(&self, sample: MetricSample) {
-        let _ = self.tx.send(TelemetryMsg::Metric(sample));
+        let _ = self.tx.try_send(TelemetryMsg::Metric(sample));
     }
 
     fn record_log(&self, sample: LogSample) {
-        let _ = self.tx.send(TelemetryMsg::Log(sample));
+        let _ = self.tx.try_send(TelemetryMsg::Log(sample));
     }
 
     fn record_descriptor(&self, descriptor: MetricDescriptor) {
-        let _ = self.tx.send(TelemetryMsg::Descriptor(descriptor));
+        let _ = self.tx.try_send(TelemetryMsg::Descriptor(descriptor));
     }
 }
 
@@ -128,22 +142,21 @@ enum TelemetryMsg {
     Shutdown,
 }
 
-/// Long-lived per-group worker that batches and flushes telemetry.
+/// The mailbox of a long-lived per-group actor that batches and flushes telemetry.
+///
+/// The loop runs on the connection's runtime; dropping the handle asks it to flush and stop.
 struct GroupTelemetryWorker {
     tx: Sender<TelemetryMsg>,
-    handle: Option<JoinHandle<()>>,
 }
 
 impl GroupTelemetryWorker {
-    fn spawn(scope: Arc<ProjectScope>, group: String) -> Self {
-        let (tx, rx) = channel::unbounded();
-        let handle = std::thread::spawn(move || {
-            run_worker(scope, group, rx);
-        });
-        Self {
-            tx,
-            handle: Some(handle),
-        }
+    fn start(scope: Arc<ProjectScope>, group: String) -> Self {
+        let (tx, rx) = async_channel::unbounded();
+        scope
+            .console
+            .runtime
+            .spawn(run_worker(Arc::clone(&scope), group, rx));
+        Self { tx }
     }
 
     fn sender(&self) -> Sender<TelemetryMsg> {
@@ -153,39 +166,36 @@ impl GroupTelemetryWorker {
 
 impl Drop for GroupTelemetryWorker {
     fn drop(&mut self) {
-        let _ = self.tx.send(TelemetryMsg::Shutdown);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        let _ = self.tx.try_send(TelemetryMsg::Shutdown);
     }
 }
 
-fn run_worker(scope: Arc<ProjectScope>, group: String, rx: Receiver<TelemetryMsg>) {
+async fn run_worker(scope: Arc<ProjectScope>, group: String, rx: Receiver<TelemetryMsg>) {
     let mut batch = Batch::default();
 
     loop {
-        match rx.recv_timeout(FLUSH_INTERVAL) {
-            Ok(TelemetryMsg::Shutdown) => {
+        match select(std::pin::pin!(rx.recv()), Delay::new(FLUSH_INTERVAL)).await {
+            Either::Left((Ok(TelemetryMsg::Shutdown), _)) => {
                 // Drain anything still queued before the final flush.
                 while let Ok(message) = rx.try_recv() {
                     if !matches!(message, TelemetryMsg::Shutdown) {
                         batch.push(message);
                     }
                 }
-                batch.flush(&scope, &group);
+                batch.flush(&scope, &group).await;
                 break;
             }
-            Ok(message) => {
+            Either::Left((Ok(message), _)) => {
                 batch.push(message);
                 if batch.len() >= MAX_BATCH {
-                    batch.flush(&scope, &group);
+                    batch.flush(&scope, &group).await;
                 }
             }
-            Err(RecvTimeoutError::Timeout) => {
-                batch.flush(&scope, &group);
+            Either::Right(((), _)) => {
+                batch.flush(&scope, &group).await;
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                batch.flush(&scope, &group);
+            Either::Left((Err(_), _)) => {
+                batch.flush(&scope, &group).await;
                 break;
             }
         }
@@ -219,7 +229,7 @@ impl Batch {
         }
     }
 
-    fn flush(&mut self, scope: &ProjectScope, group: &str) {
+    async fn flush(&mut self, scope: &ProjectScope, group: &str) {
         if self.metrics.is_empty() && self.descriptors.is_empty() && self.logs.is_empty() {
             return;
         }
@@ -230,12 +240,12 @@ impl Batch {
             logs: std::mem::take(&mut self.logs),
         };
 
-        if let Err(err) = scope.console.client.ingest_inference_telemetry(
-            &scope.owner,
-            &scope.project,
-            group,
-            request,
-        ) {
+        let shipped = scope
+            .console
+            .client
+            .ingest_inference_telemetry(&scope.owner, &scope.project, group, request)
+            .await;
+        if let Err(err) = shipped {
             tracing::warn!(
                 error = %err,
                 group = %group,

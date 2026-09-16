@@ -65,10 +65,11 @@ mod tests {
         let subscriber = tracing_subscriber::registry().with(inference_log_layer());
 
         tracing::subscriber::with_default(subscriber, || {
-            let _scope = session.enter();
-            let span = tracing::info_span!("req", model_version = "v3");
-            let _entered = span.enter();
-            tracing::info!(tokens = 5u64, "generated");
+            session.in_scope(|| {
+                let span = tracing::info_span!("req", model_version = "v3");
+                let _entered = span.enter();
+                tracing::info!(tokens = 5u64, "generated");
+            });
         });
 
         let logs = sink.logs.lock().unwrap();

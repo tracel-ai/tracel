@@ -1,7 +1,9 @@
-//! Thread-local ambient inference session, installed on the per-request worker thread.
+//! Thread-local ambient inference session, installed for the duration of a request.
 //!
-//! The ambient session is bound to a single thread. If `infer` spawns its own threads or tasks,
-//! capture the session first and move a clone into the spawned work.
+//! The ambient session is bound to a single thread and to a closure: it is pushed for
+//! [`InferenceSession::run`](crate::InferenceSession::run) and popped when that returns, so it
+//! can never outlive an `.await`. If `infer` spawns its own threads or tasks, capture the session
+//! first and move a clone into the spawned work.
 
 use std::cell::RefCell;
 
@@ -11,24 +13,19 @@ thread_local! {
     static CURRENT_SESSIONS: RefCell<Vec<InferenceSession>> = const { RefCell::new(Vec::new()) };
 }
 
-/// RAII guard that pops the ambient session when dropped.
-#[must_use = "the ambient session is cleared when the guard is dropped"]
-pub struct SessionGuard {
-    _private: (),
-}
-
-impl Drop for SessionGuard {
-    fn drop(&mut self) {
-        CURRENT_SESSIONS.with(|sessions| {
-            sessions.borrow_mut().pop();
-        });
-    }
-}
-
-/// Push `session` as the ambient session for the current thread until the returned guard drops.
-pub(crate) fn enter(session: InferenceSession) -> SessionGuard {
+/// Runs `f` with `session` as the ambient session for the current thread.
+pub(crate) fn with_session<T>(session: InferenceSession, f: impl FnOnce() -> T) -> T {
     CURRENT_SESSIONS.with(|sessions| sessions.borrow_mut().push(session));
-    SessionGuard { _private: () }
+    struct Pop;
+    impl Drop for Pop {
+        fn drop(&mut self) {
+            CURRENT_SESSIONS.with(|sessions| {
+                sessions.borrow_mut().pop();
+            });
+        }
+    }
+    let _pop = Pop;
+    f()
 }
 
 /// The ambient session for the current thread, if any.

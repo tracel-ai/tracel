@@ -1,0 +1,29 @@
+[package]
+name = "tracel-task"
+description = "Effect handles for the Tracel SDK: work you can await, block on, or poll without depending on a runtime."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["std"]
+std = ["futures/std", "futures/executor", "async-channel/std"]
+tokio = ["std", "dep:tokio", "dep:pin-project-lite"]
+
+[dependencies]
+async-channel = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+pin-project-lite = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "time"] }
