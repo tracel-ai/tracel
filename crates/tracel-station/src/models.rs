@@ -1,7 +1,13 @@
 use std::sync::Arc;
 
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
-use tracel_client::station::model::request::CreateModelRequest;
+use tracel_artifact::upload::{
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
+    upload_bundle_multipart_with_client_and_observer,
+};
+use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
+use tracel_client::station::model::request::{
+    CreateModelRequest, UploadModelFileSpecRequest, UploadModelVersionRequest,
+};
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
     ModelVersionResponse, ModelVersionStateResponse,
@@ -110,15 +116,62 @@ impl ModelOps for StationModelOps {
 
     fn publish_version(
         &self,
-        _model: &str,
-        _files: &[VersionFile],
-        _contents: &dyn tracel_artifact::upload::MultipartUploadSource,
-        _metadata: Option<&serde_json::Value>,
-        _observer: &mut dyn tracel_artifact::TransferObserver,
+        model: &str,
+        files: &[VersionFile],
+        contents: &dyn MultipartUploadSource,
+        metadata: Option<&serde_json::Value>,
+        mut observer: &mut dyn TransferObserver,
     ) -> Result<ModelVersion, ModelsError> {
-        Err(ModelsError::other(
-            "publishing a model version is not implemented for the station yet",
-        ))
+        let models = self.station.client.models();
+        let request = UploadModelVersionRequest {
+            files: files
+                .iter()
+                .map(|file| UploadModelFileSpecRequest {
+                    rel_path: file.rel_path.clone(),
+                    size_bytes: file.size_bytes,
+                    checksum: file.checksum.clone(),
+                })
+                .collect(),
+            metadata: metadata.cloned(),
+        };
+        let planned = models
+            .upload_version(model, request)
+            .map_err(|error| map_model_error(error, model))?;
+
+        let uploads = planned
+            .files
+            .into_iter()
+            .map(|file| MultipartUploadFile {
+                rel_path: file.rel_path,
+                parts: file
+                    .parts
+                    .into_iter()
+                    .map(|part| MultipartUploadPart {
+                        part: part.part,
+                        url: part.url,
+                        size_bytes: part.size_bytes,
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+
+        upload_bundle_multipart_with_client_and_observer(
+            &self.station.transfer_client,
+            &contents,
+            &uploads,
+            &mut observer,
+        )
+        .map_err(model_upload_failure)?;
+
+        let version = VersionSpec::Exact(VersionId::new(planned.version.to_string()));
+        models
+            .complete_version_upload(model, planned.version)
+            .map_err(|error| map_version_error(error, model, &version))?;
+
+        models
+            .version(model, planned.version)
+            .map(model_version_from_wire)
+            .map_err(|error| map_version_error(error, model, &version))
     }
 }
 
@@ -210,6 +263,14 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
                 })
                 .collect(),
         },
+    }
+}
+
+fn model_upload_failure(error: UploadError) -> ModelsError {
+    match error {
+        UploadError::Cancelled { .. } => ModelsError::Cancelled,
+        error @ UploadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
+        error => ModelsError::other(error),
     }
 }
 
