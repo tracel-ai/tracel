@@ -122,6 +122,7 @@ pub struct FakeOps {
     aliases: Vec<(String, VersionId)>,
     sources: Vec<SourceSpec>,
     published: Arc<Mutex<PublishRecord>>,
+    published_state: VersionState,
 }
 
 impl FakeOps {
@@ -132,7 +133,13 @@ impl FakeOps {
             aliases: Vec::new(),
             sources,
             published: Arc::new(Mutex::new(PublishRecord::default())),
+            published_state: VersionState::Ready,
         }
+    }
+
+    pub fn publishing_as(mut self, state: VersionState) -> Self {
+        self.published_state = state;
+        self
     }
 
     pub fn with_version(mut self, version: ModelVersion) -> Self {
@@ -187,7 +194,9 @@ impl ModelOps for FakeOps {
         record.metadata = metadata.cloned();
         record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
 
-        Ok(version(VersionId::new("published-id")))
+        let mut published = version(VersionId::new("published-id"));
+        published.state = self.published_state;
+        Ok(published)
     }
 
     fn list_models(&self) -> Result<Vec<Model>, ModelsError> {

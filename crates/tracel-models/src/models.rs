@@ -121,7 +121,8 @@ impl Models {
     ///
     /// Each file is measured and checksummed here, so what the backend records is what was
     /// actually read, and the same path rules that guard a download apply before anything is
-    /// written. The version only becomes visible once every file has been uploaded.
+    /// written. The version only becomes visible once every file has been uploaded, and a version
+    /// the backend does not then report ready is an error.
     pub fn publish<S, O>(
         &self,
         model: &str,
@@ -137,8 +138,10 @@ impl Models {
         if observer.is_cancelled() {
             return Err(ModelsError::Cancelled);
         }
-        self.ops
-            .publish_version(model, &files, source, metadata.as_ref(), observer)
+        let version =
+            self.ops
+                .publish_version(model, &files, source, metadata.as_ref(), observer)?;
+        ready(model, version)
     }
 
     fn stage<O: TransferObserver>(
@@ -456,6 +459,23 @@ mod tests {
         assert_eq!(record.files[0].size_bytes, b"payload".len() as u64);
         assert_eq!(record.files[0].checksum, checksum(b"payload"));
         assert_eq!(record.uploaded, vec!["weights.bin".to_string()]);
+    }
+
+    #[test]
+    fn a_published_version_the_backend_does_not_report_ready_is_an_error() {
+        let ops = FakeOps::new(Vec::new()).publishing_as(VersionState::Failed);
+        let models = Models::new(Arc::new(ops));
+        let mut bundle = FsBundle::temp().unwrap();
+        bundle
+            .put_file("weights.bin", &mut &b"payload"[..])
+            .unwrap();
+
+        let error = models.publish("alpha", &bundle, None, &mut ()).unwrap_err();
+
+        assert!(
+            matches!(error, ModelsError::VersionNotReady { .. }),
+            "{error}"
+        );
     }
 
     #[test]
