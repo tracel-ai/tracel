@@ -72,26 +72,23 @@ impl ModelOps for ConsoleModelOps {
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            VersionSpec::Latest => self
-                .list_versions(model)?
-                .into_iter()
-                .max_by_key(|version| version.version)
-                .map(|version| version.id)
-                .ok_or_else(|| ModelsError::VersionNotFound {
-                    model: model.to_string(),
-                    version: spec.clone(),
-                })?,
+        let client = &self.scope.console.client;
+        let (owner, project) = (&self.scope.owner, &self.scope.project);
+        let response = match &spec {
+            VersionSpec::Exact(id) => {
+                client.get_model_version(owner, project, model, self.route_version(model, id)?)
+            }
+            VersionSpec::Latest => {
+                client.resolve_model_version_ref(owner, project, model, "latest")
+            }
+            VersionSpec::Alias(alias) => {
+                client.resolve_model_version_ref(owner, project, model, alias)
+            }
         };
 
-        let route = self.route_version(model, &id)?;
-        self.scope
-            .console
-            .client
-            .get_model_version(&self.scope.owner, &self.scope.project, model, route)
+        response
             .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id)))
+            .map_err(|error| map_version_error(error, model, &spec))
     }
 
     fn fetch_version_files(
@@ -335,6 +332,10 @@ fn refusal(error: &ClientError, model: &str, version: Option<&VersionSpec>) -> O
     let model = model.to_string();
     let refusal = match (error.code()?, version) {
         (ApiErrorCode::Model, _) => ModelsError::ModelNotFound { name: model },
+        (ApiErrorCode::ModelAlias, Some(VersionSpec::Alias(alias))) => ModelsError::AliasNotFound {
+            model,
+            alias: alias.clone(),
+        },
         (ApiErrorCode::ModelVersion, Some(version)) => ModelsError::VersionNotFound {
             model,
             version: version.clone(),

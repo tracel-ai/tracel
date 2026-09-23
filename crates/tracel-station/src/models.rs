@@ -62,28 +62,20 @@ impl ModelOps for StationModelOps {
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            // The Station has no latest-version route, so the listing answers it.
-            VersionSpec::Latest => {
-                return self
-                    .list_versions(model)?
-                    .into_iter()
-                    .max_by_key(|version| version.version)
-                    .ok_or_else(|| ModelsError::VersionNotFound {
-                        model: model.to_string(),
-                        version: spec,
-                    });
-            }
+        let models = self.station.client.models();
+        let response = match &spec {
+            VersionSpec::Exact(id) => models
+                .version(model, self.route_version(model, id)?)
+                .map_err(|error| map_version_error(error, model, &spec)),
+            VersionSpec::Latest => models
+                .resolve(model, "latest")
+                .map_err(|error| map_error(error, model, Some(&spec))),
+            VersionSpec::Alias(alias) => models
+                .resolve(model, alias)
+                .map_err(|error| map_error(error, model, Some(&spec))),
         };
 
-        let route = self.route_version(model, &id)?;
-        self.station
-            .client
-            .models()
-            .version(model, route)
-            .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id)))
+        response.map(model_version_from_wire)
     }
 
     fn fetch_version_files(
@@ -262,10 +254,18 @@ fn map_version_error(error: ClientError, model: &str, version: &VersionSpec) -> 
     station_failure(error)
 }
 
+fn map_error(error: ClientError, model: &str, version: Option<&VersionSpec>) -> ModelsError {
+    refusal(&error, model, version).unwrap_or_else(|| station_failure(error))
+}
+
 fn refusal(error: &ClientError, model: &str, version: Option<&VersionSpec>) -> Option<ModelsError> {
     let model = model.to_string();
     let refusal = match (error.code()?, version) {
         (ApiErrorCode::Model, _) => ModelsError::ModelNotFound { name: model },
+        (ApiErrorCode::ModelAlias, Some(VersionSpec::Alias(alias))) => ModelsError::AliasNotFound {
+            model,
+            alias: alias.clone(),
+        },
         (ApiErrorCode::ModelVersion, Some(version)) => ModelsError::VersionNotFound {
             model,
             version: version.clone(),

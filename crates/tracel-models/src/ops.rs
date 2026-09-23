@@ -43,7 +43,8 @@ pub trait ModelOps: Send + Sync + 'static {
     /// Lists published versions of a model.
     fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError>;
 
-    /// Resolves a version selector against a model.
+    /// Resolves a version selector: an exact version in whatever state it is, or the ready version
+    /// `latest` or an alias points at.
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError>;
 
     /// Fetches the backend-owned file sources for one version.

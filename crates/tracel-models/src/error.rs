@@ -42,6 +42,10 @@ pub enum ModelsError {
         /// Version that was asked for.
         version: VersionSpec,
     },
+    /// A name that cannot be an alias: up to 64 lowercase letters, digits, `.`, `_` or `-`,
+    /// starting with a letter or digit, and neither `latest` nor a version number.
+    #[error("'{0}' is not an alias name")]
+    InvalidAlias(String),
     /// The backend refused a change that conflicts with the model's current state, such as
     /// completing an upload whose parts did not all arrive.
     #[error("the change conflicts with the current state of model '{model}': {code}")]

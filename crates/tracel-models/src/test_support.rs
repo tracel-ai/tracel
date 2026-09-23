@@ -118,6 +118,8 @@ pub struct PublishRecord {
 #[derive(Clone)]
 pub struct FakeOps {
     models: Vec<Model>,
+    versions: Vec<ModelVersion>,
+    aliases: Vec<(String, VersionId)>,
     sources: Vec<SourceSpec>,
     published: Arc<Mutex<PublishRecord>>,
 }
@@ -126,9 +128,21 @@ impl FakeOps {
     pub fn new(sources: Vec<SourceSpec>) -> Self {
         Self {
             models: vec![model("alpha"), model("beta")],
+            versions: vec![version(VersionId::new("version-id"))],
+            aliases: Vec::new(),
             sources,
             published: Arc::new(Mutex::new(PublishRecord::default())),
         }
+    }
+
+    pub fn with_version(mut self, version: ModelVersion) -> Self {
+        self.versions.push(version);
+        self
+    }
+
+    pub fn with_alias(mut self, alias: &str, id: &str) -> Self {
+        self.aliases.push((alias.to_string(), VersionId::new(id)));
+        self
     }
 
     pub fn publish_record(&self) -> Arc<Mutex<PublishRecord>> {
@@ -197,10 +211,33 @@ impl ModelOps for FakeOps {
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
         self.get_model(model)?;
-        Err(ModelsError::VersionNotFound {
-            model: model.to_string(),
-            version: spec,
-        })
+        let id = match &spec {
+            VersionSpec::Exact(id) => Some(id.clone()),
+            VersionSpec::Latest => self
+                .versions
+                .iter()
+                .filter(|version| version.state == VersionState::Ready)
+                .max_by_key(|version| version.version)
+                .map(|version| version.id.clone()),
+            VersionSpec::Alias(alias) => {
+                let (_, id) = self
+                    .aliases
+                    .iter()
+                    .find(|(name, _)| name == alias)
+                    .ok_or_else(|| ModelsError::AliasNotFound {
+                        model: model.to_string(),
+                        alias: alias.clone(),
+                    })?;
+                Some(id.clone())
+            }
+        };
+
+        id.and_then(|id| self.versions.iter().find(|version| version.id == id))
+            .cloned()
+            .ok_or_else(|| ModelsError::VersionNotFound {
+                model: model.to_string(),
+                version: spec,
+            })
     }
 
     fn fetch_version_files(
@@ -220,7 +257,7 @@ impl ModelOps for FakeOps {
     }
 }
 
-fn version(id: VersionId) -> ModelVersion {
+pub fn version(id: VersionId) -> ModelVersion {
     ModelVersion {
         id,
         version: Some(1),

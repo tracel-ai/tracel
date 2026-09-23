@@ -1,5 +1,12 @@
 use std::fmt;
+use std::str::FromStr;
 use std::time::SystemTime;
+
+use crate::ModelsError;
+
+const LATEST: &str = "latest";
+
+const MAX_ALIAS_LENGTH: usize = 64;
 
 /// A model available from a model capability.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,12 +117,17 @@ pub struct ModelVersion {
 }
 
 /// Selects which version of a model to use.
+///
+/// Parses from `latest` in any case, a version number with or without a leading `v`, or an alias
+/// name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionSpec {
-    /// This exact version.
+    /// This exact version, in whatever state it is.
     Exact(VersionId),
-    /// Whichever version is newest when the call is made.
+    /// Whichever ready version is newest when the call is made.
     Latest,
+    /// Whichever version this alias points at when the call is made.
+    Alias(String),
 }
 
 impl fmt::Display for VersionSpec {
@@ -123,12 +135,108 @@ impl fmt::Display for VersionSpec {
         match self {
             Self::Exact(id) => write!(formatter, "version {id}"),
             Self::Latest => formatter.write_str("latest version"),
+            Self::Alias(alias) => write!(formatter, "version at alias '{alias}'"),
         }
+    }
+}
+
+impl FromStr for VersionSpec {
+    type Err = ModelsError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.eq_ignore_ascii_case(LATEST) {
+            return Ok(Self::Latest);
+        }
+        if let Some(digits) = version_number(value) {
+            let id = digits
+                .parse::<u32>()
+                .map_or_else(|_| digits.to_string(), |number| number.to_string());
+            return Ok(Self::Exact(VersionId::new(id)));
+        }
+        check_alias_name(value)?;
+        Ok(Self::Alias(value.to_string()))
     }
 }
 
 impl From<VersionId> for VersionSpec {
     fn from(id: VersionId) -> Self {
         Self::Exact(id)
+    }
+}
+
+impl From<&VersionId> for VersionSpec {
+    fn from(id: &VersionId) -> Self {
+        Self::Exact(id.clone())
+    }
+}
+
+pub fn check_alias_name(name: &str) -> Result<(), ModelsError> {
+    let mut bytes = name.bytes();
+    let well_formed = name.len() <= MAX_ALIAS_LENGTH
+        && bytes
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && bytes.all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        });
+    if well_formed && name != LATEST && version_number(name).is_none() {
+        Ok(())
+    } else {
+        Err(ModelsError::InvalidAlias(name.to_string()))
+    }
+}
+
+fn version_number(value: &str) -> Option<&str> {
+    let digits = value.strip_prefix('v').unwrap_or(value);
+    (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())).then_some(digits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_spec_parses_the_way_a_registry_resolves_it() {
+        let exact = |id: &str| VersionSpec::Exact(VersionId::new(id));
+        let alias = |name: &str| VersionSpec::Alias(name.to_string());
+
+        for (text, expected) in [
+            ("12", exact("12")),
+            ("v12", exact("12")),
+            ("007", exact("7")),
+            ("4294967295", exact("4294967295")),
+            ("4294967296", exact("4294967296")),
+            ("latest", VersionSpec::Latest),
+            ("LATEST", VersionSpec::Latest),
+            ("production", alias("production")),
+            ("v1beta", alias("v1beta")),
+            ("7up", alias("7up")),
+            ("a.b-c_d", alias("a.b-c_d")),
+        ] {
+            assert_eq!(text.parse::<VersionSpec>().unwrap(), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_name_no_registry_can_hold_is_not_an_alias() {
+        for text in ["Prod", "-x", "", "a/b", "../versions/3", &"a".repeat(65)] {
+            let error = text.parse::<VersionSpec>().unwrap_err();
+
+            assert!(
+                matches!(&error, ModelsError::InvalidAlias(name) if name == text),
+                "{text}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn latest_and_version_numbers_are_never_alias_names() {
+        for name in ["latest", "7", "v7"] {
+            assert!(matches!(
+                check_alias_name(name),
+                Err(ModelsError::InvalidAlias(_))
+            ));
+        }
+        assert!(check_alias_name(&"a".repeat(64)).is_ok());
     }
 }

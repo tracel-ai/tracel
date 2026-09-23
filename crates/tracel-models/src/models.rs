@@ -13,9 +13,10 @@ use tracel_artifact::normalize_checksum;
 use sha2::{Digest, Sha256};
 use tracel_artifact::upload::MultipartUploadSource;
 
+use crate::domain::check_alias_name;
 use crate::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileSource, VersionId,
-    VersionSpec,
+    VersionSpec, VersionState,
 };
 
 /// Backend-independent model operations and verified transfer orchestration.
@@ -45,19 +46,25 @@ impl Models {
         self.ops.list_versions(model)
     }
 
-    /// Fetches one version using its opaque identity.
+    /// Fetches the version `spec` names: an exact version in whatever state it is, or the ready
+    /// version `latest` or an alias points at when the call is made.
     pub fn get_version(
         &self,
         model: &str,
         spec: impl Into<VersionSpec>,
     ) -> Result<ModelVersion, ModelsError> {
-        self.ops.get_version(model, spec.into())
+        let spec = spec.into();
+        if let VersionSpec::Alias(alias) = &spec {
+            check_alias_name(alias)?;
+        }
+        self.ops.get_version(model, spec)
     }
 
-    /// Downloads and verifies a version into `directory`.
+    /// Downloads and verifies the version `spec` names into `directory`.
     ///
-    /// Files are downloaded to a temporary sibling of `directory`. No destination files are
-    /// changed until every path, size, and checksum has been verified.
+    /// The spec is resolved once, and a version that is not ready is refused before any file is
+    /// requested. Files are downloaded to a temporary sibling of `directory`. No destination files
+    /// are changed until every path, size, and checksum has been verified.
     ///
     /// The verified files are then moved into `directory`. Existing files at published paths are
     /// replaced, while other entries are unchanged. This final move is not transactional; an
@@ -65,37 +72,40 @@ impl Models {
     pub fn download_into<O: TransferObserver>(
         &self,
         model: &str,
-        id: &VersionId,
+        spec: impl Into<VersionSpec>,
         directory: &Path,
         observer: &mut O,
     ) -> Result<FsBundle, ModelsError> {
         if observer.is_cancelled() {
             return Err(ModelsError::Cancelled);
         }
+        let version = ready(model, self.get_version(model, spec)?)?;
         let parent = directory
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         let staging = FsBundle::temp_in(parent, ".staging-")
             .map_err(|error| ModelsError::Output(error.to_string()))?;
-        let bundle = self.stage(model, id, staging, observer)?;
+        let bundle = self.stage(model, &version.id, staging, observer)?;
         bundle
             .move_into(directory)
             .map_err(|error| ModelsError::Output(error.to_string()))
     }
 
-    /// Downloads, verifies, and decodes a model version using `settings`.
+    /// Downloads, verifies, and decodes the version `spec` names using `settings`.
     ///
-    /// The decoder sees the complete staged bundle only after every backend file has passed path,
-    /// size, and checksum verification.
+    /// The spec is resolved once, and a version that is not ready is refused before any file is
+    /// requested. The decoder sees the complete staged bundle only after every backend file has
+    /// passed path, size, and checksum verification.
     pub fn load<D: BundleDecode>(
         &self,
         model: &str,
-        id: &VersionId,
+        spec: impl Into<VersionSpec>,
         settings: &D::Settings,
     ) -> Result<D, ModelsError> {
+        let version = ready(model, self.get_version(model, spec)?)?;
         let staging = FsBundle::temp().map_err(ModelsError::other)?;
-        let bundle = self.stage(model, id, staging, &mut ())?;
+        let bundle = self.stage(model, &version.id, staging, &mut ())?;
         D::decode(&bundle, settings).map_err(|error| {
             let error: Box<dyn std::error::Error + Send + Sync> = error.into();
             ModelsError::Decode(error.to_string())
@@ -156,6 +166,20 @@ impl Models {
 impl fmt::Debug for Models {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("Models").finish_non_exhaustive()
+    }
+}
+
+fn ready(model: &str, version: ModelVersion) -> Result<ModelVersion, ModelsError> {
+    match version.state {
+        VersionState::Ready => Ok(version),
+        VersionState::Deleted => Err(ModelsError::VersionDeleted {
+            model: model.to_string(),
+            version: VersionSpec::Exact(version.id),
+        }),
+        VersionState::Pending | VersionState::Failed => Err(ModelsError::VersionNotReady {
+            model: model.to_string(),
+            version: VersionSpec::Exact(version.id),
+        }),
     }
 }
 
@@ -371,7 +395,7 @@ mod tests {
     use tracel_artifact::bundle::BundleSink;
 
     use super::*;
-    use crate::test_support::{FakeOps, SourceSpec, checksum, models_with_sources};
+    use crate::test_support::{FakeOps, SourceSpec, checksum, models_with_sources, version};
 
     #[derive(Default)]
     struct RecordingObserver {
@@ -403,7 +427,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let directory = home.path().join("landed");
         let result =
-            models.download_into("alpha", &VersionId::new("version-id"), &directory, observer);
+            models.download_into("alpha", VersionId::new("version-id"), &directory, observer);
         (home, directory, result)
     }
 
@@ -460,6 +484,72 @@ mod tests {
     }
 
     #[test]
+    fn download_into_fetches_the_version_an_alias_points_at() {
+        let ops = FakeOps::new(vec![SourceSpec::new("weights.bin", b"aliased")])
+            .with_alias("production", "version-id");
+        let models = Models::new(Arc::new(ops));
+        let home = TempDir::new().unwrap();
+        let directory = home.path().join("landed");
+
+        models
+            .download_into(
+                "alpha",
+                "production".parse::<VersionSpec>().unwrap(),
+                &directory,
+                &mut (),
+            )
+            .unwrap();
+
+        assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), b"aliased");
+    }
+
+    #[test]
+    fn a_version_that_is_not_ready_is_refused_before_any_file_is_requested() {
+        for state in [
+            VersionState::Pending,
+            VersionState::Failed,
+            VersionState::Deleted,
+        ] {
+            let id = VersionId::new("unready-id");
+            let mut unready = version(id.clone());
+            unready.state = state;
+            let source = SourceSpec::new("weights.bin", b"payload");
+            let opens = Arc::clone(&source.opens);
+            let models = Models::new(Arc::new(FakeOps::new(vec![source]).with_version(unready)));
+            let home = TempDir::new().unwrap();
+            let directory = home.path().join("landed");
+
+            let error = models
+                .download_into("alpha", &id, &directory, &mut ())
+                .unwrap_err();
+
+            let refused = match (&error, state) {
+                (ModelsError::VersionDeleted { version, .. }, VersionState::Deleted) => version,
+                (ModelsError::VersionNotReady { version, .. }, _)
+                    if state != VersionState::Deleted =>
+                {
+                    version
+                }
+                _ => panic!("{state:?}: {error}"),
+            };
+            assert_eq!(*refused, VersionSpec::Exact(id));
+            assert_eq!(opens.load(Ordering::SeqCst), 0);
+            assert!(!directory.exists());
+        }
+    }
+
+    #[test]
+    fn a_malformed_alias_never_reaches_the_backend() {
+        let models = models_with_sources(Vec::new());
+
+        let error = models
+            .get_version("alpha", VersionSpec::Alias("../versions/3".to_string()))
+            .unwrap_err();
+
+        assert!(matches!(error, ModelsError::InvalidAlias(_)));
+    }
+
+    #[test]
     fn download_into_reports_verified_progress() {
         let bytes = b"verified payload";
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", bytes)]);
@@ -483,7 +573,7 @@ mod tests {
         ]);
 
         let bundle = models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into("alpha", VersionId::new("version-id"), &directory, &mut ())
             .unwrap();
 
         assert_eq!(fs::read(directory.join("weights.bin")).unwrap(), b"weights");
@@ -537,7 +627,7 @@ mod tests {
         models
             .download_into(
                 "alpha",
-                &VersionId::new("version-id"),
+                VersionId::new("version-id"),
                 &directory,
                 &mut observer,
             )
@@ -562,7 +652,7 @@ mod tests {
         ]);
 
         let error = models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into("alpha", VersionId::new("version-id"), &directory, &mut ())
             .unwrap_err();
 
         assert!(error.to_string().contains("mid-stream"), "{error}");
@@ -597,7 +687,7 @@ mod tests {
         let error = models
             .download_into(
                 "alpha",
-                &VersionId::new("version-id"),
+                VersionId::new("version-id"),
                 &directory,
                 &mut CancelAfterFirst::default(),
             )
@@ -618,7 +708,7 @@ mod tests {
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"new weights")]);
 
         models
-            .download_into("alpha", &VersionId::new("version-id"), &directory, &mut ())
+            .download_into("alpha", VersionId::new("version-id"), &directory, &mut ())
             .unwrap();
 
         assert_eq!(
@@ -638,7 +728,7 @@ mod tests {
         let error = models
             .download_into(
                 "alpha",
-                &VersionId::new("version-id"),
+                VersionId::new("version-id"),
                 &parent.join("landed"),
                 &mut (),
             )
@@ -689,7 +779,7 @@ mod tests {
         let models = models_with_sources(vec![SourceSpec::new("weights.bin", b"decoded")]);
 
         let decoded = models
-            .load::<Decoded>("alpha", &VersionId::new("version-id"), &())
+            .load::<Decoded>("alpha", VersionId::new("version-id"), &())
             .unwrap();
 
         assert_eq!(decoded, Decoded("decoded".to_string()));
