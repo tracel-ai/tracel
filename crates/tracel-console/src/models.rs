@@ -11,13 +11,13 @@ use tracel_client::{
     },
     console::model::response::{
         ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
-        ModelVersionResponse,
+        ModelVersionResponse, ModelVersionStateResponse,
     },
     error::ClientError,
 };
 use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    VersionId, VersionManifest, VersionSpec, VersionState,
 };
 
 use crate::ConsoleError;
@@ -233,8 +233,11 @@ fn model_version_from_wire(value: ModelVersionResponse) -> ModelVersion {
     ModelVersion {
         id: VersionId::new(value.version.to_string()),
         version: Some(value.version),
+        state: state_from_wire(value.state),
+        failure_reason: value.failure_reason,
         size_bytes: value.size,
         checksum: value.digest,
+        aliases: value.aliases,
         published_by: Some(value.created_by.username),
         created_at: console_timestamp(&value.created_at),
         manifest: VersionManifest {
@@ -250,6 +253,16 @@ fn model_version_from_wire(value: ModelVersionResponse) -> ModelVersion {
                 .collect(),
         },
         metadata: value.metadata,
+        deleted_at: value.deleted_at.as_deref().and_then(console_timestamp),
+    }
+}
+
+fn state_from_wire(state: ModelVersionStateResponse) -> VersionState {
+    match state {
+        ModelVersionStateResponse::Pending => VersionState::Pending,
+        ModelVersionStateResponse::Ready => VersionState::Ready,
+        ModelVersionStateResponse::Failed => VersionState::Failed,
+        ModelVersionStateResponse::Deleted => VersionState::Deleted,
     }
 }
 

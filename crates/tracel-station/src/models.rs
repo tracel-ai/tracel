@@ -4,11 +4,11 @@ use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
 use tracel_client::station::model::request::CreateModelRequest;
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
-    ModelVersionResponse,
+    ModelVersionResponse, ModelVersionStateResponse,
 };
 use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    VersionId, VersionManifest, VersionSpec, VersionState,
 };
 
 use crate::StationError;
@@ -180,7 +180,7 @@ fn model_from_wire(response: ModelResponse) -> Model {
         published_by: None,
         created_at: station_timestamp(&response.created_at),
         version_count: response.version_count,
-        latest_version: None,
+        latest_version: response.latest_version,
     }
 }
 
@@ -196,12 +196,15 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
     ModelVersion {
         id: VersionId::new(response.version.to_string()),
         version: Some(response.version),
+        state: state_from_wire(response.state),
+        failure_reason: response.failure_reason,
         size_bytes: response.size,
         checksum: response.digest,
+        aliases: response.aliases,
         published_by: None,
         created_at: station_timestamp(&response.created_at),
-        // The Station's version response carries no metadata.
-        metadata: serde_json::Value::Null,
+        metadata: response.metadata,
+        deleted_at: response.deleted_at.as_deref().and_then(station_timestamp),
         manifest: VersionManifest {
             files: response
                 .manifest
@@ -214,6 +217,15 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
                 })
                 .collect(),
         },
+    }
+}
+
+fn state_from_wire(state: ModelVersionStateResponse) -> VersionState {
+    match state {
+        ModelVersionStateResponse::Pending => VersionState::Pending,
+        ModelVersionStateResponse::Ready => VersionState::Ready,
+        ModelVersionStateResponse::Failed => VersionState::Failed,
+        ModelVersionStateResponse::Deleted => VersionState::Deleted,
     }
 }
 

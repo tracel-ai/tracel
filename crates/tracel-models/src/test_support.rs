@@ -9,7 +9,7 @@ use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
-    VersionFileSource, VersionId, VersionSpec,
+    VersionFileSource, VersionId, VersionSpec, VersionState,
 };
 
 #[derive(Clone)]
@@ -224,12 +224,16 @@ fn version(id: VersionId) -> ModelVersion {
     ModelVersion {
         id,
         version: Some(1),
+        state: VersionState::Ready,
+        failure_reason: None,
         size_bytes: 0,
         checksum: String::new(),
+        aliases: Vec::new(),
         published_by: Some("publisher".to_string()),
         created_at: None,
         manifest: crate::VersionManifest { files: Vec::new() },
         metadata: serde_json::Value::Null,
+        deleted_at: None,
     }
 }
 
