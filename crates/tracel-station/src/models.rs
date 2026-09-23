@@ -197,7 +197,7 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
         id: VersionId::new(response.version.to_string()),
         version: Some(response.version),
         size_bytes: response.size,
-        checksum: response.checksum,
+        checksum: response.digest,
         published_by: None,
         created_at: station_timestamp(&response.created_at),
         // The Station's version response carries no metadata.

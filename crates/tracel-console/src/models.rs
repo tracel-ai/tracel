@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use serde::Deserialize;
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
     upload_bundle_multipart_with_client_and_observer,
@@ -69,7 +68,7 @@ impl ModelOps for ConsoleModelOps {
             .client
             .list_model_versions(&self.scope.owner, &self.scope.project, model)
             .map_err(|error| map_model_error(error, model))?;
-        model_versions_from_wire(response)
+        Ok(model_versions_from_wire(response))
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
@@ -91,8 +90,8 @@ impl ModelOps for ConsoleModelOps {
             .console
             .client
             .get_model_version(&self.scope.owner, &self.scope.project, model, route)
+            .map(model_version_from_wire)
             .map_err(|error| map_version_error(error, model, &id))
-            .and_then(model_version_from_wire)
     }
 
     fn fetch_version_files(
@@ -201,8 +200,8 @@ impl ModelOps for ConsoleModelOps {
                 model,
                 planned.version,
             )
+            .map(model_version_from_wire)
             .map_err(|error| map_model_error(error, model))
-            .and_then(model_version_from_wire)
     }
 }
 
@@ -222,9 +221,7 @@ fn model_from_wire(value: ModelResponse) -> Model {
     }
 }
 
-fn model_versions_from_wire(
-    response: ModelVersionListResponse,
-) -> Result<Vec<ModelVersion>, ModelsError> {
+fn model_versions_from_wire(response: ModelVersionListResponse) -> Vec<ModelVersion> {
     response
         .items
         .into_iter()
@@ -232,40 +229,17 @@ fn model_versions_from_wire(
         .collect()
 }
 
-fn model_version_from_wire(value: ModelVersionResponse) -> Result<ModelVersion, ModelsError> {
-    let manifest: WireManifest = serde_json::from_value(value.manifest)
-        .map_err(|error| ModelsError::other(ConsoleError::InvalidResponse(error.to_string())))?;
-
-    Ok(ModelVersion {
+fn model_version_from_wire(value: ModelVersionResponse) -> ModelVersion {
+    ModelVersion {
         id: VersionId::new(value.version.to_string()),
         version: Some(value.version),
         size_bytes: value.size,
-        checksum: value.checksum,
+        checksum: value.digest,
         published_by: Some(value.created_by.username),
         created_at: console_timestamp(&value.created_at),
-        manifest: manifest.into(),
-        metadata: value.metadata,
-    })
-}
-
-/// The manifest as this console writes it, so the model domain never has to name a field the
-/// way one backend happens to spell it.
-#[derive(Deserialize)]
-struct WireManifest {
-    files: Vec<WireManifestFile>,
-}
-
-#[derive(Deserialize)]
-struct WireManifestFile {
-    rel_path: String,
-    size_bytes: u64,
-    checksum: String,
-}
-
-impl From<WireManifest> for VersionManifest {
-    fn from(value: WireManifest) -> Self {
-        VersionManifest {
+        manifest: VersionManifest {
             files: value
+                .manifest
                 .files
                 .into_iter()
                 .map(|file| VersionFile {
@@ -274,7 +248,8 @@ impl From<WireManifest> for VersionManifest {
                     checksum: file.checksum,
                 })
                 .collect(),
-        }
+        },
+        metadata: value.metadata,
     }
 }
 
