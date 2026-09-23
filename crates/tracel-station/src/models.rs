@@ -6,6 +6,7 @@ use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
     ModelVersionResponse, ModelVersionStateResponse,
 };
+use tracel_client::{ApiErrorCode, ClientError};
 use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
     VersionId, VersionManifest, VersionSpec, VersionState,
@@ -82,7 +83,7 @@ impl ModelOps for StationModelOps {
             .models()
             .version(model, route)
             .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &id))
+            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id)))
     }
 
     fn fetch_version_files(
@@ -96,7 +97,7 @@ impl ModelOps for StationModelOps {
             .client
             .models()
             .download(model, route)
-            .map_err(|error| map_version_error(error, model, id))?;
+            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id.clone())))?;
         Ok(file_sources_from_wire(
             &self.station.transfer_client,
             response,
@@ -229,14 +230,17 @@ fn state_from_wire(state: ModelVersionStateResponse) -> VersionState {
     }
 }
 
-fn station_failure(error: tracel_client::ClientError) -> ModelsError {
+fn station_failure(error: ClientError) -> ModelsError {
     match StationError::from(error) {
         StationError::Transport(reason) => ModelsError::Transport(reason),
         error => ModelsError::other(error),
     }
 }
 
-fn map_model_error(error: tracel_client::ClientError, name: &str) -> ModelsError {
+fn map_model_error(error: ClientError, name: &str) -> ModelsError {
+    if let Some(refusal) = refusal(&error, name, None) {
+        return refusal;
+    }
     if error.is_not_found() {
         return ModelsError::ModelNotFound {
             name: name.to_string(),
@@ -245,16 +249,40 @@ fn map_model_error(error: tracel_client::ClientError, name: &str) -> ModelsError
     station_failure(error)
 }
 
-fn map_version_error(
-    error: tracel_client::ClientError,
-    model: &str,
-    id: &VersionId,
-) -> ModelsError {
+fn map_version_error(error: ClientError, model: &str, version: &VersionSpec) -> ModelsError {
+    if let Some(refusal) = refusal(&error, model, Some(version)) {
+        return refusal;
+    }
     if error.is_not_found() {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
-            version: VersionSpec::Exact(id.clone()),
+            version: version.clone(),
         };
     }
     station_failure(error)
+}
+
+fn refusal(error: &ClientError, model: &str, version: Option<&VersionSpec>) -> Option<ModelsError> {
+    let model = model.to_string();
+    let refusal = match (error.code()?, version) {
+        (ApiErrorCode::Model, _) => ModelsError::ModelNotFound { name: model },
+        (ApiErrorCode::ModelVersion, Some(version)) => ModelsError::VersionNotFound {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionNotReady, Some(version)) => ModelsError::VersionNotReady {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionDeleted, Some(version)) => ModelsError::VersionDeleted {
+            model,
+            version: version.clone(),
+        },
+        (code, _) if error.is_conflict() => ModelsError::Conflict {
+            model,
+            code: code.to_string(),
+        },
+        _ => return None,
+    };
+    Some(refusal)
 }

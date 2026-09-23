@@ -13,7 +13,7 @@ use tracel_client::{
         ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
         ModelVersionResponse, ModelVersionStateResponse,
     },
-    error::ClientError,
+    error::{ApiErrorCode, ClientError},
 };
 use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
@@ -91,7 +91,7 @@ impl ModelOps for ConsoleModelOps {
             .client
             .get_model_version(&self.scope.owner, &self.scope.project, model, route)
             .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &id))
+            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id)))
     }
 
     fn fetch_version_files(
@@ -105,7 +105,7 @@ impl ModelOps for ConsoleModelOps {
             .console
             .client
             .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
-            .map_err(|error| map_version_error(error, model, id))?;
+            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id.clone())))?;
         Ok(file_sources_from_wire(
             &self.scope.console.transfer_client,
             response,
@@ -180,6 +180,7 @@ impl ModelOps for ConsoleModelOps {
         )
         .map_err(model_upload_failure)?;
 
+        let version = VersionSpec::Exact(VersionId::new(planned.version.to_string()));
         self.scope
             .console
             .client
@@ -189,7 +190,7 @@ impl ModelOps for ConsoleModelOps {
                 model,
                 planned.version,
             )
-            .map_err(|error| map_model_error(error, model))?;
+            .map_err(|error| map_version_error(error, model, &version))?;
 
         self.scope
             .console
@@ -201,7 +202,7 @@ impl ModelOps for ConsoleModelOps {
                 planned.version,
             )
             .map(model_version_from_wire)
-            .map_err(|error| map_model_error(error, model))
+            .map_err(|error| map_version_error(error, model, &version))
     }
 }
 
@@ -306,6 +307,9 @@ impl VersionFileSource for ConsoleVersionFileSource {
 }
 
 fn map_model_error(error: ClientError, name: &str) -> ModelsError {
+    if let Some(refusal) = refusal(&error, name, None) {
+        return refusal;
+    }
     if client_error_is_not_found(&error) {
         return ModelsError::ModelNotFound {
             name: name.to_string(),
@@ -314,14 +318,42 @@ fn map_model_error(error: ClientError, name: &str) -> ModelsError {
     console_failure(error)
 }
 
-fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsError {
+fn map_version_error(error: ClientError, model: &str, version: &VersionSpec) -> ModelsError {
+    if let Some(refusal) = refusal(&error, model, Some(version)) {
+        return refusal;
+    }
     if client_error_is_not_found(&error) {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
-            version: VersionSpec::Exact(id.clone()),
+            version: version.clone(),
         };
     }
     console_failure(error)
+}
+
+fn refusal(error: &ClientError, model: &str, version: Option<&VersionSpec>) -> Option<ModelsError> {
+    let model = model.to_string();
+    let refusal = match (error.code()?, version) {
+        (ApiErrorCode::Model, _) => ModelsError::ModelNotFound { name: model },
+        (ApiErrorCode::ModelVersion, Some(version)) => ModelsError::VersionNotFound {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionNotReady, Some(version)) => ModelsError::VersionNotReady {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionDeleted, Some(version)) => ModelsError::VersionDeleted {
+            model,
+            version: version.clone(),
+        },
+        (code, _) if error.is_conflict() => ModelsError::Conflict {
+            model,
+            code: code.to_string(),
+        },
+        _ => return None,
+    };
+    Some(refusal)
 }
 
 fn console_failure(error: ClientError) -> ModelsError {

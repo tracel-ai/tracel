@@ -18,6 +18,39 @@ pub enum ModelsError {
         /// Version that was asked for.
         version: VersionSpec,
     },
+    /// No alias by that name on that model.
+    #[error("model '{model}' has no alias '{alias}'")]
+    AliasNotFound {
+        /// Requested model name.
+        model: String,
+        /// Alias that was asked for.
+        alias: String,
+    },
+    /// The version exists, but its files are still arriving or never arrived.
+    #[error("{version} of model '{model}' is not ready")]
+    VersionNotReady {
+        /// Requested model name.
+        model: String,
+        /// Version that was asked for.
+        version: VersionSpec,
+    },
+    /// The version was deleted: it stays readable by number, but its files are gone.
+    #[error("{version} of model '{model}' has been deleted")]
+    VersionDeleted {
+        /// Requested model name.
+        model: String,
+        /// Version that was asked for.
+        version: VersionSpec,
+    },
+    /// The backend refused a change that conflicts with the model's current state, such as
+    /// completing an upload whose parts did not all arrive.
+    #[error("the change conflicts with the current state of model '{model}': {code}")]
+    Conflict {
+        /// Requested model name.
+        model: String,
+        /// The backend's name for the conflict.
+        code: String,
+    },
     /// The transfer was cancelled.
     #[error("model transfer cancelled")]
     Cancelled,
@@ -55,11 +88,11 @@ impl ModelsError {
         Self::Other(error.into())
     }
 
-    /// Returns whether a requested model or version does not exist.
+    /// Returns whether a requested model, version or alias does not exist.
     pub fn is_not_found(&self) -> bool {
         matches!(
             self,
-            Self::ModelNotFound { .. } | Self::VersionNotFound { .. }
+            Self::ModelNotFound { .. } | Self::VersionNotFound { .. } | Self::AliasNotFound { .. }
         )
     }
 
