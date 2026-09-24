@@ -8,6 +8,7 @@ use crate::{ActivityGuard, ExperimentRunHandle};
 /// you already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 pub struct ExperimentTrainingProgressLogger {
     experiment: ExperimentRunHandle,
+    name: String,
     training_guard: Option<ActivityGuard>,
     epoch_guard: Option<ActivityGuard>,
     split_guard: Option<ActivityGuard>,
@@ -22,6 +23,7 @@ impl ExperimentTrainingProgressLogger {
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
         Self {
             experiment: experiment.into(),
+            name: "Training".to_string(),
             training_guard: None,
             epoch_guard: None,
             split_guard: None,
@@ -30,6 +32,12 @@ impl ExperimentTrainingProgressLogger {
             split_seen: 0,
             split_total: 0,
         }
+    }
+
+    /// Set the name of the top-level activity, `"Training"` by default.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
     }
 
     fn ensure_epoch_scope(&mut self) {
@@ -63,7 +71,7 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         self.split_guard = None;
         self.training_guard = Some(
             self.experiment
-                .activity("Training")
+                .activity(self.name.clone())
                 .meter(total_epochs as u64, "epochs")
                 .start(),
         );
@@ -138,6 +146,7 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
 /// you already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 pub struct ExperimentEvaluationProgressLogger {
     experiment: ExperimentRunHandle,
+    name: String,
     eval_guard: Option<ActivityGuard>,
     test_guard: Option<ActivityGuard>,
     tests_total: usize,
@@ -151,6 +160,7 @@ impl ExperimentEvaluationProgressLogger {
     pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
         Self {
             experiment: experiment.into(),
+            name: "Evaluation".to_string(),
             eval_guard: None,
             test_guard: None,
             tests_total: 0,
@@ -158,6 +168,12 @@ impl ExperimentEvaluationProgressLogger {
             test_seen: 0,
             test_total: 0,
         }
+    }
+
+    /// Set the name of the top-level activity, `"Evaluation"` by default.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
     }
 }
 
@@ -167,7 +183,7 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         self.tests_done = 0;
         self.eval_guard = Some(
             self.experiment
-                .activity("Evaluation")
+                .activity(self.name.clone())
                 .meter(total_tests as u64, "tests")
                 .start(),
         );
@@ -293,6 +309,26 @@ mod tests {
     }
 
     #[test]
+    fn training_progress_uses_supplied_name() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let mut logger = run.training_progress_logger().with_name("Pretraining");
+
+        logger.start(1, 1, None);
+        logger.end();
+
+        let names = session
+            .activity_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActivityEvent::Started { activity } => Some(activity.name),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Pretraining"]);
+    }
+
+    #[test]
     fn endings_follow_the_meter() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
@@ -337,7 +373,7 @@ mod tests {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
         let parent = run.activity("Fold 1").start();
-        let mut logger = parent.evaluation_progress_logger();
+        let mut logger = parent.evaluation_progress_logger().with_name("Holdout");
 
         logger.start_global_progress(2);
         logger.start_test("test", 4);
@@ -357,6 +393,7 @@ mod tests {
         assert_eq!(started.len(), 3);
         let evaluation = started[1];
         let test = started[2];
+        assert_eq!(evaluation.name, "Holdout");
         assert_eq!(evaluation.parent, Some(parent.id()));
         assert_eq!(evaluation.meter.as_ref().unwrap().total, Some(2));
         assert_eq!(test.parent, Some(evaluation.id));
