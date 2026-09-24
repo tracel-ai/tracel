@@ -56,14 +56,20 @@ impl ExperimentTrainingProgressLogger {
 }
 
 impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
-    fn start(&mut self, total_epochs: usize, starting_epoch: usize, _total_items: Option<usize>) {
+    fn start(
+        &mut self,
+        total_epochs: usize,
+        starting_epoch: usize,
+        _total_items: Option<usize>,
+        label: Option<&str>,
+    ) {
         self.completed_epochs = starting_epoch.saturating_sub(1);
         self.total_epochs = Some(total_epochs);
         self.epoch_guard = None;
         self.split_guard = None;
         self.training_guard = Some(
             self.experiment
-                .activity("Training")
+                .activity(label.unwrap_or("Training"))
                 .meter(total_epochs as u64, "epochs")
                 .start(),
         );
@@ -240,7 +246,7 @@ mod tests {
         let parent_id = parent.id();
         let mut logger = parent.training_progress_logger();
 
-        logger.start(2, 1, None);
+        logger.start(2, 1, None, None);
         logger.start_split("train", 10);
         logger.update_split(4);
         logger.end_split();
@@ -299,7 +305,7 @@ mod tests {
         let parent = run.activity("Fold 6").start();
         let mut logger = parent.training_progress_logger();
 
-        logger.start(2, 1, None);
+        logger.start(2, 1, None, None);
         logger.start_split("train", 10);
         logger.update_split(10);
         logger.end_split();
