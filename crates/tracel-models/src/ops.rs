@@ -29,9 +29,10 @@ pub trait VersionFileSource: Send + Sync + 'static {
 ///
 /// An implementation is already scoped to one location, so it is never asked which one.
 ///
-/// Implementations should use the dedicated not-found variants for missing models and versions,
-/// and [`ModelsError::Transport`] for communication failures. Backend-specific failures may be
-/// preserved with [`ModelsError::other`].
+/// Implementations should use the dedicated variants for a missing model, version or alias, a
+/// version that is not ready or was deleted, and a refused change, and [`ModelsError::Transport`]
+/// for communication failures. Backend-specific failures may be preserved with
+/// [`ModelsError::other`].
 pub trait ModelOps: Send + Sync + 'static {
     /// Lists models in the implementation's scope.
     fn list_models(&self) -> Result<Vec<Model>, ModelsError>;
@@ -42,7 +43,8 @@ pub trait ModelOps: Send + Sync + 'static {
     /// Lists published versions of a model.
     fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError>;
 
-    /// Resolves a version selector against a model.
+    /// Resolves a version selector: an exact version in whatever state it is, or the ready version
+    /// `latest` or an alias points at.
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError>;
 
     /// Fetches the backend-owned file sources for one version.

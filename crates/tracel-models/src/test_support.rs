@@ -9,7 +9,7 @@ use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
     Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
-    VersionFileSource, VersionId, VersionSpec,
+    VersionFileSource, VersionId, VersionSpec, VersionState,
 };
 
 #[derive(Clone)]
@@ -118,17 +118,38 @@ pub struct PublishRecord {
 #[derive(Clone)]
 pub struct FakeOps {
     models: Vec<Model>,
+    versions: Vec<ModelVersion>,
+    aliases: Vec<(String, VersionId)>,
     sources: Vec<SourceSpec>,
     published: Arc<Mutex<PublishRecord>>,
+    published_state: VersionState,
 }
 
 impl FakeOps {
     pub fn new(sources: Vec<SourceSpec>) -> Self {
         Self {
             models: vec![model("alpha"), model("beta")],
+            versions: vec![version(VersionId::new("version-id"))],
+            aliases: Vec::new(),
             sources,
             published: Arc::new(Mutex::new(PublishRecord::default())),
+            published_state: VersionState::Ready,
         }
+    }
+
+    pub fn publishing_as(mut self, state: VersionState) -> Self {
+        self.published_state = state;
+        self
+    }
+
+    pub fn with_version(mut self, version: ModelVersion) -> Self {
+        self.versions.push(version);
+        self
+    }
+
+    pub fn with_alias(mut self, alias: &str, id: &str) -> Self {
+        self.aliases.push((alias.to_string(), VersionId::new(id)));
+        self
     }
 
     pub fn publish_record(&self) -> Arc<Mutex<PublishRecord>> {
@@ -173,7 +194,9 @@ impl ModelOps for FakeOps {
         record.metadata = metadata.cloned();
         record.uploaded = files.iter().map(|file| file.rel_path.clone()).collect();
 
-        Ok(version(VersionId::new("published-id")))
+        let mut published = version(VersionId::new("published-id"));
+        published.state = self.published_state;
+        Ok(published)
     }
 
     fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
@@ -197,10 +220,33 @@ impl ModelOps for FakeOps {
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
         self.get_model(model)?;
-        Err(ModelsError::VersionNotFound {
-            model: model.to_string(),
-            version: spec,
-        })
+        let id = match &spec {
+            VersionSpec::Exact(id) => Some(id.clone()),
+            VersionSpec::Latest => self
+                .versions
+                .iter()
+                .filter(|version| version.state == VersionState::Ready)
+                .max_by_key(|version| version.version)
+                .map(|version| version.id.clone()),
+            VersionSpec::Alias(alias) => {
+                let (_, id) = self
+                    .aliases
+                    .iter()
+                    .find(|(name, _)| name == alias)
+                    .ok_or_else(|| ModelsError::AliasNotFound {
+                        model: model.to_string(),
+                        alias: alias.clone(),
+                    })?;
+                Some(id.clone())
+            }
+        };
+
+        id.and_then(|id| self.versions.iter().find(|version| version.id == id))
+            .cloned()
+            .ok_or_else(|| ModelsError::VersionNotFound {
+                model: model.to_string(),
+                version: spec,
+            })
     }
 
     fn fetch_version_files(
@@ -220,16 +266,20 @@ impl ModelOps for FakeOps {
     }
 }
 
-fn version(id: VersionId) -> ModelVersion {
+pub fn version(id: VersionId) -> ModelVersion {
     ModelVersion {
         id,
         version: Some(1),
+        state: VersionState::Ready,
+        failure_reason: None,
         size_bytes: 0,
         checksum: String::new(),
+        aliases: Vec::new(),
         published_by: Some("publisher".to_string()),
         created_at: None,
         manifest: crate::VersionManifest { files: Vec::new() },
         metadata: serde_json::Value::Null,
+        deleted_at: None,
     }
 }
 
