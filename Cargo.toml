@@ -18,7 +18,18 @@ keywords = ["tracel", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { version = "0.22.0-pre.3", default-features = false, features = [
+# A git revision rather than a published version, so that anyone depending on
+# both this SDK and burn-onnx ends up with one burn in their graph.
+#
+# Taken from crates.io it resolved to the registry's burn for every consumer,
+# and the `[patch.crates-io]` that used to sit at the bottom of this file
+# redirected it only for this workspace's own builds: cargo ignores a `[patch]`
+# in a dependency's manifest and honours only the top-level one. So each
+# consumer had to repeat that redirection itself, and get the revision right.
+#
+# `d85aa0ab` is the revision burn-onnx names, which is what lets the two agree
+# without anybody patching anything.
+burn = { git = "https://github.com/tracel-ai/burn", rev = "d85aa0ab39dbf5d9a8b911081485dbfc9d0d5aa2", default-features = false, features = [
     "train",
 ] }
 
@@ -94,6 +105,3 @@ tracel-xtask = { version = "=5.0.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
-
-[patch.crates-io]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "9eadada8ef44d52264c615c5540f81af46260f52" }
