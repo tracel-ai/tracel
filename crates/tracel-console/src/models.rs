@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use serde::Deserialize;
 use tracel_artifact::upload::{
     MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
     upload_bundle_multipart_with_client_and_observer,
@@ -12,13 +11,13 @@ use tracel_client::{
     },
     console::model::response::{
         ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
-        ModelVersionResponse,
+        ModelVersionResponse, ModelVersionStateResponse,
     },
-    error::ClientError,
+    error::{ApiErrorCode, ClientError},
 };
 use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    VersionId, VersionManifest, VersionSpec, VersionState,
 };
 
 use crate::ConsoleError;
@@ -69,30 +68,27 @@ impl ModelOps for ConsoleModelOps {
             .client
             .list_model_versions(&self.scope.owner, &self.scope.project, model)
             .map_err(|error| map_model_error(error, model))?;
-        model_versions_from_wire(response)
+        Ok(model_versions_from_wire(response))
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            VersionSpec::Latest => self
-                .list_versions(model)?
-                .into_iter()
-                .max_by_key(|version| version.version)
-                .map(|version| version.id)
-                .ok_or_else(|| ModelsError::VersionNotFound {
-                    model: model.to_string(),
-                    version: spec.clone(),
-                })?,
+        let client = &self.scope.console.client;
+        let (owner, project) = (&self.scope.owner, &self.scope.project);
+        let response = match &spec {
+            VersionSpec::Exact(id) => {
+                client.get_model_version(owner, project, model, self.route_version(model, id)?)
+            }
+            VersionSpec::Latest => {
+                client.resolve_model_version_ref(owner, project, model, "latest")
+            }
+            VersionSpec::Alias(alias) => {
+                client.resolve_model_version_ref(owner, project, model, alias)
+            }
         };
 
-        let route = self.route_version(model, &id)?;
-        self.scope
-            .console
-            .client
-            .get_model_version(&self.scope.owner, &self.scope.project, model, route)
-            .map_err(|error| map_version_error(error, model, &id))
-            .and_then(model_version_from_wire)
+        response
+            .map(model_version_from_wire)
+            .map_err(|error| map_version_error(error, model, &spec))
     }
 
     fn fetch_version_files(
@@ -106,7 +102,7 @@ impl ModelOps for ConsoleModelOps {
             .console
             .client
             .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
-            .map_err(|error| map_version_error(error, model, id))?;
+            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id.clone())))?;
         Ok(file_sources_from_wire(
             &self.scope.console.transfer_client,
             response,
@@ -181,6 +177,7 @@ impl ModelOps for ConsoleModelOps {
         )
         .map_err(model_upload_failure)?;
 
+        let version = VersionSpec::Exact(VersionId::new(planned.version.to_string()));
         self.scope
             .console
             .client
@@ -190,7 +187,7 @@ impl ModelOps for ConsoleModelOps {
                 model,
                 planned.version,
             )
-            .map_err(|error| map_model_error(error, model))?;
+            .map_err(|error| map_version_error(error, model, &version))?;
 
         self.scope
             .console
@@ -201,8 +198,8 @@ impl ModelOps for ConsoleModelOps {
                 model,
                 planned.version,
             )
-            .map_err(|error| map_model_error(error, model))
-            .and_then(model_version_from_wire)
+            .map(model_version_from_wire)
+            .map_err(|error| map_version_error(error, model, &version))
     }
 }
 
@@ -222,9 +219,7 @@ fn model_from_wire(value: ModelResponse) -> Model {
     }
 }
 
-fn model_versions_from_wire(
-    response: ModelVersionListResponse,
-) -> Result<Vec<ModelVersion>, ModelsError> {
+fn model_versions_from_wire(response: ModelVersionListResponse) -> Vec<ModelVersion> {
     response
         .items
         .into_iter()
@@ -232,40 +227,20 @@ fn model_versions_from_wire(
         .collect()
 }
 
-fn model_version_from_wire(value: ModelVersionResponse) -> Result<ModelVersion, ModelsError> {
-    let manifest: WireManifest = serde_json::from_value(value.manifest)
-        .map_err(|error| ModelsError::other(ConsoleError::InvalidResponse(error.to_string())))?;
-
-    Ok(ModelVersion {
+fn model_version_from_wire(value: ModelVersionResponse) -> ModelVersion {
+    ModelVersion {
         id: VersionId::new(value.version.to_string()),
         version: Some(value.version),
+        state: state_from_wire(value.state),
+        failure_reason: value.failure_reason,
         size_bytes: value.size,
-        checksum: value.checksum,
+        checksum: value.digest,
+        aliases: value.aliases,
         published_by: Some(value.created_by.username),
         created_at: console_timestamp(&value.created_at),
-        manifest: manifest.into(),
-        metadata: value.metadata,
-    })
-}
-
-/// The manifest as this console writes it, so the model domain never has to name a field the
-/// way one backend happens to spell it.
-#[derive(Deserialize)]
-struct WireManifest {
-    files: Vec<WireManifestFile>,
-}
-
-#[derive(Deserialize)]
-struct WireManifestFile {
-    rel_path: String,
-    size_bytes: u64,
-    checksum: String,
-}
-
-impl From<WireManifest> for VersionManifest {
-    fn from(value: WireManifest) -> Self {
-        VersionManifest {
+        manifest: VersionManifest {
             files: value
+                .manifest
                 .files
                 .into_iter()
                 .map(|file| VersionFile {
@@ -274,7 +249,18 @@ impl From<WireManifest> for VersionManifest {
                     checksum: file.checksum,
                 })
                 .collect(),
-        }
+        },
+        metadata: value.metadata,
+        deleted_at: value.deleted_at.as_deref().and_then(console_timestamp),
+    }
+}
+
+fn state_from_wire(state: ModelVersionStateResponse) -> VersionState {
+    match state {
+        ModelVersionStateResponse::Pending => VersionState::Pending,
+        ModelVersionStateResponse::Ready => VersionState::Ready,
+        ModelVersionStateResponse::Failed => VersionState::Failed,
+        ModelVersionStateResponse::Deleted => VersionState::Deleted,
     }
 }
 
@@ -318,6 +304,9 @@ impl VersionFileSource for ConsoleVersionFileSource {
 }
 
 fn map_model_error(error: ClientError, name: &str) -> ModelsError {
+    if let Some(refusal) = refusal(&error, name, None) {
+        return refusal;
+    }
     if client_error_is_not_found(&error) {
         return ModelsError::ModelNotFound {
             name: name.to_string(),
@@ -326,14 +315,46 @@ fn map_model_error(error: ClientError, name: &str) -> ModelsError {
     console_failure(error)
 }
 
-fn map_version_error(error: ClientError, model: &str, id: &VersionId) -> ModelsError {
+fn map_version_error(error: ClientError, model: &str, version: &VersionSpec) -> ModelsError {
+    if let Some(refusal) = refusal(&error, model, Some(version)) {
+        return refusal;
+    }
     if client_error_is_not_found(&error) {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
-            version: VersionSpec::Exact(id.clone()),
+            version: version.clone(),
         };
     }
     console_failure(error)
+}
+
+fn refusal(error: &ClientError, model: &str, version: Option<&VersionSpec>) -> Option<ModelsError> {
+    let model = model.to_string();
+    let refusal = match (error.code()?, version) {
+        (ApiErrorCode::Model, _) => ModelsError::ModelNotFound { name: model },
+        (ApiErrorCode::ModelAlias, Some(VersionSpec::Alias(alias))) => ModelsError::AliasNotFound {
+            model,
+            alias: alias.clone(),
+        },
+        (ApiErrorCode::ModelVersion, Some(version)) => ModelsError::VersionNotFound {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionNotReady, Some(version)) => ModelsError::VersionNotReady {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionDeleted, Some(version)) => ModelsError::VersionDeleted {
+            model,
+            version: version.clone(),
+        },
+        (code, _) if error.is_conflict() => ModelsError::Conflict {
+            model,
+            code: code.to_string(),
+        },
+        _ => return None,
+    };
+    Some(refusal)
 }
 
 fn console_failure(error: ClientError) -> ModelsError {

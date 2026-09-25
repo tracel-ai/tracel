@@ -12,7 +12,9 @@ mod ops;
 #[cfg(test)]
 mod test_support;
 
-pub use domain::{Model, ModelVersion, VersionFile, VersionId, VersionManifest, VersionSpec};
+pub use domain::{
+    Model, ModelVersion, VersionFile, VersionId, VersionManifest, VersionSpec, VersionState,
+};
 pub use error::ModelsError;
 pub use models::Models;
 pub use ops::{ModelOps, VersionFileReader, VersionFileSource};

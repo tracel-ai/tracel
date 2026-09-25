@@ -1,14 +1,21 @@
 use std::sync::Arc;
 
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient};
-use tracel_client::station::model::request::CreateModelRequest;
+use tracel_artifact::upload::{
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
+    upload_bundle_multipart_with_client_and_observer,
+};
+use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
+use tracel_client::station::model::request::{
+    CreateModelRequest, UploadModelFileSpecRequest, UploadModelVersionRequest,
+};
 use tracel_client::station::model::response::{
     ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
-    ModelVersionResponse,
+    ModelVersionResponse, ModelVersionStateResponse,
 };
+use tracel_client::{ApiErrorCode, ClientError};
 use tracel_models::{
     Model, ModelOps, ModelVersion, ModelsError, VersionFile, VersionFileReader, VersionFileSource,
-    VersionId, VersionManifest, VersionSpec,
+    VersionId, VersionManifest, VersionSpec, VersionState,
 };
 
 use crate::StationError;
@@ -61,28 +68,20 @@ impl ModelOps for StationModelOps {
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let id = match &spec {
-            VersionSpec::Exact(id) => id.clone(),
-            // The Station has no latest-version route, so the listing answers it.
-            VersionSpec::Latest => {
-                return self
-                    .list_versions(model)?
-                    .into_iter()
-                    .max_by_key(|version| version.version)
-                    .ok_or_else(|| ModelsError::VersionNotFound {
-                        model: model.to_string(),
-                        version: spec,
-                    });
-            }
+        let models = self.station.client.models();
+        let response = match &spec {
+            VersionSpec::Exact(id) => models
+                .version(model, self.route_version(model, id)?)
+                .map_err(|error| map_version_error(error, model, &spec)),
+            VersionSpec::Latest => models
+                .resolve(model, "latest")
+                .map_err(|error| map_error(error, model, Some(&spec))),
+            VersionSpec::Alias(alias) => models
+                .resolve(model, alias)
+                .map_err(|error| map_error(error, model, Some(&spec))),
         };
 
-        let route = self.route_version(model, &id)?;
-        self.station
-            .client
-            .models()
-            .version(model, route)
-            .map(model_version_from_wire)
-            .map_err(|error| map_version_error(error, model, &id))
+        response.map(model_version_from_wire)
     }
 
     fn fetch_version_files(
@@ -96,7 +95,7 @@ impl ModelOps for StationModelOps {
             .client
             .models()
             .download(model, route)
-            .map_err(|error| map_version_error(error, model, id))?;
+            .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id.clone())))?;
         Ok(file_sources_from_wire(
             &self.station.transfer_client,
             response,
@@ -117,15 +116,62 @@ impl ModelOps for StationModelOps {
 
     fn publish_version(
         &self,
-        _model: &str,
-        _files: &[VersionFile],
-        _contents: &dyn tracel_artifact::upload::MultipartUploadSource,
-        _metadata: Option<&serde_json::Value>,
-        _observer: &mut dyn tracel_artifact::TransferObserver,
+        model: &str,
+        files: &[VersionFile],
+        contents: &dyn MultipartUploadSource,
+        metadata: Option<&serde_json::Value>,
+        mut observer: &mut dyn TransferObserver,
     ) -> Result<ModelVersion, ModelsError> {
-        Err(ModelsError::other(
-            "publishing a model version is not implemented for the station yet",
-        ))
+        let models = self.station.client.models();
+        let request = UploadModelVersionRequest {
+            files: files
+                .iter()
+                .map(|file| UploadModelFileSpecRequest {
+                    rel_path: file.rel_path.clone(),
+                    size_bytes: file.size_bytes,
+                    checksum: file.checksum.clone(),
+                })
+                .collect(),
+            metadata: metadata.cloned(),
+        };
+        let planned = models
+            .upload_version(model, request)
+            .map_err(|error| map_model_error(error, model))?;
+
+        let uploads = planned
+            .files
+            .into_iter()
+            .map(|file| MultipartUploadFile {
+                rel_path: file.rel_path,
+                parts: file
+                    .parts
+                    .into_iter()
+                    .map(|part| MultipartUploadPart {
+                        part: part.part,
+                        url: part.url,
+                        size_bytes: part.size_bytes,
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+
+        upload_bundle_multipart_with_client_and_observer(
+            &self.station.transfer_client,
+            &contents,
+            &uploads,
+            &mut observer,
+        )
+        .map_err(model_upload_failure)?;
+
+        let version = VersionSpec::Exact(VersionId::new(planned.version.to_string()));
+        models
+            .complete_version_upload(model, planned.version)
+            .map_err(|error| map_version_error(error, model, &version))?;
+
+        models
+            .version(model, planned.version)
+            .map(model_version_from_wire)
+            .map_err(|error| map_version_error(error, model, &version))
     }
 }
 
@@ -180,7 +226,7 @@ fn model_from_wire(response: ModelResponse) -> Model {
         published_by: None,
         created_at: station_timestamp(&response.created_at),
         version_count: response.version_count,
-        latest_version: None,
+        latest_version: response.latest_version,
     }
 }
 
@@ -196,12 +242,15 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
     ModelVersion {
         id: VersionId::new(response.version.to_string()),
         version: Some(response.version),
+        state: state_from_wire(response.state),
+        failure_reason: response.failure_reason,
         size_bytes: response.size,
-        checksum: response.checksum,
+        checksum: response.digest,
+        aliases: response.aliases,
         published_by: None,
         created_at: station_timestamp(&response.created_at),
-        // The Station's version response carries no metadata.
-        metadata: serde_json::Value::Null,
+        metadata: response.metadata,
+        deleted_at: response.deleted_at.as_deref().and_then(station_timestamp),
         manifest: VersionManifest {
             files: response
                 .manifest
@@ -217,14 +266,34 @@ fn model_version_from_wire(response: ModelVersionResponse) -> ModelVersion {
     }
 }
 
-fn station_failure(error: tracel_client::ClientError) -> ModelsError {
+fn model_upload_failure(error: UploadError) -> ModelsError {
+    match error {
+        UploadError::Cancelled { .. } => ModelsError::Cancelled,
+        error @ UploadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
+        error => ModelsError::other(error),
+    }
+}
+
+fn state_from_wire(state: ModelVersionStateResponse) -> VersionState {
+    match state {
+        ModelVersionStateResponse::Pending => VersionState::Pending,
+        ModelVersionStateResponse::Ready => VersionState::Ready,
+        ModelVersionStateResponse::Failed => VersionState::Failed,
+        ModelVersionStateResponse::Deleted => VersionState::Deleted,
+    }
+}
+
+fn station_failure(error: ClientError) -> ModelsError {
     match StationError::from(error) {
         StationError::Transport(reason) => ModelsError::Transport(reason),
         error => ModelsError::other(error),
     }
 }
 
-fn map_model_error(error: tracel_client::ClientError, name: &str) -> ModelsError {
+fn map_model_error(error: ClientError, name: &str) -> ModelsError {
+    if let Some(refusal) = refusal(&error, name, None) {
+        return refusal;
+    }
     if error.is_not_found() {
         return ModelsError::ModelNotFound {
             name: name.to_string(),
@@ -233,16 +302,48 @@ fn map_model_error(error: tracel_client::ClientError, name: &str) -> ModelsError
     station_failure(error)
 }
 
-fn map_version_error(
-    error: tracel_client::ClientError,
-    model: &str,
-    id: &VersionId,
-) -> ModelsError {
+fn map_version_error(error: ClientError, model: &str, version: &VersionSpec) -> ModelsError {
+    if let Some(refusal) = refusal(&error, model, Some(version)) {
+        return refusal;
+    }
     if error.is_not_found() {
         return ModelsError::VersionNotFound {
             model: model.to_string(),
-            version: VersionSpec::Exact(id.clone()),
+            version: version.clone(),
         };
     }
     station_failure(error)
+}
+
+fn map_error(error: ClientError, model: &str, version: Option<&VersionSpec>) -> ModelsError {
+    refusal(&error, model, version).unwrap_or_else(|| station_failure(error))
+}
+
+fn refusal(error: &ClientError, model: &str, version: Option<&VersionSpec>) -> Option<ModelsError> {
+    let model = model.to_string();
+    let refusal = match (error.code()?, version) {
+        (ApiErrorCode::Model, _) => ModelsError::ModelNotFound { name: model },
+        (ApiErrorCode::ModelAlias, Some(VersionSpec::Alias(alias))) => ModelsError::AliasNotFound {
+            model,
+            alias: alias.clone(),
+        },
+        (ApiErrorCode::ModelVersion, Some(version)) => ModelsError::VersionNotFound {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionNotReady, Some(version)) => ModelsError::VersionNotReady {
+            model,
+            version: version.clone(),
+        },
+        (ApiErrorCode::ModelVersionDeleted, Some(version)) => ModelsError::VersionDeleted {
+            model,
+            version: version.clone(),
+        },
+        (code, _) if error.is_conflict() => ModelsError::Conflict {
+            model,
+            code: code.to_string(),
+        },
+        _ => return None,
+    };
+    Some(refusal)
 }
