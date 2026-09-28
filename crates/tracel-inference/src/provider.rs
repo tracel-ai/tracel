@@ -36,6 +36,19 @@ impl InferenceModule {
             Arc::new(inference.into_inference());
         InferenceJob::new(self.provider.clone(), name.to_string(), inference)
     }
+
+    /// Open a session for the inference named `name`, without running an [`InferenceJob`].
+    ///
+    /// For a caller that drives its own inference loop and only wants the telemetry surface:
+    /// metrics and logs recorded through the returned session reach the backend exactly as they
+    /// would from a job's session. Nothing is recorded on the caller's behalf: the per-request
+    /// counters and durations a job records come from [`InferenceSession::run`].
+    ///
+    /// On the console backend this creates the inference group when it does not exist yet, and
+    /// every session opened for the same name shares that group's batching worker.
+    pub fn open_session(&self, name: &str) -> Result<InferenceSession, InferenceError> {
+        self.provider.create_session(name)
+    }
 }
 
 /// A named inference bound to a backend provider.
