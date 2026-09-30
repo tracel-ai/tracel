@@ -223,7 +223,7 @@ fn evaluate(
         .metrics((AccuracyMetric::new(), LossMetric::new()))
         .build(model);
 
-    evaluator.eval(name, dataloader_test)
+    evaluator.eval(name, dataloader_test).renderer
 }
 
 enum DatasetIdent {
