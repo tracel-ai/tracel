@@ -57,8 +57,8 @@ pub struct User {
     pub id: i32,
     /// User's display and login name.
     pub username: String,
-    /// User's email address.
-    pub email: String,
+    /// User's email address, absent when the console is reached with an API key.
+    pub email: Option<String>,
     /// Namespace owned by the user.
     pub namespace: Namespace,
 }
