@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use burn::train::logger::MetricLogger;
-use burn::train::metric::store::{EpochSummary, MetricsUpdate, NumericMetricUpdate, Split};
+use burn::train::metric::store::{EpochSummary, MetricsUpdate, Split};
 use burn::train::metric::{MetricAttributes, MetricDefinition, MetricId, NumericEntry};
 
 use crate::{ExperimentRunHandle, MetricSpec, MetricValue};
@@ -14,7 +14,7 @@ pub struct ExperimentMetricLogger {
     experiment_handle: ExperimentRunHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,
     iteration_count: usize,
-    last_summaries: Option<Vec<MetricValue>>,
+    epoch_final_values_awaiting_summary: HashMap<Split, Vec<MetricValue>>,
 }
 
 impl ExperimentMetricLogger {
@@ -24,63 +24,47 @@ impl ExperimentMetricLogger {
             experiment_handle: experiment.into(),
             metric_definitions: HashMap::default(),
             iteration_count: 0,
-            last_summaries: None,
+            epoch_final_values_awaiting_summary: HashMap::default(),
         }
-    }
-
-    fn get_definitions_from_entries(
-        &self,
-        entries: &[NumericMetricUpdate],
-    ) -> Vec<MetricDefinition> {
-        entries
-            .iter()
-            .filter_map(|entry| self.metric_definitions.get(&entry.entry.metric_id).cloned())
-            .collect()
     }
 }
 
 impl MetricLogger for ExperimentMetricLogger {
     fn log(&mut self, update: MetricsUpdate, epoch: usize, split: &Split) {
-        self.iteration_count += 1;
-
-        let mut logs = vec![];
-        let mut summaries = vec![];
-        let definitions = self.get_definitions_from_entries(&update.entries_numeric);
-        for (i, definition) in definitions.iter().enumerate() {
-            let NumericMetricUpdate {
-                entry: _,
-                numeric_entry,
-                running_entry,
-            } = update
-                .entries_numeric
-                .get(i)
-                .expect("Definition without numeric entry");
-
-            let get_value_from_entry = |v: &NumericEntry| match *v {
-                NumericEntry::Value(v) => v,
-                NumericEntry::Aggregated {
-                    aggregated_value, ..
-                } => aggregated_value,
-                NumericEntry::Final(v) => v,
+        let mut iteration_values = vec![];
+        for numeric_update in &update.entries_numeric {
+            let Some(definition) = self.metric_definitions.get(&numeric_update.entry.metric_id)
+            else {
+                continue;
             };
-
-            if let Some(value) = numeric_entry.as_ref().map(get_value_from_entry) {
-                logs.push(MetricValue {
-                    name: definition.name.to_string(),
-                    value,
-                });
-            }
-
-            if let Some(running_value) = running_entry.as_ref().map(get_value_from_entry) {
-                summaries.push(MetricValue {
-                    name: definition.name.to_string(),
-                    value: running_value,
-                });
+            let Some(numeric_entry) = &numeric_update.numeric_entry else {
+                continue;
+            };
+            let name = definition.name.to_string();
+            match *numeric_entry {
+                NumericEntry::Final(value) => self
+                    .epoch_final_values_awaiting_summary
+                    .entry(split.clone())
+                    .or_default()
+                    .push(MetricValue { name, value }),
+                NumericEntry::Value(value)
+                | NumericEntry::Aggregated {
+                    aggregated_value: value,
+                    ..
+                } => iteration_values.push(MetricValue { name, value }),
             }
         }
-        self.experiment_handle
-            .log_metric(epoch, split.to_string(), self.iteration_count, logs);
-        self.last_summaries = Some(summaries);
+
+        if iteration_values.is_empty() {
+            return;
+        }
+        self.iteration_count += 1;
+        self.experiment_handle.log_metric(
+            epoch,
+            split.to_string(),
+            self.iteration_count,
+            iteration_values,
+        );
     }
 
     /// Read the logs for an epoch.
@@ -111,11 +95,14 @@ impl MetricLogger for ExperimentMetricLogger {
     }
 
     fn log_epoch_summary(&mut self, summary: EpochSummary) {
-        if let Some(summaries) = self.last_summaries.take() {
+        if let Some(final_values) = self
+            .epoch_final_values_awaiting_summary
+            .remove(&summary.split)
+        {
             self.experiment_handle.log_epoch_summary(
                 summary.epoch_number,
                 summary.split.to_string(),
-                summaries,
+                final_values,
             );
         }
     }
