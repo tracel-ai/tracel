@@ -10,10 +10,13 @@ pub enum ConsoleError {
     /// A request could not reach the console or receive its response.
     #[error("console transport failed: {0}")]
     Transport(String),
-    /// The session token or API key is no longer accepted by the console: it expired, was
-    /// revoked or was deleted.
+    /// The credential is no longer accepted by the console: an API key that expired or was
+    /// deleted, or an app session that ended or was signed out.
     #[error("the console no longer accepts this credential")]
     SessionExpired,
+    /// The stored sign-in could not be read, written or locked.
+    #[error("the stored sign-in could not be used: {0}")]
+    SessionStore(String),
     /// The credential cannot be used for this request: an API key reaches project data only.
     #[error("this credential cannot be used for this request; API keys reach project data only")]
     CredentialNotAllowed,
@@ -53,7 +56,8 @@ impl ConsoleError {
 impl From<ClientError> for ConsoleError {
     fn from(error: ClientError) -> Self {
         match error {
-            ClientError::Unauthenticated => Self::SessionExpired,
+            ClientError::Unauthenticated | ClientError::AppSessionEnded => Self::SessionExpired,
+            ClientError::SessionStore(reason) => Self::SessionStore(reason),
             ClientError::CredentialNotAllowed => Self::CredentialNotAllowed,
             ClientError::NotFound | ClientError::NotFoundWithCode(_) => Self::NotFound,
             ClientError::ApiError { status, .. } if status == reqwest::StatusCode::UNAUTHORIZED => {
@@ -107,5 +111,10 @@ mod tests {
             ConsoleError::from(ClientError::CredentialNotAllowed),
             ConsoleError::CredentialNotAllowed
         ));
+    }
+
+    #[test]
+    fn an_app_session_that_ended_reads_as_an_expired_session() {
+        assert!(ConsoleError::from(ClientError::AppSessionEnded).is_session_expired());
     }
 }

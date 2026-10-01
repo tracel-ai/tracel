@@ -1,11 +1,11 @@
-//! Signing in from a device that cannot host a browser session, and renewing that
-//! session afterwards without signing in again.
+//! Signing an app in from a device that cannot host a browser session, renewing its
+//! access token afterwards without signing in again, and signing it out.
 
 use std::time::Duration;
 
 use tracel_client::console::RefreshToken;
 use tracel_client::console::auth::{
-    DeviceAuthClient, DeviceFlowError, DevicePollOutcome, IssuedSession,
+    DeviceAuthClient, DeviceFlowError, DevicePollOutcome, IssuedAppSession,
 };
 
 use crate::ConsoleError;
@@ -65,22 +65,33 @@ pub enum DeviceApproval {
     Waiting,
     /// Answered too soon; wait longer before asking again.
     PollLessOften,
-    /// The user approved, and the console issued this session and the grant that renews it.
-    Approved(IssuedSession),
+    /// The user approved, and the console signed the app in: an access token and the
+    /// refresh token that renews it.
+    Approved(IssuedAppSession),
 }
 
-/// Renews a session from a refresh token kept since an earlier sign-in.
+/// Renews an app's access token from the refresh token kept since its sign-in.
 ///
 /// The renewal needs no [`DeviceLogin`], only the token and the same `client_id` the
-/// sign-in used. Every renewal rotates the token, so the grant that comes back replaces
-/// the one spent here. [`ConsoleError::RefreshRejected`] is terminal: only a new
-/// [`DeviceLogin`] recovers from it.
+/// sign-in used. Every renewal rotates the refresh token, so the one that comes back
+/// replaces the one spent here. [`ConsoleError::RefreshRejected`] is terminal: only a
+/// new [`DeviceLogin`] recovers from it.
 pub fn refresh_session(
     client_id: impl Into<String>,
     refresh_token: &RefreshToken,
-) -> Result<IssuedSession, ConsoleError> {
+) -> Result<IssuedAppSession, ConsoleError> {
     DeviceAuthClient::new(crate::env::from_environment(), client_id)
-        .refresh_session(refresh_token)
+        .refresh(refresh_token)
+        .map_err(login_failure)
+}
+
+/// Signs an app out with its refresh token, or one of its access tokens.
+///
+/// The console answers the same whether or not the token was still live, so signing
+/// out twice is not an error.
+pub fn sign_out(client_id: impl Into<String>, token: &str) -> Result<(), ConsoleError> {
+    DeviceAuthClient::new(crate::env::from_environment(), client_id)
+        .revoke(token)
         .map_err(login_failure)
 }
 
