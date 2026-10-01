@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{
@@ -24,10 +25,14 @@ pub struct Console {
     inner: Arc<ConsoleInner>,
 }
 
+/// How long before a credential ends a connection warns about it.
+const CREDENTIAL_END_WARNING: Duration = Duration::from_secs(24 * 3600);
+
 /// Resources shared by every handle derived from a console connection.
 pub struct ConsoleInner {
     pub client: Client,
     pub transfer_client: ReqwestTransferClient,
+    credential_ends_at: Option<SystemTime>,
 }
 
 /// A project location bound to a console connection.
@@ -39,22 +44,29 @@ pub struct ProjectScope {
 
 impl Console {
     /// Connects to the console and verifies the credentials.
+    ///
+    /// Warns when the credential stops being accepted within a day, since a run that
+    /// outlives it stops with [`ConsoleError::SessionExpired`].
     pub fn connect(credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
         let client = Client::connect(crate::env::from_environment(), credentials)?;
+        let credential_ends_at = credential_end(credentials, &client);
+        warn_when_ending_soon(credentials, credential_ends_at);
 
         Ok(Self {
             inner: Arc::new(ConsoleInner {
                 client,
                 transfer_client: ReqwestTransferClient::new(),
+                credential_ends_at,
             }),
         })
     }
 
-    /// Logs out and consumes this console connection.
-    ///
-    /// This revokes the remote session used by this connection and its derived handles.
-    pub fn logout(self) -> Result<(), ConsoleError> {
-        self.inner.client.clone().logout().map_err(Into::into)
+    /// When the credential this console connected with stops being accepted: an API
+    /// key's expiry, or the end of the app session the `tracel` CLI signed in. `None`
+    /// for a key without expiry and for an access token whose renewal belongs to the
+    /// caller.
+    pub fn credential_ends_at(&self) -> Option<SystemTime> {
+        self.inner.credential_ends_at
     }
 
     /// Returns the normalized console API base URL.
@@ -124,6 +136,43 @@ impl Console {
                 project: project.into(),
             }),
         }
+    }
+}
+
+fn credential_end(credentials: &TracelCredentials, client: &Client) -> Option<SystemTime> {
+    match credentials {
+        TracelCredentials::ApiKey(_) => client
+            .user()
+            .credential
+            .expires_at
+            .as_deref()
+            .and_then(|expires_at| chrono::DateTime::parse_from_rfc3339(expires_at).ok())
+            .map(SystemTime::from),
+        TracelCredentials::AppSession(app_session) => app_session
+            .stored()
+            .ok()
+            .flatten()
+            .map(|stored| stored.refresh_token_expires_at),
+        TracelCredentials::AccessToken(_) => None,
+    }
+}
+
+fn warn_when_ending_soon(credentials: &TracelCredentials, ends_at: Option<SystemTime>) {
+    let Some(left) = ends_at.and_then(|ends_at| ends_at.duration_since(SystemTime::now()).ok())
+    else {
+        return;
+    };
+    if left > CREDENTIAL_END_WARNING {
+        return;
+    }
+    let hours = left.as_secs() / 3600;
+    match credentials {
+        TracelCredentials::ApiKey(_) => tracing::warn!(
+            "The API key expires in {hours} h; a run that outlives it will stop. Create a new key for long runs."
+        ),
+        _ => tracing::warn!(
+            "Your `tracel login` sign-in ends in {hours} h; a run that outlives it will stop. Run `tracel login` again, or set TRACEL_API_KEY for long runs."
+        ),
     }
 }
 

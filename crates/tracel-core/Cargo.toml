@@ -27,7 +27,6 @@ url.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-directories = "6.0"
 toml = "1.1.2"
 crossbeam.workspace = true
 tracel-artifact.workspace = true
