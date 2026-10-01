@@ -2,7 +2,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use tracel_artifact::ReqwestTransferClient;
-use tracel_client::console::{Client, TracelCredentials};
+use tracel_client::{
+    ClientError,
+    console::{Client, TracelCredentials},
+};
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
 use tracel_inference::InferenceModule;
@@ -59,23 +62,18 @@ impl Console {
         self.inner.client.base_url()
     }
 
-    /// Returns the current user, or `None` when the session is absent or dead.
-    ///
-    /// A dead session is represented by the console as a successful `null` response and remains a
-    /// value rather than [`ConsoleError::SessionExpired`].
+    /// Returns the current user, or `None` when the console no longer accepts the credential.
     pub fn me(&self) -> Result<Option<User>, ConsoleError> {
-        self.inner
-            .client
-            .get_current_user()
-            .map(|user| {
-                user.map(|user| User {
-                    id: user._id,
-                    username: user.username,
-                    email: user.email,
-                    namespace: Namespace::user(user.namespace),
-                })
-            })
-            .map_err(Into::into)
+        match self.inner.client.get_current_user() {
+            Ok(user) => Ok(Some(User {
+                id: user._id,
+                username: user.username,
+                email: user.email,
+                namespace: Namespace::user(user.namespace),
+            })),
+            Err(ClientError::Unauthenticated) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Lists organizations available to the current session.
