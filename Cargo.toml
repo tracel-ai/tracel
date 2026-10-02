@@ -19,7 +19,7 @@ categories = ["development-tools"]
 
 [workspace.dependencies]
 # Temporarily pinned on a git rev.
-burn = { git = "https://github.com/tracel-ai/burn", rev = "213e39df9a2900d83df06332c5a991967b3427e3", default-features = false, features = [
+burn = { git = "https://github.com/tracel-ai/burn", rev = "1425106109b64fdd4a74f44eeddb36e43b9f0af6", default-features = false, features = [
     "train",
 ] }
 
