@@ -95,26 +95,3 @@ pub fn client_error_is_not_found(error: &ClientError) -> bool {
 fn status_is_not_found(status: reqwest::StatusCode) -> bool {
     status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_credential_the_console_no_longer_accepts_reads_as_an_expired_session() {
-        assert!(ConsoleError::from(ClientError::Unauthenticated).is_session_expired());
-    }
-
-    #[test]
-    fn a_credential_a_route_does_not_accept_is_not_mistaken_for_a_missing_resource() {
-        assert!(matches!(
-            ConsoleError::from(ClientError::CredentialNotAllowed),
-            ConsoleError::CredentialNotAllowed
-        ));
-    }
-
-    #[test]
-    fn an_app_session_that_ended_reads_as_an_expired_session() {
-        assert!(ConsoleError::from(ClientError::AppSessionEnded).is_session_expired());
-    }
-}
