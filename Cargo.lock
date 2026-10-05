@@ -2611,6 +2611,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5240,7 +5249,7 @@ dependencies = [
  "combine",
  "downcast-rs",
  "dyn-clone",
- "hashbrown 0.13.2",
+ "hashbrown 0.17.1",
  "hi_sparse_bitset",
  "indexmap 2.14.2",
  "inventory",
@@ -7298,10 +7307,11 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.19.1"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4edde33355430a53c2f533b890c5902479f2178f31c62e5122cbdd02ac5cbbd4"
+checksum = "16ab04b5ffd6422e4923e2e11c8fa157a1550dd25e03a768f84ed5d21b809ba5"
 dependencies = [
+ "directories",
  "reqwest 0.13.5",
  "rustls",
  "serde",
@@ -8950,7 +8960,3 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
-
-[[patch.unused]]
-name = "tracel-client"
-version = "0.20.0"
