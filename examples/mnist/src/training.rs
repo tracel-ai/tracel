@@ -123,7 +123,7 @@ pub fn run(
             renderer,
             dataset_test_plain.clone(),
             config.batch_size,
-        );
+        )?;
     }
 
     renderer.manual_close();
@@ -210,7 +210,7 @@ fn evaluate(
     renderer: Box<dyn MetricsRenderer>,
     dataset: impl Dataset<MnistItem> + 'static,
     batch_size: usize,
-) -> Box<dyn MetricsRenderer> {
+) -> Result<Box<dyn MetricsRenderer>, Box<dyn std::error::Error + Send + Sync>> {
     let batcher = MnistBatcher::default();
     let dataset_test = DatasetIdent::prepare(ident, dataset);
     let dataloader_test = DataLoaderBuilder::new(batcher)
@@ -223,7 +223,11 @@ fn evaluate(
         .metrics((AccuracyMetric::new(), LossMetric::new()))
         .build(model);
 
-    evaluator.eval(name, dataloader_test)
+    let result = evaluator.eval(name, dataloader_test);
+    match result.error {
+        Some(error) => Err(error.into()),
+        None => Ok(result.renderer),
+    }
 }
 
 enum DatasetIdent {
