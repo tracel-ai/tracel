@@ -1,12 +1,14 @@
 //! Discovering how to reach the console: environment, credentials, and which project.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
-use directories::{BaseDirs, ProjectDirs};
 use serde::Deserialize;
 use tracel_client::{
     ClientError,
-    console::{Env, TracelCredentials},
+    console::{
+        AppSession, Env, FileSessionStore, SessionStore, TracelCredentials, auth::DeviceAuthClient,
+    },
 };
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
@@ -14,9 +16,12 @@ const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
 const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
 const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 
+/// The client `tracel login` signs in as; renewing its session must name it too.
+const TRACEL_CLI_CLIENT_ID: &str = "tracel-cli";
+
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
-    #[error("No API key found: set {TRACEL_API_KEY} or run `tracel login`")]
+    #[error("No credentials found: set {TRACEL_API_KEY} or run `tracel login`")]
     NoCredentials,
     #[error("No namespace found: set {TRACEL_NAMESPACE} or add namespace to tracel.toml")]
     NoNamespace,
@@ -24,11 +29,6 @@ pub enum CloudError {
     NoProject,
     #[error(transparent)]
     Client(#[from] ClientError),
-}
-
-#[derive(Deserialize)]
-struct CliCredentials {
-    api_key: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -39,30 +39,24 @@ struct TracelTomlConfig {
     project: Option<String>,
 }
 
+/// `TRACEL_API_KEY` first, then the app session `tracel login` stored for this
+/// environment's server, which the client renews as the run goes.
 pub fn discover_credentials() -> Result<TracelCredentials, CloudError> {
-    if let Ok(creds) = TracelCredentials::from_env() {
-        return Ok(creds);
+    if let Ok(credentials) = TracelCredentials::from_env() {
+        return Ok(credentials);
     }
 
     let env = discover_env();
-
-    let config_dir = resolve_config_dir().ok_or(CloudError::NoCredentials)?;
-
-    let filename = match &env {
-        Env::Production => "credentials.json".to_string(),
-        Env::Staging(v) => format!("credentials-staging{v}.json"),
-        Env::Development => "credentials-dev.json".to_string(),
-    };
-
-    let path = config_dir.join(&filename);
-    if path.exists() {
-        let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
-        let creds: CliCredentials =
-            serde_json::from_str(&contents).map_err(|_| CloudError::NoCredentials)?;
-        return Ok(TracelCredentials::api_key(creds.api_key));
+    let store = FileSessionStore::for_server(&env.get_url()).map_err(ClientError::from)?;
+    if store.load().map_err(ClientError::from)?.is_none() {
+        return Err(CloudError::NoCredentials);
     }
 
-    Err(CloudError::NoCredentials)
+    let device_auth = DeviceAuthClient::new(env, TRACEL_CLI_CLIENT_ID);
+    Ok(TracelCredentials::app_session(AppSession::new(
+        Arc::new(store),
+        device_auth,
+    )))
 }
 
 pub fn discover_namespace_project() -> Result<(String, String), CloudError> {
@@ -111,10 +105,4 @@ fn read_tracel_toml() -> TracelTomlConfig {
         return TracelTomlConfig::default();
     };
     toml::from_str(&contents).unwrap_or_default()
-}
-
-fn resolve_config_dir() -> Option<PathBuf> {
-    ProjectDirs::from("", "", "tracel")
-        .map(|dirs| dirs.config_dir().to_path_buf())
-        .or_else(|| BaseDirs::new().map(|dirs| dirs.config_dir().join("tracel")))
 }

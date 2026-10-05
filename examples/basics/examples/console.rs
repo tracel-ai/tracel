@@ -42,9 +42,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn credentials() -> anyhow::Result<TracelCredentials> {
-    TracelCredentials::from_env().map_err(|_| {
-        anyhow::anyhow!("set TRACEL_API_KEY or TRACEL_SESSION_TOKEN to reach the console")
-    })
+    TracelCredentials::from_env()
+        .map_err(|_| anyhow::anyhow!("set TRACEL_API_KEY to reach the console"))
 }
 
 fn project() -> anyhow::Result<(String, String)> {
