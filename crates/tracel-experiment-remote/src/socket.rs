@@ -90,8 +90,6 @@ impl ExperimentThread {
         if let Err(e) = self.ws_client.send_keepalive_ping() {
             tracing::warn!(error = ?e, "WebSocket keepalive ping failed");
         }
-        // Also after a failure: the client has already waited and retried once, and the
-        // next attempt belongs to the next silence rather than the next 50 ms poll.
         self.last_frame_sent_at = Instant::now();
     }
 
