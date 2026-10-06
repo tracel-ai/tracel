@@ -64,17 +64,6 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891477e0c6a8957309ee5c45a6368af3ae14bb510732d2684ffa19af310920f9"
-dependencies = [
- "getrandom 0.2.17",
- "once_cell",
- "version_check",
-]
-
-[[package]]
-name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
@@ -1126,7 +1115,7 @@ name = "burn-std"
 version = "0.22.0-pre.4"
 source = "git+https://github.com/tracel-ai/burn?rev=e36bdbf84e8903d576cd2c10dddcfdc15ffd0098#e36bdbf84e8903d576cd2c10dddcfdc15ffd0098"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "bytemuck",
  "bytes",
  "cubecl-common",
@@ -3552,9 +3541,6 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
-dependencies = [
- "ahash 0.7.8",
-]
 
 [[package]]
 name = "hashbrown"
@@ -3562,7 +3548,7 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
 ]
 
 [[package]]
@@ -5294,7 +5280,7 @@ dependencies = [
  "combine",
  "downcast-rs",
  "dyn-clone",
- "hashbrown 0.12.3",
+ "hashbrown 0.17.1",
  "hi_sparse_bitset",
  "indexmap 2.14.2",
  "inventory",
@@ -7315,8 +7301,7 @@ dependencies = [
 [[package]]
 name = "tracel-client"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16ab04b5ffd6422e4923e2e11c8fa157a1550dd25e03a768f84ed5d21b809ba5"
+source = "git+https://github.com/tracel-ai/tracel-client?branch=fix%2Fwebsocket-keepalive-ping#e2b91a0fe67bf0e0aae76220090f318d48311aa7"
 dependencies = [
  "directories",
  "reqwest",
