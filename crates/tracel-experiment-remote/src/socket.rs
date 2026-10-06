@@ -1,6 +1,9 @@
 use crossbeam::channel::{Receiver, RecvTimeoutError, Sender};
 use std::num::NonZeroU64;
-use std::{thread::JoinHandle, time::Duration};
+use std::{
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 use tracel_client::{
     WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
@@ -17,6 +20,11 @@ pub enum ThreadError {
 
 const WEBSOCKET_CLOSE_ERROR: &str = "Failed to close WebSocket";
 
+/// Well inside the idle timeout of the proxies between a run and the server: a run can go
+/// minutes without a message (a kernel autotune, a cold compile), and a proxy that closes
+/// the connection meanwhile ends the run on the server.
+const LONGEST_SILENCE_BEFORE_A_KEEPALIVE_PING: Duration = Duration::from_secs(20);
+
 /// Sends are written in order, so an acked flush probe proves everything
 /// queued before it was written.
 pub enum SocketCommand {
@@ -31,6 +39,7 @@ struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<SocketCommand>,
     control: ExperimentRunControl,
+    last_frame_sent_at: Instant,
 }
 
 impl ExperimentThread {
@@ -43,6 +52,7 @@ impl ExperimentThread {
             ws_client,
             message_receiver,
             control,
+            last_frame_sent_at: Instant::now(),
         }
     }
 
@@ -68,7 +78,21 @@ impl ExperimentThread {
     ) -> Result<(), ThreadError> {
         self.ws_client
             .send(message)
-            .map_err(|e| ThreadError::WebSocket(e.to_string()))
+            .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
+        self.last_frame_sent_at = Instant::now();
+        Ok(())
+    }
+
+    fn send_keepalive_ping_after_a_long_silence(&mut self) {
+        if self.last_frame_sent_at.elapsed() < LONGEST_SILENCE_BEFORE_A_KEEPALIVE_PING {
+            return;
+        }
+        if let Err(e) = self.ws_client.send_keepalive_ping() {
+            tracing::warn!(error = ?e, "WebSocket keepalive ping failed");
+        }
+        // Also after a failure: the client has already waited and retried once, and the
+        // next attempt belongs to the next silence rather than the next 50 ms poll.
+        self.last_frame_sent_at = Instant::now();
     }
 
     fn process_message(&mut self, command: SocketCommand) -> Result<(), ThreadError> {
@@ -111,6 +135,8 @@ impl ExperimentThread {
                 Ok(None) => {}
                 Err(e) => tracing::error!(error = ?e, "WebSocket receive error"),
             }
+
+            self.send_keepalive_ping_after_a_long_silence();
 
             match self.message_receiver.recv_timeout(poll) {
                 Ok(message) => self.process_message(message)?,
