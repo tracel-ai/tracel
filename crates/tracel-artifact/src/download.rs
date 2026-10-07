@@ -312,14 +312,14 @@ fn validate_download(
     expected_size: Option<u64>,
     expected_checksum: Option<&str>,
 ) -> Result<(), DownloadError> {
-    if let Some(expected_size) = expected_size {
-        if total != expected_size {
-            return Err(DownloadError::SizeMismatch {
-                path: rel_path.to_string(),
-                expected: expected_size,
-                actual: total,
-            });
-        }
+    if let Some(expected_size) = expected_size
+        && total != expected_size
+    {
+        return Err(DownloadError::SizeMismatch {
+            path: rel_path.to_string(),
+            expected: expected_size,
+            actual: total,
+        });
     }
 
     if let Some(expected_checksum) = expected_checksum {

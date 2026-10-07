@@ -163,11 +163,10 @@ impl FsBundle {
 
     fn clear_temp_files(&self) {
         for file in &self.files {
-            let tmp = temp_path(&file.abs_path);
-            if let Ok(tmp) = tmp {
-                if tmp.exists() {
-                    let _ = fs::remove_file(tmp);
-                }
+            if let Ok(tmp) = temp_path(&file.abs_path)
+                && tmp.exists()
+            {
+                let _ = fs::remove_file(tmp);
             }
         }
     }
