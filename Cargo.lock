@@ -543,7 +543,6 @@ name = "basics"
 version = "0.10.0"
 dependencies = [
  "anyhow",
- "common",
  "eventsource-stream",
  "reqwest",
  "schemars 1.2.2",
@@ -1519,15 +1518,6 @@ checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "common"
-version = "0.10.0"
-dependencies = [
- "anyhow",
- "tracel",
- "url",
 ]
 
 [[package]]
@@ -4700,7 +4690,6 @@ dependencies = [
  "anyhow",
  "burn",
  "clap",
- "common",
  "ctrlc",
  "dotenvy",
  "log",
@@ -7269,16 +7258,18 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.10.0"
 dependencies = [
+ "tempfile",
+ "thiserror 2.0.21",
  "tracel-app",
  "tracel-artifact",
  "tracel-console",
- "tracel-core",
  "tracel-datasets",
  "tracel-experiment",
  "tracel-inference",
  "tracel-models",
  "tracel-runner",
  "tracel-station",
+ "url",
 ]
 
 [[package]]
@@ -7355,24 +7346,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracel-core"
-version = "0.10.0"
-dependencies = [
- "crossbeam",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tracel-artifact",
- "tracel-console",
- "tracel-datasets",
- "tracel-experiment",
- "tracel-inference",
- "tracel-models",
- "tracel-station",
- "url",
-]
-
-[[package]]
 name = "tracel-datasets"
 version = "0.10.0"
 dependencies = [
@@ -7389,6 +7362,7 @@ dependencies = [
  "burn",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracel-artifact",

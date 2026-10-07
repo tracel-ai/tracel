@@ -8,7 +8,7 @@ use tracel_artifact::TransferObserver;
 use tracel_artifact::upload::MultipartUploadSource;
 
 use crate::{
-    Model, ModelOps, ModelVersion, Models, ModelsError, VersionFile, VersionFileReader,
+    Model, ModelOps, ModelRegistry, ModelVersion, ModelsError, VersionFile, VersionFileReader,
     VersionFileSource, VersionId, VersionSpec, VersionState,
 };
 
@@ -295,8 +295,8 @@ fn model(name: &str) -> Model {
     }
 }
 
-pub fn models_with_sources(sources: Vec<SourceSpec>) -> Models {
-    Models::new(Arc::new(FakeOps::new(sources)))
+pub fn models_with_sources(sources: Vec<SourceSpec>) -> ModelRegistry {
+    ModelRegistry::new(Arc::new(FakeOps::new(sources)))
 }
 
 pub fn checksum(bytes: &[u8]) -> String {

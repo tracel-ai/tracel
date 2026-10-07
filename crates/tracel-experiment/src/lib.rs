@@ -22,8 +22,9 @@
 //!   (behind the `burn` feature).
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
-//! Backends are connected through the [`ExperimentProvider`] port. [`ExperimentModule`] and
+//! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] and
 //! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
+//! With the `local` feature, `local::LocalExperiments` records experiments on this machine.
 
 use std::fmt;
 use std::str::FromStr;
@@ -36,6 +37,8 @@ mod activity;
 mod cancellation;
 mod context;
 mod control;
+#[cfg(feature = "local")]
+pub mod local;
 mod log;
 mod panic_watch;
 mod provider;
@@ -58,7 +61,7 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;
-pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
+pub use provider::{ExperimentFn, ExperimentJob, ExperimentProvider, Experiments};
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -239,8 +242,8 @@ enum RunState {
 impl ExperimentRun {
     /// Create a run from backend-specific session and artifact reader implementations.
     ///
-    /// This is the low-level constructor used by the built-in local and remote backends. Most
-    /// callers should prefer [`Self::local`] or [`Self::remote`].
+    /// This is the low-level constructor an [`ExperimentProvider`] uses. Most callers receive a
+    /// run from an [`ExperimentJob`] instead.
     pub fn new<S, R>(
         id: impl Into<ExperimentId>,
         session: S,

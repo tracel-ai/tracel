@@ -9,20 +9,21 @@
 //! curl -X PUT localhost:8000/v1/jobs/<job_id>/cancel
 
 use basics::training::{self, TrainingConfig};
-use tracel::experiment::ExperimentRun;
+use tracel::Target;
 use tracel::runner::StationRunner;
 use tracel::runner::mapper::JsonInput;
 
 fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+    let target = Target::from_env()?;
+    let Target::Station { url } = &target else {
+        anyhow::bail!("set TRACEL_CONNECTION=station to serve jobs to a Tracel Station");
+    };
 
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
+    let train = target
+        .experiments()?
+        .create("toy-training", training::train);
 
-    StationRunner::new(common::station_url()?.as_str())
+    StationRunner::new(url.as_str())
         .name("basics-runner")
         .register(train, JsonInput::with_default(TrainingConfig::default()))
         .run()?;

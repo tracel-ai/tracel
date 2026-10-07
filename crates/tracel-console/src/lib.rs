@@ -8,7 +8,8 @@
 //!
 //! [`Console::from_env`] and [`ProjectHandle::from_env`] read the console, the credential and the
 //! project from `TRACEL_ENV`, `TRACEL_API_KEY`, `TRACEL_NAMESPACE` and `TRACEL_PROJECT`, falling
-//! back to the `tracel login` sign-in and to `tracel.toml`.
+//! back to the `tracel login` sign-in and to `tracel.toml`. [`env_from_environment`],
+//! [`CredentialSource::from_env`] and [`ProjectRef::from_env`] read each of the three on its own.
 
 mod console;
 mod datasets;
@@ -23,6 +24,7 @@ mod wire;
 
 pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};
+pub use env::{CredentialSource, ProjectRef, env_from_environment};
 pub use error::ConsoleError;
 pub use login::{DeviceApproval, DeviceLogin, refresh_session, sign_out};
 pub use tracel_client::console::auth::IssuedAppSession;

@@ -21,17 +21,17 @@ use crate::{
 
 /// Backend-independent model operations and verified transfer orchestration.
 #[derive(Clone)]
-pub struct Models {
+pub struct ModelRegistry {
     ops: Arc<dyn ModelOps>,
 }
 
-impl Models {
-    /// Creates a capability over backend primitives that are already scoped to their location.
+impl ModelRegistry {
+    /// Creates a registry over backend primitives that are already scoped to their location.
     pub fn new(ops: Arc<dyn ModelOps>) -> Self {
         Self { ops }
     }
 
-    /// Lists models in this capability's scope.
+    /// Lists models in this registry's scope.
     pub fn list(&self) -> Result<Vec<Model>, ModelsError> {
         self.ops.list_models()
     }
@@ -166,9 +166,11 @@ impl Models {
     }
 }
 
-impl fmt::Debug for Models {
+impl fmt::Debug for ModelRegistry {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("Models").finish_non_exhaustive()
+        formatter
+            .debug_struct("ModelRegistry")
+            .finish_non_exhaustive()
     }
 }
 
@@ -230,7 +232,7 @@ fn map_download_error(error: DownloadError) -> ModelsError {
     }
 }
 
-/// Measures every file a caller wants published, rejecting a listing the capability would
+/// Measures every file a caller wants published, rejecting a listing the registry would
 /// refuse to download.
 fn measured_files<S: BundleSource, O: TransferObserver>(
     source: &S,
@@ -424,7 +426,7 @@ mod tests {
     }
 
     fn download_into_temp<O: TransferObserver>(
-        models: &Models,
+        models: &ModelRegistry,
         observer: &mut O,
     ) -> (TempDir, PathBuf, Result<FsBundle, ModelsError>) {
         let home = TempDir::new().unwrap();
@@ -438,7 +440,7 @@ mod tests {
     fn publish_measures_the_bytes_it_sends() {
         let ops = FakeOps::new(Vec::new());
         let record = ops.publish_record();
-        let models = Models::new(Arc::new(ops));
+        let models = ModelRegistry::new(Arc::new(ops));
         let mut bundle = FsBundle::temp().unwrap();
         bundle
             .put_file("weights.bin", &mut &b"payload"[..])
@@ -464,7 +466,7 @@ mod tests {
     #[test]
     fn a_published_version_the_backend_does_not_report_ready_is_an_error() {
         let ops = FakeOps::new(Vec::new()).publishing_as(VersionState::Failed);
-        let models = Models::new(Arc::new(ops));
+        let models = ModelRegistry::new(Arc::new(ops));
         let mut bundle = FsBundle::temp().unwrap();
         bundle
             .put_file("weights.bin", &mut &b"payload"[..])
@@ -482,7 +484,7 @@ mod tests {
     fn a_cancelled_publish_sends_nothing() {
         let ops = FakeOps::new(Vec::new());
         let record = ops.publish_record();
-        let models = Models::new(Arc::new(ops));
+        let models = ModelRegistry::new(Arc::new(ops));
         let mut bundle = FsBundle::temp().unwrap();
         bundle
             .put_file("weights.bin", &mut &b"payload"[..])
@@ -507,7 +509,7 @@ mod tests {
     fn download_into_fetches_the_version_an_alias_points_at() {
         let ops = FakeOps::new(vec![SourceSpec::new("weights.bin", b"aliased")])
             .with_alias("production", "version-id");
-        let models = Models::new(Arc::new(ops));
+        let models = ModelRegistry::new(Arc::new(ops));
         let home = TempDir::new().unwrap();
         let directory = home.path().join("landed");
 
@@ -535,7 +537,8 @@ mod tests {
             unready.state = state;
             let source = SourceSpec::new("weights.bin", b"payload");
             let opens = Arc::clone(&source.opens);
-            let models = Models::new(Arc::new(FakeOps::new(vec![source]).with_version(unready)));
+            let models =
+                ModelRegistry::new(Arc::new(FakeOps::new(vec![source]).with_version(unready)));
             let home = TempDir::new().unwrap();
             let directory = home.path().join("landed");
 

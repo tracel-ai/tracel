@@ -9,15 +9,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! In a function an [`Experiments`](crate::Experiments) job runs, which receives the run:
+//!
+//! ```no_run
 //! use tracel_experiment::ExperimentRun;
 //! use tracel_experiment::integration::training::ExperimentTrainingExt;
 //!
-//! let experiment = ExperimentRun::local("./runs").unwrap();
-//!
-//! let _metrics = experiment.metric_logger();
-//! let _checkpoints = experiment.checkpointers();
-//! let _interrupter = experiment.interrupter();
+//! fn train(experiment: &ExperimentRun) {
+//!     let _metrics = experiment.metric_logger();
+//!     let _checkpoints = experiment.checkpointers();
+//!     let _interrupter = experiment.interrupter();
+//! }
 //! ```
 
 mod checkpoint;

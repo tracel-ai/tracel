@@ -5,13 +5,16 @@ Small runnable examples of the Tracel framework, using toy capabilities:
 - `WordTokenizer`, a streaming inference that splits a prompt into tokens.
 - a stand-in training loop that tracks activities, logs metrics, and handles cancellation.
 
-They run offline by default, so no credentials are needed. Each example gets its `Context` from
-the shared [`common`](../common) crate, which chooses the backend from `TRACEL_CONNECTION`:
+They run offline by default, recording under `./runs`, so no credentials are needed. Each example
+reads its target with `tracel::Target::from_env`, which chooses it from `TRACEL_CONNECTION`:
 
 ```sh
-cargo run -p basics --example train                          # offline (default)
-TRACEL_CONNECTION=cloud cargo run -p basics --example train  # ships to the console
+cargo run -p basics --example train    # offline (default)
+TRACEL_CONNECTION=console TRACEL_NAMESPACE=<owner> TRACEL_PROJECT=<project> \
+    cargo run -p basics --example train  # ships to the console
 ```
+
+`console` needs credentials: run `tracel login` or set `TRACEL_API_KEY` first.
 
 The `mnist` example shows the same experiment tracking driven from the Burn `train` integration.
 
@@ -24,6 +27,7 @@ The `mnist` example shows the same experiment tracking driven from the Burn `tra
 | `cli` | A CLI serving both jobs. |
 | `serve` | An HTTP server serving both jobs (SSE for inference, fire-and-forget for training). |
 | `infer-client` | Streaming HTTP client for `serve`. |
+| `console` | The signed-in user and the project's models, read from the console. |
 
 ## Run
 

@@ -8,12 +8,13 @@ use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
+use tracel::Target;
 use tracel::experiment::ExperimentRun;
 
 fn main() -> anyhow::Result<()> {
-    let module = common::context()?.experiment();
+    let experiments = Target::from_env()?.experiments()?;
 
-    module
+    experiments
         .create("mnist", |experiment: &ExperimentRun, config| {
             training::run(
                 experiment,

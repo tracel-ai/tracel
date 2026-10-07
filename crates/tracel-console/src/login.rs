@@ -8,7 +8,7 @@ use tracel_client::console::auth::{
     DeviceAuthClient, DeviceFlowError, DevicePollOutcome, IssuedAppSession,
 };
 
-use crate::ConsoleError;
+use crate::{ConsoleError, env_from_environment};
 
 /// A pending sign-in, and what to put in front of the user while it is pending.
 #[derive(Debug, Clone)]
@@ -30,7 +30,7 @@ pub struct DeviceLogin {
 impl DeviceLogin {
     /// Asks the console to start a sign-in.
     pub fn start(client_id: impl Into<String>) -> Result<Self, ConsoleError> {
-        let client = DeviceAuthClient::new(crate::env::console_env()?, client_id);
+        let client = DeviceAuthClient::new(env_from_environment()?, client_id);
         let started = client.start().map_err(login_failure)?;
 
         Ok(Self {
@@ -80,7 +80,7 @@ pub fn refresh_session(
     client_id: impl Into<String>,
     refresh_token: &RefreshToken,
 ) -> Result<IssuedAppSession, ConsoleError> {
-    DeviceAuthClient::new(crate::env::console_env()?, client_id)
+    DeviceAuthClient::new(env_from_environment()?, client_id)
         .refresh(refresh_token)
         .map_err(login_failure)
 }
@@ -90,7 +90,7 @@ pub fn refresh_session(
 /// The console answers the same whether or not the token was still live, so signing
 /// out twice is not an error.
 pub fn sign_out(client_id: impl Into<String>, token: &str) -> Result<(), ConsoleError> {
-    DeviceAuthClient::new(crate::env::console_env()?, client_id)
+    DeviceAuthClient::new(env_from_environment()?, client_id)
         .revoke(token)
         .map_err(login_failure)
 }
