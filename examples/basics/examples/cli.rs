@@ -1,6 +1,9 @@
-//! A CLI serving both jobs. Select one by name and pass its JSON input.
+//! A CLI serving both jobs. Select one by name and give its input as flags, built from the
+//! input's schema, or as JSON.
 //!
-//! cargo run -p basics --example cli -- wordtok '{"text":"hello streaming world"}'
+//! cargo run -p basics --example cli -- toy-training --help
+//! cargo run -p basics --example cli -- wordtok --text "hello streaming world"
+//! cargo run -p basics --example cli -- toy-training --epochs 2 --batches-per-epoch 4
 //! cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
 //!
 //! List the jobs and their inputs instead of running one:
@@ -32,6 +35,7 @@ fn main() -> anyhow::Result<ExitCode> {
         .with_description("Run a toy training loop");
 
     Ok(Cli::new()
+        .version(env!("CARGO_PKG_VERSION"))
         .register(infer, JsonMapper::<Prompt>::new().with_schema())
         .register(
             train,

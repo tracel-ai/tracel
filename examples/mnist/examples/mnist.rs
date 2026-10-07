@@ -2,6 +2,8 @@
 //! See src/training.rs for the wiring.
 //!
 //! cargo run -p mnist --example mnist
+//! cargo run -p mnist --example mnist -- mnist --help
+//! cargo run -p mnist --example mnist -- mnist --num-epochs 5 --optimizer.weight-decay 0.0001
 //! cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5}'
 #![recursion_limit = "256"]
 
@@ -29,6 +31,7 @@ fn main() -> anyhow::Result<ExitCode> {
         .with_description("Train an MNIST classifier");
 
     Ok(Cli::new()
+        .version(env!("CARGO_PKG_VERSION"))
         .register(
             train,
             JsonMapper::with_default(MnistTrainingConfig::small()),

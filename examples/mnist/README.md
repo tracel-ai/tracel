@@ -17,11 +17,15 @@ see [`basics`](../basics) for the framework without it.
 
 ```bash
 cargo run -p mnist --example mnist
+cargo run -p mnist --example mnist -- mnist --help  # lists the flags and their defaults
+cargo run -p mnist --example mnist -- mnist --num-epochs 5 --optimizer.weight-decay 0.0001
 cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5}'
 ```
 
-The example runs its `mnist` job with `tracel::app::cli::Cli`, so its input, one JSON document,
-is merged onto the small default configuration and recorded as the experiment's arguments.
+The example runs its `mnist` job with `tracel::app::cli::Cli`, so each field of
+`MnistTrainingConfig`, a Burn `Config`, is a flag typed by its default value, nested fields joined
+with dots. The flags, or one JSON document, are merged onto the small default configuration and
+recorded as the experiment's arguments.
 SIGTERM cancels the run: the interrupter stops training, and the run ends as cancelled.
 Launchers send SIGKILL after a 30-second grace period.
 
