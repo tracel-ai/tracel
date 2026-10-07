@@ -223,14 +223,13 @@ impl ExperimentArtifactClient {
         Ok(res.id)
     }
 
-    fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
-        let name = name.as_ref();
-        let artifact = self.fetch(name)?;
+    /// Downloads the files of the artifact `artifact_id` into a temporary bundle.
+    fn download(&self, artifact_id: &str) -> Result<FsBundle, ArtifactError> {
         let resp = self.scope.client()?.presign_artifact_download(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
-            &artifact.id.to_string(),
+            artifact_id,
         )?;
 
         let mut files = Vec::with_capacity(resp.files.len());
@@ -251,20 +250,33 @@ impl ExperimentArtifactClient {
         Ok(bundle)
     }
 
-    fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
-        let name = name.as_ref();
-        self.scope
-            .client()?
-            .list_artifacts_by_name(
-                &self.scope.owner,
-                &self.scope.project,
-                self.experiment_num,
-                name,
-            )?
-            .items
-            .into_iter()
-            .next()
-            .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
+    /// The artifact of the experiment named `name`.
+    fn fetch(&self, name: &str) -> Result<ArtifactResponse, ArtifactError> {
+        let listed = self.scope.client()?.list_artifacts_by_name(
+            &self.scope.owner,
+            &self.scope.project,
+            self.experiment_num,
+            name,
+        )?;
+        named(listed.items, name, |artifact| &artifact.name)
+    }
+}
+
+/// The one item of `items` whose name, which `name_of` gives, is `name`.
+///
+/// The console's name filter lists the artifacts whose names contain the name asked for, so
+/// asking for `model` can list `model-2` as well.
+fn named<T>(items: Vec<T>, name: &str, name_of: impl Fn(&T) -> &str) -> Result<T, ArtifactError> {
+    let mut matching = items.into_iter().filter(|item| name_of(item) == name);
+    let found = matching
+        .next()
+        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))?;
+    match matching.count() {
+        0 => Ok(found),
+        others => Err(ArtifactError::Ambiguous {
+            name: name.to_owned(),
+            count: others + 1,
+        }),
     }
 }
 
@@ -280,6 +292,8 @@ fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
 enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
+    #[error("Artifact name is ambiguous: {count} artifacts are named {name}")]
+    Ambiguous { name: String, count: usize },
     #[error(transparent)]
     Client(#[from] ClientError),
     #[error(transparent)]
@@ -319,14 +333,14 @@ impl ExperimentArtifactReader for ConsoleArtifactReader {
         })?;
 
         client
-            .download(name)
+            .download(&artifact.id)
             .map_err(|err| {
                 ExperimentReaderError::with_source("Failed to download experiment artifact", err)
             })
             .map(|bundle| {
                 LoadedArtifact::new(
                     ArtifactRef {
-                        id: artifact.id.to_string(),
+                        id: artifact.id,
                         name: name.to_string(),
                     },
                     bundle,
@@ -372,6 +386,44 @@ mod tests {
     use tracel_client::console::Env;
 
     use super::*;
+
+    /// The id of the artifact `named` picks among `(id, name)` pairs.
+    fn pick(
+        artifacts: &[(&'static str, &'static str)],
+        name: &str,
+    ) -> Result<&'static str, ArtifactError> {
+        named(artifacts.to_vec(), name, |(_, name)| name).map(|(id, _)| id)
+    }
+
+    #[test]
+    fn an_artifact_is_picked_by_its_exact_name() {
+        let listed = [("2", "model-2"), ("1", "model"), ("3", "model.bpk")];
+
+        assert_eq!(pick(&listed, "model").unwrap(), "1");
+        assert_eq!(pick(&listed, "model-2").unwrap(), "2");
+    }
+
+    #[test]
+    fn a_name_no_artifact_has_exactly_is_not_found() {
+        let error = pick(&[("2", "model-2")], "model").unwrap_err();
+
+        assert!(matches!(&error, ArtifactError::NotFound(name) if name == "model"));
+        assert!(matches!(
+            pick(&[], "model"),
+            Err(ArtifactError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_name_several_artifacts_have_is_ambiguous() {
+        let error = pick(&[("1", "model"), ("2", "model-2"), ("3", "model")], "model").unwrap_err();
+
+        assert!(matches!(&error, ArtifactError::Ambiguous { count: 2, .. }));
+        assert_eq!(
+            error.to_string(),
+            "Artifact name is ambiguous: 2 artifacts are named model"
+        );
+    }
 
     fn page(api_url: &str, owner: Namespace, project: &str, num: i32) -> Option<String> {
         experiment_page(&Url::parse(api_url).unwrap(), &owner, project, num).map(String::from)
