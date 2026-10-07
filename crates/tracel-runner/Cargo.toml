@@ -1,6 +1,6 @@
 [package]
 name = "tracel-runner"
-description = "Station runner front-end: serves registered jobs to a Tracel Station job queue"
+description = "Station runner: serves registered jobs to a Tracel Station job queue"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -12,11 +12,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+tracel-app.workspace = true
 tracel-experiment.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
-json-patch.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -25,4 +24,6 @@ uuid.workspace = true
 reqwest.workspace = true
 
 [dev-dependencies]
+tracel-experiment = { workspace = true, features = ["local"] }
+tracel-inference.workspace = true
 uuid = { workspace = true, features = ["v4"] }

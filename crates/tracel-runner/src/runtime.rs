@@ -1,12 +1,12 @@
 //! The runner loop: SSE reader, single-job executor, reconnect with backoff.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use tracel_app::{DiscardOutput, JobInput, JobRegistry};
 use uuid::Uuid;
 
 use crate::error::RunnerError;
@@ -14,12 +14,9 @@ use crate::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
 use crate::infrastructure::{ClientError, StationRunnerClient};
-use crate::job::RunnerJob;
-
-pub(crate) type JobTable = HashMap<String, Box<dyn RunnerJob>>;
 
 /// Reports job outcomes back to the station. Split out so the loop is testable with a fake.
-pub(crate) trait FinishSink: Send + Sync + 'static {
+pub trait FinishSink: Send + Sync + 'static {
     fn finish_job(&self, job_id: Uuid, finish: &FinishJob);
 }
 
@@ -43,13 +40,13 @@ type InFlight = Arc<(Mutex<usize>, Condvar)>;
 
 /// Executes dispatched jobs one at a time on a dedicated thread, so the event stream keeps being
 /// read (for liveness) while user code runs.
-pub(crate) struct Executor {
+pub struct Executor {
     sender: mpsc::Sender<Dispatch>,
     in_flight: InFlight,
 }
 
 impl Executor {
-    pub fn spawn(jobs: Arc<JobTable>, sink: Arc<dyn FinishSink>) -> Self {
+    pub fn spawn(jobs: Arc<JobRegistry>, sink: Arc<dyn FinishSink>) -> Self {
         let (sender, receiver) = mpsc::channel::<Dispatch>();
         let in_flight: InFlight = Arc::default();
 
@@ -103,7 +100,7 @@ fn finish_in_flight(in_flight: &InFlight) {
     finished.notify_all();
 }
 
-fn execute(jobs: &JobTable, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
+fn execute(jobs: &JobRegistry, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
     let Some(runner_job) = jobs.get(&job.job_name) else {
         // Unreachable under the station's strict policy; defend anyway.
         return (
@@ -112,14 +109,19 @@ fn execute(jobs: &JobTable, job: &DispatchedJob) -> (FinishStatus, Option<String
         );
     };
     tracing::info!(job_id = %job.id, job_name = %job.job_name, "Running job");
-    let result = catch_unwind(AssertUnwindSafe(|| runner_job.run(&job.input)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let prepared = runner_job
+            .prepare(JobInput::Document(job.input.clone()))
+            .map_err(|e| format!("invalid input: {e}"))?;
+        prepared.run(DiscardOutput).map_err(|e| e.to_string())
+    }));
     match result {
         Err(panic) => (
             FinishStatus::Failed,
             Some(format!("job panicked: {}", panic_message(panic.as_ref()))),
         ),
         Ok(Ok(())) => (FinishStatus::Completed, None),
-        Ok(Err(e)) => (FinishStatus::Failed, Some(e.to_string())),
+        Ok(Err(reason)) => (FinishStatus::Failed, Some(reason)),
     }
 }
 
@@ -133,7 +135,7 @@ fn panic_message(panic: &(dyn Any + Send)) -> &str {
     }
 }
 
-pub(crate) enum StreamOutcome {
+pub enum StreamOutcome {
     /// The stream ended before the `registered` event; nothing was served.
     NeverRegistered,
     /// The session registered and served until the stream ended.
@@ -142,7 +144,7 @@ pub(crate) enum StreamOutcome {
 
 /// Drive one session: expect the leading `registered` event, then route job dispatches to the
 /// executor until the stream ends.
-pub(crate) fn serve_stream(
+pub fn serve_stream(
     mut events: impl Iterator<Item = Result<RunnerEvent, ClientError>>,
     executor: &Executor,
 ) -> StreamOutcome {
@@ -203,7 +205,7 @@ impl Backoff {
 
 /// Serve sessions until a fatal registration rejection: (re)connect, serve until the stream drops,
 /// drain, back off, repeat. Transient connection failures are retried; a permanent rejection stops.
-pub(crate) fn serve_forever(
+pub fn serve_forever(
     client: StationRunnerClient,
     register: RegisterRunner,
     executor: Executor,
@@ -230,13 +232,9 @@ pub(crate) fn serve_forever(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use serde_json::Value;
+    use tracel_app::{BoxError, Job, JobDefinition, JobKind, PreparedJob};
 
     use super::*;
-    use crate::error::BoxError;
-    use crate::job::JobDefinition;
 
     #[allow(clippy::type_complexity)]
     type RecordedFinish = (Uuid, Uuid, FinishStatus, Option<String>);
@@ -257,45 +255,49 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
     enum FakeBehaviour {
         Succeed,
         Fail(&'static str),
         Panic(&'static str),
+        RejectInput(&'static str),
     }
 
     struct FakeJob {
-        name: &'static str,
+        definition: JobDefinition,
         behaviour: FakeBehaviour,
-        ran: Arc<AtomicBool>,
     }
 
     impl FakeJob {
-        fn new(name: &'static str, behaviour: FakeBehaviour) -> Self {
+        fn new(name: &str, behaviour: FakeBehaviour) -> Self {
             Self {
-                name,
+                definition: JobDefinition {
+                    name: name.to_string(),
+                    kind: JobKind::Experiment,
+                    description: None,
+                    input_schema: None,
+                    input_example: None,
+                },
                 behaviour,
-                ran: Arc::new(AtomicBool::new(false)),
             }
         }
     }
 
-    impl RunnerJob for FakeJob {
-        fn definition(&self) -> JobDefinition {
-            JobDefinition {
-                name: self.name.to_string(),
-                description: None,
-                input_schema: None,
-                input_example: None,
-            }
+    impl Job for FakeJob {
+        fn definition(&self) -> &JobDefinition {
+            &self.definition
         }
 
-        fn run(&self, _input: &Value) -> Result<(), BoxError> {
-            self.ran.store(true, Ordering::SeqCst);
-            match &self.behaviour {
-                FakeBehaviour::Succeed => Ok(()),
-                FakeBehaviour::Fail(reason) => Err((*reason).into()),
-                FakeBehaviour::Panic(message) => panic!("{message}"),
+        fn prepare(&self, _input: JobInput) -> Result<PreparedJob, BoxError> {
+            let behaviour = self.behaviour;
+            if let FakeBehaviour::RejectInput(reason) = behaviour {
+                return Err(reason.into());
             }
+            Ok(PreparedJob::new(move |_output| match behaviour {
+                FakeBehaviour::Fail(reason) => Err(reason.into()),
+                FakeBehaviour::Panic(message) => panic!("{message}"),
+                FakeBehaviour::Succeed | FakeBehaviour::RejectInput(_) => Ok(()),
+            }))
         }
     }
 
@@ -306,12 +308,12 @@ mod tests {
     }
 
     fn setup(jobs: Vec<FakeJob>) -> Setup {
-        let table: JobTable = jobs
-            .into_iter()
-            .map(|job| (job.name.to_string(), Box::new(job) as Box<dyn RunnerJob>))
-            .collect();
+        let mut registry = JobRegistry::new();
+        for job in jobs {
+            registry.add(Box::new(job));
+        }
         let sink = Arc::new(RecordingSink::default());
-        let executor = Executor::spawn(Arc::new(table), sink.clone());
+        let executor = Executor::spawn(Arc::new(registry), sink.clone());
         Setup {
             executor,
             sink,
@@ -375,6 +377,31 @@ mod tests {
         let finishes = sink.finishes.lock().unwrap();
         assert_eq!(finishes[0].2, FinishStatus::Failed);
         assert_eq!(finishes[0].3.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn given_input_the_job_rejects_then_failure_reported_as_invalid_input() {
+        let Setup {
+            executor,
+            sink,
+            runner_id,
+        } = setup(vec![FakeJob::new(
+            "train",
+            FakeBehaviour::RejectInput("missing field `epochs`"),
+        )]);
+
+        serve_stream(
+            events(runner_id, vec![RunnerEvent::Job(dispatched("train"))]),
+            &executor,
+        );
+        executor.wait_idle();
+
+        let finishes = sink.finishes.lock().unwrap();
+        assert_eq!(finishes[0].2, FinishStatus::Failed);
+        assert_eq!(
+            finishes[0].3.as_deref(),
+            Some("invalid input: missing field `epochs`")
+        );
     }
 
     #[test]

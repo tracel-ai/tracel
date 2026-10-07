@@ -7258,6 +7258,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.10.0"
 dependencies = [
+ "serde",
  "tempfile",
  "thiserror 2.0.21",
  "tracel-app",
@@ -7279,8 +7280,10 @@ dependencies = [
  "axum",
  "clap",
  "json-patch",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
@@ -7431,13 +7434,13 @@ dependencies = [
 name = "tracel-runner"
 version = "0.10.0"
 dependencies = [
- "json-patch",
  "reqwest",
- "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tracel-app",
  "tracel-experiment",
+ "tracel-inference",
  "tracing",
  "tracing-subscriber",
  "url",

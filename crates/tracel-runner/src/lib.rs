@@ -1,16 +1,16 @@
-//! Station runner front-end: serve registered jobs to a Tracel Station job queue.
+//! Station runner: serve registered jobs to a Tracel Station job queue.
 //!
-//! [`StationRunner`] registers capability jobs with a station and executes the jobs the station
+//! [`StationRunner`] registers experiment jobs with a station and executes the jobs the station
 //! dispatches — one at a time, with results reported back as job outcomes. Registration mirrors
-//! the CLI and HTTP server front-ends in `tracel-app`:
+//! the command-line and HTTP runners in `tracel-app`:
 //!
 //! ```ignore
+//! use tracel_app::mapper::JsonMapper;
 //! use tracel_runner::StationRunner;
-//! use tracel_runner::mapper::JsonInput;
 //!
 //! StationRunner::new("http://localhost:9000")
 //!     .name("vision-runner")
-//!     .register(train, JsonInput::with_default(TrainingConfig::default()))
+//!     .register(train, JsonMapper::with_default(TrainingConfig::default()))
 //!     .run()?;
 //! ```
 //!
@@ -22,17 +22,14 @@
 
 mod error;
 mod infrastructure;
-mod job;
-/// Input mappers that turn a dispatched JSON input into a typed config.
-pub mod mapper;
 mod runtime;
 
-pub use error::{BoxError, RunnerError};
-pub use job::{IntoRunnerJob, JobDefinition, RunnerJob};
+pub use error::RunnerError;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
+use tracel_app::{IntoJob, JobRegistry};
+use tracel_experiment::ExperimentJob;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use infrastructure::StationRunnerClient;
@@ -43,7 +40,7 @@ use runtime::Executor;
 pub struct StationRunner {
     url: String,
     name: Option<String>,
-    jobs: HashMap<String, Box<dyn RunnerJob>>,
+    jobs: JobRegistry,
 }
 
 impl StationRunner {
@@ -52,7 +49,7 @@ impl StationRunner {
         Self {
             url: url.into(),
             name: None,
-            jobs: HashMap::new(),
+            jobs: JobRegistry::new(),
         }
     }
 
@@ -63,39 +60,80 @@ impl StationRunner {
         self
     }
 
-    /// Register a capability job (an experiment), decoding its dispatched input with `mapper`.
+    /// Register an experiment job, decoding its dispatched input with `mapper`.
     ///
-    /// The same call works for any job type that implements [`IntoRunnerJob`].
-    pub fn register<T, M>(self, job: T, mapper: M) -> Self
+    /// Only experiments run on a station, since a station job reports an outcome rather than
+    /// outputs:
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    ///
+    /// use tracel_app::mapper::JsonMapper;
+    /// use tracel_experiment::local::LocalExperiments;
+    /// use tracel_experiment::{ExperimentRun, Experiments};
+    /// use tracel_runner::StationRunner;
+    ///
+    /// let train = Experiments::new(Arc::new(LocalExperiments::new("./runs")))
+    ///     .create("train", |_run: &ExperimentRun, epochs: u32| {
+    ///         println!("training for {epochs} epochs");
+    ///         Ok(())
+    ///     });
+    ///
+    /// StationRunner::new("http://localhost:8000")
+    ///     .register(train, JsonMapper::with_default(10u32))
+    ///     .run()?;
+    /// # Ok::<(), tracel_runner::RunnerError>(())
+    /// ```
+    ///
+    /// An inference job does not compile:
+    ///
+    /// ```compile_fail,E0308
+    /// use std::sync::Arc;
+    ///
+    /// use tracel_app::mapper::JsonMapper;
+    /// use tracel_inference::{
+    ///     InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
+    /// };
+    /// use tracel_runner::StationRunner;
+    ///
+    /// let echo = InferenceModule::new(Arc::new(NoopInferenceProvider::new())).create(
+    ///     "echo",
+    ///     |_session: &InferenceSession,
+    ///      input: InferenceInput<String>,
+    ///      output: InferenceOutput<String>| {
+    ///         for text in input {
+    ///             let _ = output.write(text);
+    ///         }
+    ///     },
+    /// );
+    ///
+    /// StationRunner::new("http://localhost:8000")
+    ///     .register(echo, JsonMapper::<String>::new())
+    ///     .run()?;
+    /// # Ok::<(), tracel_runner::RunnerError>(())
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When a job with the same name is already registered.
+    pub fn register<I, O, M>(mut self, job: ExperimentJob<I, O>, mapper: M) -> Self
     where
-        T: IntoRunnerJob<M>,
+        ExperimentJob<I, O>: IntoJob<M>,
     {
-        self.job_boxed(job.into_runner_job(mapper))
-    }
-
-    /// Register a bespoke [`RunnerJob`]. [`register`](Self::register) builds on this for
-    /// capability jobs; use this directly only for a custom job.
-    pub fn job<J>(self, job: J) -> Self
-    where
-        J: RunnerJob + 'static,
-    {
-        self.job_boxed(Box::new(job))
-    }
-
-    fn job_boxed(mut self, job: Box<dyn RunnerJob>) -> Self {
-        let name = job.definition().name;
-        if self.jobs.contains_key(&name) {
-            panic!("job '{name}' is already registered");
-        }
-        self.jobs.insert(name, job);
+        self.jobs.add(job.into_job(mapper));
         self
     }
 
-    /// Connect to the station, advertise the job manifest, and serve dispatched jobs forever.
+    /// Connect to the station, advertise the job definitions, and serve dispatched jobs forever.
     ///
     /// Returns only when the runner cannot start; once serving, connection losses are retried
-    /// with backoff and job failures are reported to the station as job outcomes.
+    /// with backoff and job failures are reported to the station as job outcomes. When
+    /// `TRACEL_DESCRIBE` names a path, writes the definitions file there instead and returns
+    /// without connecting.
     pub fn run(self) -> Result<(), RunnerError> {
+        if self.jobs.describe_from_env("station")? {
+            return Ok(());
+        }
         let url = url::Url::parse(&self.url).map_err(|source| RunnerError::InvalidUrl {
             url: self.url.clone(),
             source,
@@ -115,7 +153,7 @@ impl StationRunner {
 
         let register = RegisterRunner {
             name: self.name,
-            jobs: self.jobs.values().map(|job| job.definition()).collect(),
+            jobs: self.jobs.definitions().cloned().collect(),
         };
         let client = StationRunnerClient::new(url);
         let executor = Executor::spawn(Arc::new(self.jobs), Arc::new(client.clone()));
@@ -125,34 +163,39 @@ impl StationRunner {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use serde_json::Value;
+    use tracel_app::mapper::JsonMapper;
+    use tracel_experiment::error::ExperimentError;
+    use tracel_experiment::{ExperimentProvider, ExperimentRun, Experiments};
 
     use super::*;
 
-    struct FakeJob {
-        name: &'static str,
+    /// A provider for experiment jobs that are registered, never run.
+    struct NeverRuns;
+
+    impl ExperimentProvider for NeverRuns {
+        fn create_experiment(
+            &self,
+            name: String,
+            _attributes: HashMap<String, Value>,
+        ) -> Result<ExperimentRun, ExperimentError> {
+            panic!("experiment '{name}' was not expected to run")
+        }
     }
 
-    impl RunnerJob for FakeJob {
-        fn definition(&self) -> JobDefinition {
-            JobDefinition {
-                name: self.name.to_string(),
-                description: None,
-                input_schema: None,
-                input_example: None,
-            }
-        }
-
-        fn run(&self, _input: &Value) -> Result<(), crate::BoxError> {
-            Ok(())
-        }
+    fn runner_with(url: &str, names: &[&str]) -> StationRunner {
+        let experiments = Experiments::new(Arc::new(NeverRuns));
+        names.iter().fold(StationRunner::new(url), |runner, name| {
+            let train = experiments.create(name, |_run: &ExperimentRun, _epochs: u32| Ok(()));
+            runner.register(train, JsonMapper::with_default(10u32))
+        })
     }
 
     #[test]
     fn given_invalid_url_when_running_then_fails_to_start() {
-        let result = StationRunner::new("not a url")
-            .job(FakeJob { name: "train" })
-            .run();
+        let result = runner_with("not a url", &["train"]).run();
 
         assert!(matches!(result, Err(RunnerError::InvalidUrl { .. })));
     }
@@ -167,8 +210,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "already registered")]
     fn given_duplicate_job_name_when_registering_then_panics() {
-        StationRunner::new("http://localhost:9000")
-            .job(FakeJob { name: "train" })
-            .job(FakeJob { name: "train" });
+        runner_with("http://localhost:9000", &["train", "train"]);
     }
 }

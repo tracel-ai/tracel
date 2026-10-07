@@ -17,6 +17,9 @@ pub enum ExperimentErrorKind {
 
     /// Internal or backend-specific failure that does not fit another category.
     Internal,
+
+    /// The program is describing its jobs (`TRACEL_DESCRIBE` is set), so no experiment runs.
+    Describing,
 }
 
 /// Error returned by experiment operations.

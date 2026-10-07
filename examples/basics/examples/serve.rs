@@ -8,26 +8,34 @@
 
 use std::time::Duration;
 
-use basics::WordTokenizer;
 use basics::training::{self, TrainingConfig};
+use basics::{Prompt, WordTokenizer};
 use tracel::Target;
-use tracel::app::server::{JsonBody, Server};
+use tracel::app::mapper::JsonMapper;
+use tracel::app::server::Server;
 
 fn main() -> anyhow::Result<()> {
     let target = Target::from_env()?;
 
-    let infer = target.inference()?.create(
-        "wordtok",
-        WordTokenizer::with_delay(Duration::from_millis(120)),
-    );
+    let infer = target
+        .inference()?
+        .create(
+            "wordtok",
+            WordTokenizer::with_delay(Duration::from_millis(120)),
+        )
+        .with_description("Split a prompt into tokens");
     let train = target
         .experiments()?
-        .create("toy-training", training::train);
+        .create("toy-training", training::train)
+        .with_description("Run a toy training loop");
 
     Server::new()
         .port(3000)
-        .register(infer, JsonBody::new())
-        .register(train, JsonBody::with_default(TrainingConfig::default()))
+        .register(infer, JsonMapper::<Prompt>::new().with_schema())
+        .register(
+            train,
+            JsonMapper::with_default(TrainingConfig::default()).with_schema(),
+        )
         .run()?;
 
     Ok(())

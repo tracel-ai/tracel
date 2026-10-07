@@ -40,7 +40,7 @@ Wrap your training function into a job with `Experiments::create`, then register
 ```rust
 use tracel::Target;
 use tracel::app::cli::Cli;
-use tracel::app::cli::mapper::JsonMapper;
+use tracel::app::mapper::JsonMapper;
 use tracel::experiment::ExperimentRun;
 
 fn training(
@@ -59,7 +59,9 @@ fn training(
 
 fn main() -> anyhow::Result<()> {
     let experiments = Target::from_env()?.experiments()?;
-    let job = experiments.create("mnist", training);
+    let job = experiments
+        .create("mnist", training)
+        .with_description("Train the MNIST classifier");
 
     Cli::new()
         .register(job, JsonMapper::with_default(YourExperimentConfig::default()))
@@ -68,6 +70,9 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+The binary runs a job by name, with its input as one JSON document merged onto the default:
+`cargo run -- mnist '{"num_epochs": 5}'`. Left out, the input is the default.
 
 Swap `Cli` for `tracel::app::server::Server` (with the optional `server` feature) to dispatch the
 same job over HTTP instead of the command line. The [`cli`](examples/basics/examples/cli.rs) and
@@ -86,6 +91,35 @@ complete, runnable versions of both.
 
 Without a `Target`, build the services directly: `tracel::console::ProjectHandle::from_env()?.experiments()`
 for a console project, or `tracel::experiment::local::LocalExperiments` to record offline.
+
+#### Describing jobs
+
+With `TRACEL_DESCRIBE=<path>` set, `run()` writes the definitions of the binary's jobs to `<path>`
+and returns `Ok(())` without running a job or serving. `Cli` and `Server` both do this, writing the
+file to `<path>.tmp` first and renaming it, so it is never read half written:
+
+```json
+{
+  "protocol": 1,
+  "sdk_version": "0.10.0",
+  "runner": "cli",
+  "jobs": [
+    {
+      "name": "mnist",
+      "kind": "experiment",
+      "description": "Train the MNIST classifier",
+      "input_schema": null,
+      "input_example": { "num_epochs": 10, "optimizer": { "lr": 0.001 } }
+    }
+  ]
+}
+```
+
+`kind` is `experiment` or `inference`. `input_example` is the default given to
+`JsonMapper::with_default`. `input_schema` is the input type's JSON Schema when the mapper is built
+with `JsonMapper::with_schema`, which needs the `schema` feature and an input type that derives
+`schemars::JsonSchema`. While `TRACEL_DESCRIBE` is set, `ExperimentJob::run` returns an error
+without creating an experiment, so describing a binary never trains.
 
 ### 2. Integrate with your Learner
 
@@ -120,7 +154,7 @@ let result = SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_
 
 ### 3. Run your training
 
-Once integrated, run your training by running your binary (`cargo run`). It records metrics,
+Once integrated, run your training by running your binary (`cargo run -- mnist`). It records metrics,
 checkpoints, and logs under `./runs`; run it with `TRACEL_CONNECTION=console`, after `tracel login`,
 to track them on the console instead.
 
