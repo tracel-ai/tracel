@@ -25,13 +25,18 @@ use crate::{
 const EVENTS_FILE: &str = "events.jsonl";
 /// The file a run keeps its [`Status`] in.
 const STATUS_FILE: &str = "status.json";
+/// The `.gitignore` written in a runs directory this backend creates: everything in it stays out
+/// of git and of code packages.
+const RUNS_GITIGNORE: &str = "# Created by tracel: experiment runs recorded on this machine.\n*\n";
 
 /// Records experiments under a directory on this machine.
 ///
 /// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`. Each run
 /// keeps its status in `status.json`, written when the run starts and again when it ends, appends
 /// its events to `events.jsonl`, and saves its artifacts under `artifacts/`. Creating a
-/// `LocalExperiments` performs no I/O; the first run creates the directories.
+/// `LocalExperiments` performs no I/O; the first run creates the directories. When it creates
+/// `dir` itself, it writes a `.gitignore` there that ignores everything under it, so the records
+/// stay out of git and of code packages; a `dir` that already exists is left as it is.
 ///
 /// `status.json` names the experiment and numbers the run, says whether the run is `running`,
 /// `completed` or `failed`, when it started and ended, in RFC 3339 UTC to the second, and why it
@@ -99,6 +104,8 @@ impl ExperimentProvider for LocalExperiments {
         let internal = |message: &'static str| {
             move |error| ExperimentError::with_source(ExperimentErrorKind::Internal, message, error)
         };
+        create_runs_dir(&self.dir)
+            .map_err(internal("Failed to create local experiment directory"))?;
         let root = self.dir.join(&name);
         let root = root
             .canonicalize()
@@ -115,6 +122,19 @@ impl ExperimentProvider for LocalExperiments {
 
         let run = ExperimentRun::new(num.to_string(), session, reader, CancelToken::new());
         Ok(run.with_location(ExperimentLocation::Dir(run_root)))
+    }
+}
+
+/// Creates `dir`, the directory runs are recorded under, with a [`RUNS_GITIGNORE`] in it, unless
+/// it already exists.
+fn create_runs_dir(dir: &Path) -> io::Result<()> {
+    if let Some(parent) = dir.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::create_dir(dir) {
+        Ok(()) => fs::write(dir.join(".gitignore"), RUNS_GITIGNORE),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -678,6 +698,28 @@ mod tests {
         LocalExperiments::new(dir)
             .create_experiment(name.to_string(), HashMap::new())
             .unwrap()
+    }
+
+    #[test]
+    fn a_runs_directory_it_creates_ignores_everything_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let runs = dir.path().join("project/runs");
+
+        let _run = run(&runs, "mnist");
+
+        assert_eq!(
+            fs::read_to_string(runs.join(".gitignore")).unwrap(),
+            RUNS_GITIGNORE
+        );
+    }
+
+    #[test]
+    fn a_runs_directory_that_exists_is_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let _run = run(dir.path(), "mnist");
+
+        assert!(!dir.path().join(".gitignore").exists());
     }
 
     #[test]
