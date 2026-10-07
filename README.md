@@ -25,7 +25,7 @@ Add Tracel to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tracel = "0.6.0"
+tracel = "0.11.0"
 ```
 
 ## Quick Start
