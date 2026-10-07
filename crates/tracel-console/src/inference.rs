@@ -59,14 +59,11 @@ impl ConsoleInferenceProvider {
     }
 
     fn ensure_group_exists(&self, name: &str) -> Result<(), InferenceError> {
-        match self.scope.console.client.get_inference_group(
-            &self.scope.owner,
-            &self.scope.project,
-            name,
-        ) {
+        let client = self.scope.client().map_err(|err| client_error(name, err))?;
+        match client.get_inference_group(&self.scope.owner, &self.scope.project, name) {
             Ok(_) => Ok(()),
             Err(err) if err.is_not_found() => {
-                match self.scope.console.client.create_inference_group(
+                match client.create_inference_group(
                     &self.scope.owner,
                     &self.scope.project,
                     name.to_string(),
@@ -230,12 +227,10 @@ impl Batch {
             logs: std::mem::take(&mut self.logs),
         };
 
-        if let Err(err) = scope.console.client.ingest_inference_telemetry(
-            &scope.owner,
-            &scope.project,
-            group,
-            request,
-        ) {
+        let shipped = scope.client().and_then(|client| {
+            client.ingest_inference_telemetry(&scope.owner, &scope.project, group, request)
+        });
+        if let Err(err) = shipped {
             tracing::warn!(
                 error = %err,
                 group = %group,

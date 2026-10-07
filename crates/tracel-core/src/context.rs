@@ -6,7 +6,7 @@ use tracel_inference::InferenceModule;
 use tracel_models::Models;
 
 use crate::backend::Backend;
-use crate::connection::{Connection, ContextError};
+use crate::connection::{Connection, ContextError, backend};
 
 #[derive(Clone)]
 pub struct Context {
@@ -16,7 +16,7 @@ pub struct Context {
 impl Context {
     pub fn new(connection: Connection) -> Result<Self, ContextError> {
         Ok(Self {
-            backend: connection.into_backend()?,
+            backend: backend(connection)?,
         })
     }
 

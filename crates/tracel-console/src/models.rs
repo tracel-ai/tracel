@@ -6,6 +6,7 @@ use tracel_artifact::upload::{
 };
 use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
 use tracel_client::{
+    console::Client,
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
     },
@@ -31,6 +32,10 @@ pub struct ConsoleModelOps {
 }
 
 impl ConsoleModelOps {
+    fn client(&self) -> Result<&Client, ModelsError> {
+        self.scope.client().map_err(console_failure)
+    }
+
     fn route_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
         id.as_str()
             .parse()
@@ -44,18 +49,14 @@ impl ConsoleModelOps {
 impl ModelOps for ConsoleModelOps {
     fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
         let response = self
-            .scope
-            .console
-            .client
+            .client()?
             .list_models(&self.scope.owner, &self.scope.project)
             .map_err(console_failure)?;
         Ok(models_from_wire(response))
     }
 
     fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
-        self.scope
-            .console
-            .client
+        self.client()?
             .get_model(&self.scope.owner, &self.scope.project, name)
             .map(model_from_wire)
             .map_err(|error| map_model_error(error, name))
@@ -63,16 +64,14 @@ impl ModelOps for ConsoleModelOps {
 
     fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
         let response = self
-            .scope
-            .console
-            .client
+            .client()?
             .list_model_versions(&self.scope.owner, &self.scope.project, model)
             .map_err(|error| map_model_error(error, model))?;
         Ok(model_versions_from_wire(response))
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let client = &self.scope.console.client;
+        let client = self.client()?;
         let (owner, project) = (&self.scope.owner, &self.scope.project);
         let response = match &spec {
             VersionSpec::Exact(id) => {
@@ -98,21 +97,17 @@ impl ModelOps for ConsoleModelOps {
     ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
         let version = self.route_version(model, id)?;
         let response = self
-            .scope
-            .console
-            .client
+            .client()?
             .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
             .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id.clone())))?;
         Ok(file_sources_from_wire(
-            &self.scope.console.transfer_client,
+            self.scope.transfer_client(),
             response,
         ))
     }
 
     fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        self.scope
-            .console
-            .client
+        self.client()?
             .create_model(
                 &self.scope.owner,
                 &self.scope.project,
@@ -145,9 +140,7 @@ impl ModelOps for ConsoleModelOps {
             metadata: metadata.cloned(),
         };
         let planned = self
-            .scope
-            .console
-            .client
+            .client()?
             .request_model_version_upload(&self.scope.owner, &self.scope.project, model, request)
             .map_err(|error| map_model_error(error, model))?;
 
@@ -170,7 +163,7 @@ impl ModelOps for ConsoleModelOps {
             .collect::<Vec<_>>();
 
         upload_bundle_multipart_with_client_and_observer(
-            &self.scope.console.transfer_client,
+            self.scope.transfer_client(),
             &contents,
             &uploads,
             &mut observer,
@@ -178,9 +171,7 @@ impl ModelOps for ConsoleModelOps {
         .map_err(model_upload_failure)?;
 
         let version = VersionSpec::Exact(VersionId::new(planned.version.to_string()));
-        self.scope
-            .console
-            .client
+        self.client()?
             .complete_model_version_upload(
                 &self.scope.owner,
                 &self.scope.project,
@@ -189,9 +180,7 @@ impl ModelOps for ConsoleModelOps {
             )
             .map_err(|error| map_version_error(error, model, &version))?;
 
-        self.scope
-            .console
-            .client
+        self.client()?
             .get_model_version(
                 &self.scope.owner,
                 &self.scope.project,
