@@ -16,30 +16,34 @@
 //!
 //! ## Crate Layout
 //!
+//! [`Target`] says where a program records its experiments and reaches models, datasets and
+//! inference telemetry: offline under `./runs` by default, or a console project.
+//! [`Target::from_env`] reads it from `TRACEL_CONNECTION` and the variables that target needs.
+//!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
 //! - [`app`]: job registration, plus CLI and HTTP server front-ends to run those jobs.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
-//! - [`datasets`]: the dataset domain and the capability over it.
-//! - [`models`]: the model domain and the capability over it.
+//! - [`datasets`]: the dataset domain and its registry.
+//! - [`models`]: the model domain and its registry.
 //! - [`artifact`]: bundle and artifact utilities.
 //!
 //! ## Registering Routines
 //!
-//! Wrap a routine into a job with [`experiment::ExperimentModule::create`], then register it
+//! Wrap a routine into a job with [`experiment::Experiments::create`], then register it
 //! with a [`app::cli::Cli`] (to dispatch from the command line) or a `app::server::Server`
 //! (to dispatch over HTTP, requires the `server` feature):
 //!
 //! ```ignore
+//! use tracel::Target;
 //! use tracel::app::cli::Cli;
 //! use tracel::app::cli::mapper::JsonMapper;
 //! use tracel::experiment::ExperimentRun;
-//! use tracel::{Connection, Context};
 //!
 //! fn main() -> anyhow::Result<()> {
-//!     let module = Context::new(Connection::Cloud)?.experiment();
+//!     let experiments = Target::from_env()?.experiments()?;
 //!
-//!     let job = module.create("my_training_procedure", |session: &ExperimentRun, config| {
+//!     let job = experiments.create("my_training_procedure", |session: &ExperimentRun, config| {
 //!         // Your training code here
 //!         my_training_function(session, config)
 //!     });
@@ -54,13 +58,18 @@
 //!
 //! The job's name (`"my_training_procedure"` above) is what callers use to select it, whether
 //! from the CLI or from an HTTP request path.
+//!
+//! Without a [`Target`], build the services from an adapter directly:
+//! [`console::ProjectHandle::from_env`] for a console project, or
+//! [`experiment::local::LocalExperiments`] to record offline.
+
+mod target;
+
+pub use target::{Target, TargetError};
 
 /// Experiment tracking and management.
-pub mod experiment {
-    pub use tracel_core::experiment::*;
-    #[doc(inline)]
-    pub use tracel_experiment::*;
-}
+#[doc(inline)]
+pub use tracel_experiment as experiment;
 
 /// The Tracel console: its organizations, projects, and users.
 #[doc(inline)]
@@ -72,11 +81,11 @@ pub use tracel_console as console;
 #[doc(inline)]
 pub use tracel_station as station;
 
-/// The dataset domain the console or a Station serves, and the operations over it.
+/// The dataset domain the console or a Station serves, and its registry.
 #[doc(inline)]
 pub use tracel_datasets as datasets;
 
-/// The model domain the console or a Station serves, and the operations over it.
+/// The model domain the console or a Station serves, and its registry.
 #[doc(inline)]
 pub use tracel_models as models;
 
@@ -98,7 +107,3 @@ pub use tracel_app as app;
 #[cfg(feature = "runner")]
 #[doc(inline)]
 pub use tracel_runner as runner;
-
-pub use tracel_core::Connection;
-pub use tracel_core::Context;
-pub use tracel_core::ContextError;

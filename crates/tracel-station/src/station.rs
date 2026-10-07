@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::station::StationClient;
-use tracel_datasets::Datasets;
-use tracel_experiment::ExperimentModule;
-use tracel_models::Models;
+use tracel_datasets::DatasetRegistry;
+use tracel_experiment::Experiments;
+use tracel_models::ModelRegistry;
 use url::Url;
 
 /// A blocking client rooted at one Station URL.
@@ -30,23 +30,23 @@ impl Station {
         }
     }
 
-    /// Returns experiment operations scoped to this Station without performing I/O.
-    pub fn experiments(&self) -> ExperimentModule {
-        ExperimentModule::new(Arc::new(crate::experiment::StationExperimentProvider {
+    /// Returns experiments scoped to this Station without performing I/O.
+    pub fn experiments(&self) -> Experiments {
+        Experiments::new(Arc::new(crate::experiment::StationExperimentProvider {
             station: Arc::clone(&self.inner),
         }))
     }
 
     /// Returns dataset operations scoped to this Station without performing I/O.
-    pub fn datasets(&self) -> Datasets {
-        Datasets::new(Arc::new(crate::datasets::StationDatasetOps {
+    pub fn datasets(&self) -> DatasetRegistry {
+        DatasetRegistry::new(Arc::new(crate::datasets::StationDatasetOps {
             station: Arc::clone(&self.inner),
         }))
     }
 
     /// Returns model operations scoped to this Station without performing I/O.
-    pub fn models(&self) -> Models {
-        Models::new(Arc::new(crate::models::StationModelOps {
+    pub fn models(&self) -> ModelRegistry {
+        ModelRegistry::new(Arc::new(crate::models::StationModelOps {
             station: Arc::clone(&self.inner),
         }))
     }

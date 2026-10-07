@@ -5,21 +5,19 @@
 
 use basics::WordTokenizer;
 use basics::training::{self, TrainingConfig};
+use tracel::Target;
 use tracel::app::cli::Cli;
 use tracel::app::cli::mapper::JsonMapper;
-use tracel::experiment::ExperimentRun;
 
 fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+    let target = Target::from_env()?;
 
-    let infer = context
-        .inference()
+    let infer = target
+        .inference()?
         .create("wordtok", WordTokenizer::default());
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
+    let train = target
+        .experiments()?
+        .create("toy-training", training::train);
 
     Cli::new()
         .register(infer, JsonMapper::new())

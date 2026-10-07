@@ -30,13 +30,15 @@ where
     }
 }
 
+/// Entry point for building experiment jobs against a backend.
 #[derive(Clone)]
-pub struct ExperimentModule {
+pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
 }
 
-impl ExperimentModule {
-    // TODO: Add settings here (e.g., an ExperimentModule builder).
+impl Experiments {
+    // TODO: Add settings here (e.g., an Experiments builder).
+    /// Create experiments backed by the given provider.
     pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
         Self { provider }
     }
@@ -209,14 +211,15 @@ mod tests {
         }
     }
 
-    fn module(session: Arc<MockSession>) -> ExperimentModule {
-        ExperimentModule::new(Arc::new(MockProvider { session }))
+    fn experiments(session: Arc<MockSession>) -> Experiments {
+        Experiments::new(Arc::new(MockProvider { session }))
     }
 
     #[test]
     fn given_run_when_completing_then_finalizes_with_success() {
         let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
+        let job =
+            experiments(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
 
         job.run(()).unwrap();
 
@@ -227,7 +230,7 @@ mod tests {
     #[test]
     fn given_run_cancelled_through_control_when_running_then_complete_cancelled() {
         let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
+        let job = experiments(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
             // A remote backend would cancel the run's own control plane; simulate that here.
             run.cancel_token().cancel();
             Ok(())
@@ -242,7 +245,7 @@ mod tests {
     #[test]
     fn given_run_error_when_cancel_started_then_complete_cancelled() {
         let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
+        let job = experiments(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
             run.cancel_token().cancel();
             Err::<(), _>("interrupted".into())
         });
@@ -257,7 +260,7 @@ mod tests {
     #[test]
     fn given_run_error_when_running_then_complete_failed() {
         let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| {
+        let job = experiments(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| {
             Err::<(), _>("boom".into())
         });
 

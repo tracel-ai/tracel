@@ -2,7 +2,7 @@ use std::error::Error;
 
 use crate::{VersionId, VersionSpec};
 
-/// Errors surfaced by the dataset capability.
+/// Errors surfaced by the dataset registry.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DatasetsError {

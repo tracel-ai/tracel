@@ -7,13 +7,14 @@ use tracel_client::{
     ClientError,
     console::{Client, Env, TracelCredentials, user::response::UserResponseSchema},
 };
-use tracel_datasets::Datasets;
-use tracel_experiment::ExperimentModule;
+use tracel_datasets::DatasetRegistry;
+use tracel_experiment::Experiments;
 use tracel_inference::InferenceModule;
-use tracel_models::Models;
+use tracel_models::ModelRegistry;
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
+use crate::env::{CredentialSource, ProjectRef, env_from_environment};
 use crate::experiment::ConsoleExperimentProvider;
 use crate::inference::ConsoleInferenceProvider;
 use crate::models::ConsoleModelOps;
@@ -127,14 +128,15 @@ impl Console {
     /// Binds to the console `TRACEL_ENV` names, with the credential the environment provides,
     /// without performing network I/O.
     ///
-    /// `TRACEL_ENV` unset or empty names the production console. The credential is
-    /// `TRACEL_API_KEY`, or else the session `tracel login` stored for that console. Fails with
+    /// `TRACEL_ENV` unset or empty names the production console, as [`env_from_environment`]
+    /// reads it. The credential is `TRACEL_API_KEY`, or else the session `tracel login` stored for
+    /// that console, as [`CredentialSource::from_env`] chooses. Fails with
     /// [`ConsoleError::InvalidSetting`] when `TRACEL_ENV` names no console, and with
     /// [`ConsoleError::NoCredentials`] when there is no credential. The first request verifies
     /// the credential, as with [`connect`](Self::connect).
     pub fn from_env() -> Result<Self, ConsoleError> {
-        let env = crate::env::console_env()?;
-        let credentials = crate::env::credentials(&env)?;
+        let env = env_from_environment()?;
+        let credentials = CredentialSource::from_env().resolve(&env)?;
         Ok(Self::connect(env, credentials))
     }
 
@@ -268,8 +270,8 @@ pub struct ProjectHandle {
 }
 
 impl ProjectHandle {
-    /// Returns the project the environment names, on the console [`Console::from_env`] binds
-    /// to, without performing network I/O.
+    /// Returns the project [`ProjectRef::from_env`] names, on the console [`Console::from_env`]
+    /// binds to, without performing network I/O.
     ///
     /// The owner namespace is `TRACEL_NAMESPACE` and the project name `TRACEL_PROJECT`; either
     /// one unset is read from `namespace` or `project` in `tracel.toml` in the current
@@ -277,8 +279,8 @@ impl ProjectHandle {
     /// neither names it.
     pub fn from_env() -> Result<Self, ConsoleError> {
         let console = Console::from_env()?;
-        let (owner, project) = crate::env::project_location()?;
-        Ok(console.project(owner, project))
+        let project = ProjectRef::from_env()?;
+        Ok(console.project(project.namespace, project.name))
     }
 
     /// Returns the console this project is reached through.
@@ -309,22 +311,22 @@ impl ProjectHandle {
     }
 
     /// Returns dataset operations already scoped to this project without performing I/O.
-    pub fn datasets(&self) -> Datasets {
-        Datasets::new(Arc::new(ConsoleDatasetOps {
+    pub fn datasets(&self) -> DatasetRegistry {
+        DatasetRegistry::new(Arc::new(ConsoleDatasetOps {
             scope: Arc::clone(&self.scope),
         }))
     }
 
     /// Returns model operations already scoped to this project without performing I/O.
-    pub fn models(&self) -> Models {
-        Models::new(Arc::new(ConsoleModelOps {
+    pub fn models(&self) -> ModelRegistry {
+        ModelRegistry::new(Arc::new(ConsoleModelOps {
             scope: Arc::clone(&self.scope),
         }))
     }
 
-    /// Builds an experiment provider scoped to this project.
-    pub fn experiments(&self) -> ExperimentModule {
-        ExperimentModule::new(Arc::new(ConsoleExperimentProvider::new(Arc::clone(
+    /// Returns experiments scoped to this project without performing I/O.
+    pub fn experiments(&self) -> Experiments {
+        Experiments::new(Arc::new(ConsoleExperimentProvider::new(Arc::clone(
             &self.scope,
         ))))
     }

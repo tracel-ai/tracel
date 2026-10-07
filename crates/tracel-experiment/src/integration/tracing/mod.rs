@@ -62,16 +62,17 @@ pub trait ExperimentTracingExt {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use tracel_experiment::ExperimentRun;
-    /// use tracel_experiment::integration::tracing::{ExperimentTracingExt};
+    /// In a function an [`Experiments`](crate::Experiments) job runs, which receives the run:
     ///
-    /// # fn main() {
-    /// let experiment = ExperimentRun::local("/tmp/experiments").unwrap();
-    /// let span: tracing::Span = experiment.tracing_span();
-    /// let _guard = span.enter();
-    /// tracing::info!("this event is routed to the experiment");
-    /// # }
+    /// ```no_run
+    /// use tracel_experiment::ExperimentRun;
+    /// use tracel_experiment::integration::tracing::ExperimentTracingExt;
+    ///
+    /// fn train(experiment: &ExperimentRun) {
+    ///     let span: tracing::Span = experiment.tracing_span();
+    ///     let _guard = span.enter();
+    ///     tracing::info!("this event is routed to the experiment");
+    /// }
     /// ```
     #[must_use = "span must be entered to route events"]
     fn tracing_span(&self) -> tracing::Span;

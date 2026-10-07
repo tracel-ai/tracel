@@ -10,21 +10,19 @@ use std::time::Duration;
 
 use basics::WordTokenizer;
 use basics::training::{self, TrainingConfig};
+use tracel::Target;
 use tracel::app::server::{JsonBody, Server};
-use tracel::experiment::ExperimentRun;
 
 fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+    let target = Target::from_env()?;
 
-    let infer = context.inference().create(
+    let infer = target.inference()?.create(
         "wordtok",
         WordTokenizer::with_delay(Duration::from_millis(120)),
     );
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
+    let train = target
+        .experiments()?
+        .create("toy-training", training::train);
 
     Server::new()
         .port(3000)

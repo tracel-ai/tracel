@@ -40,15 +40,14 @@ Here's how to integrate Tracel into a Burn training workflow:
 
 ### 1. Register your training function
 
-Wrap your training function into a job with `ExperimentModule::create`, then register it with a
-`Cli` to run it from the command line:
+Wrap your training function into a job with `Experiments::create`, then register it with a
+`Cli` (to run it from the command line) or a `Server` (to dispatch it over HTTP):
 
 ```rust
+use tracel::Target;
 use tracel::app::cli::Cli;
 use tracel::app::cli::mapper::JsonMapper;
 use tracel::experiment::ExperimentRun;
-use tracel::experiment::integration::tracing::try_init_tracing_subscriber;
-use tracel::{Connection, Context};
 
 fn training(
     experiment: &ExperimentRun,
@@ -64,11 +63,8 @@ fn training(
 }
 
 fn main() -> anyhow::Result<()> {
-    // Forward `tracing` logs to the running experiment
-    let _ = try_init_tracing_subscriber();
-
-    let module = Context::new(Connection::Cloud)?.experiment();
-    let job = module.create("mnist", training);
+    let experiments = Target::from_env()?.experiments()?;
+    let job = experiments.create("mnist", training);
 
     Cli::new()
         .register(job, JsonMapper::with_default(YourExperimentConfig::default()))
@@ -78,64 +74,60 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`Connection::Cloud` reads your credentials from `tracel login` (or `TRACEL_API_KEY`) and the
-project to report to from a `tracel.toml` in the working directory (or `TRACEL_NAMESPACE` and
-`TRACEL_PROJECT`):
+Swap `Cli` for `tracel::app::server::Server` (with the optional `server` feature) to dispatch the
+same job over HTTP instead of the command line. The [`cli`](examples/basics/examples/cli.rs) and
+[`serve`](examples/basics/examples/serve.rs) examples in [`examples/basics`](examples/basics) are
+complete, runnable versions of both.
 
-```toml
-namespace = "your-namespace"
-project = "your-project"
-```
+`Target::from_env` records offline under `./runs` unless `TRACEL_CONNECTION` says otherwise:
 
-Use `Connection::Offline("./runs".into())` instead to record runs locally, without an account.
+| Variable | Value | Default |
+| --- | --- | --- |
+| `TRACEL_CONNECTION` | `offline` or `console` | `offline` |
+| `TRACEL_RUNS_DIR` | the directory offline runs are recorded under | `./runs` |
+| `TRACEL_ENV` | the console to reach | `Production` |
+| `TRACEL_API_KEY` | an API key or a job token | the stored `tracel login` session |
+| `TRACEL_NAMESPACE`, `TRACEL_PROJECT` | the console project | `namespace` and `project` in `tracel.toml` |
 
-To dispatch the same job over HTTP, register it with a `Server` (requires the `server` feature),
-which decodes request bodies with `JsonBody` and serves each job at `POST /{name}`:
-
-```rust
-use tracel::app::server::{JsonBody, Server};
-
-Server::new()
-    .port(3000)
-    .register(job, JsonBody::with_default(YourExperimentConfig::default()))
-    .run()?;
-```
-
-See [`examples/basics`](examples/basics) for complete, runnable `cli` and `serve` examples.
+Without a `Target`, build the services directly: `tracel::console::ProjectHandle::from_env()?.experiments()`
+for a console project, or `tracel::experiment::local::LocalExperiments` to record offline.
 
 ### 2. Integrate with your Learner
 
-To enable experiment tracking, attach the experiment to your `SupervisedTraining`:
+To track a Burn training run, enable the `burn` feature of `tracel` and wire the run into your
+`SupervisedTraining` with `ExperimentTrainingExt`:
 
 ```rust
 use burn::train::{Learner, SupervisedTraining, metric::{AccuracyMetric, LossMetric}};
-use tracel::experiment::integration::training::SupervisedTrainingExperimentExt;
+use tracel::experiment::integration::training::ExperimentTrainingExt;
+
+let (model_checkpointer, optimizer_checkpointer, scheduler_checkpointer) =
+    experiment.checkpointers();
 
 let result = SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_valid)
     .metrics((AccuracyMetric::new(), LossMetric::new()))
     .num_epochs(config.num_epochs)
     .summary()
-    // Experiment metric logging, progress tracking, and interruption handling
-    .with_experiment(experiment)
-    // Experiment model, optimizer, and scheduler checkpoints
-    .with_experiment_checkpoints(experiment)
-    .launch(Learner::new(model, config.optimizer.init(), learning_rate));
+    // Experiment metric logging
+    .with_metric_logger(experiment.metric_logger())
+    // Epoch and split progress as experiment activities
+    .with_progress_logger(experiment.training_progress_logger())
+    // Experiment checkpoint saving
+    .with_custom_checkpointers(model_checkpointer, optimizer_checkpointer, scheduler_checkpointer)
+    // Experiment interruption handling
+    .with_interrupter(experiment.interrupter())
+    .launch(Learner::new(model, optimizer, lr_scheduler));
 ```
 
-For finer control, such as resuming from a previous experiment's checkpoints with
-`checkpointers_from`, `ExperimentTrainingExt` builds each adapter separately (`metric_logger()`,
-`checkpointers()`, `training_progress_logger()`, `interrupter()`). See
-[`examples/mnist`](examples/mnist/src/training.rs) for a complete training run.
+`SupervisedTrainingExperimentExt` does the same in two calls:
+`.with_experiment(experiment).with_experiment_checkpoints(experiment)`. See
+[`examples/mnist/src/training.rs`](examples/mnist/src/training.rs) for the complete wiring.
 
 ### 3. Run your training
 
-Run your binary with the job's name, optionally followed by a JSON config merged over the default,
-to track metrics, checkpoints, and logs on the console:
-
-```bash
-cargo run -- mnist
-cargo run -- mnist '{"num_epochs": 5}'
-```
+Once integrated, run your training by running your binary (`cargo run`). It records metrics,
+checkpoints, and logs under `./runs`; run it with `TRACEL_CONNECTION=console`, after `tracel login`,
+to track them on the console instead.
 
 ## Requirements
 

@@ -10,12 +10,12 @@ use crate::{
 
 /// Backend-independent dataset reading.
 #[derive(Clone)]
-pub struct Datasets {
+pub struct DatasetRegistry {
     ops: Arc<dyn DatasetOps>,
 }
 
-impl Datasets {
-    /// Builds the capability over a backend's primitives.
+impl DatasetRegistry {
+    /// Builds the registry over a backend's primitives.
     pub fn new(ops: Arc<dyn DatasetOps>) -> Self {
         Self { ops }
     }
