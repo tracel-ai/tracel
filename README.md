@@ -202,9 +202,10 @@ With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` att
 it to the job that ran it.
 
 SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop: it cancels the
-experiment's cancel token, which stops a learner given `experiment.interrupter()`. The run ends as
-`completed` or `failed` by what the job's function returns, and the binary exits with code 130. A
-second signal ends the binary at once. Launchers send SIGKILL after a 30-second grace period.
+experiment's cancel token, which stops a learner given `experiment.interrupter()`, and the
+experiment logs a warning that a stop was requested. The run ends as `completed` or `failed` by
+what the job's function returns, and the binary exits with code 130. A second signal ends the
+binary at once. Launchers send SIGKILL after a 30-second grace period.
 
 ### 2. Integrate with your Learner
 

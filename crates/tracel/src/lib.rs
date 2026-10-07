@@ -173,10 +173,10 @@
 //! links it to the job that ran it.
 //!
 //! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop: it cancels the
-//! experiment's cancel token, which stops a Burn learner given its `interrupter()`. The run ends as
-//! `completed` or `failed` by what the job's function returns, and the program exits with code
-//! 130. A second signal ends the program at once. Launchers send SIGKILL after a 30-second grace
-//! period.
+//! experiment's cancel token, which stops a Burn learner given its `interrupter()`, and the
+//! experiment logs a warning that a stop was requested. The run ends as `completed` or `failed` by
+//! what the job's function returns, and the program exits with code 130. A second signal ends the
+//! program at once. Launchers send SIGKILL after a 30-second grace period.
 
 mod target;
 
