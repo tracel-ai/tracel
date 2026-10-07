@@ -104,7 +104,6 @@ pub mod training {
     }
 
     pub fn train(experiment: &ExperimentRun, config: TrainingConfig) -> Result<(), BoxError> {
-        experiment.log_args(&config)?;
         experiment.log_metric_definition(MetricSpec {
             name: "loss".to_string(),
             description: Some("training loss".to_string()),

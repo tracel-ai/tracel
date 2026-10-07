@@ -1,6 +1,6 @@
 //! A station runner serving the training job to a Tracel Station job queue.
 //!
-//! TRACEL_CONNECTION=station cargo run -p basics --example runner --features station
+//! TRACEL_TARGET=station cargo run -p basics --example runner --features station
 //!
 //! Then queue, watch, and cancel jobs through the station API:
 //! curl -X POST localhost:8000/v1/jobs -H 'content-type: application/json' \
@@ -16,7 +16,7 @@ use tracel::runner::StationRunner;
 fn main() -> anyhow::Result<()> {
     let target = Target::from_env()?;
     let Target::Station { url } = &target else {
-        anyhow::bail!("set TRACEL_CONNECTION=station to serve jobs to a Tracel Station");
+        anyhow::bail!("set TRACEL_TARGET=station to serve jobs to a Tracel Station");
     };
 
     let train = target

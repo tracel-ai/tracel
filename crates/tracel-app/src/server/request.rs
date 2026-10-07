@@ -15,6 +15,7 @@ use axum::{
 use serde_json::Value;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
 
 use crate::{BoxError, DiscardOutput, Job, JobInput};
@@ -49,7 +50,8 @@ pub async fn start_experiment(job: &dyn Job, body: Body) -> Response {
     };
 
     let name = job.definition().name.clone();
-    let handle = tokio::task::spawn_blocking(move || prepared.run(DiscardOutput));
+    let handle =
+        tokio::task::spawn_blocking(move || prepared.run(DiscardOutput, CancelToken::new()));
     tokio::spawn(async move {
         match handle.await {
             Ok(Ok(())) => {}
@@ -79,9 +81,10 @@ pub fn stream_inference(job: &dyn Job, body: Body) -> Response {
     // to start it is reported as an error event, like any other error.
     let run_events = events.clone();
     tokio::task::spawn_blocking(move || {
-        if let Err(e) = prepared.run(SseChannel {
+        let output = SseChannel {
             events: run_events.clone(),
-        }) {
+        };
+        if let Err(e) = prepared.run(output, CancelToken::new()) {
             let _ = run_events.blocking_send(Ok(error_event(e.to_string())));
         }
     });

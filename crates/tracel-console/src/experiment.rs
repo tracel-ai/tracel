@@ -21,12 +21,14 @@ use tracel_experiment::reader::{
     ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact,
 };
 use tracel_experiment::{
-    ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
+    ArtifactKind, CancelToken, ExperimentId, ExperimentLocation, ExperimentProvider, ExperimentRun,
     ExperimentRunControl,
 };
 use tracel_experiment_remote::{ArtifactUploadError, ArtifactUploader, RemoteExperimentSession};
+use url::Url;
 
 use crate::console::ProjectScope;
+use crate::{Namespace, NamespaceKind};
 
 /// Experiment provider backed by the console's experiment run protocol.
 pub struct ConsoleExperimentProvider {
@@ -89,10 +91,52 @@ fn create_run(
 
     let reader = ConsoleArtifactReader::new(Arc::clone(scope));
     let id = ExperimentId::from(format!("{experiment_num}"));
+    let run = ExperimentRun::new_with_control(id, session, reader, control);
 
-    Ok(ExperimentRun::new_with_control(
-        id, session, reader, control,
-    ))
+    Ok(match page_of(scope, experiment_num) {
+        Some(page) => run.with_location(ExperimentLocation::Url(page.into())),
+        None => run,
+    })
+}
+
+/// The console page of experiment `num` of the project `scope` names, when the project's owner
+/// can be read.
+fn page_of(scope: &ProjectScope, num: i32) -> Option<Url> {
+    let kind = match scope.owner_kind() {
+        Ok(kind) => kind,
+        Err(error) => {
+            tracing::warn!("Could not find the console page of experiment {num}: {error}");
+            return None;
+        }
+    };
+    let owner = Namespace {
+        name: scope.owner.clone(),
+        kind,
+    };
+    experiment_page(scope.console().base_url(), &owner, &scope.project, num)
+}
+
+/// The page of experiment `num` of `project`, owned by `owner`, on the console whose API is at
+/// `api_url`.
+///
+/// The console serves its API under `api/` of its web address, and an experiment's page at
+/// `users/<namespace>/projects/<project>/experiments/<num>` of it, or under `orgs/` for a project
+/// an organization owns. `None` when the API is not served under `api/`.
+fn experiment_page(api_url: &Url, owner: &Namespace, project: &str, num: i32) -> Option<Url> {
+    let mut page = Url::parse(api_url.as_str().strip_suffix("api/")?).ok()?;
+    let owners = match owner.kind {
+        NamespaceKind::User => "users",
+        NamespaceKind::Organization => "orgs",
+    };
+    page.path_segments_mut().ok()?.pop_if_empty().extend([
+        owners,
+        &owner.name,
+        "projects",
+        project,
+        "experiments",
+        &num.to_string(),
+    ]);
+    Some(page)
 }
 
 /// A scope for artifact operations within a specific experiment.
@@ -320,5 +364,71 @@ impl ArtifactUploader for ConsoleArtifactUploader {
                 message: format!("Failed to upload artifact '{name}'"),
                 source: Some(Box::new(e)),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracel_client::console::Env;
+
+    use super::*;
+
+    fn page(api_url: &str, owner: Namespace, project: &str, num: i32) -> Option<String> {
+        experiment_page(&Url::parse(api_url).unwrap(), &owner, project, num).map(String::from)
+    }
+
+    #[test]
+    fn a_user_project_experiment_is_under_users() {
+        assert_eq!(
+            page(
+                Env::Production.get_url().as_str(),
+                Namespace::user("alice"),
+                "mnist",
+                42
+            )
+            .as_deref(),
+            Some("https://console.tracel.ai/users/alice/projects/mnist/experiments/42")
+        );
+    }
+
+    #[test]
+    fn an_organization_project_experiment_is_under_orgs() {
+        assert_eq!(
+            page(
+                "https://console.example.com/api/",
+                Namespace::organization("tracel"),
+                "vision",
+                7
+            )
+            .as_deref(),
+            Some("https://console.example.com/orgs/tracel/projects/vision/experiments/7")
+        );
+    }
+
+    #[test]
+    fn names_are_escaped_as_path_segments() {
+        assert_eq!(
+            page(
+                "https://console.example.com/api/",
+                Namespace::user("a b"),
+                "x/y",
+                1
+            )
+            .as_deref(),
+            Some("https://console.example.com/users/a%20b/projects/x%2Fy/experiments/1")
+        );
+    }
+
+    #[test]
+    fn an_api_not_served_under_api_has_no_pages() {
+        assert_eq!(
+            page(
+                Env::Development.get_url().as_str(),
+                Namespace::user("alice"),
+                "mnist",
+                1
+            ),
+            None
+        );
     }
 }

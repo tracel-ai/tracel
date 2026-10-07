@@ -30,8 +30,8 @@ impl<I> Default for ClapMapper<I> {
 }
 
 impl<I: Parser> Mapper<I> for ClapMapper<I> {
-    fn map(&self, input: &Value) -> Result<I, BoxError> {
-        let arguments = match input {
+    fn decode(&self, input: Value) -> Result<I, BoxError> {
+        let arguments = match &input {
             Value::Null => "",
             Value::String(arguments) => arguments,
             other => {
@@ -62,19 +62,16 @@ mod tests {
     fn a_json_string_parses_as_arguments() {
         let mapper = ClapMapper::<Args>::new();
 
-        assert_eq!(
-            mapper.map(&json!("--epochs 3")).unwrap(),
-            Args { epochs: 3 }
-        );
-        assert_eq!(mapper.map(&Value::Null).unwrap(), Args { epochs: 1 });
+        assert_eq!(mapper.map(json!("--epochs 3")).unwrap(), Args { epochs: 3 });
+        assert_eq!(mapper.map(Value::Null).unwrap(), Args { epochs: 1 });
     }
 
     #[test]
     fn an_input_that_is_not_a_string_does_not_decode() {
         let mapper = ClapMapper::<Args>::new();
 
-        assert!(mapper.map(&json!({"epochs": 3})).is_err());
-        assert!(mapper.map(&json!("--unknown")).is_err());
+        assert!(mapper.map(json!({"epochs": 3})).is_err());
+        assert!(mapper.map(json!("--unknown")).is_err());
         assert_eq!(mapper.example(), None);
         assert_eq!(mapper.schema(), None);
     }

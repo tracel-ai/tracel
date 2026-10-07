@@ -18,7 +18,7 @@
 //!
 //! [`Target`] says where a program records its experiments and reaches models, datasets and
 //! inference telemetry: offline under `./runs` by default, or a console project.
-//! [`Target::from_env`] reads it from `TRACEL_CONNECTION` and the variables that target needs.
+//! [`Target::from_env`] reads it from `TRACEL_TARGET` and the variables that target needs.
 //!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
@@ -35,6 +35,8 @@
 //! it over HTTP (requires the `server` feature). A mapper decodes the job's JSON input:
 //!
 //! ```no_run
+//! use std::process::ExitCode;
+//!
 //! use serde::{Deserialize, Serialize};
 //! use tracel::Target;
 //! use tracel::app::cli::Cli;
@@ -50,27 +52,27 @@
 //!     experiment: &ExperimentRun,
 //!     config: TrainingConfig,
 //! ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//!     experiment.log_args(&config)?;
 //!     // Your training code here
 //!     Ok(())
 //! }
 //!
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
 //!     let train = Target::from_env()?
 //!         .experiments()?
 //!         .create("train", train)
 //!         .with_description("Train the model");
 //!
-//!     Cli::new()
+//!     Ok(Cli::new()
 //!         .register(train, JsonMapper::with_default(TrainingConfig::default()))
-//!         .run()?;
-//!     Ok(())
+//!         .run())
 //! }
 //! ```
 //!
 //! Run it as `<binary> train '{"epochs": 5}'`: the job's name selects it, and its input, one JSON
 //! document, is merged onto the default. Left out, the job runs with the default. Over HTTP, the
-//! same input is the body of `POST /train`.
+//! same input is the body of `POST /train`. The experiment records the merged input as its
+//! arguments, which the console lists as the experiment's config; `ExperimentJob::run` records
+//! the input it is given.
 //!
 //! Without a [`Target`], build the services from an adapter directly:
 //! [`console::ProjectHandle::from_env`] for a console project, or
@@ -86,6 +88,49 @@
 //! `ExperimentJob::run` returns an
 //! [`ExperimentErrorKind::Describing`](experiment::error::ExperimentErrorKind::Describing) error
 //! without creating an experiment, so describing a program never trains.
+//!
+//! ## Launching Jobs
+//!
+//! A program that runs its jobs with [`app::cli::Cli`] can be launched by another program, such
+//! as the `tracel` CLI. [`Cli::run`](app::cli::Cli::run) returns the exit code `main` returns:
+//!
+//! | Exit code | Meaning |
+//! | --- | --- |
+//! | 0 | The job completed, or the definitions file was written |
+//! | 1 | The job failed |
+//! | 2 | No job or an unknown job is named, or the input is not JSON or does not decode; stderr lists the job names |
+//! | 130 | The job was cancelled |
+//!
+//! With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a
+//! [`RunReport`](experiment::RunReport) to `<path>` when it creates its experiment, and again when
+//! the run ends, each time to `<path>.tmp` first, renamed to `<path>`. Without it, nothing is
+//! written:
+//!
+//! ```json
+//! {
+//!   "protocol": 1,
+//!   "job": "train",
+//!   "experiment": { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" },
+//!   "status": "completed",
+//!   "started_at": "2026-10-06T14:02:11Z",
+//!   "finished_at": "2026-10-06T14:31:40Z",
+//!   "error": null
+//! }
+//! ```
+//!
+//! `status` is `running`, `completed`, `failed` or `cancelled`, and `error` says why a run
+//! failed. `url` is the experiment's page on the console; offline it is `null`, and `dir` gives
+//! the run's directory instead, where `status.json` holds the same report and `events.jsonl` the
+//! run's events, one JSON object per line, as
+//! [`LocalExperiments`](experiment::local::LocalExperiments) describes.
+//!
+//! With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which
+//! links it to the job that ran it.
+//!
+//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, cancels the running job: it cancels the
+//! experiment's cancel token, which stops a Burn learner given its `interrupter()`, and once the
+//! job's function returns, the run ends as `cancelled` and the program exits with code 130. A
+//! second signal ends the program at once. Launchers send SIGKILL after a 30-second grace period.
 
 mod target;
 

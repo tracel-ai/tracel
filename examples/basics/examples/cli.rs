@@ -6,6 +6,12 @@
 //! List the jobs and their inputs instead of running one:
 //!
 //! TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli
+//!
+//! Write the run report of the experiment the job creates:
+//!
+//! TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training
+
+use std::process::ExitCode;
 
 use basics::training::{self, TrainingConfig};
 use basics::{Prompt, WordTokenizer};
@@ -13,7 +19,7 @@ use tracel::Target;
 use tracel::app::cli::Cli;
 use tracel::app::mapper::JsonMapper;
 
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<ExitCode> {
     let target = Target::from_env()?;
 
     let infer = target
@@ -25,13 +31,11 @@ fn main() -> anyhow::Result<()> {
         .create("toy-training", training::train)
         .with_description("Run a toy training loop");
 
-    Cli::new()
+    Ok(Cli::new()
         .register(infer, JsonMapper::<Prompt>::new().with_schema())
         .register(
             train,
             JsonMapper::with_default(TrainingConfig::default()).with_schema(),
         )
-        .run()?;
-
-    Ok(())
+        .run())
 }

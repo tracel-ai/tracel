@@ -92,12 +92,36 @@ pub struct ProjectScope {
     console: Console,
     pub owner: String,
     pub project: String,
+    /// The kind of namespace that owns the project, once read from the console.
+    owner_kind: OnceLock<NamespaceKind>,
 }
 
 impl ProjectScope {
     /// Returns the console client, verifying the credential on the first request.
     pub fn client(&self) -> Result<&Client, ClientError> {
         self.console.inner.client()
+    }
+
+    /// Returns the console this project is reached through.
+    pub fn console(&self) -> &Console {
+        &self.console
+    }
+
+    /// Fetches the project's details.
+    pub fn fetch(&self) -> Result<Project, ConsoleError> {
+        let project = self.client()?.get_project(&self.owner, &self.project)?;
+        let project = Project::try_from(project)?;
+        let _ = self.owner_kind.set(project.namespace.kind);
+        Ok(project)
+    }
+
+    /// Returns the kind of namespace that owns the project, fetching the project on the first
+    /// call.
+    pub fn owner_kind(&self) -> Result<NamespaceKind, ConsoleError> {
+        match self.owner_kind.get() {
+            Some(kind) => Ok(*kind),
+            None => self.fetch().map(|project| project.namespace.kind),
+        }
     }
 
     /// Returns the client that moves files to and from presigned URLs.
@@ -212,6 +236,7 @@ impl Console {
                 console: self.clone(),
                 owner: owner.into(),
                 project: project.into(),
+                owner_kind: OnceLock::new(),
             }),
         }
     }
@@ -285,7 +310,7 @@ impl ProjectHandle {
 
     /// Returns the console this project is reached through.
     pub fn console(&self) -> &Console {
-        &self.scope.console
+        self.scope.console()
     }
 
     /// Returns the project's owner namespace.
@@ -303,11 +328,7 @@ impl ProjectHandle {
     /// Private and nonexistent projects both return [`ConsoleError::NotFound`] because the
     /// console intentionally does not reveal which case applies.
     pub fn get(&self) -> Result<Project, ConsoleError> {
-        self.scope
-            .client()?
-            .get_project(&self.scope.owner, &self.scope.project)
-            .map_err(ConsoleError::from)
-            .and_then(Project::try_from)
+        self.scope.fetch()
     }
 
     /// Returns dataset operations already scoped to this project without performing I/O.

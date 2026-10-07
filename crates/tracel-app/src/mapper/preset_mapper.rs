@@ -43,7 +43,7 @@ impl<I> Mapper<I> for PresetMapper<I>
 where
     I: Clone + Send + Sync,
 {
-    fn map(&self, input: &Value) -> Result<I, BoxError> {
+    fn decode(&self, input: Value) -> Result<I, BoxError> {
         let Some(name) = input.as_str() else {
             return Err(format!(
                 "expected a JSON string naming a preset, one of: {}",
@@ -68,15 +68,15 @@ mod tests {
     fn a_json_string_selects_a_preset() {
         let mapper = PresetMapper::new().preset("small", 1).preset("large", 8);
 
-        assert_eq!(mapper.map(&json!("large")).unwrap(), 8);
+        assert_eq!(mapper.map(json!("large")).unwrap(), 8);
     }
 
     #[test]
     fn an_unknown_or_missing_preset_lists_the_available_ones() {
         let mapper = PresetMapper::new().preset("small", 1).preset("large", 8);
 
-        let unknown = mapper.map(&json!("medium")).unwrap_err().to_string();
-        let missing = mapper.map(&Value::Null).unwrap_err().to_string();
+        let unknown = mapper.map(json!("medium")).unwrap_err().to_string();
+        let missing = mapper.map(Value::Null).unwrap_err().to_string();
 
         assert!(unknown.contains("large, small"), "{unknown}");
         assert!(missing.contains("large, small"), "{missing}");

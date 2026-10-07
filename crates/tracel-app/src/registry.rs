@@ -65,7 +65,7 @@ mod tests {
         }
 
         fn prepare(&self, _input: JobInput) -> Result<PreparedJob, BoxError> {
-            Ok(PreparedJob::new(|_output| Ok(())))
+            Ok(PreparedJob::new(|_output, _cancel_token| Ok(())))
         }
     }
 

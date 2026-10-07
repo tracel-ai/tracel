@@ -25,8 +25,12 @@
 //! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] and
 //! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
 //! With the `local` feature, `local::LocalExperiments` records experiments on this machine.
+//!
+//! When `TRACEL_REPORT_FILE` names a path, [`ExperimentJob::run`] writes a [`RunReport`] there
+//! when the experiment is created and again when the run ends.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 
@@ -43,6 +47,7 @@ mod log;
 mod panic_watch;
 mod provider;
 pub mod reader;
+mod report;
 pub mod session;
 #[cfg(test)]
 mod test_support;
@@ -62,11 +67,13 @@ pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentProvider, Experiments};
+pub use report::{ReportedExperiment, RunReport, RunStatus};
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
+use crate::report::ReportFile;
 use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 
 /// Opaque identifier for an experiment run.
@@ -130,6 +137,15 @@ impl From<u32> for ExperimentId {
     }
 }
 
+/// Where an experiment run can be looked at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExperimentLocation {
+    /// The experiment's page on the console.
+    Url(String),
+    /// The directory the run is recorded in on this machine.
+    Dir(PathBuf),
+}
+
 /// Artifact category associated with an experiment run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
@@ -182,6 +198,8 @@ struct ExperimentMetadata {
 pub struct ExperimentRun {
     inner: Arc<RunInner>,
     handle: ExperimentRunHandle,
+    location: Option<ExperimentLocation>,
+    report: Option<ReportFile>,
     _tracing_registration: TracingRegistration,
 }
 
@@ -295,8 +313,23 @@ impl ExperimentRun {
         Self {
             inner,
             handle,
+            location: None,
+            report: None,
             _tracing_registration: tracing_registration,
         }
+    }
+
+    /// Records where the run can be looked at, such as its page on the console.
+    ///
+    /// A provider sets it when it creates the run; the run report gives it.
+    pub fn with_location(mut self, location: ExperimentLocation) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    /// Where the run can be looked at, when its provider says.
+    pub fn location(&self) -> Option<&ExperimentLocation> {
+        self.location.as_ref()
     }
 
     /// Stream every panic on any thread into this run's log until the guard
@@ -329,15 +362,14 @@ impl ExperimentRun {
     /// If the run is dropped without calling [`Self::finish`] or [`Self::fail`], it is finalized
     /// as successful by default. Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn finish(self) -> Result<(), ExperimentError> {
-        self.inner.finish_once(ExperimentCompletion::Success)
+        self.complete(ExperimentCompletion::Success)
     }
 
     /// Mark the run as failed and finalize the backend session.
     ///
     /// Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
-        self.inner
-            .finish_once(ExperimentCompletion::Failed(reason.into()))
+        self.complete(ExperimentCompletion::Failed(reason.into()))
     }
 
     /// Borrow the identifier for the underlying run.
@@ -347,7 +379,9 @@ impl ExperimentRun {
 
     /// Log the serialized input arguments for the run.
     ///
-    /// Fails only if `args` cannot be serialized.
+    /// An [`ExperimentJob`] records the input it runs with as the run's arguments when the run
+    /// starts, so this is only needed to record different ones. Fails only if `args` cannot be
+    /// serialized.
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|error| {
             ExperimentError::with_source(
@@ -357,8 +391,13 @@ impl ExperimentRun {
             )
         })?;
 
-        self.handle.emit(Event::Args(value));
+        self.record_args(value);
         Ok(())
+    }
+
+    /// Records `args`, the run's input as JSON, as its arguments.
+    fn record_args(&self, args: serde_json::Value) {
+        self.handle.emit(Event::Args(args));
     }
 
     /// Log a `trace`-level message.
@@ -461,6 +500,48 @@ impl ExperimentRun {
     /// objects that should not own run finalization.
     pub fn handle(&self) -> ExperimentRunHandle {
         self.handle.clone()
+    }
+
+    /// Writes the run report of a run of `job` to `path` now, and again when the run ends.
+    fn report_to(&mut self, job: &str, path: PathBuf) -> Result<(), ExperimentError> {
+        let (url, dir) = match &self.location {
+            Some(ExperimentLocation::Url(url)) => (Some(url.clone()), None),
+            Some(ExperimentLocation::Dir(dir)) => (None, Some(dir.clone())),
+            None => (None, None),
+        };
+        let experiment = ReportedExperiment {
+            num: self.id().parse(),
+            url,
+            dir,
+        };
+        let report = ReportFile::start(path.clone(), job, experiment).map_err(|error| {
+            ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                format!(
+                    "Failed to write the run report to {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        self.report = Some(report);
+        Ok(())
+    }
+
+    /// Finalizes the backend session with `completion`, then rewrites the run report.
+    ///
+    /// Fails with [`ExperimentErrorKind::AlreadyFinished`] when the run has already finished.
+    fn complete(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        self.inner.mark_finished()?;
+        let finished = self.inner.session.finish(completion.clone());
+        if let Some(report) = &self.report {
+            if let Err(error) = report.finish(&completion) {
+                tracing::warn!(
+                    "Failed to write the run report to {}: {error}",
+                    report.path().display()
+                );
+            }
+        }
+        finished
     }
 }
 
@@ -760,7 +841,8 @@ impl RunInner {
         }
     }
 
-    fn finish_once(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+    /// Moves the run to finished, once: fails when it already is.
+    fn mark_finished(&self) -> Result<(), ExperimentError> {
         let mut state = self.state.lock().unwrap();
         match *state {
             RunState::Finished => Err(ExperimentError::new(
@@ -769,8 +851,7 @@ impl RunInner {
             )),
             RunState::Active => {
                 *state = RunState::Finished;
-                drop(state);
-                self.session.finish(completion)
+                Ok(())
             }
         }
     }
@@ -789,7 +870,7 @@ impl Drop for ExperimentRun {
             ExperimentCompletion::Success
         };
 
-        let _ = self.inner.finish_once(completion);
+        let _ = self.complete(completion);
     }
 }
 
