@@ -8,7 +8,7 @@ members = ["crates/*", "examples/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.10.0"
+version = "0.11.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -19,9 +19,10 @@ categories = ["development-tools"]
 
 [workspace.dependencies]
 # Temporarily pinned on a git rev.
-burn = { git = "https://github.com/tracel-ai/burn", rev = "e8a6afbf9751013fc4191e074d3139dad7ff34f7", default-features = false, features = [
-    "train",
-] }
+# burn = { git = "https://github.com/tracel-ai/burn", rev = "e8a6afbf9751013fc4191e074d3139dad7ff34f7", default-features = false, features = [
+#     "train",
+# ] }
+burn = { version = "0.22", default-features = false, features = [ "train" ] }
 
 rand = "0.9.2"
 ctrlc = "3.5.2"
@@ -77,18 +78,18 @@ tracel-client = { version = "0.21.0", default-features = false, features = [
 ] }
 
 ## Crate
-tracel-runner = { path = "crates/tracel-runner", version = "0.10.0" }
-tracel-console = { path = "crates/tracel-console", version = "0.10.0" }
-tracel-models = { path = "crates/tracel-models", version = "0.10.0" }
-tracel-station = { path = "crates/tracel-station", version = "0.10.0" }
-tracel-datasets = { path = "crates/tracel-datasets", version = "0.10.0" }
-tracel-app = { path = "crates/tracel-app", version = "0.10.0" }
-tracel-inference = { path = "crates/tracel-inference", version = "0.10.0" }
-tracel-artifact = { path = "crates/tracel-artifact", version = "0.10.0" }
-tracel-experiment = { path = "crates/tracel-experiment", version = "0.10.0" }
-tracel-experiment-remote = { path = "crates/tracel-experiment-remote", version = "0.10.0" }
-tracel-core = { path = "crates/tracel-core", version = "0.10.0" }
-tracel = { path = "crates/tracel", version = "0.10.0" }
+tracel-runner = { path = "crates/tracel-runner", version = "0.11.0" }
+tracel-console = { path = "crates/tracel-console", version = "0.11.0" }
+tracel-models = { path = "crates/tracel-models", version = "0.11.0" }
+tracel-station = { path = "crates/tracel-station", version = "0.11.0" }
+tracel-datasets = { path = "crates/tracel-datasets", version = "0.11.0" }
+tracel-app = { path = "crates/tracel-app", version = "0.11.0" }
+tracel-inference = { path = "crates/tracel-inference", version = "0.11.0" }
+tracel-artifact = { path = "crates/tracel-artifact", version = "0.11.0" }
+tracel-experiment = { path = "crates/tracel-experiment", version = "0.11.0" }
+tracel-experiment-remote = { path = "crates/tracel-experiment-remote", version = "0.11.0" }
+tracel-core = { path = "crates/tracel-core", version = "0.11.0" }
+tracel = { path = "crates/tracel", version = "0.11.0" }
 
 ### For xtask crate ###
 tracel-xtask = { version = "=5.0.0" }
