@@ -1,5 +1,4 @@
 mod backend;
-mod cloud;
 mod connection;
 mod context;
 

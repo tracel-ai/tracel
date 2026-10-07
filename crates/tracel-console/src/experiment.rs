@@ -55,7 +55,7 @@ impl ExperimentProvider for ConsoleExperimentProvider {
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-enum CloudError {
+enum StartRunError {
     Http(#[from] ClientError),
     WebSocket(#[from] WebSocketError),
 }
@@ -64,8 +64,8 @@ fn create_run(
     scope: &Arc<ProjectScope>,
     name: String,
     attributes: HashMap<String, Value>,
-) -> Result<ExperimentRun, CloudError> {
-    let experiment = scope.console.client.create_experiment(
+) -> Result<ExperimentRun, StartRunError> {
+    let experiment = scope.client()?.create_experiment(
         &scope.owner,
         &scope.project,
         Some(name),
@@ -79,7 +79,7 @@ fn create_run(
 
     let artifact_uploader = ConsoleArtifactUploader::new(Arc::clone(scope), experiment_num);
 
-    let ws = scope.console.client.create_experiment_run_websocket(
+    let ws = scope.client()?.create_experiment_run_websocket(
         &scope.owner,
         &scope.project,
         experiment_num,
@@ -126,7 +126,7 @@ impl ExperimentArtifactClient {
             });
         }
 
-        let res = self.scope.console.client.create_artifact(
+        let res = self.scope.client()?.create_artifact(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
@@ -168,7 +168,7 @@ impl ExperimentArtifactClient {
         }
         upload_bundle_multipart(bundle, &uploads)?;
 
-        self.scope.console.client.complete_artifact_upload(
+        self.scope.client()?.complete_artifact_upload(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
@@ -182,7 +182,7 @@ impl ExperimentArtifactClient {
     fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
-        let resp = self.scope.console.client.presign_artifact_download(
+        let resp = self.scope.client()?.presign_artifact_download(
             &self.scope.owner,
             &self.scope.project,
             self.experiment_num,
@@ -210,8 +210,7 @@ impl ExperimentArtifactClient {
     fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
         self.scope
-            .console
-            .client
+            .client()?
             .list_artifacts_by_name(
                 &self.scope.owner,
                 &self.scope.project,

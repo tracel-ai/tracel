@@ -13,10 +13,9 @@ categories.workspace = true
 
 [features]
 default = []
-station = ["dep:tracel-station", "tracel-client/station"]
+station = ["dep:tracel-station"]
 
 [dependencies]
-tracel-client.workspace = true
 tracel-console.workspace = true
 tracel-datasets.workspace = true
 tracel-models.workspace = true
@@ -25,9 +24,7 @@ tracel-experiment.workspace = true
 tracel-inference.workspace = true
 url.workspace = true
 thiserror.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-toml = "1.1.2"
 crossbeam.workspace = true
 tracel-artifact.workspace = true
 

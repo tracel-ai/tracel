@@ -4,11 +4,10 @@ use std::sync::Arc;
 #[cfg(feature = "station")]
 use url::Url;
 
-use tracel_console::{Console, ConsoleError};
+use tracel_console::{ConsoleError, ProjectHandle};
 
 use crate::backend::Backend;
 use crate::backend::local::LocalBackend;
-use crate::cloud::CloudError;
 #[cfg(feature = "station")]
 use tracel_station::Station;
 
@@ -20,29 +19,18 @@ pub enum Connection {
     Station(Url),
 }
 
-impl Connection {
-    pub(crate) fn into_backend(self) -> Result<Arc<dyn Backend>, ContextError> {
-        match self {
-            Connection::Cloud => {
-                let credentials = crate::cloud::discover_credentials()?;
-                let (namespace, project) = crate::cloud::discover_namespace_project()?;
-
-                let console = Console::connect(&credentials)?;
-                let project = console.project(namespace, project);
-
-                Ok(Arc::new(project))
-            }
-            Connection::Offline(path) => Ok(Arc::new(LocalBackend::new(path))),
-            #[cfg(feature = "station")]
-            Connection::Station(url) => Ok(Arc::new(Station::connect(url))),
-        }
+/// The backend `connection` reaches, bound without performing network I/O.
+pub fn backend(connection: Connection) -> Result<Arc<dyn Backend>, ContextError> {
+    match connection {
+        Connection::Cloud => Ok(Arc::new(ProjectHandle::from_env()?)),
+        Connection::Offline(path) => Ok(Arc::new(LocalBackend::new(path))),
+        #[cfg(feature = "station")]
+        Connection::Station(url) => Ok(Arc::new(Station::connect(url))),
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContextError {
-    #[error(transparent)]
-    Cloud(#[from] CloudError),
     #[error(transparent)]
     Console(#[from] ConsoleError),
 }

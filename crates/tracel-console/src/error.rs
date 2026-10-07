@@ -1,6 +1,6 @@
 use tracel_client::error::ClientError;
 
-/// Errors produced while authenticating with or calling the console.
+/// Errors produced while configuring, authenticating with or calling the console.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConsoleError {
@@ -17,6 +17,25 @@ pub enum ConsoleError {
     /// The stored sign-in could not be read, written or locked.
     #[error("the stored sign-in could not be used: {0}")]
     SessionStore(String),
+    /// An environment variable holds a value the SDK does not accept.
+    #[error("invalid {variable} value `{value}`: expected {expected}")]
+    InvalidSetting {
+        /// The environment variable.
+        variable: &'static str,
+        /// The value it holds.
+        value: String,
+        /// The values it accepts.
+        expected: &'static str,
+    },
+    /// Neither `TRACEL_API_KEY` nor a `tracel login` sign-in provides a credential.
+    #[error("no credentials found: set TRACEL_API_KEY or run `tracel login`")]
+    NoCredentials,
+    /// Neither `TRACEL_NAMESPACE` nor `tracel.toml` names the project's owner namespace.
+    #[error("no namespace found: set TRACEL_NAMESPACE or add namespace to tracel.toml")]
+    NoNamespace,
+    /// Neither `TRACEL_PROJECT` nor `tracel.toml` names the project.
+    #[error("no project found: set TRACEL_PROJECT or add project to tracel.toml")]
+    NoProject,
     /// The credential cannot be used for this request: an API key reaches project data only.
     #[error("this credential cannot be used for this request; API keys reach project data only")]
     CredentialNotAllowed,
@@ -63,12 +82,7 @@ impl From<ClientError> for ConsoleError {
             ClientError::ApiError { status, .. } if status == reqwest::StatusCode::UNAUTHORIZED => {
                 Self::SessionExpired
             }
-            ClientError::ApiError { status, .. }
-                if status == reqwest::StatusCode::FORBIDDEN
-                    || status == reqwest::StatusCode::NOT_FOUND =>
-            {
-                Self::NotFound
-            }
+            ClientError::ApiError { status, .. } if status_is_not_found(status) => Self::NotFound,
             ClientError::ApiError { status, body } => Self::Server {
                 status: status.as_u16(),
                 message: body.to_string(),

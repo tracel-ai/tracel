@@ -7395,6 +7395,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror 2.0.21",
+ "toml",
  "tracel-artifact",
  "tracel-client",
  "tracel-datasets",
@@ -7411,13 +7412,10 @@ name = "tracel-core"
 version = "0.11.0"
 dependencies = [
  "crossbeam",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "toml",
  "tracel-artifact",
- "tracel-client",
  "tracel-console",
  "tracel-datasets",
  "tracel-experiment",

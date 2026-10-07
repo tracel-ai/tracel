@@ -1,11 +1,11 @@
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{
     ClientError,
-    console::{Client, TracelCredentials},
+    console::{Client, Env, TracelCredentials, user::response::UserResponseSchema},
 };
 use tracel_datasets::Datasets;
 use tracel_experiment::ExperimentModule;
@@ -29,54 +29,132 @@ pub struct Console {
 const CREDENTIAL_END_WARNING: Duration = Duration::from_secs(24 * 3600);
 
 /// Resources shared by every handle derived from a console connection.
-pub struct ConsoleInner {
-    pub client: Client,
-    pub transfer_client: ReqwestTransferClient,
+struct ConsoleInner {
+    env: Env,
+    base_url: Url,
+    credentials: TracelCredentials,
+    transfer_client: ReqwestTransferClient,
+    connected: OnceLock<Connected>,
+    connecting: Mutex<()>,
+}
+
+/// A client whose credential the console accepted.
+struct Connected {
+    client: Client,
     credential_ends_at: Option<SystemTime>,
+}
+
+impl ConsoleInner {
+    /// Returns the client, verifying the credential with the console on the first call.
+    ///
+    /// A failed verification is not kept, so the next call tries again.
+    fn client(&self) -> Result<&Client, ClientError> {
+        self.connected().map(|connected| &connected.client)
+    }
+
+    fn connected(&self) -> Result<&Connected, ClientError> {
+        if let Some(connected) = self.connected.get() {
+            return Ok(connected);
+        }
+
+        // Concurrent first requests share one verification.
+        let _connecting = self
+            .connecting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(connected) = self.connected.get() {
+            return Ok(connected);
+        }
+
+        let client = Client::connect(self.env.clone(), &self.credentials)?;
+        let credential_ends_at = credential_end(&self.credentials, &client);
+        warn_when_ending_soon(&self.credentials, credential_ends_at);
+
+        Ok(self.connected.get_or_init(|| Connected {
+            client,
+            credential_ends_at,
+        }))
+    }
+
+    /// Returns the current user. Verifying the credential reads it, so a call that verifies does
+    /// not ask again.
+    fn current_user(&self) -> Result<UserResponseSchema, ClientError> {
+        match self.connected.get() {
+            Some(connected) => connected.client.get_current_user(),
+            None => self.client().map(|client| client.user().clone()),
+        }
+    }
 }
 
 /// A project location bound to a console connection.
 pub struct ProjectScope {
-    pub console: Arc<ConsoleInner>,
+    console: Console,
     pub owner: String,
     pub project: String,
 }
 
-impl Console {
-    /// Connects to the console and verifies the credentials.
-    ///
-    /// Warns when the credential stops being accepted within a day, since a run that
-    /// outlives it stops with [`ConsoleError::SessionExpired`].
-    pub fn connect(credentials: &TracelCredentials) -> Result<Self, ConsoleError> {
-        let client = Client::connect(crate::env::from_environment(), credentials)?;
-        let credential_ends_at = credential_end(credentials, &client);
-        warn_when_ending_soon(credentials, credential_ends_at);
-
-        Ok(Self {
-            inner: Arc::new(ConsoleInner {
-                client,
-                transfer_client: ReqwestTransferClient::new(),
-                credential_ends_at,
-            }),
-        })
+impl ProjectScope {
+    /// Returns the console client, verifying the credential on the first request.
+    pub fn client(&self) -> Result<&Client, ClientError> {
+        self.console.inner.client()
     }
 
-    /// When the credential this console connected with stops being accepted: an API
-    /// key's expiry, or the end of the app session the `tracel` CLI signed in. `None`
-    /// for a key without expiry and for an access token whose renewal belongs to the
-    /// caller.
-    pub fn credential_ends_at(&self) -> Option<SystemTime> {
-        self.inner.credential_ends_at
+    /// Returns the client that moves files to and from presigned URLs.
+    pub fn transfer_client(&self) -> &ReqwestTransferClient {
+        &self.console.inner.transfer_client
+    }
+}
+
+impl Console {
+    /// Binds to the console `env` names, with `credentials`, without performing I/O.
+    ///
+    /// The first request verifies `credentials`, and fails with [`ConsoleError::SessionExpired`]
+    /// when the console refuses them. It warns when the credential stops being accepted within a
+    /// day, since a run that outlives it stops with [`ConsoleError::SessionExpired`].
+    pub fn connect(env: Env, credentials: TracelCredentials) -> Self {
+        Self {
+            inner: Arc::new(ConsoleInner {
+                base_url: env.get_url(),
+                env,
+                credentials,
+                transfer_client: ReqwestTransferClient::new(),
+                connected: OnceLock::new(),
+                connecting: Mutex::new(()),
+            }),
+        }
+    }
+
+    /// Binds to the console `TRACEL_ENV` names, with the credential the environment provides,
+    /// without performing network I/O.
+    ///
+    /// `TRACEL_ENV` unset or empty names the production console. The credential is
+    /// `TRACEL_API_KEY`, or else the session `tracel login` stored for that console. Fails with
+    /// [`ConsoleError::InvalidSetting`] when `TRACEL_ENV` names no console, and with
+    /// [`ConsoleError::NoCredentials`] when there is no credential. The first request verifies
+    /// the credential, as with [`connect`](Self::connect).
+    pub fn from_env() -> Result<Self, ConsoleError> {
+        let env = crate::env::console_env()?;
+        let credentials = crate::env::credentials(&env)?;
+        Ok(Self::connect(env, credentials))
+    }
+
+    /// When the credential this console uses stops being accepted: an API key's expiry, or the
+    /// end of the app session the `tracel` CLI signed in. `None` for a key without expiry and for
+    /// an access token whose renewal belongs to the caller.
+    ///
+    /// Verifies the credential first when no request has yet.
+    pub fn credential_ends_at(&self) -> Result<Option<SystemTime>, ConsoleError> {
+        Ok(self.inner.connected()?.credential_ends_at)
     }
 
     /// Returns the normalized console API base URL.
     pub fn base_url(&self) -> &Url {
-        self.inner.client.base_url()
+        &self.inner.base_url
     }
 
     /// Returns the current user, or `None` when the console no longer accepts the credential.
     pub fn me(&self) -> Result<Option<User>, ConsoleError> {
-        match self.inner.client.get_current_user() {
+        match self.inner.current_user() {
             Ok(user) => Ok(Some(User {
                 id: user._id,
                 username: user.username,
@@ -91,7 +169,7 @@ impl Console {
     /// Lists organizations available to the current session.
     pub fn organizations(&self) -> Result<Vec<Organization>, ConsoleError> {
         self.inner
-            .client
+            .client()?
             .get_user_organizations()
             .map(|response| {
                 response
@@ -112,12 +190,10 @@ impl Console {
         namespace: impl AsRef<Namespace>,
     ) -> Result<Vec<Project>, ConsoleError> {
         let namespace = namespace.as_ref();
+        let client = self.inner.client()?;
         let projects = match namespace.kind {
-            NamespaceKind::User => self.inner.client.list_user_projects(&namespace.name),
-            NamespaceKind::Organization => self
-                .inner
-                .client
-                .list_organization_projects(&namespace.name),
+            NamespaceKind::User => client.list_user_projects(&namespace.name),
+            NamespaceKind::Organization => client.list_organization_projects(&namespace.name),
         }?;
 
         projects.into_iter().map(Project::try_from).collect()
@@ -131,7 +207,7 @@ impl Console {
     {
         ProjectHandle {
             scope: Arc::new(ProjectScope {
-                console: Arc::clone(&self.inner),
+                console: self.clone(),
                 owner: owner.into(),
                 project: project.into(),
             }),
@@ -192,6 +268,24 @@ pub struct ProjectHandle {
 }
 
 impl ProjectHandle {
+    /// Returns the project the environment names, on the console [`Console::from_env`] binds
+    /// to, without performing network I/O.
+    ///
+    /// The owner namespace is `TRACEL_NAMESPACE` and the project name `TRACEL_PROJECT`; either
+    /// one unset is read from `namespace` or `project` in `tracel.toml` in the current
+    /// directory. Fails with [`ConsoleError::NoNamespace`] or [`ConsoleError::NoProject`] when
+    /// neither names it.
+    pub fn from_env() -> Result<Self, ConsoleError> {
+        let console = Console::from_env()?;
+        let (owner, project) = crate::env::project_location()?;
+        Ok(console.project(owner, project))
+    }
+
+    /// Returns the console this project is reached through.
+    pub fn console(&self) -> &Console {
+        &self.scope.console
+    }
+
     /// Returns the project's owner namespace.
     pub fn owner(&self) -> &str {
         &self.scope.owner
@@ -208,8 +302,7 @@ impl ProjectHandle {
     /// console intentionally does not reveal which case applies.
     pub fn get(&self) -> Result<Project, ConsoleError> {
         self.scope
-            .console
-            .client
+            .client()?
             .get_project(&self.scope.owner, &self.scope.project)
             .map_err(ConsoleError::from)
             .and_then(Project::try_from)
@@ -255,5 +348,37 @@ impl fmt::Debug for ProjectHandle {
             .field("owner", &self.scope.owner)
             .field("project", &self.scope.project)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn handles_can_be_shared_across_threads() {
+        assert_send_sync::<Console>();
+        assert_send_sync::<ProjectHandle>();
+    }
+
+    #[test]
+    fn binding_and_scoping_send_no_request() {
+        let console = Console::connect(
+            Env::Development,
+            TracelCredentials::api_key("tcl_key_not_checked_until_the_first_request"),
+        );
+        let project = console.project("owner", "project");
+        let _ = (
+            project.datasets(),
+            project.models(),
+            project.experiments(),
+            project.inference(),
+        );
+
+        assert!(console.inner.connected.get().is_none());
+        assert!(Arc::ptr_eq(&project.console().inner, &console.inner));
+        assert_eq!(console.base_url(), &Env::Development.get_url());
     }
 }
