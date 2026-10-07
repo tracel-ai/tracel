@@ -2,7 +2,8 @@ use crate::{BoxError, DescribeError};
 
 /// The exit code of a job that failed, or of a definitions file that could not be written.
 const FAILED: u8 = 1;
-/// The exit code of a command line that names no registered job or gives an unusable input.
+/// The exit code of a command line that names no registered job, or gives an unusable flag or
+/// input.
 const USAGE: u8 = 2;
 /// The exit code of a cancelled job.
 pub const CANCELLED: u8 = 130;
@@ -26,7 +27,12 @@ pub enum CliError {
         available: Vec<String>,
     },
 
-    /// The input is not JSON, or does not decode as the job's input.
+    /// The command line does not parse: an unknown flag, a flag value of the wrong type, a
+    /// required flag left out, or an input or `--config` file that is not JSON.
+    #[error(transparent)]
+    Usage(clap::Error),
+
+    /// The input does not decode as the job's input.
     #[error("invalid input: {0}")]
     InvalidInput(#[source] BoxError),
 
@@ -47,9 +53,22 @@ impl CliError {
     /// The exit code the process ends with.
     pub fn exit_code(&self) -> u8 {
         match self {
-            Self::MissingJob { .. } | Self::UnknownJob { .. } | Self::InvalidInput(_) => USAGE,
+            Self::MissingJob { .. }
+            | Self::UnknownJob { .. }
+            | Self::Usage(_)
+            | Self::InvalidInput(_) => USAGE,
             Self::JobFailed(_) | Self::Describe(_) => FAILED,
             Self::Cancelled => CANCELLED,
+        }
+    }
+
+    /// Prints why to stderr, a usage error as clap renders it, with the usage that follows.
+    pub fn print(&self) {
+        match self {
+            Self::Usage(error) => {
+                let _ = error.print();
+            }
+            error => eprintln!("error: {error}"),
         }
     }
 }

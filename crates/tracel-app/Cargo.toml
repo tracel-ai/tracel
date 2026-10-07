@@ -17,7 +17,8 @@ server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
 schema = ["dep:schemars"]
 
 [dependencies]
-clap.workspace = true
+clap = { workspace = true, features = ["string"] }
+clap_complete.workspace = true
 ctrlc = { workspace = true, features = ["termination"] }
 tracel-experiment.workspace = true
 tracel-inference.workspace = true

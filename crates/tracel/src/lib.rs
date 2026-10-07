@@ -63,6 +63,7 @@
 //!         .with_description("Train the model");
 //!
 //!     Ok(Cli::new()
+//!         .version(env!("CARGO_PKG_VERSION"))
 //!         .register(train, JsonMapper::with_default(TrainingConfig::default()))
 //!         .run())
 //! }
@@ -74,9 +75,53 @@
 //! arguments, which the console lists as the experiment's config; `ExperimentJob::run` records
 //! the input it is given.
 //!
+//! [`version`](app::cli::Cli::version) gives the binary its `--version`, which prints the
+//! binary's name and that version; without it, the binary has no `--version`.
+//!
 //! Without a [`Target`], build the services from an adapter directly:
 //! [`console::ProjectHandle::from_env`] for a console project, or
 //! [`experiment::local::LocalExperiments`] to record offline.
+//!
+//! ## Command-Line Flags
+//!
+//! [`app::cli::Cli`] builds its command line from the definitions of its jobs, so each field of a
+//! job's input is also a flag: `<binary> train --epochs 5` runs the job above with the same input
+//! as `<binary> train '{"epochs": 5}'`. `<binary> --help` lists the jobs, and
+//! `<binary> train --help` the job's flags with their defaults:
+//!
+//! ```text
+//! Train the model
+//!
+//! Usage: my-binary train [OPTIONS] [INPUT]
+//!
+//! Arguments:
+//!   [INPUT]  JSON merged after --config and before the flags
+//!
+//! Options:
+//!       --epochs <INT>   [default: 0]
+//!   -c, --config <FILE>  JSON merged before the input and the flags
+//!   -h, --help           Print help
+//! ```
+//!
+//! - With an input schema (`JsonMapper::with_schema` and the `schema` feature), a flag takes its
+//!   field's type, allowed values and requiredness from the schema, and the field's doc comment
+//!   as its help. Without one, each field of the example input is a flag typed by its value: a
+//!   boolean, an integer, a number or a string. Burn `Config` types work this way.
+//! - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
+//!   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, an object
+//!   with no fields of its own, or `null` in the example input takes a JSON literal, such as
+//!   `--layers '[64, 32]'`. A boolean flag given no value is `true`.
+//! - The input is the example input, then the `--config` file, then the JSON document, then the
+//!   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
+//! - `help`, `version` and `config` are the runner's names: a field with one of them has no flag,
+//!   and is set through `--config` or the JSON document.
+//! - `<binary> --completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`,
+//!   `powershell` or `zsh`.
+//!
+//! [`app::cli::command`] builds the same command line from job definitions alone, such as those of
+//! a definitions file, and [`app::cli::job_input`] reads a job's input from its arguments. A job
+//! whose input type derives `clap::Parser` can parse its own arguments instead, through
+//! [`ClapMapper`](app::mapper::ClapMapper), from a JSON string: `<binary> train '"--epochs 3"'`.
 //!
 //! ## Describing Jobs
 //!
@@ -96,9 +141,9 @@
 //!
 //! | Exit code | Meaning |
 //! | --- | --- |
-//! | 0 | The job completed, or the definitions file was written |
+//! | 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
 //! | 1 | The job failed |
-//! | 2 | No job or an unknown job is named, or the input is not JSON or does not decode; stderr lists the job names |
+//! | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 //! | 130 | The job was cancelled |
 //!
 //! With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a

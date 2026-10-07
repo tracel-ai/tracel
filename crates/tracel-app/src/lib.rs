@@ -5,9 +5,11 @@
 //! [`Mapper`](mapper::Mapper) that decodes its input, which every runner hands over as JSON. Each
 //! registered job has a [`JobDefinition`]: its name, kind, description and input.
 //!
-//! - [`cli::Cli`] runs one job from the command line: `<job_name> [<input-json>]`, and returns
-//!   the process's exit code: 0 when the job completed, 1 when it failed, 2 for an unknown job or
-//!   an unusable input, and 130 when it was cancelled.
+//! - [`cli::Cli`] runs one job from the command line: `<job_name> [<input-json>] [<flags>]`, with
+//!   a flag per field of the job's input, and returns the process's exit code: 0 when the job
+//!   completed, 1 when it failed, 2 for an unknown job or an unusable flag or input, and 130 when
+//!   it was cancelled. [`cli::command`] builds that command line from the job definitions alone,
+//!   so a program that reads a [`DefinitionsFile`] builds the same one.
 //! - `server::Server` serves every job over HTTP at `POST /{job_name}` (requires the `server`
 //!   feature).
 //!

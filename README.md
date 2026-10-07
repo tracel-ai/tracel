@@ -62,14 +62,17 @@ fn main() -> anyhow::Result<ExitCode> {
         .with_description("Train the MNIST classifier");
 
     Ok(Cli::new()
+        .version(env!("CARGO_PKG_VERSION"))
         .register(job, JsonMapper::with_default(YourExperimentConfig::default()))
         .run())
 }
 ```
 
-The binary runs a job by name, with its input as one JSON document merged onto the default:
-`cargo run -- mnist '{"num_epochs": 5}'`. Left out, the input is the default. The experiment
-records the merged input as its arguments, which the console lists as its config.
+The binary runs a job by name, with its input as flags or one JSON document merged onto the
+default: `cargo run -- mnist --num-epochs 5` or `cargo run -- mnist '{"num_epochs": 5}'`. Left
+out, the input is the default. The experiment records the merged input as its arguments, which the
+console lists as its config. `version` gives the binary its `--version`, which prints the binary's
+name and that version, such as `mnist 0.1.0`; without it, the binary has no `--version`.
 
 Swap `Cli` for `tracel::app::server::Server` (with the optional `server` feature) to dispatch the
 same job over HTTP instead of the command line. The [`cli`](examples/basics/examples/cli.rs) and
@@ -88,6 +91,50 @@ complete, runnable versions of both.
 
 Without a `Target`, build the services directly: `tracel::console::ProjectHandle::from_env()?.experiments()`
 for a console project, or `tracel::experiment::local::LocalExperiments` to record offline.
+
+#### Command-line flags
+
+`Cli` builds its command line from the definitions of its jobs, so each field of a job's input is
+also a flag: `cargo run -- mnist --num-epochs 5` runs with the same input as
+`cargo run -- mnist '{"num_epochs": 5}'`. `--help` lists the jobs, and `mnist --help` the job's
+flags with their defaults:
+
+```text
+$ cargo run -- mnist --help
+Train the MNIST classifier
+
+Usage: mnist mnist [OPTIONS] [INPUT]
+
+Arguments:
+  [INPUT]  JSON merged after --config and before the flags
+
+Options:
+      --batch-size <INT>                [default: 64]
+      --num-epochs <INT>                [default: 10]
+      --optimizer.lr <FLOAT>            [default: 0.001]
+      --optimizer.weight-decay <FLOAT>  [default: 0.00005]
+  -c, --config <FILE>                   JSON merged before the input and the flags
+  -h, --help                            Print help
+```
+
+- With an input schema (`JsonMapper::with_schema` and the `schema` feature), a flag takes its
+  field's type, allowed values and requiredness from the schema, and the field's doc comment as
+  its help. Without one, each field of the example input is a flag typed by its value: a boolean,
+  an integer, a number or a string. Burn `Config` types work this way.
+- A nested field's flag joins the keys with dots and writes `_` as `-`: the field
+  `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, an object with
+  no fields of its own, or `null` in the example input takes a JSON literal, such as
+  `--layers '[64, 32]'`. A boolean flag given no value is `true`.
+- The input is the example input, then the `--config` file, then the JSON document, then the
+  flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
+- `help`, `version` and `config` are the runner's names: a field with one of them has no flag, and
+  is set through `--config` or the JSON document.
+- `--completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`, `powershell`
+  or `zsh`: `cargo run -- --completions bash > mnist.bash`.
+
+`tracel::app::cli::command` builds the same command line from job definitions alone, such as those
+of a definitions file. A job whose input type derives `clap::Parser` can parse its own arguments
+instead, through `ClapMapper`, from a JSON string: `cargo run -- <job> '"--epochs 3"'`.
 
 #### Describing jobs
 
@@ -125,9 +172,9 @@ A binary whose `main` returns `Cli::run()` can be launched by another program, s
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | The job completed, or the definitions file was written |
+| 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
 | 1 | The job failed |
-| 2 | No job or an unknown job is named, or the input is not JSON or does not decode; stderr lists the job names |
+| 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 | 130 | The job was cancelled |
 
 With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a run report to `<path>` when it

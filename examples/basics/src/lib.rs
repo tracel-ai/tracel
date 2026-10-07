@@ -7,6 +7,7 @@ use tracel::inference::{Inference, InferenceInput, InferenceOutput, InferenceSes
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct Prompt {
+    /// The text to split into tokens.
     pub text: String,
 }
 
@@ -90,7 +91,9 @@ pub mod training {
 
     #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct TrainingConfig {
+        /// Passes over the toy dataset.
         pub epochs: usize,
+        /// Batches in each epoch.
         pub batches_per_epoch: usize,
     }
 
