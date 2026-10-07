@@ -6,15 +6,12 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
+use tracel_job::{TRACEL_DESCRIBE, TRACEL_REPORT_FILE};
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
 use crate::{CancelToken, ExperimentRun};
 
-/// Set while a program writes its job definitions instead of running a job.
-const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
-/// Names the file a run writes its run report to.
-const TRACEL_REPORT_FILE: &str = "TRACEL_REPORT_FILE";
 /// The number of the job a launcher runs, recorded as the experiment attribute
 /// [`JOB_NUM_ATTRIBUTE`].
 const TRACEL_JOB_NUM: &str = "TRACEL_JOB_NUM";

@@ -1,38 +1,13 @@
 use std::error::Error;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
+use tracel_job::JobDefinition;
 
 /// The error a job or a mapper fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
-
-/// What a job runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobKind {
-    /// An experiment: one input, recorded as an experiment run.
-    Experiment,
-    /// An inference: one or more inputs, each answered with outputs.
-    Inference,
-}
-
-/// Something a runner can run: its name, kind and description, and the input it takes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct JobDefinition {
-    /// The name that selects the job.
-    pub name: String,
-    /// What the job runs.
-    pub kind: JobKind,
-    /// What the job does.
-    pub description: Option<String>,
-    /// JSON Schema of the job's input, when its mapper provides one.
-    pub input_schema: Option<Value>,
-    /// An example input, typically the job's default configuration.
-    pub input_example: Option<Value>,
-}
 
 /// The input a runner hands a job, as JSON.
 pub enum JobInput {

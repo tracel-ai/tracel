@@ -12,9 +12,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use tracel_job::JobKind;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{IntoJob, Job, JobKind, JobRegistry};
+use crate::{IntoJob, Job, JobRegistry};
 use request::MAX_BODY_BYTES;
 
 /// Serves every registered job over HTTP at `POST /{job_name}`.

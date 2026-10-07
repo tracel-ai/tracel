@@ -10,27 +10,26 @@ use clap::{Arg, ArgMatches, Command, ValueHint, value_parser};
 use clap_complete::Shell;
 use serde_json::{Map, Value};
 
-use super::flags::{Flag, Kind, flags, scalar_text};
 use crate::JobDefinition;
+use crate::flags::{Flag, Kind, flags, scalar_text};
 
 /// The id of a job's input argument, which no field's flag has: field ids have no `:`.
 const INPUT: &str = "tracel:input";
 /// The id of a job's `--config` argument.
 const CONFIG: &str = "tracel:config";
 /// The id of the program's `--completions` argument.
-pub const COMPLETIONS: &str = "tracel:completions";
+const COMPLETIONS: &str = "tracel:completions";
 
 /// The command line of the program `name` that runs the jobs `definitions` describes:
 /// `<name> <job> [<input-json>] [--<field> <value>...]`, with one subcommand per job, as
 /// [`job_command`] builds it.
 ///
 /// `<name> --completions <SHELL>` asks for the program's completion script, which
-/// [`clap_complete::generate`] writes from this command.
+/// [`completions`] reads and [`clap_complete::generate`] writes from this command.
 ///
 /// The command depends only on `name` and the definitions, so a program that reads them from a
 /// [`DefinitionsFile`](crate::DefinitionsFile) builds the same command line as the program that
-/// wrote it, but for `--version`, which [`Cli`](super::Cli) adds when given the program's
-/// version.
+/// wrote it, but for `--version`, which the SDK's `Cli` adds when given the program's version.
 pub fn command<'a>(
     name: impl Into<String>,
     definitions: impl IntoIterator<Item = &'a JobDefinition>,
@@ -129,6 +128,16 @@ pub fn job_input(matches: &ArgMatches) -> Value {
             input
         })
         .unwrap_or(Value::Null)
+}
+
+/// The shell whose completion script the arguments of a [`command`] ask for with
+/// `--completions <SHELL>`.
+pub fn completions(matches: &ArgMatches) -> Option<Shell> {
+    matches
+        .try_get_one::<Shell>(COMPLETIONS)
+        .ok()
+        .flatten()
+        .copied()
 }
 
 /// The argument of a field's flag.
@@ -234,7 +243,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::mapper::{JsonMapper, Mapper};
     use crate::{DefinitionsFile, JobKind};
 
     fn definition(name: &str, schema: Option<Value>, example: Option<Value>) -> JobDefinition {
@@ -492,19 +500,6 @@ mod tests {
                 "optimizer": {"lr": 0.3, "weight_decay": 0.5}
             })
         );
-        // The mapper merges the input onto the example, where `null` removes the field.
-        let mapper = JsonMapper::with_default(mnist().input_example.unwrap());
-        assert_eq!(
-            mapper.resolve(input),
-            json!({
-                "num_epochs": 3,
-                "batch_size": 16,
-                "shuffle": true,
-                "layers": [64, 32],
-                "resume_from": null,
-                "optimizer": {"lr": 0.3, "weight_decay": 0.5}
-            })
-        );
     }
 
     #[test]
@@ -555,6 +550,29 @@ mod tests {
     }
 
     #[test]
+    fn completions_names_the_shell_the_command_line_asks_for() {
+        let jobs = [mnist()];
+        let matches = |args: &[&str]| {
+            command("program", &jobs)
+                .try_get_matches_from(["program"].iter().chain(args))
+                .unwrap()
+        };
+
+        assert_eq!(
+            completions(&matches(&["--completions", "zsh"])),
+            Some(Shell::Zsh)
+        );
+        assert_eq!(completions(&matches(&["mnist"])), None);
+        assert_eq!(
+            command("program", &jobs)
+                .try_get_matches_from(["program", "--completions", "tcsh"])
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
     fn completions_cover_the_jobs_and_their_flags() {
         let jobs = [mnist(), prompt()];
         let mut script = Vec::new();
@@ -597,74 +615,5 @@ mod tests {
             let read = read.find_subcommand_mut(job).unwrap().render_help();
             assert_eq!(built.to_string(), read.to_string());
         }
-    }
-
-    #[cfg(feature = "schema")]
-    #[test]
-    fn a_documented_input_type_gives_documented_flags() {
-        use serde::{Deserialize, Serialize};
-
-        /// How to train.
-        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
-        struct Config {
-            /// Passes over the data.
-            num_epochs: u32,
-            optimizer: Optimizer,
-            /// Where to train.
-            device: Device,
-            resume_from: Option<Resume>,
-        }
-
-        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
-        struct Optimizer {
-            /// The learning rate.
-            lr: f64,
-        }
-
-        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
-        #[serde(rename_all = "snake_case")]
-        enum Device {
-            /// The CPU.
-            Cpu,
-            /// The first GPU.
-            Gpu,
-        }
-
-        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
-        struct Resume {
-            experiment: u32,
-        }
-
-        let mapper = JsonMapper::with_default(Config {
-            num_epochs: 10,
-            optimizer: Optimizer { lr: 0.001 },
-            device: Device::Cpu,
-            resume_from: None,
-        })
-        .with_schema();
-        let job = definition("train", mapper.schema(), mapper.example());
-
-        let help = help(&job);
-        for line in [
-            "--device <VALUE>",
-            "Where to train.",
-            "cpu: The CPU.",
-            "--num-epochs <INT>",
-            "Passes over the data.",
-            "--optimizer.lr <FLOAT>",
-            "The learning rate.",
-            "--resume-from <JSON>",
-        ] {
-            assert!(help.contains(line), "no {line} in\n{help}");
-        }
-        let input = input(
-            &job,
-            &["--device", "gpu", "--resume-from", r#"{"experiment": 4}"#],
-        )
-        .unwrap();
-        let config = mapper.map(input).unwrap();
-        assert!(matches!(config.device, Device::Gpu));
-        assert_eq!(config.resume_from.map(|resume| resume.experiment), Some(4));
-        assert_eq!(config.num_epochs, 10);
     }
 }

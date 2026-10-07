@@ -17,11 +17,12 @@ server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
 schema = ["dep:schemars"]
 
 [dependencies]
-clap = { workspace = true, features = ["string"] }
+clap = { workspace = true, features = ["derive", "string"] }
 clap_complete.workspace = true
 ctrlc = { workspace = true, features = ["termination"] }
 tracel-experiment.workspace = true
 tracel-inference.workspace = true
+tracel-job.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 json-patch.workspace = true

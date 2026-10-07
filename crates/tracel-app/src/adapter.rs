@@ -7,8 +7,9 @@ use serde::Serialize;
 use serde_json::Value;
 use tracel_experiment::ExperimentJob;
 use tracel_inference::{InferenceJob, OutputWriter, OutputWriterError};
+use tracel_job::{JobDefinition, JobKind};
 
-use crate::job::{BoxError, IntoJob, Job, JobDefinition, JobInput, JobKind, PreparedJob};
+use crate::job::{BoxError, IntoJob, Job, JobInput, PreparedJob};
 use crate::mapper::Mapper;
 
 fn definition<I>(
