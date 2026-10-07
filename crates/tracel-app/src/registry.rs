@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::job::{Job, JobDefinition};
+use tracel_job::JobDefinition;
+
+use crate::job::Job;
 
 /// The jobs a runner can run, by name.
 ///
@@ -53,9 +55,10 @@ impl JobRegistry {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tracel_job::JobKind;
 
     use super::*;
-    use crate::job::{BoxError, JobInput, JobKind, PreparedJob};
+    use crate::job::{BoxError, JobInput, PreparedJob};
 
     struct Named(JobDefinition);
 

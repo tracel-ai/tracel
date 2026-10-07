@@ -1,0 +1,21 @@
+[package]
+name = "tracel-job"
+description = "Job definitions, run reports and the generated command line shared by Tracel SDK programs and the tools that launch them."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+clap = { workspace = true, features = ["string"] }
+clap_complete.workspace = true
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

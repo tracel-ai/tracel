@@ -12,10 +12,11 @@ use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tracel_artifact::bundle::FsBundle;
+use tracel_job::ReportedExperiment;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-use crate::report::{ReportFile, ReportedExperiment};
+use crate::report::ReportFile;
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use crate::{
     ActivityEvent, ActivitySpec, ActivityStatus, ArtifactKind, CancelToken, ExperimentId,
@@ -30,7 +31,7 @@ const STATUS_FILE: &str = "status.json";
 /// Records experiments under a directory on this machine.
 ///
 /// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`. Each run
-/// keeps its [`RunReport`](crate::RunReport) in `status.json`, written when the run starts and
+/// keeps its [`RunReport`](tracel_job::RunReport) in `status.json`, written when the run starts and
 /// again when it ends, appends its events to `events.jsonl`, and saves its artifacts under
 /// `artifacts/`. Creating a `LocalExperiments` performs no I/O; the first run creates the
 /// directories.

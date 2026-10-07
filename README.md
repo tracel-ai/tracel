@@ -132,8 +132,8 @@ Options:
 - `--completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`, `powershell`
   or `zsh`: `cargo run -- --completions bash > mnist.bash`.
 
-`tracel::app::cli::command` builds the same command line from job definitions alone, such as those
-of a definitions file. A job whose input type derives `clap::Parser` can parse its own arguments
+`tracel::job::command` builds the same command line from job definitions alone, such as those of
+a definitions file. A job whose input type derives `clap::Parser` can parse its own arguments
 instead, through `ClapMapper`, from a JSON string: `cargo run -- <job> '"--epochs 3"'`.
 
 #### Describing jobs

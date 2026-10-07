@@ -7257,6 +7257,7 @@ dependencies = [
  "tracel-datasets",
  "tracel-experiment",
  "tracel-inference",
+ "tracel-job",
  "tracel-models",
  "tracel-runner",
  "tracel-station",
@@ -7281,6 +7282,7 @@ dependencies = [
  "tokio-stream",
  "tracel-experiment",
  "tracel-inference",
+ "tracel-job",
  "tracing",
  "tracing-subscriber",
 ]
@@ -7362,6 +7364,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracel-artifact",
+ "tracel-job",
  "tracing",
  "tracing-subscriber",
 ]
@@ -7390,6 +7393,17 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "tracel-job"
+version = "0.10.0"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -7434,6 +7448,7 @@ dependencies = [
  "tracel-app",
  "tracel-experiment",
  "tracel-inference",
+ "tracel-job",
  "tracing",
  "tracing-subscriber",
  "url",

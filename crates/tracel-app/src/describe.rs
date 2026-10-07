@@ -1,62 +1,12 @@
+//! Describing the registered jobs instead of running one.
+
 use std::ffi::OsString;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use tracel_job::{DefinitionsFile, TRACEL_DESCRIBE};
 
-use crate::job::JobDefinition;
 use crate::registry::JobRegistry;
-
-/// Names the file a runner writes its job definitions to, instead of running a job.
-const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
-
-/// The runner protocol version a definitions file follows.
-const PROTOCOL: u32 = 1;
-
-/// The file a runner writes to the path `TRACEL_DESCRIBE` names: the jobs it can run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DefinitionsFile {
-    /// The runner protocol version, `1`.
-    pub protocol: u32,
-    /// The version of the Tracel SDK the program is built with.
-    pub sdk_version: String,
-    /// The runner that wrote the file, such as `cli` or `server`.
-    pub runner: String,
-    /// The jobs the runner can run, ordered by name.
-    pub jobs: Vec<JobDefinition>,
-}
-
-impl DefinitionsFile {
-    fn new(runner: &str, jobs: Vec<JobDefinition>) -> Self {
-        Self {
-            protocol: PROTOCOL,
-            sdk_version: env!("CARGO_PKG_VERSION").to_string(),
-            runner: runner.to_string(),
-            jobs,
-        }
-    }
-
-    /// Writes the file to `path` atomically: to `<path>.tmp` first, then renamed to `path`.
-    fn write(&self, path: &Path) -> Result<(), DescribeError> {
-        let failed = |source| DescribeError {
-            path: path.to_path_buf(),
-            source,
-        };
-        let mut contents = serde_json::to_vec_pretty(self).map_err(|e| failed(e.into()))?;
-        contents.push(b'\n');
-
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
-        if let Err(source) =
-            std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, path))
-        {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(failed(source));
-        }
-        Ok(())
-    }
-}
 
 impl JobRegistry {
     /// Writes the definitions file for `runner` when `TRACEL_DESCRIBE` names a path.
@@ -77,8 +27,10 @@ impl JobRegistry {
         let Some(path) = lookup(TRACEL_DESCRIBE).filter(|path| !path.is_empty()) else {
             return Ok(false);
         };
+        let path = PathBuf::from(path);
         DefinitionsFile::new(runner, self.definitions().cloned().collect())
-            .write(Path::new(&path))?;
+            .write(&path)
+            .map_err(|source| DescribeError { path, source })?;
         Ok(true)
     }
 }
@@ -93,6 +45,7 @@ pub struct DescribeError {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::Arc;
 
     use serde_json::{Value, json};
@@ -172,37 +125,20 @@ mod tests {
                 ]
             })
         );
-        assert!(contents.ends_with('\n'));
-        let parsed: DefinitionsFile = serde_json::from_str(&contents).unwrap();
         assert_eq!(
-            parsed.jobs,
+            DefinitionsFile::read(&path).unwrap().jobs,
             registry().definitions().cloned().collect::<Vec<_>>()
         );
     }
 
     #[test]
-    fn the_file_replaces_an_existing_one_through_a_temporary_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jobs.json");
-        std::fs::write(&path, "stale").unwrap();
-
-        describe_to(&path).unwrap();
-
-        let file: DefinitionsFile =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(file.jobs.len(), 2);
-        assert!(!dir.path().join("jobs.json.tmp").exists());
-    }
-
-    #[test]
-    fn a_failed_write_names_the_path_and_leaves_no_file() {
+    fn a_failed_write_names_the_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("jobs.json");
 
         let error = describe_to(&path).unwrap_err();
 
         assert!(error.to_string().contains("jobs.json"), "{error}");
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]

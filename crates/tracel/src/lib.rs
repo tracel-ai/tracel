@@ -23,6 +23,8 @@
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
 //! - [`app`]: job registration, plus the command-line and HTTP runners that run those jobs.
+//! - [`job`]: the job definitions file, the run report, and the command line built from job
+//!   definitions, which programs that launch jobs share with the SDK.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
 //! - [`datasets`]: the dataset domain and its registry.
 //! - [`models`]: the model domain and its registry.
@@ -118,15 +120,15 @@
 //! - `<binary> --completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`,
 //!   `powershell` or `zsh`.
 //!
-//! [`app::cli::command`] builds the same command line from job definitions alone, such as those of
-//! a definitions file, and [`app::cli::job_input`] reads a job's input from its arguments. A job
+//! [`job::command`] builds the same command line from job definitions alone, such as those of a
+//! definitions file, and [`job::job_input`] reads a job's input from its arguments. A job
 //! whose input type derives `clap::Parser` can parse its own arguments instead, through
 //! [`ClapMapper`](app::mapper::ClapMapper), from a JSON string: `<binary> train '"--epochs 3"'`.
 //!
 //! ## Describing Jobs
 //!
 //! With `TRACEL_DESCRIBE=<path>` set, every runner writes the definitions of its jobs to `<path>`
-//! as JSON, then returns without running a job or serving: see [`app::DefinitionsFile`]. Each
+//! as JSON, then returns without running a job or serving: see [`job::DefinitionsFile`]. Each
 //! definition gives the job's name, kind (`experiment` or `inference`), description, input schema
 //! and example input. The example input is the mapper's default, and the input schema needs
 //! `JsonMapper::with_schema` and the `schema` feature. While the variable is set,
@@ -146,10 +148,9 @@
 //! | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 //! | 130 | The job was cancelled |
 //!
-//! With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a
-//! [`RunReport`](experiment::RunReport) to `<path>` when it creates its experiment, and again when
-//! the run ends, each time to `<path>.tmp` first, renamed to `<path>`. Without it, nothing is
-//! written:
+//! With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a [`RunReport`](job::RunReport)
+//! to `<path>` when it creates its experiment, and again when the run ends, each time to
+//! `<path>.tmp` first, renamed to `<path>`. Without it, nothing is written:
 //!
 //! ```json
 //! {
@@ -215,6 +216,10 @@ pub use tracel_artifact as artifact;
 /// Job registration, input mappers, and the command-line and HTTP runners.
 #[doc(inline)]
 pub use tracel_app as app;
+
+/// The job definitions file, the run report, and the command line built from job definitions.
+#[doc(inline)]
+pub use tracel_job as job;
 
 /// Station runner: serve registered jobs to a Tracel Station job queue (requires the `runner`
 /// feature).

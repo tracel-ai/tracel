@@ -1,6 +1,4 @@
-mod command;
 mod error;
-mod flags;
 mod signal;
 
 use std::any::Any;
@@ -17,10 +15,9 @@ use clap_complete::Shell;
 use serde_json::Value;
 use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
+use tracel_job::{command, completions, job_input};
 
 use crate::{BoxError, IntoJob, Job, JobInput, JobRegistry};
-use command::COMPLETIONS;
-pub use command::{command, job_command, job_input};
 use error::CliError;
 
 /// Runs one registered job from the command line: `<job_name> [<input-json>] [<flags>]`.
@@ -210,8 +207,8 @@ impl Cli {
             }
             Err(error) => return Err(CliError::Usage(error)),
         };
-        if let Some(shell) = matches.get_one::<Shell>(COMPLETIONS) {
-            return Ok(Request::Completions(*shell));
+        if let Some(shell) = completions(&matches) {
+            return Ok(Request::Completions(shell));
         }
         match (matches.subcommand(), &self.default) {
             (Some((job, matches)), _) => Ok(Request::Run {
@@ -308,13 +305,13 @@ impl OutputWriter<Value> for Stdout {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-
     use tracel_experiment::local::LocalExperiments;
     use tracel_experiment::{ExperimentRun, Experiments};
+    use tracel_job::{JobDefinition, JobKind, job_command};
 
     use super::*;
-    use crate::mapper::{ClapMapper, PresetMapper};
-    use crate::{JobDefinition, JobKind, PreparedJob};
+    use crate::PreparedJob;
+    use crate::mapper::{ClapMapper, JsonMapper, Mapper, PresetMapper};
 
     #[derive(Clone, Copy)]
     enum Outcome {
@@ -332,16 +329,21 @@ mod tests {
         ran_with: Arc<Mutex<Option<Value>>>,
     }
 
+    /// The definition of an experiment named `name` whose input has `schema` and `example`.
+    fn definition(name: &str, schema: Option<Value>, example: Option<Value>) -> JobDefinition {
+        JobDefinition {
+            name: name.to_string(),
+            kind: JobKind::Experiment,
+            description: None,
+            input_schema: schema,
+            input_example: example,
+        }
+    }
+
     impl FakeJob {
         fn new(name: &str, outcome: Outcome) -> Self {
             Self {
-                definition: JobDefinition {
-                    name: name.to_string(),
-                    kind: JobKind::Experiment,
-                    description: None,
-                    input_schema: None,
-                    input_example: None,
-                },
+                definition: definition(name, None, None),
                 outcome,
                 ran_with: Arc::default(),
             }
@@ -648,6 +650,120 @@ mod tests {
             let cli = self::cli(FakeJob::new("train", outcome));
             assert_eq!(exit_code(run(&cli, &["train"])), code);
         }
+    }
+
+    /// The input the job's command line `<job> <args>` gives.
+    fn job_command_input(definition: &JobDefinition, args: &[&str]) -> Value {
+        let matches = job_command(definition)
+            .try_get_matches_from([definition.name.as_str()].iter().chain(args))
+            .unwrap();
+        job_input(&matches)
+    }
+
+    #[test]
+    fn the_mapper_merges_the_command_line_input_onto_its_default() {
+        let mapper = JsonMapper::with_default(json!({
+            "num_epochs": 10,
+            "batch_size": 64,
+            "shuffle": true,
+            "tag": "baseline",
+            "layers": [64, 32],
+            "resume_from": null,
+            "optimizer": {"lr": 0.001, "weight_decay": 5e-5f32}
+        }));
+        let job = definition("mnist", None, mapper.example());
+
+        let input = job_command_input(
+            &job,
+            &[
+                "--num-epochs",
+                "3",
+                r#"{"batch_size": 16, "tag": null, "optimizer": {"lr": 0.2, "weight_decay": 0.5}}"#,
+                "--optimizer.lr",
+                "0.3",
+            ],
+        );
+
+        // `null` removes the field from the default.
+        assert_eq!(
+            mapper.resolve(input),
+            json!({
+                "num_epochs": 3,
+                "batch_size": 16,
+                "shuffle": true,
+                "layers": [64, 32],
+                "resume_from": null,
+                "optimizer": {"lr": 0.3, "weight_decay": 0.5}
+            })
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn a_documented_input_type_gives_documented_flags() {
+        use serde::{Deserialize, Serialize};
+
+        /// How to train.
+        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+        struct Config {
+            /// Passes over the data.
+            num_epochs: u32,
+            optimizer: Optimizer,
+            /// Where to train.
+            device: Device,
+            resume_from: Option<Resume>,
+        }
+
+        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+        struct Optimizer {
+            /// The learning rate.
+            lr: f64,
+        }
+
+        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+        #[serde(rename_all = "snake_case")]
+        enum Device {
+            /// The CPU.
+            Cpu,
+            /// The first GPU.
+            Gpu,
+        }
+
+        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+        struct Resume {
+            experiment: u32,
+        }
+
+        let mapper = JsonMapper::with_default(Config {
+            num_epochs: 10,
+            optimizer: Optimizer { lr: 0.001 },
+            device: Device::Cpu,
+            resume_from: None,
+        })
+        .with_schema();
+        let job = definition("train", mapper.schema(), mapper.example());
+
+        let help = job_command(&job).render_long_help().to_string();
+        for line in [
+            "--device <VALUE>",
+            "Where to train.",
+            "cpu: The CPU.",
+            "--num-epochs <INT>",
+            "Passes over the data.",
+            "--optimizer.lr <FLOAT>",
+            "The learning rate.",
+            "--resume-from <JSON>",
+        ] {
+            assert!(help.contains(line), "no {line} in\n{help}");
+        }
+        let input = job_command_input(
+            &job,
+            &["--device", "gpu", "--resume-from", r#"{"experiment": 4}"#],
+        );
+        let config = mapper.map(input).unwrap();
+        assert!(matches!(config.device, Device::Gpu));
+        assert_eq!(config.resume_from.map(|resume| resume.experiment), Some(4));
+        assert_eq!(config.num_epochs, 10);
     }
 
     #[test]

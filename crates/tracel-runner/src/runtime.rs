@@ -235,7 +235,8 @@ pub fn serve_forever(
 
 #[cfg(test)]
 mod tests {
-    use tracel_app::{BoxError, Job, JobDefinition, JobKind, PreparedJob};
+    use tracel_app::{BoxError, Job, PreparedJob};
+    use tracel_job::{JobDefinition, JobKind};
 
     use super::*;
 

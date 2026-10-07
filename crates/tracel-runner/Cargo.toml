@@ -14,6 +14,7 @@ categories.workspace = true
 [dependencies]
 tracel-app.workspace = true
 tracel-experiment.workspace = true
+tracel-job.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

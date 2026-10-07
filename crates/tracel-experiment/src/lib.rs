@@ -26,8 +26,9 @@
 //! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
 //! With the `local` feature, `local::LocalExperiments` records experiments on this machine.
 //!
-//! When `TRACEL_REPORT_FILE` names a path, [`ExperimentJob::run`] writes a [`RunReport`] there
-//! when the experiment is created and again when the run ends.
+//! When `TRACEL_REPORT_FILE` names a path, [`ExperimentJob::run`] writes a
+//! [`RunReport`](tracel_job::RunReport) there when the experiment is created and again when the
+//! run ends.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
+use tracel_job::ReportedExperiment;
 
 mod activity;
 mod cancellation;
@@ -67,7 +69,6 @@ pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentProvider, Experiments};
-pub use report::{ReportedExperiment, RunReport, RunStatus};
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
