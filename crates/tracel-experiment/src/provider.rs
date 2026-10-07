@@ -217,11 +217,11 @@ impl<I, O> ExperimentJob<I, O> {
         if !arguments.is_null() {
             experiment.record_args(arguments);
         }
-        if let Some(path) = var(TRACEL_REPORT_FILE) {
-            if let Err(error) = experiment.report_to(&self.name, PathBuf::from(path)) {
-                let _ = experiment.fail(error.to_string());
-                return Err(error.into());
-            }
+        if let Some(path) = var(TRACEL_REPORT_FILE)
+            && let Err(error) = experiment.report_to(&self.name, PathBuf::from(path))
+        {
+            let _ = experiment.fail(error.to_string());
+            return Err(error.into());
         }
 
         let handle = experiment.handle();

@@ -533,13 +533,13 @@ impl ExperimentRun {
     fn complete(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
         self.inner.mark_finished()?;
         let finished = self.inner.session.finish(completion.clone());
-        if let Some(report) = &self.report {
-            if let Err(error) = report.finish(&completion) {
-                tracing::warn!(
-                    "Failed to write the run report to {}: {error}",
-                    report.path().display()
-                );
-            }
+        if let Some(report) = &self.report
+            && let Err(error) = report.finish(&completion)
+        {
+            tracing::warn!(
+                "Failed to write the run report to {}: {error}",
+                report.path().display()
+            );
         }
         finished
     }

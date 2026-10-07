@@ -251,9 +251,9 @@ track them on the console instead.
 
 ## Requirements
 
-- Rust 1.87.0 or higher
-- A Tracel account (create one on the [console](https://console.tracel.ai/))
-- The [tracel-cli](https://github.com/tracel-ai/tracel-cli), to log in and store your credentials locally (or set `TRACEL_API_KEY`)
+- Rust 1.97.0 or higher
+- A Burn Central account (create one at [central.burn.dev](https://central.burn.dev/))
+- The [tracel-cli](https://github.com/tracel-ai/tracel-cli), to log in and store your credentials locally
 
 ## Contribution
 

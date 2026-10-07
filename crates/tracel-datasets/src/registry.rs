@@ -105,12 +105,12 @@ impl VersionDraft {
     /// offered without one are never refused.
     pub fn add(&mut self, item: NewItem) -> Result<(), DatasetsError> {
         let identity = item.source_item_id.clone();
-        if let Some(identity) = &identity {
-            if self.offered.contains(identity) {
-                return Err(DatasetsError::DuplicateItem {
-                    source_item_id: identity.clone(),
-                });
-            }
+        if let Some(identity) = &identity
+            && self.offered.contains(identity)
+        {
+            return Err(DatasetsError::DuplicateItem {
+                source_item_id: identity.clone(),
+            });
         }
 
         self.publication.add_item(item)?;
