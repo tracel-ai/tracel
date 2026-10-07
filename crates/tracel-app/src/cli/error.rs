@@ -69,12 +69,14 @@ impl CliError {
         }
     }
 
-    /// Prints why to stderr, a usage error as clap renders it, with the usage that follows.
+    /// Prints why to stderr: a usage error as clap renders it, with the usage that follows, and a
+    /// stop request as a warning, since a job asked to stop may still have completed.
     pub fn print(&self) {
         match self {
             Self::Usage(error) => {
                 let _ = error.print();
             }
+            Self::Stopped => eprintln!("warning: {self}"),
             error => eprintln!("error: {error}"),
         }
     }
