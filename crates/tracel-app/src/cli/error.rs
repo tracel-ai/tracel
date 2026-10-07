@@ -5,8 +5,8 @@ const FAILED: u8 = 1;
 /// The exit code of a command line that names no registered job, or gives an unusable flag or
 /// input.
 const USAGE: u8 = 2;
-/// The exit code of a cancelled job.
-pub const CANCELLED: u8 = 130;
+/// The exit code of a job that was asked to stop.
+pub const STOPPED: u8 = 130;
 
 /// Why a [`Cli`](crate::cli::Cli) ran no job, or the job it ran did not complete.
 #[derive(Debug, thiserror::Error)]
@@ -40,9 +40,9 @@ pub enum CliError {
     #[error("job failed: {0}")]
     JobFailed(#[source] BoxError),
 
-    /// The job was cancelled.
-    #[error("job cancelled")]
-    Cancelled,
+    /// The job was asked to stop.
+    #[error("the job was asked to stop")]
+    Stopped,
 
     /// `TRACEL_DESCRIBE` names a path the definitions file could not be written to.
     #[error(transparent)]
@@ -58,7 +58,7 @@ impl CliError {
             | Self::Usage(_)
             | Self::InvalidInput(_) => USAGE,
             Self::JobFailed(_) | Self::Describe(_) => FAILED,
-            Self::Cancelled => CANCELLED,
+            Self::Stopped => STOPPED,
         }
     }
 

@@ -27,7 +27,6 @@ impl ReportFile {
         let (status, error) = match completion {
             ExperimentCompletion::Success => (RunStatus::Completed, None),
             ExperimentCompletion::Failed(reason) => (RunStatus::Failed, Some(reason.clone())),
-            ExperimentCompletion::Cancelled => (RunStatus::Cancelled, None),
         };
         RunReport {
             status,
@@ -117,7 +116,6 @@ mod tests {
                 "failed",
                 json!("out of memory"),
             ),
-            (ExperimentCompletion::Cancelled, "cancelled", Value::Null),
         ] {
             file.finish(&completion).unwrap();
 

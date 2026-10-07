@@ -26,8 +26,8 @@ The example runs its `mnist` job with `tracel::app::cli::Cli`, so each field of
 `MnistTrainingConfig`, a Burn `Config`, is a flag typed by its default value, nested fields joined
 with dots. The flags, or one JSON document, are merged onto the small default configuration and
 recorded as the experiment's arguments.
-SIGTERM cancels the run: the interrupter stops training, and the run ends as cancelled.
-Launchers send SIGKILL after a 30-second grace period.
+SIGTERM asks the run to stop: the interrupter stops training, the run ends as completed, and the
+program exits with code 130. Launchers send SIGKILL after a 30-second grace period.
 
 Runs offline by default, recording under `./runs`, so it needs no credentials. It reads its target
 with `tracel::Target::from_env`: set `TRACEL_TARGET=console` to ship metrics, checkpoints, and

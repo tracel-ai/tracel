@@ -37,8 +37,9 @@ impl PreparedJob {
 
     /// Runs the job, sending its outputs to `output`.
     ///
-    /// Cancelling `cancel_token` asks the job to stop: an experiment ends as cancelled, and an
-    /// inference takes no more input.
+    /// Cancelling `cancel_token` asks the job to stop: an experiment's run has its cancel token
+    /// cancelled and ends as completed or failed by what its function returns, and an inference
+    /// takes no more input.
     pub fn run<W>(self, output: W, cancel_token: CancelToken) -> Result<(), BoxError>
     where
         W: OutputWriter<Value> + Send + Sync + 'static,

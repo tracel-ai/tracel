@@ -46,6 +46,9 @@ pub struct ReportedExperiment {
 }
 
 /// How a run is going, in a [`RunReport`].
+///
+/// A run ends as completed or failed by what its job returns, whether or not it was asked to
+/// stop: being stopped is known to whoever stopped it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
@@ -55,8 +58,6 @@ pub enum RunStatus {
     Completed,
     /// The run failed, for the reason in [`RunReport::error`].
     Failed,
-    /// The run was cancelled.
-    Cancelled,
 }
 
 impl RunReport {
@@ -145,6 +146,22 @@ mod tests {
         assert_eq!(report.started_at, STARTED_AT);
         assert_eq!(report.finished_at, None);
         assert_eq!(report.error, None);
+    }
+
+    #[test]
+    fn a_status_is_running_completed_or_failed() {
+        for (status, name) in [
+            (RunStatus::Running, "running"),
+            (RunStatus::Completed, "completed"),
+            (RunStatus::Failed, "failed"),
+        ] {
+            assert_eq!(serde_json::to_value(status).unwrap(), name);
+            assert_eq!(
+                serde_json::from_value::<RunStatus>(name.into()).unwrap(),
+                status
+            );
+        }
+        assert!(serde_json::from_value::<RunStatus>("cancelled".into()).is_err());
     }
 
     #[test]

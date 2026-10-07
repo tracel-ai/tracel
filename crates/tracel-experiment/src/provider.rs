@@ -155,11 +155,13 @@ impl<I, O> ExperimentJob<I, O> {
     }
 
     /// Runs the job like [`run`](Self::run), recording `arguments` as the experiment's arguments
-    /// instead of serializing `input`, and cancelling the run when `cancel_token` is cancelled.
+    /// instead of serializing `input`, and cancelling the run's cancel token when `cancel_token` is
+    /// cancelled.
     ///
-    /// `arguments` is typically the JSON `input` was decoded from; `null` records none. A run
-    /// whose token is cancelled ends as cancelled, and one cancelled before it starts creates no
-    /// experiment and returns an [`ExperimentErrorKind::Cancelled`] error.
+    /// `arguments` is typically the JSON `input` was decoded from; `null` records none. A run whose
+    /// token is cancelled still ends as completed or failed, by what the job's function returns.
+    /// One cancelled before it starts creates no experiment and returns an
+    /// [`ExperimentErrorKind::Cancelled`] error.
     pub fn run_with(
         &self,
         input: I,
@@ -229,21 +231,11 @@ impl<I, O> ExperimentJob<I, O> {
 
         match result {
             Ok(output) => {
-                if experiment.cancel_token().is_cancelled() {
-                    // Dropping without an explicit completion finalizes the run as cancelled.
-                    drop(experiment);
-                } else {
-                    experiment.finish()?;
-                }
+                experiment.finish()?;
                 Ok(output)
             }
-            Err(e) if experiment.cancel_token().is_cancelled() => {
-                drop(experiment);
-                Err(e)
-            }
             Err(e) => {
-                let msg = e.to_string();
-                let _ = experiment.fail(msg);
+                let _ = experiment.fail(e.to_string());
                 Err(e)
             }
         }
@@ -357,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn given_run_cancelled_through_control_when_running_then_complete_cancelled() {
+    fn given_run_cancelled_through_control_when_running_then_complete_success() {
         let fixture = Fixture::new();
         let job = fixture
             .experiments
@@ -369,11 +361,11 @@ mod tests {
 
         job.run(()).unwrap();
 
-        assert_eq!(fixture.completions(), [ExperimentCompletion::Cancelled]);
+        assert_eq!(fixture.completions(), [ExperimentCompletion::Success]);
     }
 
     #[test]
-    fn given_run_error_when_cancel_started_then_complete_cancelled() {
+    fn given_run_error_when_cancel_started_then_complete_failed() {
         let fixture = Fixture::new();
         let job = fixture
             .experiments
@@ -385,7 +377,10 @@ mod tests {
         let result = job.run(());
 
         assert!(result.is_err());
-        assert_eq!(fixture.completions(), [ExperimentCompletion::Cancelled]);
+        assert_eq!(
+            fixture.completions(),
+            [ExperimentCompletion::Failed("interrupted".to_string())]
+        );
     }
 
     #[test]
@@ -426,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_the_token_given_cancels_the_run() {
+    fn cancelling_the_token_given_cancels_the_run_token() {
         let fixture = Fixture::new();
         let cancel = CancelToken::new();
         let job = fixture.experiments.create("job", {
@@ -440,7 +435,7 @@ mod tests {
 
         job.run_with((), Value::Null, cancel).unwrap();
 
-        assert_eq!(fixture.completions(), [ExperimentCompletion::Cancelled]);
+        assert_eq!(fixture.completions(), [ExperimentCompletion::Success]);
     }
 
     #[test]
@@ -591,30 +586,38 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_run_is_reported_cancelled() {
+    fn a_cancelled_run_is_reported_by_what_its_function_returns() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
         let fixture = Fixture::new();
-        let cancel = CancelToken::new();
-        let job = fixture.experiments.create("job", {
-            let cancel = cancel.clone();
-            move |_run: &ExperimentRun, _input: ()| {
-                cancel.cancel();
-                Err::<(), _>("interrupted".into())
-            }
-        });
+        let job = fixture.experiments.create(
+            "job",
+            |run: &ExperimentRun, fail: bool| -> Result<(), Box<dyn Error + Send + Sync>> {
+                run.cancel_token().cancel();
+                if fail {
+                    Err("interrupted".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        let run = |fail: bool| {
+            let _ = job.run_with_vars(
+                vars(&[(TRACEL_REPORT_FILE, &path)]),
+                fail,
+                Value::Null,
+                CancelToken::new(),
+            );
+            read_json(&path)
+        };
 
-        job.run_with_vars(
-            vars(&[(TRACEL_REPORT_FILE, &path)]),
-            (),
-            Value::Null,
-            cancel,
-        )
-        .unwrap_err();
+        let completed = run(false);
+        let failed = run(true);
 
-        let report = read_json(&path);
-        assert_eq!(report["status"], "cancelled");
-        assert_eq!(report["error"], Value::Null);
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["error"], Value::Null);
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["error"], "interrupted");
     }
 
     #[test]

@@ -804,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_or_cancelled_run_says_so_in_its_status() {
+    fn a_run_says_how_it_ended_in_its_status() {
         let dir = tempfile::tempdir().unwrap();
         run(dir.path(), "mnist").fail("diverged").unwrap();
         {
@@ -816,7 +816,7 @@ mod tests {
         let cancelled = read_json(&dir.path().join("mnist/2/status.json"));
         assert_eq!(failed["status"], "failed");
         assert_eq!(failed["error"], "diverged");
-        assert_eq!(cancelled["status"], "cancelled");
+        assert_eq!(cancelled["status"], "completed");
         assert_eq!(cancelled["error"], Value::Null);
     }
 
