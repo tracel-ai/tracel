@@ -2,19 +2,23 @@
 //! See src/training.rs for the wiring.
 //!
 //! cargo run -p mnist --example mnist
+//! cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5}'
 #![recursion_limit = "256"]
+
+use std::process::ExitCode;
 
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
 use tracel::Target;
+use tracel::app::cli::Cli;
+use tracel::app::mapper::JsonMapper;
 use tracel::experiment::ExperimentRun;
 
-fn main() -> anyhow::Result<()> {
-    let experiments = Target::from_env()?.experiments()?;
-
-    experiments
+fn main() -> anyhow::Result<ExitCode> {
+    let train = Target::from_env()?
+        .experiments()?
         .create("mnist", |experiment: &ExperimentRun, config| {
             training::run(
                 experiment,
@@ -22,8 +26,13 @@ fn main() -> anyhow::Result<()> {
                 vec![Device::autodiff(WgpuDevice::default().into())],
             )
         })
-        .run(MnistTrainingConfig::small())
-        .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
+        .with_description("Train an MNIST classifier");
 
-    Ok(())
+    Ok(Cli::new()
+        .register(
+            train,
+            JsonMapper::with_default(MnistTrainingConfig::small()),
+        )
+        .default_job("mnist")
+        .run())
 }

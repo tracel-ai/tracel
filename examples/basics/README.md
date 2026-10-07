@@ -6,11 +6,11 @@ Small runnable examples of the Tracel framework, using toy capabilities:
 - a stand-in training loop that tracks activities, logs metrics, and handles cancellation.
 
 They run offline by default, recording under `./runs`, so no credentials are needed. Each example
-reads its target with `tracel::Target::from_env`, which chooses it from `TRACEL_CONNECTION`:
+reads its target with `tracel::Target::from_env`, which chooses it from `TRACEL_TARGET`:
 
 ```sh
 cargo run -p basics --example train    # offline (default)
-TRACEL_CONNECTION=console TRACEL_NAMESPACE=<owner> TRACEL_PROJECT=<project> \
+TRACEL_TARGET=console TRACEL_NAMESPACE=<owner> TRACEL_PROJECT=<project> \
     cargo run -p basics --example train  # ships to the console
 ```
 
@@ -38,6 +38,7 @@ cargo run -p basics --example train
 cargo run -p basics --example cli -- wordtok '{"text":"hello streaming world"}'
 cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
 TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli  # writes the job definitions to jobs.json
+TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training  # writes its run report to report.json
 
 cargo run -p basics --example serve
 curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'

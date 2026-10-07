@@ -9,9 +9,9 @@ use crate::mapper::Mapper;
 
 /// Decodes a job's input as JSON, merged onto a default when it has one.
 ///
-/// With a default, no input yields the default, and an input is merged onto it with JSON merge
-/// patch (RFC 7386): its fields replace the default's, and a `null` field removes one. The default
-/// is also the job's example input.
+/// With a default, no input resolves to the default, and an input is merged onto it with JSON
+/// merge patch (RFC 7386): its fields replace the default's, and a `null` field removes one. The
+/// default is also the job's example input.
 pub struct JsonMapper<I> {
     default: Option<Value>,
     schema: Option<Value>,
@@ -66,16 +66,20 @@ impl<I> Mapper<I> for JsonMapper<I>
 where
     I: DeserializeOwned,
 {
-    fn map(&self, input: &Value) -> Result<I, BoxError> {
+    fn resolve(&self, input: Value) -> Value {
         match &self.default {
-            Some(default) if input.is_null() => Ok(I::deserialize(default)?),
+            Some(default) if input.is_null() => default.clone(),
             Some(default) => {
                 let mut merged = default.clone();
-                json_patch::merge(&mut merged, input);
-                Ok(serde_json::from_value(merged)?)
+                json_patch::merge(&mut merged, &input);
+                merged
             }
-            None => Ok(I::deserialize(input)?),
+            None => input,
         }
+    }
+
+    fn decode(&self, input: Value) -> Result<I, BoxError> {
+        Ok(serde_json::from_value(input)?)
     }
 
     fn example(&self) -> Option<Value> {
@@ -125,7 +129,7 @@ mod tests {
         let mapper = JsonMapper::<Optimizer>::new();
 
         let optimizer = mapper
-            .map(&json!({"lr": 0.1, "weight_decay": 0.01}))
+            .map(json!({"lr": 0.1, "weight_decay": 0.01}))
             .unwrap();
 
         assert_eq!(
@@ -135,7 +139,7 @@ mod tests {
                 weight_decay: 0.01
             }
         );
-        assert!(mapper.map(&Value::Null).is_err());
+        assert!(mapper.map(Value::Null).is_err());
         assert_eq!(mapper.example(), None);
     }
 
@@ -143,7 +147,7 @@ mod tests {
     fn no_input_yields_the_default() {
         let mapper = JsonMapper::with_default(default_config());
 
-        assert_eq!(mapper.map(&Value::Null).unwrap(), default_config());
+        assert_eq!(mapper.map(Value::Null).unwrap(), default_config());
     }
 
     #[test]
@@ -151,7 +155,7 @@ mod tests {
         let mapper = JsonMapper::with_default(default_config());
 
         let config = mapper
-            .map(&json!({"epochs": 2, "optimizer": {"lr": 0.1}, "tag": null}))
+            .map(json!({"epochs": 2, "optimizer": {"lr": 0.1}, "tag": null}))
             .unwrap();
 
         assert_eq!(
@@ -164,6 +168,28 @@ mod tests {
                 },
                 tag: None,
             }
+        );
+    }
+
+    #[test]
+    fn the_resolved_input_is_the_merged_json() {
+        let mapper = JsonMapper::with_default(default_config());
+
+        assert_eq!(
+            mapper.resolve(json!({"epochs": 2, "optimizer": {"lr": 0.1}})),
+            json!({
+                "epochs": 2,
+                "optimizer": {"lr": 0.1, "weight_decay": 0.0},
+                "tag": "baseline"
+            })
+        );
+        assert_eq!(
+            mapper.resolve(Value::Null),
+            serde_json::to_value(default_config()).unwrap()
+        );
+        assert_eq!(
+            JsonMapper::<Config>::new().resolve(json!({"epochs": 2})),
+            json!({"epochs": 2})
         );
     }
 
@@ -185,7 +211,7 @@ mod tests {
     fn an_input_of_the_wrong_type_does_not_decode() {
         let mapper = JsonMapper::with_default(default_config());
 
-        assert!(mapper.map(&json!({"epochs": "ten"})).is_err());
+        assert!(mapper.map(json!({"epochs": "ten"})).is_err());
     }
 
     #[test]

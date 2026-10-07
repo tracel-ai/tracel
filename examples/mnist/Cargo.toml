@@ -22,11 +22,6 @@ burn = { workspace = true, features = [
 ] }
 tracel = { workspace = true, features = ["burn"] }
 anyhow.workspace = true
-clap.workspace = true
-ctrlc.workspace = true
-dotenvy.workspace = true
-log.workspace = true
 rand.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json.workspace = true
-tracing.workspace = true

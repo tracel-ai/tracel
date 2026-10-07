@@ -13,7 +13,7 @@ use tracel_station::Station;
 #[cfg(feature = "station")]
 use url::Url;
 
-const TRACEL_CONNECTION: &str = "TRACEL_CONNECTION";
+const TRACEL_TARGET: &str = "TRACEL_TARGET";
 const TRACEL_RUNS_DIR: &str = "TRACEL_RUNS_DIR";
 const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
@@ -25,11 +25,11 @@ const DEFAULT_RUNS_DIR: &str = "./runs";
 #[cfg(feature = "station")]
 const DEFAULT_STATION_URL: &str = "http://localhost:8000";
 
-/// The values `TRACEL_CONNECTION` accepts, as an error lists them.
+/// The values `TRACEL_TARGET` accepts, as an error lists them.
 #[cfg(not(feature = "station"))]
-const CONNECTIONS: &str = "offline or console";
+const TARGETS: &str = "offline or console";
 #[cfg(feature = "station")]
-const CONNECTIONS: &str = "offline, console or station";
+const TARGETS: &str = "offline, console or station";
 
 /// Where a program records its experiments and reaches models, datasets and inference
 /// telemetry.
@@ -66,18 +66,17 @@ pub enum Target {
 impl Target {
     /// Reads the target the environment names, without performing network I/O.
     ///
-    /// `TRACEL_CONNECTION` picks the kind of target, and the variables that kind needs fill it
-    /// in. An unset or empty variable takes its default:
+    /// `TRACEL_TARGET` picks the kind of target, and the variables that kind needs fill it in. An unset or empty variable takes its default:
     ///
     /// | Variable | Value | Default |
     /// | --- | --- | --- |
     #[cfg_attr(
         not(feature = "station"),
-        doc = "| `TRACEL_CONNECTION` | `offline` or `console` | `offline` |"
+        doc = "| `TRACEL_TARGET` | `offline` or `console` | `offline` |"
     )]
     #[cfg_attr(
         feature = "station",
-        doc = "| `TRACEL_CONNECTION` | `offline`, `console` or `station` | `offline` |"
+        doc = "| `TRACEL_TARGET` | `offline`, `console` or `station` | `offline` |"
     )]
     /// | `TRACEL_RUNS_DIR` | the directory offline runs are recorded under | `./runs` |
     /// | `TRACEL_ENV` | the console, as [`env_from_environment`](crate::console::env_from_environment) reads it | `Production` |
@@ -88,9 +87,9 @@ impl Target {
         doc = "| `TRACEL_STATION_URL` | the Station's base URL | `http://localhost:8000` |"
     )]
     ///
-    /// Fails with [`TargetError::UnknownConnection`] when `TRACEL_CONNECTION` names no target, and
-    /// with [`TargetError::MissingSetting`] or [`TargetError::InvalidSetting`] naming the variable
-    /// to set when the target cannot be filled in.
+    /// Fails with [`TargetError::UnknownTarget`] when `TRACEL_TARGET` names no target, and with
+    /// [`TargetError::MissingSetting`] or [`TargetError::InvalidSetting`] naming the variable to
+    /// set when the target cannot be filled in.
     pub fn from_env() -> Result<Target, TargetError> {
         Self::from_vars(|name| std::env::var_os(name))
     }
@@ -99,9 +98,9 @@ impl Target {
     /// console's own variables are read by [`tracel_console`].
     fn from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Target, TargetError> {
         let var = |name: &str| lookup(name).filter(|value| !value.is_empty());
-        let connection = var(TRACEL_CONNECTION).map(|value| value.to_string_lossy().into_owned());
+        let target = var(TRACEL_TARGET).map(|value| value.to_string_lossy().into_owned());
 
-        match connection.as_deref() {
+        match target.as_deref() {
             None | Some("offline") => Ok(Target::Offline {
                 dir: var(TRACEL_RUNS_DIR).map_or_else(|| DEFAULT_RUNS_DIR.into(), PathBuf::from),
             }),
@@ -129,12 +128,12 @@ impl Target {
             }
             #[cfg(not(feature = "station"))]
             Some("station") => Err(TargetError::FeatureRequired {
-                connection: "station",
+                target: "station",
                 feature: "station",
             }),
-            Some(value) => Err(TargetError::UnknownConnection {
+            Some(value) => Err(TargetError::UnknownTarget {
                 value: value.to_string(),
-                expected: CONNECTIONS,
+                expected: TARGETS,
             }),
         }
     }
@@ -230,19 +229,19 @@ fn noop_inference() -> InferenceModule {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TargetError {
-    /// `TRACEL_CONNECTION` names no target.
-    #[error("unknown TRACEL_CONNECTION value `{value}`: expected {expected}")]
-    UnknownConnection {
-        /// The value `TRACEL_CONNECTION` holds.
+    /// `TRACEL_TARGET` names no target.
+    #[error("unknown TRACEL_TARGET value `{value}`: expected {expected}")]
+    UnknownTarget {
+        /// The value `TRACEL_TARGET` holds.
         value: String,
         /// The values it accepts.
         expected: &'static str,
     },
-    /// `TRACEL_CONNECTION` names a target this build of `tracel` leaves out.
-    #[error("TRACEL_CONNECTION={connection} needs the `{feature}` feature of tracel")]
+    /// `TRACEL_TARGET` names a target this build of `tracel` leaves out.
+    #[error("TRACEL_TARGET={target} needs the `{feature}` feature of tracel")]
     FeatureRequired {
-        /// The value `TRACEL_CONNECTION` holds.
-        connection: &'static str,
+        /// The value `TRACEL_TARGET` holds.
+        target: &'static str,
         /// The `tracel` feature that adds the target.
         feature: &'static str,
     },
@@ -336,14 +335,14 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_or_empty_connection_records_offline_under_runs() {
+    fn an_unset_or_empty_target_records_offline_under_runs() {
         assert_eq!(offline_dir(target(&[])), Path::new("./runs"));
         assert_eq!(
-            offline_dir(target(&[(TRACEL_CONNECTION, "")])),
+            offline_dir(target(&[(TRACEL_TARGET, "")])),
             Path::new("./runs")
         );
         assert_eq!(
-            offline_dir(target(&[(TRACEL_CONNECTION, "offline")])),
+            offline_dir(target(&[(TRACEL_TARGET, "offline")])),
             Path::new("./runs")
         );
     }
@@ -361,19 +360,19 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_connection_names_the_value_and_the_accepted_ones() {
+    fn an_unknown_target_names_the_value_and_the_accepted_ones() {
         for value in ["cloud", "Offline", "CONSOLE", " console"] {
-            let error = target(&[(TRACEL_CONNECTION, value)]).unwrap_err();
+            let error = target(&[(TRACEL_TARGET, value)]).unwrap_err();
 
             assert!(
                 matches!(
                     &error,
-                    TargetError::UnknownConnection { value: held, .. } if held == value
+                    TargetError::UnknownTarget { value: held, .. } if held == value
                 ),
                 "{value}: {error:?}"
             );
             let message = error.to_string();
-            assert!(message.contains("TRACEL_CONNECTION"), "{message}");
+            assert!(message.contains("TRACEL_TARGET"), "{message}");
             assert!(message.contains(value), "{message}");
             assert!(message.contains("offline"), "{message}");
             assert!(message.contains("console"), "{message}");
@@ -382,8 +381,8 @@ mod tests {
 
     #[cfg(not(feature = "station"))]
     #[test]
-    fn a_station_connection_says_it_needs_the_station_feature() {
-        let error = target(&[(TRACEL_CONNECTION, "station")]).unwrap_err();
+    fn a_station_target_says_it_needs_the_station_feature() {
+        let error = target(&[(TRACEL_TARGET, "station")]).unwrap_err();
 
         assert!(matches!(
             error,
@@ -397,19 +396,19 @@ mod tests {
 
     #[cfg(feature = "station")]
     #[test]
-    fn a_station_connection_reads_tracel_station_url() {
+    fn a_station_target_reads_tracel_station_url() {
         let station_url = |vars: &[(&str, &str)]| match target(vars) {
             Ok(Target::Station { url }) => url.to_string(),
             other => panic!("expected a station target, got {other:?}"),
         };
 
         assert_eq!(
-            station_url(&[(TRACEL_CONNECTION, "station")]),
+            station_url(&[(TRACEL_TARGET, "station")]),
             "http://localhost:8000/"
         );
         assert_eq!(
             station_url(&[
-                (TRACEL_CONNECTION, "station"),
+                (TRACEL_TARGET, "station"),
                 (TRACEL_STATION_URL, "https://station.example.com")
             ]),
             "https://station.example.com/"
@@ -421,7 +420,7 @@ mod tests {
     fn an_invalid_station_url_names_the_variable() {
         for value in ["not a url", "localhost:8000", "ftp://localhost:8000"] {
             let error =
-                target(&[(TRACEL_CONNECTION, "station"), (TRACEL_STATION_URL, value)]).unwrap_err();
+                target(&[(TRACEL_TARGET, "station"), (TRACEL_STATION_URL, value)]).unwrap_err();
 
             assert!(
                 matches!(

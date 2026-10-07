@@ -1,15 +1,19 @@
 mod error;
+mod signal;
 
-pub use error::CliError;
-
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use clap::Parser;
 use serde_json::Value;
+use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
 
 use crate::{BoxError, IntoJob, Job, JobInput, JobRegistry};
+use error::CliError;
 
 #[derive(Parser)]
 #[command(about = "Run a registered job")]
@@ -24,6 +28,30 @@ struct Args {
 ///
 /// The input is one JSON document. Left out, the job runs with no input, which a mapper with a
 /// default reads as that default. An inference prints each output as a line of JSON.
+///
+/// [`run`](Self::run) returns the exit code for the process, so `main` returns it:
+///
+/// ```no_run
+/// use std::process::ExitCode;
+/// use std::sync::Arc;
+///
+/// use tracel_app::cli::Cli;
+/// use tracel_app::mapper::JsonMapper;
+/// use tracel_experiment::local::LocalExperiments;
+/// use tracel_experiment::{ExperimentRun, Experiments};
+///
+/// fn main() -> ExitCode {
+///     let train = Experiments::new(Arc::new(LocalExperiments::new("./runs")))
+///         .create("train", |_run: &ExperimentRun, epochs: u32| {
+///             println!("training for {epochs} epochs");
+///             Ok(())
+///         });
+///
+///     Cli::new()
+///         .register(train, JsonMapper::with_default(10u32))
+///         .run()
+/// }
+/// ```
 #[derive(Default)]
 pub struct Cli {
     jobs: JobRegistry,
@@ -66,19 +94,49 @@ impl Cli {
         self
     }
 
-    /// Runs the job the command-line arguments name.
+    /// Runs the job the command-line arguments name, and returns the exit code for the process.
     ///
-    /// When `TRACEL_DESCRIBE` names a path, writes the definitions file there instead and returns
-    /// without running a job.
-    pub fn run(self) -> Result<(), CliError> {
+    /// | Exit code | Meaning |
+    /// | --- | --- |
+    /// | 0 | The job completed, or the definitions file was written |
+    /// | 1 | The job failed, or the definitions file could not be written |
+    /// | 2 | No job or an unknown job is named, or the input is not JSON or does not decode |
+    /// | 130 | The job was cancelled |
+    ///
+    /// Why it did not complete is printed to stderr, with the registered job names when no job or
+    /// an unknown one is named. When `TRACEL_DESCRIBE` names a path, writes the definitions file
+    /// there instead of running a job.
+    ///
+    /// SIGTERM, SIGINT or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows,
+    /// cancels the job: an experiment's run is cancelled, and it ends as cancelled once its
+    /// function returns. A second signal ends the process at once, with exit code 130. Launchers
+    /// send SIGKILL after a 30-second grace period.
+    pub fn run(self) -> ExitCode {
+        match self.execute() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::from(error.exit_code())
+            }
+        }
+    }
+
+    fn execute(self) -> Result<(), CliError> {
         if self.jobs.describe_from_env("cli")? {
             return Ok(());
         }
         let args = Args::parse();
-        self.dispatch(args.job, args.input)
+        let cancel_token = CancelToken::new();
+        signal::cancel_on_termination(cancel_token.clone());
+        self.dispatch(args.job, args.input, cancel_token)
     }
 
-    fn dispatch(&self, name: Option<String>, input: Option<String>) -> Result<(), CliError> {
+    fn dispatch(
+        &self,
+        name: Option<String>,
+        input: Option<String>,
+        cancel_token: CancelToken,
+    ) -> Result<(), CliError> {
         let name = name
             .or_else(|| self.default.clone())
             .ok_or_else(|| CliError::MissingJob {
@@ -100,11 +158,33 @@ impl Cli {
             .map_err(CliError::InvalidInput)?;
         let output = Stdout::default();
         let failure = output.failure.clone();
-        prepared.run(output).map_err(CliError::JobFailed)?;
-        match failure.lock().unwrap().take() {
-            Some(error) => Err(CliError::JobFailed(error)),
-            None => Ok(()),
+        let ran = catch_unwind(AssertUnwindSafe(|| {
+            prepared.run(output, cancel_token.clone())
+        }));
+
+        if cancel_token.is_cancelled() {
+            return Err(CliError::Cancelled);
         }
+        match ran {
+            Ok(Ok(())) => match failure.lock().unwrap().take() {
+                Some(error) => Err(CliError::JobFailed(error)),
+                None => Ok(()),
+            },
+            Ok(Err(error)) => Err(CliError::JobFailed(error)),
+            Err(panic) => Err(CliError::JobFailed(
+                format!("the job panicked: {}", panic_message(panic.as_ref())).into(),
+            )),
+        }
+    }
+}
+
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        message
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message
+    } else {
+        "unknown panic"
     }
 }
 
@@ -140,6 +220,8 @@ mod tests {
         Succeed,
         Fail,
         ReportError,
+        Panic,
+        Cancel,
     }
 
     /// Takes an object input, or none, and records the input it ran with.
@@ -179,7 +261,7 @@ mod tests {
             }
             let ran_with = self.ran_with.clone();
             let outcome = self.outcome;
-            Ok(PreparedJob::new(move |output| {
+            Ok(PreparedJob::new(move |output, cancel_token| {
                 *ran_with.lock().unwrap() = Some(input);
                 match outcome {
                     Outcome::Succeed => Ok(()),
@@ -187,6 +269,11 @@ mod tests {
                     Outcome::ReportError => {
                         let _ = output.error("bad output".into());
                         Ok(())
+                    }
+                    Outcome::Panic => panic!("kernel exploded"),
+                    Outcome::Cancel => {
+                        cancel_token.cancel();
+                        Err("interrupted".into())
                     }
                 }
             }))
@@ -199,14 +286,21 @@ mod tests {
             .job(FakeJob::new("evaluate", Outcome::Succeed))
     }
 
+    /// Runs the job `name` names with `input`, as the command line `<name> <input>`.
+    fn run(cli: &Cli, name: Option<&str>, input: Option<&str>) -> Result<(), CliError> {
+        cli.dispatch(
+            name.map(str::to_string),
+            input.map(str::to_string),
+            CancelToken::new(),
+        )
+    }
+
     #[test]
     fn the_named_job_runs_with_its_json_input() {
         let job = FakeJob::new("train", Outcome::Succeed);
         let ran_with = job.ran_with.clone();
 
-        cli(job)
-            .dispatch(Some("train".into()), Some(r#"{"epochs": 2}"#.into()))
-            .unwrap();
+        run(&cli(job), Some("train"), Some(r#"{"epochs": 2}"#)).unwrap();
 
         assert_eq!(*ran_with.lock().unwrap(), Some(json!({"epochs": 2})));
     }
@@ -216,7 +310,7 @@ mod tests {
         let job = FakeJob::new("train", Outcome::Succeed);
         let ran_with = job.ran_with.clone();
 
-        cli(job).dispatch(Some("train".into()), None).unwrap();
+        run(&cli(job), Some("train"), None).unwrap();
 
         assert_eq!(*ran_with.lock().unwrap(), Some(Value::Null));
     }
@@ -226,7 +320,7 @@ mod tests {
         let job = FakeJob::new("train", Outcome::Succeed);
         let ran_with = job.ran_with.clone();
 
-        cli(job).default_job("train").dispatch(None, None).unwrap();
+        run(&cli(job).default_job("train"), None, None).unwrap();
 
         assert_eq!(*ran_with.lock().unwrap(), Some(Value::Null));
     }
@@ -235,8 +329,8 @@ mod tests {
     fn an_unknown_or_missing_job_lists_the_registered_ones() {
         let cli = cli(FakeJob::new("train", Outcome::Succeed));
 
-        let unknown = cli.dispatch(Some("infer".into()), None).unwrap_err();
-        let missing = cli.dispatch(None, None).unwrap_err();
+        let unknown = run(&cli, Some("infer"), None).unwrap_err();
+        let missing = run(&cli, None, None).unwrap_err();
 
         assert!(matches!(
             &unknown,
@@ -244,6 +338,7 @@ mod tests {
         ));
         assert!(matches!(missing, CliError::MissingJob { .. }));
         assert!(unknown.to_string().contains("evaluate, train"), "{unknown}");
+        assert!(missing.to_string().contains("evaluate, train"), "{missing}");
     }
 
     #[test]
@@ -252,8 +347,8 @@ mod tests {
         let ran_with = job.ran_with.clone();
         let cli = cli(job);
 
-        let not_json = cli.dispatch(Some("train".into()), Some("--epochs 2".into()));
-        let not_decoded = cli.dispatch(Some("train".into()), Some("[1, 2]".into()));
+        let not_json = run(&cli, Some("train"), Some("--epochs 2"));
+        let not_decoded = run(&cli, Some("train"), Some("[1, 2]"));
 
         assert!(matches!(not_json, Err(CliError::InvalidInput(_))));
         assert!(matches!(not_decoded, Err(CliError::InvalidInput(_))));
@@ -262,13 +357,64 @@ mod tests {
 
     #[test]
     fn a_failing_job_or_an_error_output_fails() {
-        let failing =
-            cli(FakeJob::new("train", Outcome::Fail)).dispatch(Some("train".into()), None);
-        let reporting =
-            cli(FakeJob::new("train", Outcome::ReportError)).dispatch(Some("train".into()), None);
+        let failing = run(
+            &cli(FakeJob::new("train", Outcome::Fail)),
+            Some("train"),
+            None,
+        );
+        let reporting = run(
+            &cli(FakeJob::new("train", Outcome::ReportError)),
+            Some("train"),
+            None,
+        );
 
         assert!(matches!(failing, Err(CliError::JobFailed(e)) if e.to_string() == "boom"));
         assert!(matches!(reporting, Err(CliError::JobFailed(e)) if e.to_string() == "bad output"));
+    }
+
+    #[test]
+    fn a_panicking_job_fails() {
+        let panicking = run(
+            &cli(FakeJob::new("train", Outcome::Panic)),
+            Some("train"),
+            None,
+        );
+
+        assert!(matches!(
+            panicking,
+            Err(CliError::JobFailed(e)) if e.to_string().contains("kernel exploded")
+        ));
+    }
+
+    #[test]
+    fn a_job_whose_token_is_cancelled_is_cancelled_even_when_it_fails() {
+        let cancelled = run(
+            &cli(FakeJob::new("train", Outcome::Cancel)),
+            Some("train"),
+            None,
+        );
+
+        assert!(matches!(cancelled, Err(CliError::Cancelled)));
+    }
+
+    #[test]
+    fn each_outcome_has_its_exit_code() {
+        let cli = cli(FakeJob::new("train", Outcome::Succeed));
+        let exit_code = |outcome: Result<(), CliError>| outcome.unwrap_err().exit_code();
+
+        assert_eq!(exit_code(run(&cli, Some("infer"), None)), 2);
+        assert_eq!(exit_code(run(&cli, None, None)), 2);
+        assert_eq!(exit_code(run(&cli, Some("train"), Some("{"))), 2);
+        assert_eq!(exit_code(run(&cli, Some("train"), Some("[1, 2]"))), 2);
+        for (outcome, code) in [
+            (Outcome::Fail, 1),
+            (Outcome::ReportError, 1),
+            (Outcome::Panic, 1),
+            (Outcome::Cancel, 130),
+        ] {
+            let cli = self::cli(FakeJob::new("train", outcome));
+            assert_eq!(exit_code(run(&cli, Some("train"), None)), code);
+        }
     }
 
     #[test]

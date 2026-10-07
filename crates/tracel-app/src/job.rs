@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
 
 /// The error a job or a mapper fails with.
@@ -46,24 +47,28 @@ pub type JobOutput = Box<dyn OutputWriter<Value> + Send + Sync>;
 
 /// A job whose input is decoded, ready to run.
 pub struct PreparedJob {
-    run: Box<dyn FnOnce(JobOutput) -> Result<(), BoxError> + Send>,
+    run: Box<dyn FnOnce(JobOutput, CancelToken) -> Result<(), BoxError> + Send>,
 }
 
 impl PreparedJob {
-    /// Wraps `run`, which runs the job and sends its outputs to the writer it is given.
+    /// Wraps `run`, which runs the job, sends its outputs to the writer it is given, and stops
+    /// once the token it is given is cancelled.
     pub fn new<F>(run: F) -> Self
     where
-        F: FnOnce(JobOutput) -> Result<(), BoxError> + Send + 'static,
+        F: FnOnce(JobOutput, CancelToken) -> Result<(), BoxError> + Send + 'static,
     {
         Self { run: Box::new(run) }
     }
 
     /// Runs the job, sending its outputs to `output`.
-    pub fn run<W>(self, output: W) -> Result<(), BoxError>
+    ///
+    /// Cancelling `cancel_token` asks the job to stop: an experiment ends as cancelled, and an
+    /// inference takes no more input.
+    pub fn run<W>(self, output: W, cancel_token: CancelToken) -> Result<(), BoxError>
     where
         W: OutputWriter<Value> + Send + Sync + 'static,
     {
-        (self.run)(Box::new(output))
+        (self.run)(Box::new(output), cancel_token)
     }
 }
 

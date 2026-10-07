@@ -71,9 +71,13 @@ where
             )
             .into());
         };
-        let input = self.mapper.map(&input)?;
+        // The experiment records the input it runs with: the JSON the mapper resolved.
+        let arguments = self.mapper.resolve(input);
+        let input = self.mapper.decode(arguments.clone())?;
         let job = self.job.clone();
-        Ok(PreparedJob::new(move |_output| job.run(input).map(|_| ())))
+        Ok(PreparedJob::new(move |_output, cancel_token| {
+            job.run_with(input, arguments, cancel_token).map(|_| ())
+        }))
     }
 }
 
@@ -113,25 +117,28 @@ where
         let job = self.job.clone();
         match input {
             JobInput::Document(input) => {
-                let input = self.mapper.map(&input)?;
-                Ok(PreparedJob::new(move |output| {
+                let input = self.mapper.map(input)?;
+                Ok(PreparedJob::new(move |output, _cancel_token| {
                     let output = JsonOutput(Arc::from(output));
                     Ok(job.run(std::iter::once(input), output)?)
                 }))
             }
             JobInput::Stream(inputs) => {
                 let mapper = self.mapper.clone();
-                Ok(PreparedJob::new(move |output| {
+                Ok(PreparedJob::new(move |output, cancel_token| {
                     let output: Arc<dyn OutputWriter<Value> + Send + Sync> = Arc::from(output);
                     let errors = output.clone();
-                    // An input that does not decode is reported as an error and ends the stream.
-                    let inputs = inputs.map_while(move |input| match mapper.map(&input) {
-                        Ok(input) => Some(input),
-                        Err(error) => {
-                            let _ = errors.error(error);
-                            None
-                        }
-                    });
+                    // An input that does not decode is reported as an error and ends the stream,
+                    // and cancelling ends it before the next input.
+                    let inputs = inputs
+                        .take_while(move |_| !cancel_token.is_cancelled())
+                        .map_while(move |input| match mapper.map(input) {
+                            Ok(input) => Some(input),
+                            Err(error) => {
+                                let _ = errors.error(error);
+                                None
+                            }
+                        });
                     Ok(job.run(inputs, JsonOutput(output))?)
                 }))
             }
@@ -161,16 +168,19 @@ impl<O: Serialize> OutputWriter<O> for JsonOutput {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::Mutex;
 
     use serde::Deserialize;
     use serde_json::json;
-    use tracel_experiment::{ExperimentRun, Experiments};
+    use tracel_experiment::local::LocalExperiments;
+    use tracel_experiment::{CancelToken, ExperimentRun, Experiments};
     use tracel_inference::{
         InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
     };
 
     use super::*;
+    use crate::DiscardOutput;
     use crate::mapper::JsonMapper;
     use crate::test_support::NeverRuns;
 
@@ -247,6 +257,63 @@ mod tests {
         assert!(job.prepare(JobInput::Document(json!(3))).is_ok());
     }
 
+    fn read_json(path: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_experiment_records_the_input_its_mapper_resolved_as_its_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = Experiments::new(Arc::new(LocalExperiments::new(dir.path())))
+            .create("train", |_run: &ExperimentRun, _config: Value| Ok(()))
+            .into_job(JsonMapper::with_default(
+                json!({"epochs": 10, "optimizer": {"lr": 0.001}}),
+            ));
+
+        job.prepare(JobInput::Document(json!({"epochs": 2})))
+            .unwrap()
+            .run(DiscardOutput, CancelToken::new())
+            .unwrap();
+
+        let events = std::fs::read_to_string(dir.path().join("train/1/events.jsonl")).unwrap();
+        let arguments: Vec<Value> = events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|event| event["type"] == "arguments")
+            .collect();
+        assert_eq!(
+            arguments,
+            [json!({
+                "type": "arguments",
+                "value": {"epochs": 2, "optimizer": {"lr": 0.001}}
+            })]
+        );
+    }
+
+    #[test]
+    fn cancelling_the_token_given_cancels_the_experiment() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel_token = CancelToken::new();
+        let job = Experiments::new(Arc::new(LocalExperiments::new(dir.path())))
+            .create("train", {
+                let cancel_token = cancel_token.clone();
+                move |run: &ExperimentRun, _epochs: u32| {
+                    cancel_token.cancel();
+                    assert!(run.cancel_token().is_cancelled());
+                    Ok(())
+                }
+            })
+            .into_job(JsonMapper::with_default(10u32));
+
+        job.prepare(JobInput::Document(Value::Null))
+            .unwrap()
+            .run(DiscardOutput, cancel_token)
+            .unwrap();
+
+        let status = read_json(&dir.path().join("train/1/status.json"));
+        assert_eq!(status["status"], "cancelled");
+    }
+
     #[test]
     fn an_inference_sends_its_outputs_as_json() {
         let output = Collected::default();
@@ -254,7 +321,7 @@ mod tests {
         words()
             .prepare(JobInput::Document(json!({"text": "hello streaming world"})))
             .unwrap()
-            .run(output.clone())
+            .run(output.clone(), CancelToken::new())
             .unwrap();
 
         assert_eq!(
@@ -279,7 +346,7 @@ mod tests {
         words()
             .prepare(JobInput::Stream(Box::new(inputs.into_iter())))
             .unwrap()
-            .run(output.clone())
+            .run(output.clone(), CancelToken::new())
             .unwrap();
 
         let output = output.0.lock().unwrap();

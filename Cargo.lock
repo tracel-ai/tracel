@@ -4689,15 +4689,10 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "burn",
- "clap",
- "ctrlc",
- "dotenvy",
- "log",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "tracel",
- "tracing",
 ]
 
 [[package]]
@@ -7279,6 +7274,7 @@ version = "0.10.0"
 dependencies = [
  "axum",
  "clap",
+ "ctrlc",
  "json-patch",
  "schemars 1.2.2",
  "serde",
@@ -7363,6 +7359,7 @@ name = "tracel-experiment"
 version = "0.10.0"
 dependencies = [
  "burn",
+ "chrono",
  "serde",
  "serde_json",
  "tempfile",
