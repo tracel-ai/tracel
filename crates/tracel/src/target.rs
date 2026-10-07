@@ -279,8 +279,12 @@ pub enum TargetError {
 fn fallback(variable: &str) -> &'static str {
     match variable {
         TRACEL_API_KEY => ", and there is no `tracel login` sign-in for this console",
-        TRACEL_NAMESPACE => ", and tracel.toml names no namespace",
-        TRACEL_PROJECT => ", and tracel.toml names no project",
+        TRACEL_NAMESPACE => {
+            ", and tracel.toml sets no `namespace` (expected keys: `namespace` and `project`)"
+        }
+        TRACEL_PROJECT => {
+            ", and tracel.toml sets no `project` (expected keys: `namespace` and `project`)"
+        }
         _ => "",
     }
 }
@@ -498,6 +502,19 @@ mod tests {
             );
             assert!(error.to_string().contains(variable), "{error}");
             assert!(error.to_string().contains(fallback), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_missing_namespace_or_project_names_the_keys_of_tracel_toml() {
+        for (error, key) in [
+            (ConsoleError::NoNamespace, "no `namespace`"),
+            (ConsoleError::NoProject, "no `project`"),
+        ] {
+            let message = TargetError::from(error).to_string();
+
+            assert!(message.contains(key), "{message}");
+            assert!(message.contains("`namespace` and `project`"), "{message}");
         }
     }
 }
