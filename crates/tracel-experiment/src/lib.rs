@@ -348,10 +348,10 @@ impl ExperimentRun {
         self.inner.control.cancel_token()
     }
 
-    /// Signal that the experiment run has been cancelled.
+    /// Ask the run to stop: cancels its [`cancel_token`](Self::cancel_token).
     ///
-    /// The run remains usable until it is explicitly finished, failed, or dropped. If it is later
-    /// dropped without an explicit completion, it will be marked as cancelled.
+    /// The run remains usable. It still ends as completed or failed, as [`Self::finish`],
+    /// [`Self::fail`] or dropping it records.
     pub fn cancel(&self) -> Result<(), ExperimentError> {
         self.inner.ensure_active()?;
         self.inner.control.cancel_run();
@@ -858,15 +858,14 @@ impl RunInner {
     }
 }
 
-/// Finalize the run on drop if it has not already been completed.
+/// Finalize the run on drop if it has not already been completed: as failed while a panic
+/// unwinds it, as successful otherwise.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
         let completion = if std::thread::panicking() {
             let reason =
                 panic_watch::take_thread_panic().unwrap_or_else(|| "the run panicked".to_string());
             ExperimentCompletion::Failed(reason)
-        } else if self.inner.control.is_run_cancelled() {
-            ExperimentCompletion::Cancelled
         } else {
             ExperimentCompletion::Success
         };
@@ -1200,16 +1199,25 @@ mod tests {
     }
 
     #[test]
-    fn cancel_marks_run_cancelled_on_drop() {
+    fn a_cancelled_run_ends_by_how_it_is_finished() {
         let session = Arc::new(MockSession::default());
 
         {
-            let run = create_run(session.clone());
-            run.cancel().unwrap();
+            let dropped = create_run(session.clone());
+            dropped.cancel().unwrap();
         }
+        let failed = create_run(session.clone());
+        failed.cancel().unwrap();
+        failed.fail("interrupted").unwrap();
 
         let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+        assert_eq!(
+            completions.as_slice(),
+            &[
+                ExperimentCompletion::Success,
+                ExperimentCompletion::Failed("interrupted".to_string()),
+            ]
+        );
     }
 
     #[test]

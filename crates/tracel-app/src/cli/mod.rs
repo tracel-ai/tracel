@@ -133,16 +133,17 @@ impl Cli {
     /// | 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
     /// | 1 | The job failed, or the definitions file could not be written |
     /// | 2 | No job or an unknown job is named, a flag or the input is unusable, or the input does not decode |
-    /// | 130 | The job was cancelled |
+    /// | 130 | The job was asked to stop |
     ///
     /// Why it did not complete is printed to stderr, with the registered job names when no job or
     /// an unknown one is named. When `TRACEL_DESCRIBE` names a path, writes the definitions file
     /// there instead of running a job.
     ///
-    /// SIGTERM, SIGINT or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows,
-    /// cancels the job: an experiment's run is cancelled, and it ends as cancelled once its
-    /// function returns. A second signal ends the process at once, with exit code 130. Launchers
-    /// send SIGKILL after a 30-second grace period.
+    /// SIGTERM, SIGINT or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows, asks
+    /// the job to stop: it cancels the cancel token of an experiment's run, which ends as completed
+    /// or failed by what its function returns, and the process exits with code 130. A second
+    /// signal ends the process at once, also with exit code 130. Launchers send SIGKILL after a
+    /// 30-second grace period.
     pub fn run(self) -> ExitCode {
         match self.execute() {
             Ok(()) => ExitCode::SUCCESS,
@@ -246,7 +247,7 @@ impl Cli {
         }));
 
         if cancel_token.is_cancelled() {
-            return Err(CliError::Cancelled);
+            return Err(CliError::Stopped);
         }
         match ran {
             Ok(Ok(())) => match failure.lock().unwrap().take() {
@@ -623,10 +624,10 @@ mod tests {
     }
 
     #[test]
-    fn a_job_whose_token_is_cancelled_is_cancelled_even_when_it_fails() {
-        let cancelled = run(&cli(FakeJob::new("train", Outcome::Cancel)), &["train"]);
+    fn a_job_asked_to_stop_is_stopped_even_when_it_fails() {
+        let stopped = run(&cli(FakeJob::new("train", Outcome::Cancel)), &["train"]);
 
-        assert!(matches!(cancelled, Err(CliError::Cancelled)));
+        assert!(matches!(stopped, Err(CliError::Stopped)));
     }
 
     #[test]

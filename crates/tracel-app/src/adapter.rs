@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_the_token_given_cancels_the_experiment() {
+    fn cancelling_the_token_given_asks_the_experiment_to_stop() {
         let dir = tempfile::tempdir().unwrap();
         let cancel_token = CancelToken::new();
         let job = Experiments::new(Arc::new(LocalExperiments::new(dir.path())))
@@ -312,7 +312,7 @@ mod tests {
             .unwrap();
 
         let status = read_json(&dir.path().join("train/1/status.json"));
-        assert_eq!(status["status"], "cancelled");
+        assert_eq!(status["status"], "completed");
     }
 
     #[test]

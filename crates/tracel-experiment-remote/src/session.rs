@@ -322,6 +322,5 @@ fn to_remote_completion(completion: ExperimentCompletion) -> RemoteExperimentCom
     match completion {
         ExperimentCompletion::Success => RemoteExperimentCompletion::Success,
         ExperimentCompletion::Failed(reason) => RemoteExperimentCompletion::Fail { reason },
-        ExperimentCompletion::Cancelled => RemoteExperimentCompletion::Success,
     }
 }

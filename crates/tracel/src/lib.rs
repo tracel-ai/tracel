@@ -146,7 +146,7 @@
 //! | 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
 //! | 1 | The job failed |
 //! | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
-//! | 130 | The job was cancelled |
+//! | 130 | The job was asked to stop |
 //!
 //! With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a [`RunReport`](job::RunReport)
 //! to `<path>` when it creates its experiment, and again when the run ends, each time to
@@ -164,19 +164,19 @@
 //! }
 //! ```
 //!
-//! `status` is `running`, `completed`, `failed` or `cancelled`, and `error` says why a run
-//! failed. `url` is the experiment's page on the console; offline it is `null`, and `dir` gives
-//! the run's directory instead, where `status.json` holds the same report and `events.jsonl` the
-//! run's events, one JSON object per line, as
-//! [`LocalExperiments`](experiment::local::LocalExperiments) describes.
+//! `status` is `running`, `completed` or `failed`, and `error` says why a run failed. `url` is the
+//! experiment's page on the console; offline it is `null`, and `dir` gives the run's directory
+//! instead, where `status.json` holds the same report and `events.jsonl` the run's events, one JSON
+//! object per line, as [`LocalExperiments`](experiment::local::LocalExperiments) describes.
 //!
 //! With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which
 //! links it to the job that ran it.
 //!
-//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, cancels the running job: it cancels the
-//! experiment's cancel token, which stops a Burn learner given its `interrupter()`, and once the
-//! job's function returns, the run ends as `cancelled` and the program exits with code 130. A
-//! second signal ends the program at once. Launchers send SIGKILL after a 30-second grace period.
+//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop: it cancels the
+//! experiment's cancel token, which stops a Burn learner given its `interrupter()`. The run ends as
+//! `completed` or `failed` by what the job's function returns, and the program exits with code
+//! 130. A second signal ends the program at once. Launchers send SIGKILL after a 30-second grace
+//! period.
 
 mod target;
 
