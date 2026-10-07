@@ -33,6 +33,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
@@ -188,7 +189,8 @@ struct ExperimentMetadata {
 /// An active experiment run.
 ///
 /// `ExperimentRun` owns finalization. As long as the run remains active, it can log structured
-/// events, persist artifacts, and expose a cancellation token to child work.
+/// events, persist artifacts, and expose a cancellation token to child work. When that token is
+/// cancelled while the run is active, the run logs a warning that a stop was requested, once.
 ///
 /// Use [`ExperimentRun::handle`] when you need to share logging and artifact access without
 /// transferring lifecycle ownership. If the run is dropped without an explicit completion, it is
@@ -300,6 +302,10 @@ impl ExperimentRun {
             reader: Box::new(reader),
             activity_id_allocator: Arc::new(AtomicActivityIdAllocator::new()),
         });
+        control.cancel_token().link(StopRequestLog {
+            run: Arc::downgrade(&inner),
+            requested: AtomicBool::new(false),
+        });
 
         let handle = ExperimentRunHandle {
             metadata,
@@ -342,8 +348,8 @@ impl ExperimentRun {
 
     /// Return a cancellation token that can be linked to child work.
     ///
-    /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
-    /// tasks and adapters.
+    /// Cancelling the token does not finish the run: it broadcasts cancellation to linked tasks
+    /// and adapters, and the run logs, once, that a stop was requested.
     pub fn cancel_token(&self) -> CancelToken {
         self.inner.control.cancel_token()
     }
@@ -812,14 +818,9 @@ impl ExperimentRunHandle {
     /// storage, argument and config serialization — report errors through their own return types
     /// instead.
     fn emit(&self, event: Event) {
-        let Ok(inner) = self.upgrade() else {
-            return;
-        };
-        if inner.ensure_active().is_err() {
-            return;
+        if let Ok(inner) = self.upgrade() {
+            inner.emit(event);
         }
-
-        inner.session.record_event(event).ok();
     }
 
     fn upgrade(&self) -> Result<Arc<RunInner>, ExperimentError> {
@@ -831,6 +832,13 @@ impl ExperimentRunHandle {
 }
 
 impl RunInner {
+    /// Hands `event` to the backend session, or discards it once the run has finished.
+    fn emit(&self, event: Event) {
+        if self.ensure_active().is_ok() {
+            self.session.record_event(event).ok();
+        }
+    }
+
     fn ensure_active(&self) -> Result<(), ExperimentError> {
         let state = self.state.lock().unwrap();
         match *state {
@@ -858,6 +866,36 @@ impl RunInner {
     }
 }
 
+/// The warning a run logs when its cancel token is cancelled while it is active.
+const STOP_REQUESTED: &str = "Stop requested; the run ends when the job returns";
+
+/// Logs [`STOP_REQUESTED`] to a run, once, when the run's cancel token is cancelled.
+///
+/// Linked to the run's token, it logs on the thread that cancels it. It holds the run weakly, as
+/// the token can outlive the run, and logs nothing once the run has finished.
+struct StopRequestLog {
+    run: Weak<RunInner>,
+    requested: AtomicBool,
+}
+
+impl Cancellable for StopRequestLog {
+    fn cancel(&self) {
+        if self.requested.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if let Some(run) = self.run.upgrade() {
+            run.emit(Event::Log {
+                record: LogRecord::warn(STOP_REQUESTED),
+                activity: None,
+            });
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
+}
+
 /// Finalize the run on drop if it has not already been completed: as failed while a panic
 /// unwinds it, as successful otherwise.
 impl Drop for ExperimentRun {
@@ -877,7 +915,7 @@ impl Drop for ExperimentRun {
 #[cfg(test)]
 mod tests {
     use crate::activity::ActivityEvent;
-    use crate::test_support::{MockSession, create_run};
+    use crate::test_support::{MockSession, create_run, create_run_with_control};
 
     use super::*;
 
@@ -1229,11 +1267,73 @@ mod tests {
         run.log_info("still-logging");
 
         let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => assert_eq!(record.message, "still-logging"),
+        match events.last() {
+            Some(Event::Log { record, .. }) => assert_eq!(record.message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    /// The level, message, attributes and activity of each log `session` recorded.
+    fn logs(session: &MockSession) -> Vec<(LogLevel, String, usize, Option<ActivityId>)> {
+        session
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Log { record, activity } => Some((
+                    record.level,
+                    record.message.clone(),
+                    record.attributes.len(),
+                    *activity,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_stop_request_is_logged_once_while_the_run_is_active() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("epoch 1").cancellable().start();
+
+        activity.cancel_token().cancel();
+        assert!(logs(&session).is_empty());
+        run.cancel_token().cancel();
+        run.cancel().unwrap();
+        run.cancel_token().cancel();
+
+        assert_eq!(
+            logs(&session),
+            [(LogLevel::Warn, STOP_REQUESTED.to_string(), 0, None)]
+        );
+    }
+
+    #[test]
+    fn a_run_whose_token_is_already_cancelled_logs_the_stop_request_when_it_starts() {
+        let session = Arc::new(MockSession::default());
+        let control = ExperimentRunControl::default();
+        control.cancel_run();
+
+        let _run = create_run_with_control(session.clone(), control);
+
+        assert_eq!(
+            logs(&session),
+            [(LogLevel::Warn, STOP_REQUESTED.to_string(), 0, None)]
+        );
+    }
+
+    #[test]
+    fn a_stop_requested_once_the_run_has_finished_is_not_logged() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let cancel_token = run.cancel_token();
+
+        run.finish().unwrap();
+        cancel_token.cancel();
+
+        assert!(logs(&session).is_empty());
     }
 
     #[test]
