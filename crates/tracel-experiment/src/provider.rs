@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::OsString;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -8,6 +9,9 @@ use serde_json::Value;
 use crate::ExperimentRun;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
+
+/// Set while a program writes its job definitions instead of running a job.
+const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
 
 pub trait ExperimentProvider: Send + Sync + 'static {
     fn create_experiment(
@@ -55,6 +59,7 @@ impl Experiments {
 pub struct ExperimentJob<I, O> {
     provider: Arc<dyn ExperimentProvider>,
     name: String,
+    description: Option<String>,
     attributes: HashMap<String, Value>,
     f: Arc<dyn ExperimentFn<I, O>>,
 }
@@ -64,6 +69,7 @@ impl<I, O> Clone for ExperimentJob<I, O> {
         Self {
             provider: self.provider.clone(),
             name: self.name.clone(),
+            description: self.description.clone(),
             attributes: self.attributes.clone(),
             f: self.f.clone(),
         }
@@ -78,14 +84,26 @@ impl<I, O> ExperimentJob<I, O> {
         Self {
             provider,
             name,
+            description: None,
             attributes: HashMap::new(),
             f: Arc::new(f),
         }
     }
 
-    #[doc(hidden)]
+    /// The job's name, used to select it from a runner.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The job's description, as runners list it.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Sets the job's description.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     pub fn attribute(
@@ -110,7 +128,31 @@ impl<I, O> ExperimentJob<I, O> {
         self
     }
 
-    pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
+    /// Runs the job with `input`, recording one experiment.
+    ///
+    /// While `TRACEL_DESCRIBE` is set, the program is describing its jobs: this returns an
+    /// [`ExperimentErrorKind::Describing`] error without creating an experiment.
+    pub fn run(&self, input: I) -> Result<O, Box<dyn Error + Send + Sync>> {
+        self.run_with_vars(|name| std::env::var_os(name), input)
+    }
+
+    /// [`run`](Self::run) with the environment variables `lookup` gives.
+    fn run_with_vars(
+        &self,
+        lookup: impl Fn(&str) -> Option<OsString>,
+        input: I,
+    ) -> Result<O, Box<dyn Error + Send + Sync>> {
+        if lookup(TRACEL_DESCRIBE).is_some_and(|path| !path.is_empty()) {
+            return Err(ExperimentError::new(
+                ExperimentErrorKind::Describing,
+                format!(
+                    "experiment '{}' does not run while TRACEL_DESCRIBE is set",
+                    self.name
+                ),
+            )
+            .into());
+        }
+
         let _ = try_init_tracing_subscriber();
 
         let experiment = self
@@ -148,6 +190,7 @@ impl<I, O> ExperimentJob<I, O> {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
@@ -255,6 +298,43 @@ mod tests {
         assert!(result.is_err());
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+    }
+
+    #[test]
+    fn a_run_while_describing_creates_no_experiment() {
+        let session = Arc::new(MockSession::default());
+        let called = Arc::new(AtomicBool::new(false));
+        let job = experiments(session.clone()).create("job", {
+            let called = called.clone();
+            move |_run: &ExperimentRun, _input: ()| {
+                called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+
+        let error = job
+            .run_with_vars(
+                |name| (name == TRACEL_DESCRIBE).then(|| "jobs.json".into()),
+                (),
+            )
+            .unwrap_err();
+
+        let error = error.downcast::<ExperimentError>().unwrap();
+        assert_eq!(error.kind, ExperimentErrorKind::Describing);
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(session.completions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_empty_tracel_describe_runs_the_experiment() {
+        let session = Arc::new(MockSession::default());
+        let job =
+            experiments(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
+
+        job.run_with_vars(|_| Some(OsString::new()), ()).unwrap();
+
+        let completions = session.completions.lock().unwrap();
+        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
     }
 
     #[test]

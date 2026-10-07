@@ -17,6 +17,7 @@ server = ["tracel-app/server"]
 station = ["dep:tracel-station", "dep:url"]
 runner = ["dep:tracel-runner"]
 burn = ["tracel-experiment/burn", "tracel-datasets/burn"]
+schema = ["tracel-app/schema"]
 
 [dependencies]
 tracel-app.workspace = true
@@ -32,4 +33,5 @@ thiserror.workspace = true
 url = { workspace = true, optional = true }
 
 [dev-dependencies]
+serde = { workspace = true, features = ["std"] }
 tempfile.workspace = true

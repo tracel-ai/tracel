@@ -1,6 +1,6 @@
 [package]
 name = "tracel-app"
-description = "App front-ends for the Tracel SDK: run registered capabilities from a CLI or serve them over HTTP."
+description = "Runners for the Tracel SDK: run registered jobs from a command line or serve them over HTTP."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -14,6 +14,7 @@ categories.workspace = true
 [features]
 default = []
 server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
+schema = ["dep:schemars"]
 
 [dependencies]
 clap.workspace = true
@@ -22,9 +23,13 @@ tracel-inference.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 json-patch.workspace = true
+schemars = { workspace = true, optional = true }
 thiserror.workspace = true
 axum = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["sync"] }
 tokio-stream = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -10,7 +10,7 @@ server = ["tracel/server"]
 station = ["tracel/station", "tracel/runner"]
 
 [dependencies]
-tracel = { workspace = true }
+tracel = { workspace = true, features = ["schema"] }
 anyhow.workspace = true
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json.workspace = true

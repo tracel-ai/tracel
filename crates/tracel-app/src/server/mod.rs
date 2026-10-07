@@ -1,11 +1,9 @@
 mod error;
-/// Request-body decoders for server routes.
-pub mod mapper;
-mod route;
+mod request;
 
 pub use error::ServerError;
-pub use mapper::{BodyMapper, JsonBody};
-pub use route::{IntoServerRoute, ServerRoute};
+
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -14,15 +12,18 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use route::MAX_BODY_BYTES;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-type Routes = HashMap<String, Box<dyn ServerRoute>>;
+use crate::{IntoJob, Job, JobKind, JobRegistry};
+use request::MAX_BODY_BYTES;
 
+/// Serves every registered job over HTTP at `POST /{job_name}`.
+///
+/// The request body is the job's JSON input. An experiment takes one JSON document (an empty
+/// body is no input) and the response returns once it has started. An inference takes NDJSON,
+/// one input per line as it arrives, and streams its outputs back as Server-Sent Events.
 pub struct Server {
-    routes: Routes,
+    jobs: JobRegistry,
     host: String,
     port: u16,
 }
@@ -34,62 +35,82 @@ impl Default for Server {
 }
 
 impl Server {
+    /// A server with no jobs, listening on `0.0.0.0:3000`.
     pub fn new() -> Self {
         Self {
-            routes: HashMap::new(),
+            jobs: JobRegistry::new(),
             host: "0.0.0.0".to_string(),
             port: 3000,
         }
     }
 
+    /// Sets the host to listen on.
     pub fn host(mut self, host: &str) -> Self {
         self.host = host.to_string();
         self
     }
 
+    /// Sets the port to listen on.
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
 
-    /// Register a bespoke [`ServerRoute`]. [`register`](Self::register) builds on this for capability
-    /// jobs; use this directly only for a custom route.
-    pub fn route<R>(self, route: R) -> Self
+    /// Registers a capability job (an experiment or an inference), decoding its input with
+    /// `mapper`.
+    ///
+    /// # Panics
+    ///
+    /// When a job with the same name is already registered.
+    pub fn register<J, M>(mut self, job: J, mapper: M) -> Self
     where
-        R: ServerRoute + 'static,
+        J: IntoJob<M>,
     {
-        self.route_boxed(Box::new(route))
-    }
-
-    fn route_boxed(mut self, route: Box<dyn ServerRoute>) -> Self {
-        let name = route.name().to_string();
-        if self.routes.contains_key(&name) {
-            panic!("route '{name}' is already registered");
-        }
-        self.routes.insert(name, route);
+        self.jobs.add(job.into_job(mapper));
         self
     }
 
-    /// Register a capability job (experiment, inference, ...) at `POST /{name}`, decoding its input
-    /// with `mapper`.
+    /// Registers a job that implements [`Job`] directly.
     ///
-    /// The same call works for any job type that implements [`IntoServerRoute`]: experiments respond
-    /// fire-and-forget, inference streams its outputs over SSE.
-    pub fn register<T, I>(self, job: T, mapper: impl BodyMapper<I> + 'static) -> Self
-    where
-        T: IntoServerRoute<I>,
-    {
-        self.route_boxed(job.into_server_route(Arc::new(mapper)))
+    /// # Panics
+    ///
+    /// When a job with the same name is already registered.
+    pub fn job(mut self, job: impl Job + 'static) -> Self {
+        self.jobs.add(Box::new(job));
+        self
     }
 
+    /// Serves the registered jobs on the current Tokio runtime until the server stops.
+    ///
+    /// When `TRACEL_DESCRIBE` names a path, writes the definitions file there instead and returns
+    /// without serving.
     pub async fn run_async(self) -> Result<(), ServerError> {
-        let addr = format!("{}:{}", self.host, self.port);
-        let state = Arc::new(self.routes);
+        if self.jobs.describe_from_env("server")? {
+            return Ok(());
+        }
+        self.serve().await
+    }
 
+    /// Serves the registered jobs on a new Tokio runtime until the server stops.
+    ///
+    /// When `TRACEL_DESCRIBE` names a path, writes the definitions file there instead and returns
+    /// without serving.
+    pub fn run(self) -> Result<(), ServerError> {
+        if self.jobs.describe_from_env("server")? {
+            return Ok(());
+        }
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(self.serve())
+    }
+
+    async fn serve(self) -> Result<(), ServerError> {
+        let addr = format!("{}:{}", self.host, self.port);
         let app = Router::new()
             .route("/{name}", post(dispatch))
             .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-            .with_state(state);
+            .with_state(Arc::new(self.jobs));
 
         let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
@@ -101,9 +122,6 @@ impl Server {
             )
             .try_init();
 
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .try_init();
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         tracing::info!(
             "Server listening on http://localhost:{}",
@@ -112,22 +130,18 @@ impl Server {
         axum::serve(listener, app).await?;
         Ok(())
     }
-
-    pub fn run(self) -> Result<(), ServerError> {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?
-            .block_on(self.run_async())
-    }
 }
 
 async fn dispatch(
-    State(routes): State<Arc<Routes>>,
+    State(jobs): State<Arc<JobRegistry>>,
     Path(name): Path<String>,
     request: Request,
 ) -> Response {
-    match routes.get(&name) {
-        Some(route) => route.handle(request.into_body()).await,
-        None => (StatusCode::NOT_FOUND, format!("unknown route '{name}'")).into_response(),
+    let Some(job) = jobs.get(&name) else {
+        return (StatusCode::NOT_FOUND, format!("unknown job '{name}'")).into_response();
+    };
+    match job.definition().kind {
+        JobKind::Experiment => request::start_experiment(job, request.into_body()).await,
+        JobKind::Inference => request::stream_inference(job, request.into_body()),
     }
 }

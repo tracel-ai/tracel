@@ -10,8 +10,8 @@
 
 use basics::training::{self, TrainingConfig};
 use tracel::Target;
+use tracel::app::mapper::JsonMapper;
 use tracel::runner::StationRunner;
-use tracel::runner::mapper::JsonInput;
 
 fn main() -> anyhow::Result<()> {
     let target = Target::from_env()?;
@@ -21,11 +21,15 @@ fn main() -> anyhow::Result<()> {
 
     let train = target
         .experiments()?
-        .create("toy-training", training::train);
+        .create("toy-training", training::train)
+        .with_description("Run a toy training loop");
 
     StationRunner::new(url.as_str())
         .name("basics-runner")
-        .register(train, JsonInput::with_default(TrainingConfig::default()))
+        .register(
+            train,
+            JsonMapper::with_default(TrainingConfig::default()).with_schema(),
+        )
         .run()?;
 
     Ok(())

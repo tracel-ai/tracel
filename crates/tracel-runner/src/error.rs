@@ -1,6 +1,4 @@
-use std::error::Error;
-
-pub type BoxError = Box<dyn Error + Send + Sync>;
+use tracel_app::DescribeError;
 
 /// Fatal runner errors.
 ///
@@ -18,4 +16,7 @@ pub enum RunnerError {
     NoJobs,
     #[error("station rejected runner registration: {0}")]
     Registration(String),
+    /// `TRACEL_DESCRIBE` names a path the definitions file could not be written to.
+    #[error(transparent)]
+    Describe(#[from] DescribeError),
 }

@@ -37,6 +37,7 @@ cargo run -p basics --example train
 
 cargo run -p basics --example cli -- wordtok '{"text":"hello streaming world"}'
 cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
+TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli  # writes the job definitions to jobs.json
 
 cargo run -p basics --example serve
 curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'
