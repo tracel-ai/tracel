@@ -149,12 +149,10 @@ fn non_empty_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// The project a `tracel.toml` names.
+/// The project a `tracel.toml` names with its `namespace` and `project` keys.
 #[derive(Deserialize, Default)]
 struct TracelToml {
-    #[serde(alias = "owner")]
     namespace: Option<String>,
-    #[serde(alias = "name")]
     project: Option<String>,
 }
 
@@ -216,13 +214,20 @@ mod tests {
     }
 
     #[test]
-    fn tracel_toml_may_name_the_project_by_owner_and_name() {
+    fn tracel_toml_names_the_project_only_by_namespace_and_project() {
         let file = "name = \"file-project\"\nowner = \"file-owner\"";
 
-        assert_eq!(
-            located(None, None, file).unwrap(),
-            ProjectRef::new("file-owner", "file-project")
-        );
+        let no_namespace = located(None, None, file).unwrap_err();
+        let no_project = located(Some("env-owner"), None, file).unwrap_err();
+
+        assert!(matches!(no_namespace, ConsoleError::NoNamespace));
+        assert!(matches!(no_project, ConsoleError::NoProject));
+        for error in [no_namespace, no_project] {
+            assert!(
+                error.to_string().contains("`namespace` and `project`"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

@@ -1,2 +1,2 @@
-name = "burn-central-example"
-owner = "test"
+namespace = "test"
+project = "burn-central-example"

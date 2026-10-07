@@ -38,6 +38,6 @@ tracel login          # or set TRACEL_API_KEY
 TRACEL_TARGET=console cargo run -p mnist --example mnist
 ```
 
-The namespace and name come from `TRACEL_NAMESPACE` and `TRACEL_PROJECT`, or from
-[`tracel.toml`](tracel.toml) when run from this directory. Enable a backend with Cargo features
-(defaults to `wgpu` and `flex`).
+The namespace and project come from `TRACEL_NAMESPACE` and `TRACEL_PROJECT`, or from the
+`namespace` and `project` keys of [`tracel.toml`](tracel.toml) when run from this directory.
+Enable a backend with Cargo features (defaults to `wgpu` and `flex`).

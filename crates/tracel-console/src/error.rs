@@ -31,10 +31,16 @@ pub enum ConsoleError {
     #[error("no credentials found: set TRACEL_API_KEY or run `tracel login`")]
     NoCredentials,
     /// Neither `TRACEL_NAMESPACE` nor `tracel.toml` names the project's owner namespace.
-    #[error("no namespace found: set TRACEL_NAMESPACE or add namespace to tracel.toml")]
+    #[error(
+        "no namespace found: set TRACEL_NAMESPACE, or `namespace` in tracel.toml \
+         (expected keys: `namespace` and `project`)"
+    )]
     NoNamespace,
     /// Neither `TRACEL_PROJECT` nor `tracel.toml` names the project.
-    #[error("no project found: set TRACEL_PROJECT or add project to tracel.toml")]
+    #[error(
+        "no project found: set TRACEL_PROJECT, or `project` in tracel.toml \
+         (expected keys: `namespace` and `project`)"
+    )]
     NoProject,
     /// The credential cannot be used for this request: an API key reaches project data only.
     #[error("this credential cannot be used for this request; API keys reach project data only")]
