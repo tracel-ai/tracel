@@ -433,12 +433,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::JobKind;
 
     fn definition(schema: Option<Value>, example: Option<Value>) -> JobDefinition {
         JobDefinition {
             name: "train".to_string(),
-            kind: JobKind::Experiment,
             description: None,
             input_schema: schema,
             input_example: example,

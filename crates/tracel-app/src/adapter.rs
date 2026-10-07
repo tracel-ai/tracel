@@ -7,20 +7,14 @@ use serde::Serialize;
 use serde_json::Value;
 use tracel_experiment::{ExperimentJob, ExperimentLocation, ExperimentRun};
 use tracel_inference::{InferenceJob, OutputWriter, OutputWriterError};
-use tracel_job::{JobDefinition, JobKind, ReportedExperiment};
+use tracel_job::{JobDefinition, ReportedExperiment};
 
 use crate::job::{BoxError, IntoJob, Job, JobInput, PreparedJob};
 use crate::mapper::Mapper;
 
-fn definition<I>(
-    name: &str,
-    kind: JobKind,
-    description: Option<&str>,
-    mapper: &dyn Mapper<I>,
-) -> JobDefinition {
+fn definition<I>(name: &str, description: Option<&str>, mapper: &dyn Mapper<I>) -> JobDefinition {
     JobDefinition {
         name: name.to_string(),
-        kind,
         description: description.map(str::to_string),
         input_schema: mapper.schema(),
         input_example: mapper.example(),
@@ -35,12 +29,7 @@ where
 {
     fn into_job(self, mapper: M) -> Box<dyn Job> {
         Box::new(Experiment {
-            definition: definition(
-                self.name(),
-                JobKind::Experiment,
-                self.description(),
-                &mapper,
-            ),
+            definition: definition(self.name(), self.description(), &mapper),
             job: self,
             mapper,
         })
@@ -65,15 +54,8 @@ where
     }
 
     fn prepare(&self, input: JobInput) -> Result<PreparedJob, BoxError> {
-        let JobInput::Document(input) = input else {
-            return Err(format!(
-                "experiment '{}' takes one JSON document, not a stream",
-                self.definition.name
-            )
-            .into());
-        };
         // The experiment records the input it runs with: the JSON the mapper resolved.
-        let arguments = self.mapper.resolve(input);
+        let arguments = self.mapper.resolve(input.one()?);
         let input = self.mapper.decode(arguments.clone())?;
         let job = self.job.clone();
         Ok(PreparedJob::new(move |_output, context| {
@@ -107,7 +89,7 @@ where
 {
     fn into_job(self, mapper: M) -> Box<dyn Job> {
         Box::new(Inference {
-            definition: definition(self.name(), JobKind::Inference, self.description(), &mapper),
+            definition: definition(self.name(), self.description(), &mapper),
             job: self,
             mapper: Arc::new(mapper),
         })
@@ -147,17 +129,19 @@ where
                     let cancel_token = context.cancel_token().clone();
                     let output: Arc<dyn OutputWriter<Value> + Send + Sync> = Arc::from(output);
                     let errors = output.clone();
-                    // An input that does not decode is reported as an error and ends the stream,
-                    // and cancelling ends it before the next input.
+                    // An input that cannot be read or does not decode is reported as an error and
+                    // ends the stream, and cancelling ends it before the next input.
                     let inputs = inputs
                         .take_while(move |_| !cancel_token.is_cancelled())
-                        .map_while(move |input| match mapper.map(input) {
-                            Ok(input) => Some(input),
-                            Err(error) => {
-                                let _ = errors.error(error);
-                                None
-                            }
-                        });
+                        .map_while(
+                            move |input| match input.and_then(|input| mapper.map(input)) {
+                                Ok(input) => Some(input),
+                                Err(error) => {
+                                    let _ = errors.error(error);
+                                    None
+                                }
+                            },
+                        );
                     Ok(job.run(inputs, JsonOutput(output))?)
                 }))
             }
@@ -255,7 +239,6 @@ mod tests {
             job.definition(),
             &JobDefinition {
                 name: "train".to_string(),
-                kind: JobKind::Experiment,
                 description: Some("Train the model".to_string()),
                 input_schema: None,
                 input_example: Some(json!(10)),
@@ -263,18 +246,21 @@ mod tests {
         );
     }
 
+    fn stream(inputs: Vec<Value>) -> JobInput {
+        JobInput::Stream(Box::new(inputs.into_iter().map(Ok)))
+    }
+
     #[test]
-    fn an_experiment_rejects_an_input_that_does_not_decode_or_a_stream() {
+    fn an_experiment_takes_one_input_that_decodes() {
         let job = Experiments::new(Arc::new(NeverRuns))
             .create("train", |_run: &ExperimentRun, _epochs: u32| Ok(()))
             .into_job(JsonMapper::with_default(10u32));
 
-        assert!(job.prepare(JobInput::Document(json!("ten"))).is_err());
-        assert!(
-            job.prepare(JobInput::Stream(Box::new(std::iter::empty())))
-                .is_err()
-        );
         assert!(job.prepare(JobInput::Document(json!(3))).is_ok());
+        assert!(job.prepare(stream(vec![json!(3)])).is_ok());
+        assert!(job.prepare(stream(vec![])).is_ok());
+        assert!(job.prepare(JobInput::Document(json!("ten"))).is_err());
+        assert!(job.prepare(stream(vec![json!(3), json!(4)])).is_err());
     }
 
     fn read_json(path: &Path) -> Value {
@@ -429,7 +415,7 @@ mod tests {
         ];
 
         words()
-            .prepare(JobInput::Stream(Box::new(inputs.into_iter())))
+            .prepare(stream(inputs))
             .unwrap()
             .run(output.clone(), JobContext::default())
             .unwrap();
@@ -438,5 +424,26 @@ mod tests {
         assert_eq!(output[..2], [Ok(json!("one")), Ok(json!("two"))]);
         assert!(matches!(&output[2], Err(error) if error.contains("text")));
         assert_eq!(output.len(), 3);
+    }
+
+    #[test]
+    fn an_inference_stream_ends_at_the_first_input_that_cannot_be_read() {
+        let output = Collected::default();
+        let inputs: Vec<Result<Value, BoxError>> = vec![
+            Ok(json!({"text": "one"})),
+            Err("invalid JSON".into()),
+            Ok(json!({"text": "two"})),
+        ];
+
+        words()
+            .prepare(JobInput::Stream(Box::new(inputs.into_iter())))
+            .unwrap()
+            .run(output.clone(), JobContext::default())
+            .unwrap();
+
+        assert_eq!(
+            *output.0.lock().unwrap(),
+            [Ok(json!("one")), Err("invalid JSON".to_string())]
+        );
     }
 }

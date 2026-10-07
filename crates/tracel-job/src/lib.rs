@@ -26,7 +26,6 @@
 //!   "jobs": [
 //!     {
 //!       "name": "train",
-//!       "kind": "experiment",
 //!       "description": "Train the model",
 //!       "input_schema": null,
 //!       "input_example": { "epochs": 10, "optimizer": { "lr": 0.001 } }
@@ -59,7 +58,7 @@ mod json_file;
 mod report;
 
 pub use command::{command, completions, job_command, job_input};
-pub use definitions::{DefinitionsFile, JobDefinition, JobKind, TRACEL_DESCRIBE};
+pub use definitions::{DefinitionsFile, JobDefinition, TRACEL_DESCRIBE};
 pub use report::{ReportedExperiment, RunReport, RunStatus, TRACEL_REPORT_FILE};
 
 /// The protocol version a [`DefinitionsFile`] and a [`RunReport`] follow, which each gives as

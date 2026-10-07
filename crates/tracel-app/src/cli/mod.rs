@@ -2,9 +2,7 @@ mod error;
 mod report;
 mod signal;
 
-use std::any::Any;
 use std::ffi::OsString;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
@@ -18,6 +16,7 @@ use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
 use tracel_job::{command, completions, job_input};
 
+use crate::panics::catch_panic;
 use crate::{BoxError, IntoJob, Job, JobContext, JobInput, JobRegistry};
 use error::CliError;
 use report::ReportFile;
@@ -37,7 +36,7 @@ use report::ReportFile;
 ///
 /// The input is the `--config` file, the JSON document and the flags, each merged onto the one
 /// before, as [`job_input`] reads it. With none, the job runs with no input, which a mapper with
-/// a default reads as that default. An inference prints each output as a line of JSON.
+/// a default reads as that default. Each output the job writes is printed as a line of JSON.
 ///
 /// When `TRACEL_REPORT_FILE` names a path, the job's [`RunReport`](tracel_job::RunReport) is
 /// written there when the job starts, again when the job records an experiment, and again when it
@@ -259,14 +258,8 @@ impl Cli {
         }
         let output = Stdout::default();
         let failure = output.failure.clone();
-        let ran = catch_unwind(AssertUnwindSafe(|| prepared.run(output, context)));
-        let outcome = match ran {
-            Ok(Ok(())) => failure.lock().unwrap().take().map_or(Ok(()), Err),
-            Ok(Err(error)) => Err(error),
-            Err(panic) => {
-                Err(format!("the job panicked: {}", panic_message(panic.as_ref())).into())
-            }
-        };
+        let outcome = catch_panic(|| prepared.run(output, context))
+            .and_then(|()| failure.lock().unwrap().take().map_or(Ok(()), Err));
 
         if let Some(report) = report
             && let Err(error) = report.finish(&outcome)
@@ -289,16 +282,6 @@ fn program_name() -> String {
         .and_then(Path::file_stem)
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "job".to_string())
-}
-
-fn panic_message(panic: &(dyn Any + Send)) -> &str {
-    if let Some(message) = panic.downcast_ref::<&str>() {
-        message
-    } else if let Some(message) = panic.downcast_ref::<String>() {
-        message
-    } else {
-        "unknown panic"
-    }
 }
 
 /// Prints each output as a line of JSON. The first error stops the job and becomes its failure.
@@ -329,7 +312,7 @@ mod tests {
     use tracel_inference::{
         InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
     };
-    use tracel_job::{JobDefinition, JobKind, job_command};
+    use tracel_job::{JobDefinition, job_command};
 
     use super::*;
     use crate::PreparedJob;
@@ -354,11 +337,10 @@ mod tests {
         ran_with: Arc<Mutex<Option<Value>>>,
     }
 
-    /// The definition of an experiment named `name` whose input has `schema` and `example`.
+    /// The definition of a job named `name` whose input has `schema` and `example`.
     fn definition(name: &str, schema: Option<Value>, example: Option<Value>) -> JobDefinition {
         JobDefinition {
             name: name.to_string(),
-            kind: JobKind::Experiment,
             description: None,
             input_schema: schema,
             input_example: example,
@@ -388,9 +370,7 @@ mod tests {
         }
 
         fn prepare(&self, input: JobInput) -> Result<PreparedJob, BoxError> {
-            let JobInput::Document(input) = input else {
-                return Err("a stream".into());
-            };
+            let input = input.one()?;
             if !(input.is_object() || input.is_null()) {
                 return Err("not an object".into());
             }

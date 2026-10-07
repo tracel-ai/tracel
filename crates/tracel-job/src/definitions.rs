@@ -11,23 +11,11 @@ use crate::{PROTOCOL, json_file};
 /// Names the file a program writes its [`DefinitionsFile`] to, instead of running a job.
 pub const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
 
-/// What a job runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobKind {
-    /// An experiment: one input, recorded as an experiment run.
-    Experiment,
-    /// An inference: one or more inputs, each answered with outputs.
-    Inference,
-}
-
-/// Something a runner can run: its name, kind and description, and the input it takes.
+/// Something a runner can run: its name and description, and the input it takes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobDefinition {
     /// The name that selects the job.
     pub name: String,
-    /// What the job runs.
-    pub kind: JobKind,
     /// What the job does.
     pub description: Option<String>,
     /// JSON Schema of the job's input, when its mapper provides one.
@@ -87,14 +75,12 @@ mod tests {
             vec![
                 JobDefinition {
                     name: "echo".to_string(),
-                    kind: JobKind::Inference,
                     description: None,
                     input_schema: Some(json!({"type": "string"})),
                     input_example: None,
                 },
                 JobDefinition {
                     name: "train".to_string(),
-                    kind: JobKind::Experiment,
                     description: Some("Train the model".to_string()),
                     input_schema: None,
                     input_example: Some(json!({"epochs": 10, "optimizer": {"lr": 0.001}})),
@@ -117,7 +103,6 @@ mod tests {
   "jobs": [
     {
       "name": "echo",
-      "kind": "inference",
       "description": null,
       "input_schema": {
         "type": "string"
@@ -126,7 +111,6 @@ mod tests {
     },
     {
       "name": "train",
-      "kind": "experiment",
       "description": "Train the model",
       "input_schema": null,
       "input_example": {
