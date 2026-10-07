@@ -1,10 +1,11 @@
 mod error;
+mod report;
 mod signal;
 
 use std::any::Any;
 use std::ffi::OsString;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,8 +18,9 @@ use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
 use tracel_job::{command, completions, job_input};
 
-use crate::{BoxError, IntoJob, Job, JobInput, JobRegistry};
+use crate::{BoxError, IntoJob, Job, JobContext, JobInput, JobRegistry};
 use error::CliError;
+use report::ReportFile;
 
 /// Runs one registered job from the command line: `<job_name> [<input-json>] [<flags>]`.
 ///
@@ -36,6 +38,11 @@ use error::CliError;
 /// The input is the `--config` file, the JSON document and the flags, each merged onto the one
 /// before, as [`job_input`] reads it. With none, the job runs with no input, which a mapper with
 /// a default reads as that default. An inference prints each output as a line of JSON.
+///
+/// When `TRACEL_REPORT_FILE` names a path, the job's [`RunReport`](tracel_job::RunReport) is
+/// written there when the job starts, again when the job records an experiment, and again when it
+/// ends, as completed or failed by what the job returns. None is written for a command line or an
+/// input that is rejected.
 ///
 /// `<program> --completions <SHELL>` prints the program's completion script for `bash`,
 /// `elvish`, `fish`, `powershell` or `zsh`, and with [`version`](Self::version),
@@ -131,7 +138,7 @@ impl Cli {
     /// | Exit code | Meaning |
     /// | --- | --- |
     /// | 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
-    /// | 1 | The job failed, or the definitions file could not be written |
+    /// | 1 | The job failed, or the definitions file or the run report could not be written |
     /// | 2 | No job or an unknown job is named, a flag or the input is unusable, or the input does not decode |
     /// | 130 | The job was asked to stop |
     ///
@@ -163,7 +170,7 @@ impl Cli {
             Request::Run { job, input } => {
                 let cancel_token = CancelToken::new();
                 signal::cancel_on_termination(cancel_token.clone());
-                self.dispatch(&job, input, cancel_token)
+                self.dispatch(&job, input, cancel_token, report::path_from_env())
             }
             Request::Completions(shell) => {
                 let name = command.get_name().to_string();
@@ -226,11 +233,14 @@ impl Cli {
         }
     }
 
+    /// Runs the job `name` with `input`, asked to stop once `cancel_token` is cancelled, keeping
+    /// its run report at `report_path` when there is one.
     fn dispatch(
         &self,
         name: &str,
         input: Value,
         cancel_token: CancelToken,
+        report_path: Option<PathBuf>,
     ) -> Result<(), CliError> {
         let job = self.jobs.get(name).ok_or_else(|| CliError::UnknownJob {
             name: name.to_string(),
@@ -240,25 +250,33 @@ impl Cli {
         let prepared = job
             .prepare(JobInput::Document(input))
             .map_err(CliError::InvalidInput)?;
+        let report = report_path
+            .map(|path| ReportFile::start(path, name))
+            .transpose()?;
+        let mut context = JobContext::new(cancel_token.clone());
+        if let Some(report) = &report {
+            context = context.with_reporter(report.experiment_reporter());
+        }
         let output = Stdout::default();
         let failure = output.failure.clone();
-        let ran = catch_unwind(AssertUnwindSafe(|| {
-            prepared.run(output, cancel_token.clone())
-        }));
+        let ran = catch_unwind(AssertUnwindSafe(|| prepared.run(output, context)));
+        let outcome = match ran {
+            Ok(Ok(())) => failure.lock().unwrap().take().map_or(Ok(()), Err),
+            Ok(Err(error)) => Err(error),
+            Err(panic) => {
+                Err(format!("the job panicked: {}", panic_message(panic.as_ref())).into())
+            }
+        };
 
+        if let Some(report) = report
+            && let Err(error) = report.finish(&outcome)
+        {
+            eprintln!("warning: {error}");
+        }
         if cancel_token.is_cancelled() {
             return Err(CliError::Stopped);
         }
-        match ran {
-            Ok(Ok(())) => match failure.lock().unwrap().take() {
-                Some(error) => Err(CliError::JobFailed(error)),
-                None => Ok(()),
-            },
-            Ok(Err(error)) => Err(CliError::JobFailed(error)),
-            Err(panic) => Err(CliError::JobFailed(
-                format!("the job panicked: {}", panic_message(panic.as_ref())).into(),
-            )),
-        }
+        outcome.map_err(CliError::JobFailed)
     }
 }
 
@@ -308,6 +326,9 @@ mod tests {
     use serde_json::json;
     use tracel_experiment::local::LocalExperiments;
     use tracel_experiment::{ExperimentRun, Experiments};
+    use tracel_inference::{
+        InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
+    };
     use tracel_job::{JobDefinition, JobKind, job_command};
 
     use super::*;
@@ -320,7 +341,10 @@ mod tests {
         Fail,
         ReportError,
         Panic,
+        /// Asks itself to stop, then fails.
         Cancel,
+        /// Asks itself to stop, then succeeds.
+        Stop,
     }
 
     /// Takes an object input, or none, and records the input it ran with.
@@ -372,7 +396,7 @@ mod tests {
             }
             let ran_with = self.ran_with.clone();
             let outcome = self.outcome;
-            Ok(PreparedJob::new(move |output, cancel_token| {
+            Ok(PreparedJob::new(move |output, context| {
                 *ran_with.lock().unwrap() = Some(input);
                 match outcome {
                     Outcome::Succeed => Ok(()),
@@ -383,8 +407,12 @@ mod tests {
                     }
                     Outcome::Panic => panic!("kernel exploded"),
                     Outcome::Cancel => {
-                        cancel_token.cancel();
+                        context.cancel_token().cancel();
                         Err("interrupted".into())
+                    }
+                    Outcome::Stop => {
+                        context.cancel_token().cancel();
+                        Ok(())
                     }
                 }
             }))
@@ -405,8 +433,19 @@ mod tests {
 
     /// Runs the command line `program <args>` as [`Cli::execute`] does, printing nothing.
     fn run(cli: &Cli, args: &[&str]) -> Result<(), CliError> {
+        run_reporting(cli, args, None)
+    }
+
+    /// Runs the command line `program <args>` as [`run`] does, keeping the run report at
+    /// `report_path` when there is one.
+    fn run_reporting(cli: &Cli, args: &[&str], report_path: Option<&Path>) -> Result<(), CliError> {
         match parse(cli, args)? {
-            Request::Run { job, input } => cli.dispatch(&job, input, CancelToken::new()),
+            Request::Run { job, input } => cli.dispatch(
+                &job,
+                input,
+                CancelToken::new(),
+                report_path.map(Path::to_path_buf),
+            ),
             Request::Completions(_) | Request::Print(_) => Ok(()),
         }
     }
@@ -624,10 +663,12 @@ mod tests {
     }
 
     #[test]
-    fn a_job_asked_to_stop_is_stopped_even_when_it_fails() {
-        let stopped = run(&cli(FakeJob::new("train", Outcome::Cancel)), &["train"]);
+    fn a_job_asked_to_stop_is_stopped_whether_it_fails_or_succeeds() {
+        for outcome in [Outcome::Cancel, Outcome::Stop] {
+            let stopped = run(&cli(FakeJob::new("train", outcome)), &["train"]);
 
-        assert!(matches!(stopped, Err(CliError::Stopped)));
+            assert!(matches!(stopped, Err(CliError::Stopped)));
+        }
     }
 
     #[test]
@@ -647,10 +688,196 @@ mod tests {
             (Outcome::ReportError, 1),
             (Outcome::Panic, 1),
             (Outcome::Cancel, 130),
+            (Outcome::Stop, 130),
         ] {
             let cli = self::cli(FakeJob::new("train", outcome));
             assert_eq!(exit_code(run(&cli, &["train"])), code);
         }
+    }
+
+    fn read_json(path: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// The fields of the report at `path` that say how the job is going and how it ended.
+    fn status(path: &Path) -> (Value, Value, Value) {
+        let report = read_json(path);
+        (
+            report["status"].clone(),
+            report["error"].clone(),
+            report["experiment"].clone(),
+        )
+    }
+
+    #[test]
+    fn an_inference_is_reported_running_then_completed_with_no_experiment() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.json");
+        let running = Arc::new(Mutex::new(None));
+        let words = InferenceModule::new(Arc::new(NoopInferenceProvider::new())).create("words", {
+            let (path, running) = (path.clone(), running.clone());
+            move |_session: &InferenceSession,
+                  input: InferenceInput<String>,
+                  output: InferenceOutput<String>| {
+                *running.lock().unwrap() = Some(read_json(&path));
+                for text in input {
+                    let _ = output.write(text);
+                }
+            }
+        });
+        let cli = Cli::new().register(words, JsonMapper::<String>::new());
+
+        run_reporting(&cli, &["words", r#""hello""#], Some(&path)).unwrap();
+
+        let running = running.lock().unwrap().take().unwrap();
+        assert_eq!(running["job"], "words");
+        assert_eq!(running["status"], "running");
+        assert_eq!(running["experiment"], Value::Null);
+        assert_eq!(
+            status(&path),
+            (json!("completed"), Value::Null, Value::Null)
+        );
+        assert!(read_json(&path)["finished_at"].is_string());
+    }
+
+    #[test]
+    fn an_experiment_is_linked_once_created_and_reported_by_how_its_job_ended() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.json");
+        let runs = dir.path().join("runs");
+        let linked = Arc::new(Mutex::new(Vec::new()));
+        let train = Experiments::new(Arc::new(LocalExperiments::new(&runs))).create("train", {
+            let (path, linked) = (path.clone(), linked.clone());
+            move |_run: &ExperimentRun, fail: bool| -> Result<(), BoxError> {
+                linked.lock().unwrap().push(read_json(&path));
+                if fail {
+                    Err("loss is NaN".into())
+                } else {
+                    Ok(())
+                }
+            }
+        });
+        let cli = Cli::new().register(train, JsonMapper::<bool>::new());
+
+        run_reporting(&cli, &["train", "false"], Some(&path)).unwrap();
+        let completed = status(&path);
+        let failed = run_reporting(&cli, &["train", "true"], Some(&path));
+
+        let runs = runs.canonicalize().unwrap();
+        let linked = linked.lock().unwrap();
+        for (num, report) in [(1, &linked[0]), (2, &linked[1])] {
+            assert_eq!(report["status"], "running");
+            assert_eq!(
+                report["experiment"],
+                json!({"num": num, "url": null, "dir": runs.join(format!("train/{num}"))})
+            );
+        }
+        assert_eq!(
+            completed,
+            (
+                json!("completed"),
+                Value::Null,
+                linked[0]["experiment"].clone()
+            )
+        );
+        assert!(matches!(failed, Err(CliError::JobFailed(_))));
+        assert_eq!(
+            status(&path),
+            (
+                json!("failed"),
+                json!("loss is NaN"),
+                linked[1]["experiment"].clone()
+            )
+        );
+    }
+
+    #[test]
+    fn a_job_asked_to_stop_is_reported_by_what_it_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.json");
+        let report = |outcome| {
+            let stopped = run_reporting(
+                &cli(FakeJob::new("train", outcome)),
+                &["train"],
+                Some(&path),
+            );
+            assert!(matches!(stopped, Err(CliError::Stopped)));
+            status(&path)
+        };
+
+        assert_eq!(
+            report(Outcome::Stop),
+            (json!("completed"), Value::Null, Value::Null)
+        );
+        assert_eq!(
+            report(Outcome::Cancel),
+            (json!("failed"), json!("interrupted"), Value::Null)
+        );
+    }
+
+    #[test]
+    fn a_failing_or_panicking_job_is_reported_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.json");
+        let report = |outcome| {
+            let failed = run_reporting(
+                &cli(FakeJob::new("train", outcome)),
+                &["train"],
+                Some(&path),
+            );
+            assert!(matches!(failed, Err(CliError::JobFailed(_))));
+            status(&path)
+        };
+
+        assert_eq!(
+            report(Outcome::Fail),
+            (json!("failed"), json!("boom"), Value::Null)
+        );
+        assert_eq!(
+            report(Outcome::ReportError),
+            (json!("failed"), json!("bad output"), Value::Null)
+        );
+        assert_eq!(
+            report(Outcome::Panic),
+            (
+                json!("failed"),
+                json!("the job panicked: kernel exploded"),
+                Value::Null
+            )
+        );
+    }
+
+    #[test]
+    fn a_rejected_job_or_input_writes_no_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.json");
+        let cli = cli(FakeJob::with_example("train", json!({"epochs": 10})));
+
+        for args in [
+            &["infer"][..],
+            &["train", "[1, 2]"],
+            &["train", "--epochs", "ten"],
+        ] {
+            let rejected = run_reporting(&cli, args, Some(&path));
+
+            assert_eq!(rejected.unwrap_err().exit_code(), 2, "{args:?}");
+            assert!(!path.exists(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn a_report_that_cannot_be_written_fails_the_job_before_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing").join("report.json");
+        let job = FakeJob::new("train", Outcome::Succeed);
+        let ran_with = job.ran_with.clone();
+
+        let failed = run_reporting(&cli(job), &["train"], Some(&path));
+
+        let failed = failed.unwrap_err();
+        assert!(matches!(failed, CliError::Report(_)), "{failed:?}");
+        assert_eq!(failed.exit_code(), 1);
+        assert!(ran_with.lock().unwrap().is_none());
     }
 
     /// The input the job's command line `<job> <args>` gives.

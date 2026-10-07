@@ -25,10 +25,6 @@
 //! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] and
 //! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
 //! With the `local` feature, `local::LocalExperiments` records experiments on this machine.
-//!
-//! When `TRACEL_REPORT_FILE` names a path, [`ExperimentJob::run`] writes a
-//! [`RunReport`](tracel_job::RunReport) there when the experiment is created and again when the
-//! run ends.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -38,7 +34,6 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
 use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
-use tracel_job::ReportedExperiment;
 
 mod activity;
 mod cancellation;
@@ -50,7 +45,6 @@ mod log;
 mod panic_watch;
 mod provider;
 pub mod reader;
-mod report;
 pub mod session;
 #[cfg(test)]
 mod test_support;
@@ -75,7 +69,6 @@ use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
-use crate::report::ReportFile;
 use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 
 /// Opaque identifier for an experiment run.
@@ -202,7 +195,6 @@ pub struct ExperimentRun {
     inner: Arc<RunInner>,
     handle: ExperimentRunHandle,
     location: Option<ExperimentLocation>,
-    report: Option<ReportFile>,
     _tracing_registration: TracingRegistration,
 }
 
@@ -321,14 +313,13 @@ impl ExperimentRun {
             inner,
             handle,
             location: None,
-            report: None,
             _tracing_registration: tracing_registration,
         }
     }
 
     /// Records where the run can be looked at, such as its page on the console.
     ///
-    /// A provider sets it when it creates the run; the run report gives it.
+    /// A provider sets it when it creates the run.
     pub fn with_location(mut self, location: ExperimentLocation) -> Self {
         self.location = Some(location);
         self
@@ -509,46 +500,12 @@ impl ExperimentRun {
         self.handle.clone()
     }
 
-    /// Writes the run report of a run of `job` to `path` now, and again when the run ends.
-    fn report_to(&mut self, job: &str, path: PathBuf) -> Result<(), ExperimentError> {
-        let (url, dir) = match &self.location {
-            Some(ExperimentLocation::Url(url)) => (Some(url.clone()), None),
-            Some(ExperimentLocation::Dir(dir)) => (None, Some(dir.clone())),
-            None => (None, None),
-        };
-        let experiment = ReportedExperiment {
-            num: self.id().parse(),
-            url,
-            dir,
-        };
-        let report = ReportFile::start(path.clone(), job, experiment).map_err(|error| {
-            ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                format!(
-                    "Failed to write the run report to {}: {error}",
-                    path.display()
-                ),
-            )
-        })?;
-        self.report = Some(report);
-        Ok(())
-    }
-
-    /// Finalizes the backend session with `completion`, then rewrites the run report.
+    /// Finalizes the backend session with `completion`.
     ///
     /// Fails with [`ExperimentErrorKind::AlreadyFinished`] when the run has already finished.
     fn complete(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
         self.inner.mark_finished()?;
-        let finished = self.inner.session.finish(completion.clone());
-        if let Some(report) = &self.report
-            && let Err(error) = report.finish(&completion)
-        {
-            tracing::warn!(
-                "Failed to write the run report to {}: {error}",
-                report.path().display()
-            );
-        }
-        finished
+        self.inner.session.finish(completion)
     }
 }
 

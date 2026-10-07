@@ -177,34 +177,37 @@ A binary whose `main` returns `Cli::run()` can be launched by another program, s
 | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 | 130 | The job was asked to stop |
 
-With `TRACEL_REPORT_FILE=<path>` set, an experiment job writes a run report to `<path>` when it
-creates its experiment, and again when the run ends, each time to `<path>.tmp` first, renamed to
-`<path>`. Without it, nothing is written:
+With `TRACEL_REPORT_FILE=<path>` set, the binary writes the job's run report to `<path>`: how the
+job is going and how it ended, and the experiment it recorded, if any. Every job writes it, an
+inference too. It is written when the job starts, again when the job records an experiment, and
+again when the job ends, each time to `<path>.tmp` first, renamed to `<path>`. Without the
+variable, or when the binary rejects the job or its input, nothing is written:
 
 ```json
 {
   "protocol": 1,
   "job": "mnist",
-  "experiment": { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" },
   "status": "completed",
   "started_at": "2026-10-06T14:02:11Z",
   "finished_at": "2026-10-06T14:31:40Z",
-  "error": null
+  "error": null,
+  "experiment": { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
 }
 ```
 
-`status` is `running`, `completed` or `failed`, and `error` says why a run failed.
-`url` is the experiment's page on the console; offline it is `null`, and `dir` gives the run's
-directory instead, where `status.json` holds the same report and `events.jsonl` the run's events,
-one JSON object per line.
+`status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why a
+job failed. `experiment` is `null` until the job records an experiment, and stays `null` for a job
+that records none, such as an inference. `url` is the experiment's page on the console; offline it
+is `null`, and `dir` gives the experiment's directory instead, where `status.json` says how the
+experiment went and `events.jsonl` holds its events, one JSON object per line.
 
 With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which links
 it to the job that ran it.
 
 SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop: it cancels the
 experiment's cancel token, which stops a learner given `experiment.interrupter()`, and the
-experiment logs a warning that a stop was requested. The run ends as `completed` or `failed` by
-what the job's function returns, and the binary exits with code 130. A second signal ends the
+experiment logs a warning that a stop was requested. The job ends as `completed` or `failed` by
+what its function returns, and the binary exits with code 130. A second signal ends the
 binary at once. Launchers send SIGKILL after a 30-second grace period.
 
 ### 2. Integrate with your Learner

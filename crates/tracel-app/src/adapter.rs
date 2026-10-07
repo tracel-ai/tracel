@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
-use tracel_experiment::ExperimentJob;
+use tracel_experiment::{ExperimentJob, ExperimentLocation, ExperimentRun};
 use tracel_inference::{InferenceJob, OutputWriter, OutputWriterError};
-use tracel_job::{JobDefinition, JobKind};
+use tracel_job::{JobDefinition, JobKind, ReportedExperiment};
 
 use crate::job::{BoxError, IntoJob, Job, JobInput, PreparedJob};
 use crate::mapper::Mapper;
@@ -76,9 +76,26 @@ where
         let arguments = self.mapper.resolve(input);
         let input = self.mapper.decode(arguments.clone())?;
         let job = self.job.clone();
-        Ok(PreparedJob::new(move |_output, cancel_token| {
-            job.run_with(input, arguments, cancel_token).map(|_| ())
+        Ok(PreparedJob::new(move |_output, context| {
+            job.run_with(input, arguments, context.cancel_token().clone(), |run| {
+                context.reporter().report(reported(run));
+            })
+            .map(|_| ())
         }))
+    }
+}
+
+/// `run` as a job's run report links it: its number, and its page or its directory.
+fn reported(run: &ExperimentRun) -> ReportedExperiment {
+    let (url, dir) = match run.location() {
+        Some(ExperimentLocation::Url(url)) => (Some(url.clone()), None),
+        Some(ExperimentLocation::Dir(dir)) => (None, Some(dir.clone())),
+        None => (None, None),
+    };
+    ReportedExperiment {
+        num: run.id().parse(),
+        url,
+        dir,
     }
 }
 
@@ -119,14 +136,15 @@ where
         match input {
             JobInput::Document(input) => {
                 let input = self.mapper.map(input)?;
-                Ok(PreparedJob::new(move |output, _cancel_token| {
+                Ok(PreparedJob::new(move |output, _context| {
                     let output = JsonOutput(Arc::from(output));
                     Ok(job.run(std::iter::once(input), output)?)
                 }))
             }
             JobInput::Stream(inputs) => {
                 let mapper = self.mapper.clone();
-                Ok(PreparedJob::new(move |output, cancel_token| {
+                Ok(PreparedJob::new(move |output, context| {
+                    let cancel_token = context.cancel_token().clone();
                     let output: Arc<dyn OutputWriter<Value> + Send + Sync> = Arc::from(output);
                     let errors = output.clone();
                     // An input that does not decode is reported as an error and ends the stream,
@@ -169,21 +187,22 @@ impl<O: Serialize> OutputWriter<O> for JsonOutput {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::Path;
     use std::sync::Mutex;
 
     use serde::Deserialize;
     use serde_json::json;
     use tracel_experiment::local::LocalExperiments;
-    use tracel_experiment::{CancelToken, ExperimentRun, Experiments};
+    use tracel_experiment::{CancelToken, ExperimentProvider, Experiments};
     use tracel_inference::{
         InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
     };
 
     use super::*;
-    use crate::DiscardOutput;
     use crate::mapper::JsonMapper;
     use crate::test_support::NeverRuns;
+    use crate::{DiscardOutput, ExperimentReporter, JobContext};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Prompt {
@@ -273,7 +292,7 @@ mod tests {
 
         job.prepare(JobInput::Document(json!({"epochs": 2})))
             .unwrap()
-            .run(DiscardOutput, CancelToken::new())
+            .run(DiscardOutput, JobContext::default())
             .unwrap();
 
         let events = std::fs::read_to_string(dir.path().join("train/1/events.jsonl")).unwrap();
@@ -308,11 +327,76 @@ mod tests {
 
         job.prepare(JobInput::Document(Value::Null))
             .unwrap()
-            .run(DiscardOutput, cancel_token)
+            .run(DiscardOutput, JobContext::new(cancel_token))
             .unwrap();
 
         let status = read_json(&dir.path().join("train/1/status.json"));
         assert_eq!(status["status"], "completed");
+    }
+
+    #[test]
+    fn an_experiment_hands_the_experiment_it_creates_to_the_reporter_before_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let reporter = ExperimentReporter::new({
+            let reported = reported.clone();
+            move |experiment| reported.lock().unwrap().push(experiment)
+        });
+        let job = Experiments::new(Arc::new(LocalExperiments::new(dir.path())))
+            .create("train", {
+                let reported = reported.clone();
+                move |_run: &ExperimentRun, _epochs: u32| {
+                    assert_eq!(reported.lock().unwrap().len(), 1);
+                    Ok(())
+                }
+            })
+            .into_job(JsonMapper::with_default(10u32));
+
+        job.prepare(JobInput::Document(Value::Null))
+            .unwrap()
+            .run(DiscardOutput, JobContext::default().with_reporter(reporter))
+            .unwrap();
+
+        assert_eq!(
+            *reported.lock().unwrap(),
+            [ReportedExperiment {
+                num: Some(1),
+                url: None,
+                dir: Some(dir.path().canonicalize().unwrap().join("train/1")),
+            }]
+        );
+    }
+
+    #[test]
+    fn an_experiment_is_reported_with_its_page_or_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let experiments = LocalExperiments::new(dir.path());
+        let page = "https://console.tracel.ai/users/me/projects/mnist/experiments/2";
+
+        let offline = experiments
+            .create_experiment("mnist".to_string(), HashMap::new())
+            .unwrap();
+        let on_the_console = experiments
+            .create_experiment("mnist".to_string(), HashMap::new())
+            .unwrap()
+            .with_location(ExperimentLocation::Url(page.to_string()));
+
+        assert_eq!(
+            reported(&offline),
+            ReportedExperiment {
+                num: Some(1),
+                url: None,
+                dir: Some(dir.path().canonicalize().unwrap().join("mnist/1")),
+            }
+        );
+        assert_eq!(
+            reported(&on_the_console),
+            ReportedExperiment {
+                num: Some(2),
+                url: Some(page.to_string()),
+                dir: None,
+            }
+        );
     }
 
     #[test]
@@ -322,7 +406,7 @@ mod tests {
         words()
             .prepare(JobInput::Document(json!({"text": "hello streaming world"})))
             .unwrap()
-            .run(output.clone(), CancelToken::new())
+            .run(output.clone(), JobContext::default())
             .unwrap();
 
         assert_eq!(
@@ -347,7 +431,7 @@ mod tests {
         words()
             .prepare(JobInput::Stream(Box::new(inputs.into_iter())))
             .unwrap()
-            .run(output.clone(), CancelToken::new())
+            .run(output.clone(), JobContext::default())
             .unwrap();
 
         let output = output.0.lock().unwrap();

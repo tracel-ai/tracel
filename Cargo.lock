@@ -7269,6 +7269,7 @@ name = "tracel-app"
 version = "0.10.0"
 dependencies = [
  "axum",
+ "chrono",
  "clap",
  "clap_complete",
  "ctrlc",

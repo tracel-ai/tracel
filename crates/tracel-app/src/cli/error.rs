@@ -1,6 +1,8 @@
+use super::report::ReportError;
 use crate::{BoxError, DescribeError};
 
-/// The exit code of a job that failed, or of a definitions file that could not be written.
+/// The exit code of a job that failed, or of a definitions file or a run report that could not be
+/// written.
 const FAILED: u8 = 1;
 /// The exit code of a command line that names no registered job, or gives an unusable flag or
 /// input.
@@ -47,6 +49,11 @@ pub enum CliError {
     /// `TRACEL_DESCRIBE` names a path the definitions file could not be written to.
     #[error(transparent)]
     Describe(#[from] DescribeError),
+
+    /// `TRACEL_REPORT_FILE` names a path the run report could not be written to when the job
+    /// started, so it did not run.
+    #[error(transparent)]
+    Report(#[from] ReportError),
 }
 
 impl CliError {
@@ -57,7 +64,7 @@ impl CliError {
             | Self::UnknownJob { .. }
             | Self::Usage(_)
             | Self::InvalidInput(_) => USAGE,
-            Self::JobFailed(_) | Self::Describe(_) => FAILED,
+            Self::JobFailed(_) | Self::Describe(_) | Self::Report(_) => FAILED,
             Self::Stopped => STOPPED,
         }
     }
