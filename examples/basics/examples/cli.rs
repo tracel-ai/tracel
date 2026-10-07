@@ -10,7 +10,7 @@
 //!
 //! TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli
 //!
-//! Write the run report of the experiment the job creates:
+//! Write the job's run report, which links the experiment it records:
 //!
 //! TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training
 

@@ -12,11 +12,9 @@ use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tracel_artifact::bundle::FsBundle;
-use tracel_job::ReportedExperiment;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-use crate::report::ReportFile;
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use crate::{
     ActivityEvent, ActivitySpec, ActivityStatus, ArtifactKind, CancelToken, ExperimentId,
@@ -25,16 +23,30 @@ use crate::{
 
 /// The file a run appends its events to, one JSON object per line.
 const EVENTS_FILE: &str = "events.jsonl";
-/// The file a run keeps its run report in.
+/// The file a run keeps its [`Status`] in.
 const STATUS_FILE: &str = "status.json";
 
 /// Records experiments under a directory on this machine.
 ///
 /// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`. Each run
-/// keeps its [`RunReport`](tracel_job::RunReport) in `status.json`, written when the run starts and
-/// again when it ends, appends its events to `events.jsonl`, and saves its artifacts under
-/// `artifacts/`. Creating a `LocalExperiments` performs no I/O; the first run creates the
-/// directories.
+/// keeps its status in `status.json`, written when the run starts and again when it ends, appends
+/// its events to `events.jsonl`, and saves its artifacts under `artifacts/`. Creating a
+/// `LocalExperiments` performs no I/O; the first run creates the directories.
+///
+/// `status.json` names the experiment and numbers the run, says whether the run is `running`,
+/// `completed` or `failed`, when it started and ended, in RFC 3339 UTC to the second, and why it
+/// failed:
+///
+/// ```json
+/// {
+///   "name": "mnist",
+///   "num": 3,
+///   "status": "failed",
+///   "started_at": "2026-10-06T14:02:11Z",
+///   "finished_at": "2026-10-06T14:31:40Z",
+///   "error": "loss is NaN"
+/// }
+/// ```
 ///
 /// Each line of `events.jsonl` is one event, a JSON object whose `type` names it, with the
 /// fields the console's experiment API gives it:
@@ -95,30 +107,30 @@ impl ExperimentProvider for LocalExperiments {
                 root.canonicalize()
             })
             .map_err(internal("Failed to create local experiment directory"))?;
-        let (id, run_root) = create_local_run_dir(&root)
+        let (num, run_root) = create_local_run_dir(&root)
             .map_err(internal("Failed to create local experiment run directory"))?;
-        let session = LocalExperimentSession::start(run_root.clone(), &name, &id, attributes)
+        let session = LocalExperimentSession::start(run_root.clone(), name, num, attributes)
             .map_err(internal("Failed to initialize local experiment session"))?;
         let reader = LocalExperimentReader { root };
 
-        Ok(ExperimentRun::new(id, session, reader, CancelToken::new())
-            .with_location(ExperimentLocation::Dir(run_root)))
+        let run = ExperimentRun::new(num.to_string(), session, reader, CancelToken::new());
+        Ok(run.with_location(ExperimentLocation::Dir(run_root)))
     }
 }
 
 struct LocalExperimentSession {
     root: PathBuf,
-    status: ReportFile,
+    status: Status,
     active: Mutex<Option<LocalWorker>>,
 }
 
 impl LocalExperimentSession {
-    /// Starts recording the run `id` of `job` in `root`: writes its status as running and its
-    /// attributes as its first events.
+    /// Starts recording the run `num` of the experiment `name` in `root`: writes its status as
+    /// running and its attributes as its first events.
     fn start(
         root: PathBuf,
-        job: &str,
-        id: &ExperimentId,
+        name: String,
+        num: u64,
         attributes: HashMap<String, Value>,
     ) -> io::Result<Self> {
         fs::create_dir_all(root.join("artifacts"))?;
@@ -132,15 +144,8 @@ impl LocalExperimentSession {
             .append(true)
             .open(root.join(EVENTS_FILE))?;
         events.write_all(to_jsonl(attributes)?.as_bytes())?;
-        let status = ReportFile::start(
-            root.join(STATUS_FILE),
-            job,
-            ReportedExperiment {
-                num: id.parse(),
-                url: None,
-                dir: Some(root.clone()),
-            },
-        )?;
+        let status = Status::running(name, num);
+        status.write(&root.join(STATUS_FILE))?;
         let (sender, receiver) = channel();
         let join = thread::spawn(move || local_worker(receiver, events));
 
@@ -197,13 +202,16 @@ impl LocalExperimentSession {
             }
         }
 
-        self.status.finish(&completion).map_err(|err| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Internal,
-                "Failed to write the local experiment status",
-                err,
-            )
-        })
+        self.status
+            .ended(completion)
+            .write(&self.root.join(STATUS_FILE))
+            .map_err(|err| {
+                ExperimentError::with_source(
+                    ExperimentErrorKind::Internal,
+                    "Failed to write the local experiment status",
+                    err,
+                )
+            })
     }
 }
 
@@ -261,6 +269,71 @@ impl ExperimentSession for LocalExperimentSession {
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
         self.finish_worker(completion)
     }
+}
+
+/// How a run is going, as its `status.json` gives it.
+#[derive(Clone, Serialize)]
+struct Status {
+    name: String,
+    num: u64,
+    status: StatusKind,
+    started_at: String,
+    finished_at: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StatusKind {
+    Running,
+    Completed,
+    Failed,
+}
+
+impl Status {
+    /// The status of the run `num` of the experiment `name`, started now.
+    fn running(name: String, num: u64) -> Self {
+        Self {
+            name,
+            num,
+            status: StatusKind::Running,
+            started_at: now(),
+            finished_at: None,
+            error: None,
+        }
+    }
+
+    /// The status of the run once it ended now with `completion`.
+    fn ended(&self, completion: ExperimentCompletion) -> Self {
+        let (status, error) = match completion {
+            ExperimentCompletion::Success => (StatusKind::Completed, None),
+            ExperimentCompletion::Failed(reason) => (StatusKind::Failed, Some(reason)),
+        };
+        Self {
+            status,
+            finished_at: Some(now()),
+            error,
+            ..self.clone()
+        }
+    }
+
+    /// Writes the status to `path` as pretty-printed JSON: to `<path>.tmp` first, then renamed to
+    /// `path`, so it is never read half written.
+    fn write(&self, path: &Path) -> io::Result<()> {
+        let mut contents = serde_json::to_vec_pretty(self)?;
+        contents.push(b'\n');
+        let tmp = path.with_extension("json.tmp");
+        let written = fs::write(&tmp, contents).and_then(|()| fs::rename(&tmp, path));
+        if written.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        written
+    }
+}
+
+/// The current time, in RFC 3339 UTC to the second.
+fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 struct LocalWorker {
@@ -532,7 +605,9 @@ fn collect_bundle_files(root: &Path, current: &Path) -> Result<Vec<String>, std:
     Ok(files)
 }
 
-fn create_local_run_dir(root: &Path) -> Result<(ExperimentId, PathBuf), std::io::Error> {
+/// Creates the directory of the next run under `root`, numbered after the highest one there, and
+/// returns its number and path.
+fn create_local_run_dir(root: &Path) -> Result<(u64, PathBuf), std::io::Error> {
     let mut next_id = 1u64;
 
     for entry in fs::read_dir(root)? {
@@ -551,10 +626,9 @@ fn create_local_run_dir(root: &Path) -> Result<(ExperimentId, PathBuf), std::io:
     }
 
     loop {
-        let id = next_id.to_string();
-        let run_root = root.join(&id);
+        let run_root = root.join(next_id.to_string());
         match fs::create_dir(&run_root) {
-            Ok(()) => return Ok((ExperimentId::from(id), run_root)),
+            Ok(()) => return Ok((next_id, run_root)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 next_id += 1;
             }
@@ -778,28 +852,52 @@ mod tests {
         );
     }
 
+    fn is_utc_seconds(timestamp: &Value) -> bool {
+        timestamp.as_str().is_some_and(|timestamp| {
+            timestamp.ends_with('Z')
+                && !timestamp.contains('.')
+                && chrono::DateTime::parse_from_rfc3339(timestamp).is_ok()
+        })
+    }
+
     #[test]
-    fn the_status_is_a_run_report_from_the_start_to_the_end() {
+    fn the_status_follows_the_run_from_the_start_to_the_end() {
         let dir = tempfile::tempdir().unwrap();
         let experiment = run(dir.path(), "mnist");
-        let run_dir = dir.path().canonicalize().unwrap().join("mnist/1");
+        let run_dir = dir.path().join("mnist/1");
 
-        let running = read_json(&run_dir.join("status.json"));
+        let mut running = read_json(&run_dir.join("status.json"));
         experiment.finish().unwrap();
-        let completed = read_json(&run_dir.join("status.json"));
+        let mut completed = read_json(&run_dir.join("status.json"));
 
-        assert_eq!(running["protocol"], 1);
-        assert_eq!(running["job"], "mnist");
-        assert_eq!(
-            running["experiment"],
-            json!({"num": 1, "url": null, "dir": run_dir})
-        );
-        assert_eq!(running["status"], "running");
-        assert_eq!(running["finished_at"], Value::Null);
-        assert_eq!(completed["status"], "completed");
+        assert!(is_utc_seconds(&running["started_at"]), "{running}");
+        assert!(is_utc_seconds(&completed["finished_at"]), "{completed}");
         assert_eq!(completed["started_at"], running["started_at"]);
-        assert!(completed["finished_at"].is_string());
-        assert_eq!(completed["error"], Value::Null);
+        running["started_at"] = Value::Null;
+        completed["started_at"] = Value::Null;
+        completed["finished_at"] = Value::Null;
+        assert_eq!(
+            running,
+            json!({
+                "name": "mnist",
+                "num": 1,
+                "status": "running",
+                "started_at": null,
+                "finished_at": null,
+                "error": null
+            })
+        );
+        assert_eq!(
+            completed,
+            json!({
+                "name": "mnist",
+                "num": 1,
+                "status": "completed",
+                "started_at": null,
+                "finished_at": null,
+                "error": null
+            })
+        );
         assert!(!run_dir.join("status.json.tmp").exists());
     }
 

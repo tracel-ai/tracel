@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
-use tracel_job::{TRACEL_DESCRIBE, TRACEL_REPORT_FILE};
+use tracel_job::TRACEL_DESCRIBE;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
@@ -137,9 +136,7 @@ impl<I, O> ExperimentJob<I, O> {
     ///
     /// While `TRACEL_DESCRIBE` is set, the program is describing its jobs: this returns an
     /// [`ExperimentErrorKind::Describing`] error without creating an experiment. When
-    /// `TRACEL_REPORT_FILE` names a path, the run report is written there when the experiment is
-    /// created and again when the run ends. When `TRACEL_JOB_NUM` is set, the experiment records
-    /// it as the attribute `tracel.job_num`.
+    /// `TRACEL_JOB_NUM` is set, the experiment records it as the attribute `tracel.job_num`.
     pub fn run(&self, input: I) -> Result<O, Box<dyn Error + Send + Sync>>
     where
         I: Serialize,
@@ -151,12 +148,13 @@ impl<I, O> ExperimentJob<I, O> {
                 error,
             )
         })?;
-        self.run_with(input, arguments, CancelToken::new())
+        self.run_with(input, arguments, CancelToken::new(), |_| {})
     }
 
     /// Runs the job like [`run`](Self::run), recording `arguments` as the experiment's arguments
-    /// instead of serializing `input`, and cancelling the run's cancel token when `cancel_token` is
-    /// cancelled.
+    /// instead of serializing `input`, cancelling the run's cancel token when `cancel_token` is
+    /// cancelled, and calling `on_created` with the run once the experiment exists, before the
+    /// job's function runs.
     ///
     /// `arguments` is typically the JSON `input` was decoded from; `null` records none. A run whose
     /// token is cancelled still ends as completed or failed, by what the job's function returns.
@@ -167,12 +165,14 @@ impl<I, O> ExperimentJob<I, O> {
         input: I,
         arguments: Value,
         cancel_token: CancelToken,
+        on_created: impl FnOnce(&ExperimentRun),
     ) -> Result<O, Box<dyn Error + Send + Sync>> {
         self.run_with_vars(
             |name| std::env::var_os(name),
             input,
             arguments,
             cancel_token,
+            on_created,
         )
     }
 
@@ -183,6 +183,7 @@ impl<I, O> ExperimentJob<I, O> {
         input: I,
         arguments: Value,
         cancel_token: CancelToken,
+        on_created: impl FnOnce(&ExperimentRun),
     ) -> Result<O, Box<dyn Error + Send + Sync>> {
         let var = |name: &str| lookup(name).filter(|value| !value.is_empty());
         if var(TRACEL_DESCRIBE).is_some() {
@@ -209,19 +210,14 @@ impl<I, O> ExperimentJob<I, O> {
         if let Some(job_num) = job_num(var(TRACEL_JOB_NUM)) {
             attributes.insert(JOB_NUM_ATTRIBUTE.to_string(), job_num);
         }
-        let mut experiment = self
+        let experiment = self
             .provider
             .create_experiment(self.name.clone(), attributes)?;
         cancel_token.link(experiment.cancel_token());
         if !arguments.is_null() {
             experiment.record_args(arguments);
         }
-        if let Some(path) = var(TRACEL_REPORT_FILE)
-            && let Err(error) = experiment.report_to(&self.name, PathBuf::from(path))
-        {
-            let _ = experiment.fail(error.to_string());
-            return Err(error.into());
-        }
+        on_created(&experiment);
 
         let handle = experiment.handle();
         // Worker-thread panics (a kernel compiler, a data loader) land in the
@@ -253,13 +249,13 @@ fn job_num(value: Option<OsString>) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use serde_json::json;
 
     use super::*;
+    use crate::ExperimentId;
     use crate::session::{Event, ExperimentCompletion};
     use crate::test_support::{MockSession, create_run_with_id};
 
@@ -320,20 +316,26 @@ mod tests {
     }
 
     /// The variables a launcher sets: `vars` and nothing else.
-    fn vars(vars: &[(&'static str, &Path)]) -> impl Fn(&str) -> Option<OsString> {
-        let vars: Vec<(&'static str, OsString)> = vars
-            .iter()
-            .map(|(name, value)| (*name, value.as_os_str().to_owned()))
-            .collect();
+    fn vars(vars: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
+        let vars = vars.to_vec();
         move |name| {
             vars.iter()
                 .find(|(variable, _)| *variable == name)
-                .map(|(_, value)| value.clone())
+                .map(|(_, value)| OsString::from(value))
         }
     }
 
-    fn read_json(path: &Path) -> Value {
-        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    /// An `on_created` hook that keeps the ID of each run it is called with.
+    fn created() -> (
+        impl Fn(&ExperimentRun) + Clone,
+        Arc<Mutex<Vec<ExperimentId>>>,
+    ) {
+        let created = Arc::new(Mutex::new(Vec::new()));
+        let hook = {
+            let created = created.clone();
+            move |run: &ExperimentRun| created.lock().unwrap().push(run.id().clone())
+        };
+        (hook, created)
     }
 
     #[test]
@@ -409,9 +411,14 @@ mod tests {
             .create("job", |_run: &ExperimentRun, _input: Value| Ok(()));
 
         job.run(json!({"epochs": 2})).unwrap();
-        job.run_with(json!("ignored"), json!({"epochs": 3}), CancelToken::new())
-            .unwrap();
-        job.run_with(json!("ignored"), Value::Null, CancelToken::new())
+        job.run_with(
+            json!("ignored"),
+            json!({"epochs": 3}),
+            CancelToken::new(),
+            |_| {},
+        )
+        .unwrap();
+        job.run_with(json!("ignored"), Value::Null, CancelToken::new(), |_| {})
             .unwrap();
 
         assert_eq!(
@@ -433,7 +440,7 @@ mod tests {
             }
         });
 
-        job.run_with((), Value::Null, cancel).unwrap();
+        job.run_with((), Value::Null, cancel, |_| {}).unwrap();
 
         assert_eq!(fixture.completions(), [ExperimentCompletion::Success]);
     }
@@ -447,11 +454,14 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
 
-        let error = job.run_with((), Value::Null, cancel).unwrap_err();
+        let (hook, created) = created();
+
+        let error = job.run_with((), Value::Null, cancel, hook).unwrap_err();
 
         let error = error.downcast::<ExperimentError>().unwrap();
         assert_eq!(error.kind, ExperimentErrorKind::Cancelled);
         assert!(fixture.attributes.lock().unwrap().is_empty());
+        assert!(created.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -466,12 +476,15 @@ mod tests {
             }
         });
 
+        let (hook, created) = created();
+
         let error = job
             .run_with_vars(
-                vars(&[(TRACEL_DESCRIBE, Path::new("jobs.json"))]),
+                vars(&[(TRACEL_DESCRIBE, "jobs.json")]),
                 (),
                 Value::Null,
                 CancelToken::new(),
+                hook,
             )
             .unwrap_err();
 
@@ -479,6 +492,7 @@ mod tests {
         assert_eq!(error.kind, ExperimentErrorKind::Describing);
         assert!(!called.load(Ordering::SeqCst));
         assert!(fixture.completions().is_empty());
+        assert!(created.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -489,10 +503,11 @@ mod tests {
             .create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
 
         job.run_with_vars(
-            vars(&[(TRACEL_DESCRIBE, Path::new(""))]),
+            vars(&[(TRACEL_DESCRIBE, "")]),
             (),
             Value::Null,
             CancelToken::new(),
+            |_| {},
         )
         .unwrap();
 
@@ -515,20 +530,16 @@ mod tests {
             .attribute("kind", "example")
             .unwrap();
 
-        job.run_with_vars(
-            vars(&[(TRACEL_JOB_NUM, Path::new("12"))]),
-            (),
-            Value::Null,
-            CancelToken::new(),
-        )
-        .unwrap();
-        job.run_with_vars(
-            vars(&[(TRACEL_JOB_NUM, Path::new(""))]),
-            (),
-            Value::Null,
-            CancelToken::new(),
-        )
-        .unwrap();
+        for job_num in ["12", ""] {
+            job.run_with_vars(
+                vars(&[(TRACEL_JOB_NUM, job_num)]),
+                (),
+                Value::Null,
+                CancelToken::new(),
+                |_| {},
+            )
+            .unwrap();
+        }
 
         let attributes = fixture.attributes.lock().unwrap();
         assert_eq!(
@@ -545,141 +556,29 @@ mod tests {
     }
 
     #[test]
-    fn the_report_file_follows_the_run_from_running_to_its_end() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
+    fn on_created_is_called_with_the_run_before_its_function_runs() {
         let fixture = Fixture::new();
-        let job = fixture.experiments.create("mnist", {
-            let path = path.clone();
-            move |_run: &ExperimentRun, fail: bool| -> Result<(), Box<dyn Error + Send + Sync>> {
-                let report = read_json(&path);
-                assert_eq!(report["status"], "running");
-                assert_eq!(report["finished_at"], Value::Null);
+        let (hook, created) = created();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let job = fixture.experiments.create("job", {
+            let (created, seen) = (created.clone(), seen.clone());
+            move |run: &ExperimentRun, fail: bool| -> Result<(), Box<dyn Error + Send + Sync>> {
+                seen.lock()
+                    .unwrap()
+                    .push(created.lock().unwrap().last() == Some(run.id()));
                 if fail { Err("diverged".into()) } else { Ok(()) }
             }
         });
 
-        job.run_with_vars(
-            vars(&[(TRACEL_REPORT_FILE, &path)]),
-            false,
-            Value::Null,
-            CancelToken::new(),
-        )
-        .unwrap();
-        let completed = read_json(&path);
-        job.run_with_vars(
-            vars(&[(TRACEL_REPORT_FILE, &path)]),
-            true,
-            Value::Null,
-            CancelToken::new(),
-        )
-        .unwrap_err();
-        let failed = read_json(&path);
-
-        assert_eq!(completed["job"], "mnist");
-        assert_eq!(completed["experiment"], json!({"num": 7, "url": null}));
-        assert_eq!(completed["status"], "completed");
-        assert_eq!(completed["error"], Value::Null);
-        assert!(completed["finished_at"].is_string());
-        assert_eq!(failed["status"], "failed");
-        assert_eq!(failed["error"], "diverged");
-    }
-
-    #[test]
-    fn a_cancelled_run_is_reported_by_what_its_function_returns() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        let fixture = Fixture::new();
-        let job = fixture.experiments.create(
-            "job",
-            |run: &ExperimentRun, fail: bool| -> Result<(), Box<dyn Error + Send + Sync>> {
-                run.cancel_token().cancel();
-                if fail {
-                    Err("interrupted".into())
-                } else {
-                    Ok(())
-                }
-            },
-        );
-        let run = |fail: bool| {
-            let _ = job.run_with_vars(
-                vars(&[(TRACEL_REPORT_FILE, &path)]),
-                fail,
-                Value::Null,
-                CancelToken::new(),
-            );
-            read_json(&path)
-        };
-
-        let completed = run(false);
-        let failed = run(true);
-
-        assert_eq!(completed["status"], "completed");
-        assert_eq!(completed["error"], Value::Null);
-        assert_eq!(failed["status"], "failed");
-        assert_eq!(failed["error"], "interrupted");
-    }
-
-    #[test]
-    fn a_panicking_run_is_reported_failed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        let fixture = Fixture::new();
-        let job = fixture.experiments.create(
-            "job",
-            |_run: &ExperimentRun, _input: ()| -> Result<(), Box<dyn Error + Send + Sync>> {
-                panic!("kernel exploded")
-            },
-        );
-
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            job.run_with_vars(
-                vars(&[(TRACEL_REPORT_FILE, &path)]),
-                (),
-                Value::Null,
-                CancelToken::new(),
-            )
-        }));
-
-        assert!(outcome.is_err());
-        let report = read_json(&path);
-        assert_eq!(report["status"], "failed");
-        assert!(
-            report["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("kernel exploded")),
-            "{report}"
-        );
-    }
-
-    #[test]
-    fn a_report_file_that_cannot_be_written_fails_the_run_before_it_starts() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing").join("report.json");
-        let fixture = Fixture::new();
-        let called = Arc::new(AtomicBool::new(false));
-        let job = fixture.experiments.create("job", {
-            let called = called.clone();
-            move |_run: &ExperimentRun, _input: ()| {
-                called.store(true, Ordering::SeqCst);
-                Ok(())
-            }
-        });
-
-        let error = job
-            .run_with_vars(
-                vars(&[(TRACEL_REPORT_FILE, &path)]),
-                (),
-                Value::Null,
-                CancelToken::new(),
-            )
+        job.run_with(false, Value::Null, CancelToken::new(), hook.clone())
+            .unwrap();
+        job.run_with(true, Value::Null, CancelToken::new(), hook)
             .unwrap_err();
 
-        assert!(error.to_string().contains("run report"), "{error}");
-        assert!(!called.load(Ordering::SeqCst));
-        assert!(matches!(
-            fixture.completions().as_slice(),
-            [ExperimentCompletion::Failed(_)]
-        ));
+        assert_eq!(*seen.lock().unwrap(), [true, true]);
+        assert_eq!(
+            *created.lock().unwrap(),
+            [ExperimentId::from("7"), ExperimentId::from("7")]
+        );
     }
 }

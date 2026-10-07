@@ -1,10 +1,11 @@
 use std::error::Error;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
 use tracel_experiment::CancelToken;
 use tracel_inference::{OutputWriter, OutputWriterError};
-use tracel_job::JobDefinition;
+use tracel_job::{JobDefinition, ReportedExperiment};
 
 /// The error a job or a mapper fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
@@ -20,31 +21,93 @@ pub enum JobInput {
 /// Where a job sends its outputs.
 pub type JobOutput = Box<dyn OutputWriter<Value> + Send + Sync>;
 
+/// What a runner gives the job it runs, besides where its outputs go: the token that asks the job
+/// to stop, and the reporter the job hands the experiment it records.
+#[derive(Clone, Default)]
+pub struct JobContext {
+    cancel_token: CancelToken,
+    reporter: ExperimentReporter,
+}
+
+impl JobContext {
+    /// The context of a job asked to stop once `cancel_token` is cancelled, whose runner keeps no
+    /// run report.
+    pub fn new(cancel_token: CancelToken) -> Self {
+        Self {
+            cancel_token,
+            reporter: ExperimentReporter::default(),
+        }
+    }
+
+    /// Hands the experiment the job records to `reporter`, the runner's run report.
+    pub fn with_reporter(mut self, reporter: ExperimentReporter) -> Self {
+        self.reporter = reporter;
+        self
+    }
+
+    /// The token cancelled to ask the job to stop.
+    pub fn cancel_token(&self) -> &CancelToken {
+        &self.cancel_token
+    }
+
+    /// The reporter the job hands the experiment it records.
+    pub fn reporter(&self) -> &ExperimentReporter {
+        &self.reporter
+    }
+}
+
+/// Hands the experiment a job records to the run report its runner keeps.
+///
+/// A runner that keeps a run report gives the job a reporter in its [`JobContext`], and an
+/// experiment job hands it the experiment once it is created, so the report links it while the
+/// job runs. The default reporter belongs to no report: it drops what it is given.
+#[derive(Clone, Default)]
+pub struct ExperimentReporter {
+    report: Option<Arc<dyn Fn(ReportedExperiment) + Send + Sync>>,
+}
+
+impl ExperimentReporter {
+    /// A reporter that hands each experiment to `report`, which links it to the run report.
+    pub fn new(report: impl Fn(ReportedExperiment) + Send + Sync + 'static) -> Self {
+        Self {
+            report: Some(Arc::new(report)),
+        }
+    }
+
+    /// Hands `experiment`, the experiment the job records, to the run report.
+    pub fn report(&self, experiment: ReportedExperiment) {
+        if let Some(report) = &self.report {
+            report(experiment);
+        }
+    }
+}
+
 /// A job whose input is decoded, ready to run.
 pub struct PreparedJob {
-    run: Box<dyn FnOnce(JobOutput, CancelToken) -> Result<(), BoxError> + Send>,
+    run: Box<dyn FnOnce(JobOutput, JobContext) -> Result<(), BoxError> + Send>,
 }
 
 impl PreparedJob {
     /// Wraps `run`, which runs the job, sends its outputs to the writer it is given, and stops
-    /// once the token it is given is cancelled.
+    /// once the cancel token of the context it is given is cancelled.
     pub fn new<F>(run: F) -> Self
     where
-        F: FnOnce(JobOutput, CancelToken) -> Result<(), BoxError> + Send + 'static,
+        F: FnOnce(JobOutput, JobContext) -> Result<(), BoxError> + Send + 'static,
     {
         Self { run: Box::new(run) }
     }
 
-    /// Runs the job, sending its outputs to `output`.
+    /// Runs the job in `context`, sending its outputs to `output`.
     ///
-    /// Cancelling `cancel_token` asks the job to stop: an experiment's run has its cancel token
-    /// cancelled and ends as completed or failed by what its function returns, and an inference
-    /// takes no more input.
-    pub fn run<W>(self, output: W, cancel_token: CancelToken) -> Result<(), BoxError>
+    /// Cancelling the context's cancel token asks the job to stop: an experiment's run has its
+    /// cancel token cancelled and ends as completed or failed by what its function returns, and an
+    /// inference takes no more input. An experiment hands the experiment it creates to the
+    /// context's reporter.
+    pub fn run<W>(self, output: W, context: JobContext) -> Result<(), BoxError>
     where
         W: OutputWriter<Value> + Send + Sync + 'static,
     {
-        (self.run)(Box::new(output), cancel_token)
+        (self.run)(Box::new(output), context)
     }
 }
 
@@ -87,4 +150,33 @@ impl OutputWriter<Value> for DiscardOutput {
     }
 
     fn finish(&self, _duration: Duration) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    fn offline_run() -> ReportedExperiment {
+        ReportedExperiment {
+            num: Some(3),
+            url: None,
+            dir: Some("runs/mnist/3".into()),
+        }
+    }
+
+    #[test]
+    fn a_reporter_hands_each_experiment_to_its_report() {
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let reporter = ExperimentReporter::new({
+            let reported = reported.clone();
+            move |experiment| reported.lock().unwrap().push(experiment)
+        });
+        let context = JobContext::default().with_reporter(reporter);
+
+        context.clone().reporter().report(offline_run());
+
+        assert_eq!(*reported.lock().unwrap(), [offline_run()]);
+    }
 }

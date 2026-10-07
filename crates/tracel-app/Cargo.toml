@@ -17,6 +17,7 @@ server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
 schema = ["dep:schemars"]
 
 [dependencies]
+chrono.workspace = true
 clap = { workspace = true, features = ["derive", "string"] }
 clap_complete.workspace = true
 ctrlc = { workspace = true, features = ["termination"] }

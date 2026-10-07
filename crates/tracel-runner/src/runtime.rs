@@ -6,8 +6,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tracel_app::{DiscardOutput, JobInput, JobRegistry};
-use tracel_experiment::CancelToken;
+use tracel_app::{DiscardOutput, JobContext, JobInput, JobRegistry};
 use uuid::Uuid;
 
 use crate::error::RunnerError;
@@ -115,7 +114,7 @@ fn execute(jobs: &JobRegistry, job: &DispatchedJob) -> (FinishStatus, Option<Str
             .prepare(JobInput::Document(job.input.clone()))
             .map_err(|e| format!("invalid input: {e}"))?;
         prepared
-            .run(DiscardOutput, CancelToken::new())
+            .run(DiscardOutput, JobContext::default())
             .map_err(|e| e.to_string())
     }));
     match result {
@@ -297,13 +296,11 @@ mod tests {
             if let FakeBehaviour::RejectInput(reason) = behaviour {
                 return Err(reason.into());
             }
-            Ok(PreparedJob::new(
-                move |_output, _cancel_token| match behaviour {
-                    FakeBehaviour::Fail(reason) => Err(reason.into()),
-                    FakeBehaviour::Panic(message) => panic!("{message}"),
-                    FakeBehaviour::Succeed | FakeBehaviour::RejectInput(_) => Ok(()),
-                },
-            ))
+            Ok(PreparedJob::new(move |_output, _context| match behaviour {
+                FakeBehaviour::Fail(reason) => Err(reason.into()),
+                FakeBehaviour::Panic(message) => panic!("{message}"),
+                FakeBehaviour::Succeed | FakeBehaviour::RejectInput(_) => Ok(()),
+            }))
         }
     }
 
