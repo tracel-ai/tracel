@@ -235,7 +235,7 @@ pub fn serve_forever(
 #[cfg(test)]
 mod tests {
     use tracel_app::{BoxError, Job, PreparedJob};
-    use tracel_job::{JobDefinition, JobKind};
+    use tracel_job::JobDefinition;
 
     use super::*;
 
@@ -276,7 +276,6 @@ mod tests {
             Self {
                 definition: JobDefinition {
                     name: name.to_string(),
-                    kind: JobKind::Experiment,
                     description: None,
                     input_schema: None,
                     input_example: None,

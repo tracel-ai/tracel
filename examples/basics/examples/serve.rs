@@ -1,8 +1,9 @@
-//! An HTTP server serving both jobs: SSE for inference, fire-and-forget for training.
+//! An HTTP server serving both jobs, each answering with its outputs and how it ended as
+//! Server-Sent Events.
 //!
 //! cargo run -p basics --example serve
 //! curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'
-//! curl -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
+//! curl -N -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
 //!
 //! For a streaming request, run the infer-client example.
 

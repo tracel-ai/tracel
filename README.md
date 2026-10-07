@@ -75,7 +75,8 @@ console lists as its config. `version` gives the binary its `--version`, which p
 name and that version, such as `mnist 0.1.0`; without it, the binary has no `--version`.
 
 Swap `Cli` for `tracel::app::server::Server` (with the optional `server` feature) to dispatch the
-same job over HTTP instead of the command line. The [`cli`](examples/basics/examples/cli.rs) and
+same job over HTTP instead of the command line, as [Serving jobs over HTTP](#serving-jobs-over-http)
+describes. The [`cli`](examples/basics/examples/cli.rs) and
 [`serve`](examples/basics/examples/serve.rs) examples in [`examples/basics`](examples/basics) are
 complete, runnable versions of both.
 
@@ -150,7 +151,6 @@ the file to `<path>.tmp` first and renaming it, so it is never read half written
   "jobs": [
     {
       "name": "mnist",
-      "kind": "experiment",
       "description": "Train the MNIST classifier",
       "input_schema": null,
       "input_example": { "num_epochs": 10, "optimizer": { "lr": 0.001 } }
@@ -159,7 +159,7 @@ the file to `<path>.tmp` first and renaming it, so it is never read half written
 }
 ```
 
-`kind` is `experiment` or `inference`. `input_example` is the default given to
+`input_example` is the default given to
 `JsonMapper::with_default`. `input_schema` is the input type's JSON Schema when the mapper is built
 with `JsonMapper::with_schema`, which needs the `schema` feature and an input type that derives
 `schemars::JsonSchema`. While `TRACEL_DESCRIBE` is set, `ExperimentJob::run` returns an error
@@ -209,6 +209,33 @@ experiment's cancel token, which stops a learner given `experiment.interrupter()
 experiment logs a warning that a stop was requested. The job ends as `completed` or `failed` by
 what its function returns, and the binary exits with code 130. A second signal ends the
 binary at once. Launchers send SIGKILL after a 30-second grace period.
+
+#### Serving jobs over HTTP
+
+`Server` serves every job at `POST /<job>`, and runs each the same way. The request body is the
+job's input: one JSON document per line (NDJSON), each handed to the job once its line has
+arrived, or one document over several lines, such as a pretty-printed one, handed over once the
+body has ended. An empty body is a `null` input, which the mapper reads as its default. A job that
+takes one input, such as an experiment, takes the body's one document; a job that takes several,
+such as an inference, takes each as it arrives.
+
+The response streams the job's events as Server-Sent Events while it runs: each output the job
+writes, as JSON in an unnamed event; each error it reports, as text in an `error` event; the
+experiment it records, in an `experiment` event; and last, how it ended, in a `done` event:
+
+```text
+event: experiment
+data: {"num":4,"url":null,"dir":"/home/me/demo/runs/mnist/4"}
+
+event: done
+data: {"status":"completed","error":null,"experiment":{"num":4,"url":null,"dir":"/home/me/demo/runs/mnist/4"}}
+```
+
+The experiment is given as the run report links it. In `done`, `status` is `completed` or `failed`,
+by what the job returned, `error` says why a job failed, and `experiment` is `null` for a job that
+records none. An unknown job is answered with `404 Not Found`, and an input the job rejects before
+it runs, such as one that does not decode, with `400 Bad Request` and the reason. A client that
+disconnects asks the job to stop, as a termination signal does for `Cli`.
 
 ### 2. Integrate with your Learner
 

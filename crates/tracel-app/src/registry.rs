@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use tracel_job::JobDefinition;
 
@@ -9,7 +10,7 @@ use crate::job::Job;
 /// Each runner keeps one, filled by its `register` methods.
 #[derive(Default)]
 pub struct JobRegistry {
-    jobs: BTreeMap<String, Box<dyn Job>>,
+    jobs: BTreeMap<String, Arc<dyn Job>>,
 }
 
 impl JobRegistry {
@@ -28,12 +29,12 @@ impl JobRegistry {
         if self.jobs.contains_key(&name) {
             panic!("job '{name}' is already registered");
         }
-        self.jobs.insert(name, job);
+        self.jobs.insert(name, Arc::from(job));
     }
 
     /// The job named `name`.
-    pub fn get(&self, name: &str) -> Option<&dyn Job> {
-        self.jobs.get(name).map(|job| job.as_ref())
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Job>> {
+        self.jobs.get(name).cloned()
     }
 
     /// The definitions of the registered jobs, ordered by name.
@@ -55,7 +56,6 @@ impl JobRegistry {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tracel_job::JobKind;
 
     use super::*;
     use crate::job::{BoxError, JobInput, PreparedJob};
@@ -75,7 +75,6 @@ mod tests {
     fn job(name: &str) -> Box<dyn Job> {
         Box::new(Named(JobDefinition {
             name: name.to_string(),
-            kind: JobKind::Experiment,
             description: None,
             input_schema: None,
             input_example: Some(json!({"name": name})),

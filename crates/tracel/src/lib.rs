@@ -73,7 +73,8 @@
 //!
 //! Run it as `<binary> train '{"epochs": 5}'`: the job's name selects it, and its input, one JSON
 //! document, is merged onto the default. Left out, the job runs with the default. Over HTTP, the
-//! same input is the body of `POST /train`. The experiment records the merged input as its
+//! same input is the body of `POST /train`, answered with the job's outputs, the experiment it
+//! records and how it ended, as Server-Sent Events. The experiment records the merged input as its
 //! arguments, which the console lists as the experiment's config; `ExperimentJob::run` records
 //! the input it is given.
 //!
@@ -129,10 +130,9 @@
 //!
 //! With `TRACEL_DESCRIBE=<path>` set, every runner writes the definitions of its jobs to `<path>`
 //! as JSON, then returns without running a job or serving: see [`job::DefinitionsFile`]. Each
-//! definition gives the job's name, kind (`experiment` or `inference`), description, input schema
-//! and example input. The example input is the mapper's default, and the input schema needs
-//! `JsonMapper::with_schema` and the `schema` feature. While the variable is set,
-//! `ExperimentJob::run` returns an
+//! definition gives the job's name, description, input schema and example input. The example
+//! input is the mapper's default, and the input schema needs `JsonMapper::with_schema` and the
+//! `schema` feature. While the variable is set, `ExperimentJob::run` returns an
 //! [`ExperimentErrorKind::Describing`](experiment::error::ExperimentErrorKind::Describing) error
 //! without creating an experiment, so describing a program never trains.
 //!

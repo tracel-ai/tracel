@@ -25,7 +25,7 @@ The `mnist` example shows the same experiment tracking driven from the Burn `tra
 | `infer` | Streaming inference: prompts fed over time, tokens streamed back. |
 | `train` | An experiment run: activity tracking, metrics, cancellation. |
 | `cli` | A CLI serving both jobs, each with flags built from its input schema. |
-| `serve` | An HTTP server serving both jobs (SSE for inference, fire-and-forget for training). |
+| `serve` | An HTTP server serving both jobs, each answering with its outputs and how it ended as SSE. |
 | `infer-client` | Streaming HTTP client for `serve`. |
 | `console` | The signed-in user and the project's models, read from the console. |
 
@@ -47,6 +47,6 @@ TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training
 
 cargo run -p basics --example serve
 curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'
-curl -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
+curl -N -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
 cargo run -p basics --example infer-client
 ```

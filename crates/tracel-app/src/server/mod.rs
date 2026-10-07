@@ -1,4 +1,5 @@
 mod error;
+mod input;
 mod request;
 
 pub use error::ServerError;
@@ -6,13 +7,12 @@ pub use error::ServerError;
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    RequestExt, Router,
     extract::{DefaultBodyLimit, Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
 };
-use tracel_job::JobKind;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{IntoJob, Job, JobRegistry};
@@ -20,9 +20,38 @@ use request::MAX_BODY_BYTES;
 
 /// Serves every registered job over HTTP at `POST /{job_name}`.
 ///
-/// The request body is the job's JSON input. An experiment takes one JSON document (an empty
-/// body is no input) and the response returns once it has started. An inference takes NDJSON,
-/// one input per line as it arrives, and streams its outputs back as Server-Sent Events.
+/// The request body is the job's input: one JSON document per line (NDJSON), each handed to the
+/// job once its line has arrived, or one document over several lines, such as a pretty-printed
+/// one, handed over once the body has ended. An empty body is a `null` input. A job that takes
+/// one input takes the body's one document; a job that takes several takes each as it arrives.
+///
+/// The response streams the job's events as Server-Sent Events while it runs:
+///
+/// | Event | Data | Sent |
+/// | --- | --- | --- |
+/// | `message` | an output, as JSON | for each output the job writes, as an unnamed event |
+/// | `error` | the error, as text | for each error the job reports |
+/// | `experiment` | the experiment, as JSON | when the job records an experiment |
+/// | `done` | how the job ended, as JSON | once, when the job ends, as the last event |
+///
+/// ```text
+/// event: experiment
+/// data: {"num":4,"url":null,"dir":"/home/me/demo/runs/train/4"}
+///
+/// event: done
+/// data: {"status":"completed","error":null,"experiment":{"num":4,"url":null,"dir":"/home/me/demo/runs/train/4"}}
+/// ```
+///
+/// An experiment is given as a [`RunReport`](tracel_job::RunReport) links it: its `num`, and its
+/// page on the console as `url` or, offline, its directory as `dir`. In `done`, `status` is
+/// `completed` or `failed`, by what the job returned, `error` says why a job failed, and
+/// `experiment` is the experiment the job recorded, or `null`. A job that takes several inputs
+/// reports an input that is not JSON, or does not decode, as an `error` and takes no more.
+///
+/// An unknown job is answered with `404 Not Found`. An input the job rejects before it runs, such
+/// as one that is not JSON or does not decode, or a second document for a job that takes one, is
+/// answered with `400 Bad Request` and the reason. A client that disconnects asks the job to stop,
+/// through the cancel token of its [`JobContext`](crate::JobContext).
 pub struct Server {
     jobs: JobRegistry,
     host: String,
@@ -141,8 +170,30 @@ async fn dispatch(
     let Some(job) = jobs.get(&name) else {
         return (StatusCode::NOT_FOUND, format!("unknown job '{name}'")).into_response();
     };
-    match job.definition().kind {
-        JobKind::Experiment => request::start_experiment(job, request.into_body()).await,
-        JobKind::Inference => request::stream_inference(job, request.into_body()),
+    request::run(job, request.into_limited_body()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unknown_job_is_not_found() {
+        let request = Request::new(Body::from("{}"));
+
+        let response = dispatch(
+            State(Arc::new(JobRegistry::new())),
+            Path("train".to_string()),
+            request,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body, "unknown job 'train'");
     }
 }

@@ -110,14 +110,12 @@ mod tests {
                 "jobs": [
                     {
                         "name": "echo",
-                        "kind": "inference",
                         "description": null,
                         "input_schema": null,
                         "input_example": null
                     },
                     {
                         "name": "train",
-                        "kind": "experiment",
                         "description": "Train the model",
                         "input_schema": null,
                         "input_example": {"epochs": 10, "optimizer": {"lr": 0.001}}
