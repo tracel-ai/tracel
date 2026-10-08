@@ -24,27 +24,24 @@ pub struct JobDefinition {
     pub input_example: Option<Value>,
 }
 
-/// The file a runner writes to the path [`TRACEL_DESCRIBE`] names: the jobs it can run.
+/// The file a program writes to the path [`TRACEL_DESCRIBE`] names: the jobs it can run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DefinitionsFile {
     /// The [`PROTOCOL`] version the file follows.
     pub protocol: u32,
     /// The version of the Tracel SDK the program is built with.
     pub sdk_version: String,
-    /// The runner that wrote the file, such as `cli`, which runs a job from the command line.
-    pub runner: String,
-    /// The jobs the runner can run, ordered by name.
+    /// The jobs the program can run, ordered by name.
     pub jobs: Vec<JobDefinition>,
 }
 
 impl DefinitionsFile {
-    /// The file of the runner `runner`, such as `cli`, that can run `jobs`: following
-    /// [`PROTOCOL`], and built with this version of the SDK.
-    pub fn new(runner: impl Into<String>, jobs: Vec<JobDefinition>) -> Self {
+    /// The file of a program that can run `jobs`: following [`PROTOCOL`], and built with this
+    /// version of the SDK.
+    pub fn new(jobs: Vec<JobDefinition>) -> Self {
         Self {
             protocol: PROTOCOL,
             sdk_version: env!("CARGO_PKG_VERSION").to_string(),
-            runner: runner.into(),
             jobs,
         }
     }
@@ -70,23 +67,20 @@ mod tests {
     use super::*;
 
     fn file() -> DefinitionsFile {
-        DefinitionsFile::new(
-            "cli",
-            vec![
-                JobDefinition {
-                    name: "echo".to_string(),
-                    description: None,
-                    input_schema: Some(json!({"type": "string"})),
-                    input_example: None,
-                },
-                JobDefinition {
-                    name: "train".to_string(),
-                    description: Some("Train the model".to_string()),
-                    input_schema: None,
-                    input_example: Some(json!({"epochs": 10, "optimizer": {"lr": 0.001}})),
-                },
-            ],
-        )
+        DefinitionsFile::new(vec![
+            JobDefinition {
+                name: "echo".to_string(),
+                description: None,
+                input_schema: Some(json!({"type": "string"})),
+                input_example: None,
+            },
+            JobDefinition {
+                name: "train".to_string(),
+                description: Some("Train the model".to_string()),
+                input_schema: None,
+                input_example: Some(json!({"epochs": 10, "optimizer": {"lr": 0.001}})),
+            },
+        ])
     }
 
     #[test]
@@ -99,7 +93,6 @@ mod tests {
         let expected = r#"{
   "protocol": 1,
   "sdk_version": "SDK_VERSION",
-  "runner": "cli",
   "jobs": [
     {
       "name": "echo",

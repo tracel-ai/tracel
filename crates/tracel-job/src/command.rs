@@ -601,7 +601,6 @@ mod tests {
         let file: DefinitionsFile = serde_json::from_value(json!({
             "protocol": 1,
             "sdk_version": "0.10.0",
-            "runner": "cli",
             "jobs": serde_json::to_value(&jobs).unwrap()
         }))
         .unwrap();

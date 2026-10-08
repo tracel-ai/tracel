@@ -165,7 +165,6 @@ renaming it, so it is never read half written:
 {
   "protocol": 1,
   "sdk_version": "0.10.0",
-  "runner": "cli",
   "jobs": [
     {
       "name": "mnist",

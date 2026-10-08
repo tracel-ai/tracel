@@ -26,7 +26,6 @@
 //! {
 //!   "protocol": 1,
 //!   "sdk_version": "0.10.0",
-//!   "runner": "cli",
 //!   "jobs": [
 //!     {
 //!       "name": "train",

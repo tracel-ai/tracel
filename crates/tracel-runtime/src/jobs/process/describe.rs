@@ -6,9 +6,6 @@ use std::path::PathBuf;
 
 use tracel_job::{DefinitionsFile, JobDefinition, TRACEL_DESCRIBE};
 
-/// The runner the definitions file names: the command line [`Jobs::run`](crate::Jobs::run) reads.
-const RUNNER: &str = "cli";
-
 /// Writes the definitions file of the jobs `definitions` gives when `TRACEL_DESCRIBE`, among the
 /// environment variables `lookup` gives, names a path.
 ///
@@ -21,7 +18,7 @@ pub fn describe<'a>(
         return Ok(false);
     };
     let path = PathBuf::from(path);
-    DefinitionsFile::new(RUNNER, definitions.into_iter().cloned().collect())
+    DefinitionsFile::new(definitions.into_iter().cloned().collect())
         .write(&path)
         .map_err(|source| DescribeError { path, source })?;
     Ok(true)
@@ -80,7 +77,6 @@ mod tests {
             json!({
                 "protocol": 1,
                 "sdk_version": env!("CARGO_PKG_VERSION"),
-                "runner": "cli",
                 "jobs": [
                     {
                         "name": "evaluate",
