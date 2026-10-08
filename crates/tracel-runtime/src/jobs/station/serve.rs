@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tracel_job::ReportedExperiment;
+use tracel_job_proto::ReportedExperiment;
 use uuid::Uuid;
 
 use crate::Jobs;

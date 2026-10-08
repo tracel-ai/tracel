@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tracel_job::ReportedExperiment;
+use tracel_job_proto::ReportedExperiment;
 
 use crate::stop::Stop;
 

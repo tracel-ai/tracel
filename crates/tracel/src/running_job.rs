@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tracel_experiment::{ExperimentLocation, ExperimentRun, Experiments};
-use tracel_job::{JOB_NUM_ATTRIBUTE, ReportedExperiment};
+use tracel_job_proto::{JOB_NUM_ATTRIBUTE, ReportedExperiment};
 use tracel_runtime::JobScope;
 
 /// `experiments`, linked to the job the current thread runs, when it runs one, as [`link`] links

@@ -1,9 +1,16 @@
 #![deny(missing_docs)]
 
-//! The process interface of a program's jobs, which the program that launches it shares with the
-//! SDK: the files the program writes for its launcher, the environment variables that name them,
-//! and its command line, with the plain data types they carry, [`JobDefinition`] and
-//! [`ReportedExperiment`].
+//! The contract between the process adapter of the Tracel runtime and the programs that launch job
+//! binaries, such as `tracel run` and compute providers: the files a job binary writes for its
+//! launcher, the environment variables that name them, and its command line, with the plain data
+//! types they carry, [`JobDefinition`] and [`ReportedExperiment`]. It is not an API for writing
+//! jobs.
+//!
+//! It holds the contract's shapes and names, and does no I/O: [`DefinitionsFile::to_json`] and
+//! [`RunReport::to_json`] give the exact text of each file, [`DefinitionsFile::from_json`] and
+//! [`RunReport::from_json`] read it back, checking its [`PROTOCOL`], and [`job_input`] reads the
+//! `--config` file through the function its caller gives. Writing and reading the files is the
+//! caller's.
 //!
 //! - [`DefinitionsFile`]: the jobs a program can run, each given by its [`JobDefinition`]. When
 //!   [`TRACEL_DESCRIBE`] names a path, the program writes the file there instead of running a
@@ -17,8 +24,8 @@
 //!   program that reads a definitions file builds the same command line as the program that wrote
 //!   it. [`job_input`] reads a job's input from its arguments.
 //!
-//! Both files are JSON and give the [`PROTOCOL`] version they follow. Each is written to
-//! `<path>.tmp` first, then renamed to `<path>`, so it is never read half written.
+//! Both files are JSON and give the [`PROTOCOL`] version they follow. A job binary writes each to
+//! `<path>.tmp` first, then renames it to `<path>`, so it is never read half written.
 //!
 //! A definitions file:
 //!
@@ -59,11 +66,12 @@
 mod command;
 mod definitions;
 mod flags;
-mod json_file;
+mod json;
 mod report;
 
-pub use command::{command, completions, job_command, job_input};
+pub use command::{ConfigError, command, completions, job_command, job_input};
 pub use definitions::{DefinitionsFile, JobDefinition, TRACEL_DESCRIBE};
+pub use json::ParseError;
 pub use report::{
     JOB_NUM_ATTRIBUTE, ReportedExperiment, RunReport, RunStatus, TRACEL_JOB_NUM, TRACEL_REPORT_FILE,
 };

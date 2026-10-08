@@ -7217,7 +7217,7 @@ dependencies = [
  "tracel-datasets",
  "tracel-experiment",
  "tracel-inference",
- "tracel-job",
+ "tracel-job-proto",
  "tracel-models",
  "tracel-runtime",
  "tracel-station",
@@ -7332,14 +7332,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracel-job"
+name = "tracel-job-proto"
 version = "0.11.0"
 dependencies = [
  "clap",
  "clap_complete",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -7388,7 +7387,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tracel-job",
+ "tracel-job-proto",
  "url",
  "uuid",
 ]

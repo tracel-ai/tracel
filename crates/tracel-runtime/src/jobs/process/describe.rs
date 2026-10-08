@@ -4,7 +4,9 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
-use tracel_job::{DefinitionsFile, JobDefinition, TRACEL_DESCRIBE};
+use tracel_job_proto::{DefinitionsFile, JobDefinition, TRACEL_DESCRIBE};
+
+use crate::jobs::process::file::write_atomically;
 
 /// Writes the definitions file of the jobs `definitions` gives when `TRACEL_DESCRIBE`, among the
 /// environment variables `lookup` gives, names a path.
@@ -18,9 +20,8 @@ pub fn describe<'a>(
         return Ok(false);
     };
     let path = PathBuf::from(path);
-    DefinitionsFile::new(definitions.into_iter().cloned().collect())
-        .write(&path)
-        .map_err(|source| DescribeError { path, source })?;
+    let file = DefinitionsFile::new(definitions.into_iter().cloned().collect());
+    write_atomically(&path, &file.to_json()).map_err(|source| DescribeError { path, source })?;
     Ok(true)
 }
 
@@ -93,7 +94,13 @@ mod tests {
                 ]
             })
         );
-        assert_eq!(DefinitionsFile::read(&path).unwrap().jobs, definitions());
+        assert_eq!(contents, DefinitionsFile::new(definitions()).to_json());
+        assert_eq!(
+            DefinitionsFile::from_json(contents.as_bytes())
+                .unwrap()
+                .jobs,
+            definitions()
+        );
     }
 
     #[test]

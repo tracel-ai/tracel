@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use chrono::{SecondsFormat, Utc};
-use tracel_job::{ReportedExperiment, RunReport, RunStatus, TRACEL_REPORT_FILE};
+use tracel_job_proto::{ReportedExperiment, RunReport, RunStatus, TRACEL_REPORT_FILE};
 
 use crate::BoxError;
+use crate::jobs::process::file::write_atomically;
 
 /// The path `TRACEL_REPORT_FILE` names, among the environment variables `lookup` gives, when it
 /// names one.
@@ -29,7 +30,7 @@ impl ReportFile {
     /// Writes to `path` the report of `job`, started now: running, with no experiments.
     pub fn start(path: PathBuf, job: &str) -> Result<Self, ReportError> {
         let report = RunReport::new(job, now());
-        if let Err(source) = report.write(&path) {
+        if let Err(source) = write_atomically(&path, &report.to_json()) {
             return Err(ReportError { path, source });
         }
         Ok(Self {
@@ -65,7 +66,7 @@ impl ReportFile {
             return Ok(());
         }
         change(&mut report);
-        report.write(&self.path).map_err(|source| ReportError {
+        write_atomically(&self.path, &report.to_json()).map_err(|source| ReportError {
             path: self.path.clone(),
             source,
         })

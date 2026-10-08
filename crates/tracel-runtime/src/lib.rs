@@ -14,22 +14,23 @@
 //! [`Job`] adds what a launcher reads about a job: its description, its default input, which its
 //! input is merged onto and which is its example input, and its input's JSON Schema (requires the
 //! `schema` feature). The command line `<program> <job> [<input-json>] [<flags>]` is built from
-//! them, with a flag per field of the input, as [`tracel_job::command`] builds it, so a program
-//! that reads a [`DefinitionsFile`](tracel_job::DefinitionsFile) builds the same one.
+//! them, with a flag per field of the input, as [`tracel_job_proto::command`] builds it, so a
+//! program that reads a [`DefinitionsFile`](tracel_job_proto::DefinitionsFile) builds the same
+//! one.
 //!
 //! ## The process interface
 //!
 //! - When `TRACEL_DESCRIBE` names a path, the program writes the
-//!   [`DefinitionsFile`](tracel_job::DefinitionsFile) of its jobs there, as JSON, instead of
+//!   [`DefinitionsFile`](tracel_job_proto::DefinitionsFile) of its jobs there, as JSON, instead of
 //!   running a job, and exits with code 0.
 //! - `<program> <job> [<input-json>]` runs the job with that input. It exits with code 0 when the
 //!   job completed, 1 when it failed, 2 when the job or its input is rejected, and 130 when it was
 //!   asked to stop.
 //! - When `TRACEL_REPORT_FILE` names a path, the program writes the job's
-//!   [`RunReport`](tracel_job::RunReport) there when the job starts, again each time code in the
-//!   job reports an experiment it started, and again when the job ends, as `completed` or `failed`
-//!   by what the job returned, whether or not it was asked to stop. A job or input that is
-//!   rejected writes none.
+//!   [`RunReport`](tracel_job_proto::RunReport) there when the job starts, again each time code in
+//!   the job reports an experiment it started, and again when the job ends, as `completed` or
+//!   `failed` by what the job returned, whether or not it was asked to stop. A job or input that
+//!   is rejected writes none.
 //! - SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the job to stop. Launchers send SIGKILL
 //!   after a 30-second grace period.
 //!

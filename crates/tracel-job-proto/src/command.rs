@@ -1,6 +1,8 @@
 //! The command line of a program's jobs, built from their definitions.
 
-use std::path::PathBuf;
+use std::fmt;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use clap::builder::{
     PathBufValueParser, PossibleValue, PossibleValuesParser, TypedValueParser, ValueParser,
@@ -29,7 +31,7 @@ const COMPLETIONS: &str = "tracel:completions";
 ///
 /// The command depends only on `name` and the definitions, so a program that reads them from a
 /// [`DefinitionsFile`](crate::DefinitionsFile) builds the same command line as the program that
-/// wrote it, but for `--version`, which the SDK's `Cli` adds when given the program's version.
+/// wrote it, but for `--version`, which a program adds when it gives its version.
 pub fn command<'a>(
     name: impl Into<String>,
     definitions: impl IntoIterator<Item = &'a JobDefinition>,
@@ -89,7 +91,7 @@ pub fn job_command(definition: &JobDefinition) -> Command {
                 .long("config")
                 .value_name("FILE")
                 .value_hint(ValueHint::FilePath)
-                .value_parser(PathBufValueParser::new().try_map(read_config))
+                .value_parser(PathBufValueParser::new())
                 .help("JSON merged before the input and the flags"),
         );
     match &definition.description {
@@ -106,7 +108,13 @@ pub fn job_command(definition: &JobDefinition) -> Command {
 /// the fields of an object replace those of the object below or are overlaid onto them, and any
 /// other value replaces what is below. A `null` field still removes that field from the job's
 /// default input, which the input is merged onto. One of them alone is the input as given.
-pub fn job_input(matches: &ArgMatches) -> Value {
+///
+/// `read_config` reads the `--config` file, such as with `std::fs::read_to_string`, when the
+/// arguments name one. Fails when it cannot be read or is not JSON.
+pub fn job_input(
+    matches: &ArgMatches,
+    read_config: impl FnOnce(&Path) -> io::Result<String>,
+) -> Result<Value, ConfigError> {
     let mut fields = Value::Null;
     for id in matches.ids().map(|id| id.as_str()) {
         if id == INPUT || id == CONFIG || matches.value_source(id) != Some(ValueSource::CommandLine)
@@ -118,16 +126,85 @@ pub fn job_input(matches: &ArgMatches) -> Value {
             set(&mut fields, &path, value.clone());
         }
     }
-    let given = |id| matches.try_get_one::<Value>(id).ok().flatten().cloned();
+    let config = match matches.try_get_one::<PathBuf>(CONFIG).ok().flatten() {
+        Some(path) => Some(config(path, read_config)?),
+        None => None,
+    };
+    let given = matches.try_get_one::<Value>(INPUT).ok().flatten().cloned();
     let fields = Some(fields).filter(|fields| !fields.is_null());
-    [given(CONFIG), given(INPUT), fields]
+    Ok([config, given, fields]
         .into_iter()
         .flatten()
         .reduce(|mut input, layer| {
             overlay(&mut input, layer);
             input
         })
-        .unwrap_or(Value::Null)
+        .unwrap_or(Value::Null))
+}
+
+/// The JSON document of the `--config` file at `path`, read with `read`.
+fn config(
+    path: &Path,
+    read: impl FnOnce(&Path) -> io::Result<String>,
+) -> Result<Value, ConfigError> {
+    let unreadable = |source| ConfigError::Unreadable {
+        path: path.to_path_buf(),
+        source,
+    };
+    let contents = read(path).map_err(unreadable)?;
+    serde_json::from_str(&contents).map_err(|source| ConfigError::NotJson {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Why the `--config` file of a job's command line gives no input.
+#[derive(Debug)]
+pub enum ConfigError {
+    /// The file cannot be read.
+    Unreadable {
+        /// The path the command line gives.
+        path: PathBuf,
+        /// Why it cannot be read.
+        source: io::Error,
+    },
+    /// The file is not a JSON document.
+    NotJson {
+        /// The path the command line gives.
+        path: PathBuf,
+        /// Why it is not JSON.
+        source: serde_json::Error,
+    },
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreadable { path, source } => {
+                write!(
+                    f,
+                    "cannot read the --config file {}: {source}",
+                    path.display()
+                )
+            }
+            Self::NotJson { path, source } => {
+                write!(
+                    f,
+                    "the --config file {} is not JSON: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unreadable { source, .. } => Some(source),
+            Self::NotJson { source, .. } => Some(source),
+        }
+    }
 }
 
 /// The shell whose completion script the arguments of a [`command`] ask for with
@@ -195,13 +272,6 @@ fn flag_arg(flag: &Flag) -> Arg {
 fn one_of(values: impl IntoIterator<Item = PossibleValue>, kind: &Kind) -> ValueParser {
     let kind = kind.clone();
     ValueParser::new(PossibleValuesParser::new(values).try_map(move |text| kind.parse(&text)))
-}
-
-/// Reads the JSON document in the file at `path`.
-fn read_config(path: PathBuf) -> Result<Value, String> {
-    let contents =
-        std::fs::read_to_string(&path).map_err(|error| format!("cannot read it: {error}"))?;
-    serde_json::from_str(&contents).map_err(|error| format!("not JSON: {error}"))
 }
 
 /// Sets the field at `path` of `target` to `value`, making `target` and the fields on the way
@@ -288,22 +358,32 @@ mod tests {
         )
     }
 
-    /// The input the job's command line `<job> <args>` gives.
-    fn input(definition: &JobDefinition, args: &[&str]) -> Result<Value, clap::Error> {
+    /// The input the job's command line `<job> <args>` gives, its `--config` file read from
+    /// `files`, by name.
+    fn input_from(
+        definition: &JobDefinition,
+        args: &[&str],
+        files: &[(&str, &str)],
+    ) -> Result<Result<Value, ConfigError>, clap::Error> {
         let matches = job_command(definition)
             .try_get_matches_from([definition.name.as_str()].iter().chain(args))?;
-        Ok(job_input(&matches))
+        Ok(job_input(&matches, |path| {
+            files
+                .iter()
+                .find(|(name, _)| Path::new(name) == path)
+                .map(|(_, contents)| contents.to_string())
+                .ok_or_else(|| io::ErrorKind::NotFound.into())
+        }))
+    }
+
+    /// The input the job's command line `<job> <args>` gives, with no `--config` file to read.
+    fn input(definition: &JobDefinition, args: &[&str]) -> Result<Value, clap::Error> {
+        input_from(definition, args, &[]).map(|input| input.unwrap())
     }
 
     /// The job's `--help`.
     fn help(definition: &JobDefinition) -> String {
         job_command(definition).render_long_help().to_string()
-    }
-
-    fn config_file(contents: &str) -> tempfile::NamedTempFile {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), contents).unwrap();
-        file
     }
 
     #[test]
@@ -443,8 +523,7 @@ mod tests {
     #[test]
     fn a_required_flag_can_be_left_to_the_json_input_or_the_config_file() {
         let prompt = prompt();
-        let config = config_file(r#"{"text": "from a file"}"#);
-        let config = config.path().to_str().unwrap();
+        let files = [("config.json", r#"{"text": "from a file"}"#)];
 
         let missing = input(&prompt, &["--mode", "fast"]).unwrap_err();
 
@@ -455,7 +534,9 @@ mod tests {
             json!({"text": "hi"})
         );
         assert_eq!(
-            input(&prompt, &["-c", config]).unwrap(),
+            input_from(&prompt, &["-c", "config.json"], &files)
+                .unwrap()
+                .unwrap(),
             json!({"text": "from a file"})
         );
     }
@@ -471,23 +552,25 @@ mod tests {
 
     #[test]
     fn the_config_file_then_the_json_input_then_the_flags_win() {
-        let config = config_file(
+        let files = [(
+            "config.json",
             r#"{"num_epochs": 1, "batch_size": 8, "tag": "file", "optimizer": {"lr": 0.1, "weight_decay": 0.5}}"#,
-        );
-        let config = config.path().to_str().unwrap();
+        )];
 
-        let input = input(
+        let input = input_from(
             &mnist(),
             &[
                 "--num-epochs",
                 "3",
                 "--config",
-                config,
+                "config.json",
                 r#"{"num_epochs": 2, "batch_size": 16, "tag": null, "optimizer": {"lr": 0.2}}"#,
                 "--optimizer.lr",
                 "0.3",
             ],
+            &files,
         )
+        .unwrap()
         .unwrap();
 
         assert_eq!(
@@ -510,16 +593,35 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_or_invalid_config_file_is_a_usage_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("missing.json");
-        let not_json = config_file("epochs = 3");
+    fn an_unreadable_or_invalid_config_file_gives_no_input() {
+        let files = [("config.toml", "epochs = 3")];
+        let error = |path| {
+            input_from(&mnist(), &["-c", path], &files)
+                .unwrap()
+                .unwrap_err()
+        };
 
-        for path in [missing.as_path(), not_json.path()] {
-            let error = input(&mnist(), &["-c", path.to_str().unwrap()]).unwrap_err();
-            assert_eq!(error.kind(), ErrorKind::ValueValidation, "{error}");
-            assert_eq!(error.exit_code(), 2);
-        }
+        let missing = error("missing.json");
+        let not_json = error("config.toml");
+
+        assert!(
+            matches!(&missing, ConfigError::Unreadable { path, .. } if path == Path::new("missing.json")),
+            "{missing:?}"
+        );
+        assert!(
+            missing
+                .to_string()
+                .starts_with("cannot read the --config file missing.json: ")
+        );
+        assert!(
+            matches!(&not_json, ConfigError::NotJson { .. }),
+            "{not_json:?}"
+        );
+        assert!(
+            not_json
+                .to_string()
+                .starts_with("the --config file config.toml is not JSON: ")
+        );
     }
 
     #[test]
@@ -529,13 +631,15 @@ mod tests {
             None,
             Some(json!({"config": "small", "help": false, "version": 1, "epochs": 3})),
         );
-        let config = config_file(r#"{"config": "large"}"#);
+        let files = [("large.json", r#"{"config": "large"}"#)];
 
         let command = job_command(&job);
         let longs: Vec<&str> = command.get_arguments().filter_map(Arg::get_long).collect();
         assert_eq!(longs, ["epochs", "config"]);
         assert_eq!(
-            input(&job, &["--config", config.path().to_str().unwrap()]).unwrap(),
+            input_from(&job, &["--config", "large.json"], &files)
+                .unwrap()
+                .unwrap(),
             json!({"config": "large"})
         );
         assert_eq!(

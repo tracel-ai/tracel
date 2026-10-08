@@ -1,12 +1,10 @@
 //! The definitions file: the jobs a program can run.
 
-use std::io;
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{PROTOCOL, json_file};
+use crate::PROTOCOL;
+use crate::json::{self, ParseError};
 
 /// Names the file a program writes its [`DefinitionsFile`] to, instead of running a job.
 pub const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
@@ -46,17 +44,17 @@ impl DefinitionsFile {
         }
     }
 
-    /// Writes the file to `path` atomically: to `<path>.tmp` first, then renamed to `path`.
-    pub fn write(&self, path: &Path) -> io::Result<()> {
-        json_file::write(path, self)
+    /// The file's contents: pretty-printed JSON ending with a newline.
+    pub fn to_json(&self) -> String {
+        json::to_json(self)
     }
 
-    /// Reads the file at `path`.
+    /// The file `json` holds.
     ///
-    /// Fails when it cannot be read or is not a definitions file. It is read whatever its
-    /// `protocol`, which the caller compares with [`PROTOCOL`].
-    pub fn read(path: &Path) -> io::Result<Self> {
-        json_file::read(path)
+    /// Fails with [`ParseError::Protocol`] when it follows another [`PROTOCOL`] version, and with
+    /// [`ParseError::Invalid`] when it is not a definitions file.
+    pub fn from_json(json: &[u8]) -> Result<Self, ParseError> {
+        json::from_json(json)
     }
 }
 
@@ -85,11 +83,6 @@ mod tests {
 
     #[test]
     fn the_file_is_pretty_printed_json_ending_with_a_newline() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jobs.json");
-
-        file().write(&path).unwrap();
-
         let expected = r#"{
   "protocol": 1,
   "sdk_version": "SDK_VERSION",
@@ -117,41 +110,20 @@ mod tests {
 }
 "#
         .replace("SDK_VERSION", env!("CARGO_PKG_VERSION"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
-        assert_eq!(DefinitionsFile::read(&path).unwrap(), file());
+
+        assert_eq!(file().to_json(), expected);
+        assert_eq!(
+            DefinitionsFile::from_json(expected.as_bytes()).unwrap(),
+            file()
+        );
     }
 
     #[test]
-    fn the_file_replaces_an_existing_one_through_a_temporary_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jobs.json");
-        std::fs::write(&path, "stale").unwrap();
+    fn only_a_definitions_file_of_this_protocol_parses() {
+        let incomplete = DefinitionsFile::from_json(br#"{"protocol": 1}"#);
+        let other = DefinitionsFile::from_json(br#"{"protocol": 2, "jobs": {}}"#);
 
-        file().write(&path).unwrap();
-
-        assert_eq!(DefinitionsFile::read(&path).unwrap().jobs.len(), 2);
-        assert!(!dir.path().join("jobs.json.tmp").exists());
-    }
-
-    #[test]
-    fn a_file_that_cannot_be_written_leaves_no_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing").join("jobs.json");
-
-        assert!(file().write(&path).is_err());
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn only_a_definitions_file_reads() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jobs.json");
-
-        let missing = DefinitionsFile::read(&path).unwrap_err();
-        std::fs::write(&path, r#"{"protocol": 1}"#).unwrap();
-        let incomplete = DefinitionsFile::read(&path).unwrap_err();
-
-        assert_eq!(missing.kind(), io::ErrorKind::NotFound);
-        assert_eq!(incomplete.kind(), io::ErrorKind::InvalidData);
+        assert!(matches!(incomplete, Err(ParseError::Invalid(_))));
+        assert!(matches!(other, Err(ParseError::Protocol { found: 2 })));
     }
 }

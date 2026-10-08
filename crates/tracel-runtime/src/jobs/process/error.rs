@@ -1,3 +1,5 @@
+use tracel_job_proto::ConfigError;
+
 use crate::BoxError;
 use crate::jobs::process::describe::DescribeError;
 use crate::jobs::process::report::ReportError;
@@ -31,9 +33,13 @@ pub enum RunError {
     },
 
     /// The command line does not parse: an unknown flag, a flag value of the wrong type, a
-    /// required flag left out, or an input or `--config` file that is not JSON.
+    /// required flag left out, or an input that is not JSON.
     #[error(transparent)]
     Usage(clap::Error),
+
+    /// The `--config` file cannot be read or is not JSON.
+    #[error(transparent)]
+    Config(ConfigError),
 
     /// The input does not decode as the job's input.
     #[error("invalid input: {0}")]
@@ -64,6 +70,7 @@ impl RunError {
             Self::MissingJob { .. }
             | Self::UnknownJob { .. }
             | Self::Usage(_)
+            | Self::Config(_)
             | Self::InvalidInput(_) => USAGE,
             Self::JobFailed(_) | Self::Describe(_) | Self::Report(_) => FAILED,
             Self::Stopped => STOPPED,

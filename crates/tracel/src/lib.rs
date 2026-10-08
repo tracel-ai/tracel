@@ -239,4 +239,4 @@ pub use tracel_runtime as runtime;
 
 /// The job definitions file, the run report, and the command line built from job definitions.
 #[doc(inline)]
-pub use tracel_job as job;
+pub use tracel_job_proto as job;

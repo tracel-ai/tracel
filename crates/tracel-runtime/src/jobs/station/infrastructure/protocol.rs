@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tracel_job::JobDefinition;
+use tracel_job_proto::JobDefinition;
 use uuid::Uuid;
 
 /// Registration body; the response to it is the SSE event stream.

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracel_job::JobDefinition;
+use tracel_job_proto::JobDefinition;
 
 use crate::BoxError;
 use crate::job::{IntoJob, Prepared, Registered};
@@ -21,9 +21,10 @@ use crate::stop::Stop;
 /// returns [`run`](Self::run).
 ///
 /// The command line is `<program> <job> [<input-json>] [<flags>]`, built from the jobs'
-/// definitions as [`command`](tracel_job::command) builds it: one subcommand per job, each with a
-/// flag per field of its input, typed by the input schema or the default input, so a job runs
-/// without writing JSON. `<program> <job> --help` lists the flags. For a job whose default input is
+/// definitions as [`command`](tracel_job_proto::command) builds it: one subcommand per job, each
+/// with a flag per field of its input, typed by the input schema or the default input, so a job
+/// runs without writing JSON. `<program> <job> --help` lists the flags. For a job whose default
+/// input is
 /// `{"epochs": 10, "optimizer": {"weight_decay": 0.0}}`:
 ///
 /// ```text
@@ -33,9 +34,9 @@ use crate::stop::Stop;
 /// ```
 ///
 /// The input is the `--config` file, the JSON document and the flags, each merged onto the one
-/// before, as [`job_input`](tracel_job::job_input) reads it, then merged onto the job's default
-/// input. With none, the job runs with its default input, or with `null` when it has none, which
-/// a job taking `()` accepts.
+/// before, as [`job_input`](tracel_job_proto::job_input) reads it, then merged onto the job's
+/// default input. With none, the job runs with its default input, or with `null` when it has
+/// none, which a job taking `()` accepts.
 ///
 /// `<program> --completions <SHELL>` prints the program's completion script for `bash`,
 /// `elvish`, `fish`, `powershell` or `zsh`, and with [`version`](Self::version),

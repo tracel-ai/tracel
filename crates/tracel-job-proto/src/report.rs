@@ -1,11 +1,11 @@
 //! The run report: how a job is going and how it ended, and the experiments it started.
 
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{PROTOCOL, json_file};
+use crate::PROTOCOL;
+use crate::json::{self, ParseError};
 
 /// Names the file the runner of a job writes the job's [`RunReport`] to.
 pub const TRACEL_REPORT_FILE: &str = "TRACEL_REPORT_FILE";
@@ -85,17 +85,17 @@ impl RunReport {
         }
     }
 
-    /// Writes the report to `path` atomically: to `<path>.tmp` first, then renamed to `path`.
-    pub fn write(&self, path: &Path) -> io::Result<()> {
-        json_file::write(path, self)
+    /// The report's file contents: pretty-printed JSON ending with a newline.
+    pub fn to_json(&self) -> String {
+        json::to_json(self)
     }
 
-    /// Reads the report at `path`.
+    /// The report `json` holds.
     ///
-    /// Fails when it cannot be read or is not a run report. It is read whatever its `protocol`,
-    /// which the caller compares with [`PROTOCOL`].
-    pub fn read(path: &Path) -> io::Result<Self> {
-        json_file::read(path)
+    /// Fails with [`ParseError::Protocol`] when it follows another [`PROTOCOL`] version, and with
+    /// [`ParseError::Invalid`] when it is not a run report.
+    pub fn from_json(json: &[u8]) -> Result<Self, ParseError> {
+        json::from_json(json)
     }
 }
 
@@ -115,8 +115,6 @@ mod tests {
 
     #[test]
     fn the_report_is_pretty_printed_json_ending_with_a_newline() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
         let report = RunReport {
             status: RunStatus::Failed,
             finished_at: Some("2026-10-06T14:31:40Z".into()),
@@ -124,8 +122,6 @@ mod tests {
             experiments: vec![console_experiment()],
             ..RunReport::new("mnist", STARTED_AT)
         };
-
-        report.write(&path).unwrap();
 
         let expected = r#"{
   "protocol": 1,
@@ -142,8 +138,8 @@ mod tests {
   ]
 }
 "#;
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
-        assert_eq!(RunReport::read(&path).unwrap(), report);
+        assert_eq!(report.to_json(), expected);
+        assert_eq!(RunReport::from_json(expected.as_bytes()).unwrap(), report);
     }
 
     #[test]
@@ -161,20 +157,16 @@ mod tests {
 
     #[test]
     fn a_report_without_experiments_gives_them_as_an_empty_list() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
+        let json = RunReport::new("evaluate", STARTED_AT).to_json();
 
-        RunReport::new("evaluate", STARTED_AT).write(&path).unwrap();
-
-        let fields: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let fields: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(fields["experiments"], serde_json::json!([]));
     }
 
     #[test]
     fn a_report_that_leaves_out_the_experiments_reads_as_having_none() {
-        let report: RunReport = serde_json::from_str(
-            r#"{"protocol": 1, "job": "evaluate", "status": "completed",
+        let report = RunReport::from_json(
+            br#"{"protocol": 1, "job": "evaluate", "status": "completed",
                 "started_at": "2026-10-06T14:02:11Z", "finished_at": "2026-10-06T14:02:12Z",
                 "error": null}"#,
         )
@@ -182,6 +174,15 @@ mod tests {
 
         assert!(report.experiments.is_empty());
         assert_eq!(report.status, RunStatus::Completed);
+    }
+
+    #[test]
+    fn only_a_run_report_of_this_protocol_parses() {
+        let incomplete = RunReport::from_json(br#"{"protocol": 1, "job": "evaluate"}"#);
+        let other = RunReport::from_json(br#"{"protocol": 2, "state": "done"}"#);
+
+        assert!(matches!(incomplete, Err(ParseError::Invalid(_))));
+        assert!(matches!(other, Err(ParseError::Protocol { found: 2 })));
     }
 
     #[test]
@@ -202,56 +203,22 @@ mod tests {
 
     #[test]
     fn an_offline_experiment_gives_its_directory_and_no_url() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
         let experiment = ReportedExperiment {
             num: Some(3),
             url: None,
-            dir: Some(dir.path().join("mnist/3")),
+            dir: Some("/home/me/runs/mnist/3".into()),
         };
 
-        RunReport {
+        let json = RunReport {
             experiments: vec![experiment.clone()],
             ..RunReport::new("mnist", STARTED_AT)
         }
-        .write(&path)
-        .unwrap();
+        .to_json();
 
-        let contents = std::fs::read_to_string(&path).unwrap();
-        let report: RunReport = serde_json::from_str(&contents).unwrap();
-        let fields: serde_json::Value = serde_json::from_str(&contents).unwrap();
+        let report = RunReport::from_json(json.as_bytes()).unwrap();
+        let fields: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(report.experiments, [experiment]);
         assert_eq!(fields["experiments"][0]["url"], serde_json::Value::Null);
-        assert!(contents.ends_with('\n'));
-    }
-
-    #[test]
-    fn the_report_replaces_the_file_through_a_temporary_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        std::fs::write(&path, "stale").unwrap();
-        let running = RunReport::new("mnist", STARTED_AT);
-
-        running.write(&path).unwrap();
-        RunReport {
-            status: RunStatus::Completed,
-            ..running
-        }
-        .write(&path)
-        .unwrap();
-
-        assert_eq!(RunReport::read(&path).unwrap().status, RunStatus::Completed);
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn a_report_that_cannot_be_written_leaves_no_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing").join("report.json");
-
-        let report = RunReport::new("mnist", STARTED_AT);
-
-        assert!(report.write(&path).is_err());
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        assert_eq!(fields["experiments"][0]["dir"], "/home/me/runs/mnist/3");
     }
 }

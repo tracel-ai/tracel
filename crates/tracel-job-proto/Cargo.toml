@@ -1,6 +1,6 @@
 [package]
-name = "tracel-job"
-description = "Job definitions, run reports and the generated command line shared by Tracel SDK programs and the tools that launch them."
+name = "tracel-job-proto"
+description = "The contract between Tracel job binaries and the programs that launch them: job definitions, run reports, launch environment variables and the generated command line."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -16,6 +16,3 @@ clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

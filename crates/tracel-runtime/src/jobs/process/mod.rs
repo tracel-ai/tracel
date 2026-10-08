@@ -3,6 +3,7 @@
 
 mod describe;
 mod error;
+mod file;
 mod report;
 mod signal;
 
@@ -15,7 +16,7 @@ use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap_complete::Shell;
 use serde_json::Value;
-use tracel_job::{TRACEL_JOB_NUM, command, completions, job_input};
+use tracel_job_proto::{TRACEL_JOB_NUM, command, completions, job_input};
 
 use crate::jobs::{Jobs, Launch, PrepareError};
 use crate::stop::Stop;
@@ -69,11 +70,12 @@ impl Jobs {
     /// an unknown one is named, and a stop request as a warning. When `TRACEL_DESCRIBE` names a
     /// path, writes the definitions file there instead of running a job.
     ///
-    /// When `TRACEL_REPORT_FILE` names a path, the job's [`RunReport`](tracel_job::RunReport) is
-    /// written there when the job starts, once its input decodes, again each time code in the job
-    /// reports an experiment it started, through [`report_experiment`](crate::report_experiment),
-    /// and again when it ends, as completed or failed by what the job returns. None is written
-    /// for a command line or an input that is rejected.
+    /// When `TRACEL_REPORT_FILE` names a path, the job's
+    /// [`RunReport`](tracel_job_proto::RunReport) is written there when the job starts, once its
+    /// input decodes, again each time code in the job reports an experiment it started, through
+    /// [`report_experiment`](crate::report_experiment), and again when it ends, as completed or
+    /// failed by what the job returns. None is written for a command line or an input that is
+    /// rejected.
     ///
     /// The job runs on this thread, in its [`JobScope`](crate::JobScope):
     /// [`stop_requested`](crate::stop_requested) says whether it was asked to stop,
@@ -157,7 +159,8 @@ impl Jobs {
         match (matches.subcommand(), &self.default) {
             (Some((job, matches)), _) => Ok(Request::Run {
                 job: job.to_string(),
-                input: job_input(matches),
+                input: job_input(matches, |path| std::fs::read_to_string(path))
+                    .map_err(RunError::Config)?,
             }),
             (None, Some(job)) => Ok(Request::Run {
                 job: job.clone(),
@@ -230,7 +233,7 @@ mod tests {
 
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use tracel_job::{ReportedExperiment, TRACEL_REPORT_FILE};
+    use tracel_job_proto::{ReportedExperiment, TRACEL_REPORT_FILE};
 
     use super::*;
     use crate::scope::request_stop;
@@ -448,6 +451,28 @@ mod tests {
                 "optimizer": {"lr": 0.3, "weight_decay": 0.5}
             }))
         );
+    }
+
+    #[test]
+    fn the_config_file_is_read_and_an_unreadable_one_rejects_the_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.json");
+        std::fs::write(&config, r#"{"epochs": 3}"#).unwrap();
+        let missing = dir.path().join("missing.json");
+        let (jobs, ran_with) = with_default(json!({"epochs": 10, "lr": 0.1}));
+        let (rejected_jobs, rejected) = with_default(json!({"epochs": 10}));
+
+        run(jobs, &["train", "-c", config.to_str().unwrap()]).unwrap();
+        let unreadable = run(rejected_jobs, &["train", "-c", missing.to_str().unwrap()]);
+
+        assert_eq!(
+            *ran_with.lock().unwrap(),
+            Some(json!({"epochs": 3, "lr": 0.1}))
+        );
+        let unreadable = unreadable.unwrap_err();
+        assert!(matches!(unreadable, RunError::Config(_)), "{unreadable:?}");
+        assert_eq!(unreadable.exit_code(), 2);
+        assert!(rejected.lock().unwrap().is_none());
     }
 
     #[test]
@@ -893,7 +918,7 @@ mod tests {
         .with_schema();
         let jobs = Jobs::new().job("train", train);
 
-        let help = tracel_job::job_command(jobs.jobs["train"].definition())
+        let help = tracel_job_proto::job_command(jobs.jobs["train"].definition())
             .render_long_help()
             .to_string();
         for line in [

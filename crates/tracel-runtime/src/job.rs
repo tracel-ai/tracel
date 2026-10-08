@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracel_job::JobDefinition;
+use tracel_job_proto::JobDefinition;
 
 /// The error a job fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
