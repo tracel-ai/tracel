@@ -146,8 +146,8 @@
 //! | 130 | The job was asked to stop |
 //!
 //! With `TRACEL_REPORT_FILE=<path>` set, the program writes the job's [`RunReport`](job::RunReport)
-//! to `<path>`: how the job is going and how it ended, and the experiment it recorded, if any.
-//! It is written when the job starts, again when the job records an experiment, and again when the
+//! to `<path>`: how the job is going and how it ended, and the experiments it recorded. It is
+//! written when the job starts, again each time the job records an experiment, and again when the
 //! job ends, each time to `<path>.tmp` first, renamed to `<path>`. Without the variable, or when
 //! the program rejects the job or its input, nothing is written:
 //!
@@ -159,14 +159,16 @@
 //!   "started_at": "2026-10-06T14:02:11Z",
 //!   "finished_at": "2026-10-06T14:31:40Z",
 //!   "error": null,
-//!   "experiment": { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
+//!   "experiments": [
+//!     { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
+//!   ]
 //! }
 //! ```
 //!
 //! `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why
-//! a job failed. `experiment` is `null` until the job records an experiment, and stays `null` for
-//! a job that records none. `url` is the experiment's page on the console; offline it is `null`,
-//! and `dir` gives the experiment's directory instead, where `status.json` says how the experiment
+//! a job failed. `experiments` lists the experiments the job recorded, in order: `[]` until it
+//! records one, and for a job that records none. `url` is an experiment's page on the console;
+//! offline it is `null`, and `dir` gives the experiment's directory instead, where `status.json` says how the experiment
 //! went and `events.jsonl` holds its events, one JSON object per line, as
 //! [`LocalExperiments`](experiment::local::LocalExperiments) describes.
 //!

@@ -20,12 +20,11 @@
 //!
 //! When `TRACEL_REPORT_FILE` names a path, [`cli::Cli`] writes the
 //! [`RunReport`](tracel_job::RunReport) of the job it runs there: how the job is going and how it
-//! ended, and the experiment it recorded, if any. It writes the report when the job starts, once
-//! its input is decoded, again when the job records an experiment, which the job hands to the
-//! reporter of its [`JobContext`], and again when the job ends, as `completed` or `failed`
-//! by what the job returned, whether or not it was asked to stop. The report of a job that records
-//! no experiment gives its `experiment` as `null`. Each write goes to `<path>.tmp` first, renamed
-//! to `<path>`.
+//! ended, and the experiments it recorded. It writes the report when the job starts, once its input
+//! is decoded, again each time the job records an experiment, which the job hands to the reporter
+//! of its [`JobContext`], and again when the job ends, as `completed` or `failed` by what the job
+//! returned, whether or not it was asked to stop. The report of a job that records no experiment
+//! gives its `experiments` as `[]`. Each write goes to `<path>.tmp` first, renamed to `<path>`.
 //!
 //! ## Describing jobs
 //!

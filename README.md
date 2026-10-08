@@ -181,8 +181,8 @@ A binary whose `main` returns `Cli::run()` can be launched by another program, s
 | 130 | The job was asked to stop |
 
 With `TRACEL_REPORT_FILE=<path>` set, the binary writes the job's run report to `<path>`: how the
-job is going and how it ended, and the experiment it recorded, if any. It is written when the job
-starts, again when the job records an experiment, and again when the job ends, each time to
+job is going and how it ended, and the experiments it recorded. It is written when the job starts,
+again each time the job records an experiment, and again when the job ends, each time to
 `<path>.tmp` first, renamed to `<path>`. Without the variable, or when the binary rejects the job or
 its input, nothing is written:
 
@@ -194,14 +194,16 @@ its input, nothing is written:
   "started_at": "2026-10-06T14:02:11Z",
   "finished_at": "2026-10-06T14:31:40Z",
   "error": null,
-  "experiment": { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
+  "experiments": [
+    { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
+  ]
 }
 ```
 
 `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why a
-job failed. `experiment` is `null` until the job records an experiment, and stays `null` for a job
-that records none. `url` is the experiment's page on the console; offline it
-is `null`, and `dir` gives the experiment's directory instead, where `status.json` says how the
+job failed. `experiments` lists the experiments the job recorded, in order: `[]` until it records
+one, and for a job that records none. `url` is an experiment's page on the console; offline it is
+`null`, and `dir` gives the experiment's directory instead, where `status.json` says how the
 experiment went and `events.jsonl` holds its events, one JSON object per line.
 
 With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which links

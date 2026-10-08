@@ -1,4 +1,4 @@
-//! The run report: how a job is going and how it ended, and the experiment it recorded, if any.
+//! The run report: how a job is going and how it ended, and the experiments it started.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,11 +10,11 @@ use crate::{PROTOCOL, json_file};
 /// Names the file the runner of a job writes the job's [`RunReport`] to.
 pub const TRACEL_REPORT_FILE: &str = "TRACEL_REPORT_FILE";
 
-/// How a job is going and how it ended, and the experiment it recorded, if any, as JSON.
+/// How a job is going and how it ended, and the experiments it started, as JSON.
 ///
 /// It is the contents of the file [`TRACEL_REPORT_FILE`] names. The runner of a job writes it when
-/// the job starts, with the status `running`, again when the job records an experiment, and again
-/// when the job ends. The job does not own the experiment: the report links it, as the
+/// the job starts, with the status `running`, again each time the job starts an experiment, and
+/// again when the job ends. The job does not own its experiments: the report links them, as each
 /// experiment's `tracel.job_num` attribute links the job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunReport {
@@ -30,13 +30,12 @@ pub struct RunReport {
     pub finished_at: Option<String>,
     /// Why the job failed; `None` unless it failed.
     pub error: Option<String>,
-    /// The experiment the job recorded; `None` until it records one, and for a job that records
-    /// none, such as an inference.
+    /// The experiments the job started, in the order it started them; empty until it starts one.
     #[serde(default)]
-    pub experiment: Option<ReportedExperiment>,
+    pub experiments: Vec<ReportedExperiment>,
 }
 
-/// The experiment a job recorded, as its [`RunReport`] links it.
+/// An experiment a job started, as its [`RunReport`] links it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReportedExperiment {
     /// The experiment's number, when its ID is a number, as it is for every backend of the SDK.
@@ -64,7 +63,7 @@ pub enum RunStatus {
 }
 
 impl RunReport {
-    /// The report of `job`, started at `started_at`: running, with no experiment yet, and
+    /// The report of `job`, started at `started_at`: running, with no experiments yet, and
     /// following [`PROTOCOL`].
     pub fn new(job: impl Into<String>, started_at: impl Into<String>) -> Self {
         Self {
@@ -74,7 +73,7 @@ impl RunReport {
             started_at: started_at.into(),
             finished_at: None,
             error: None,
-            experiment: None,
+            experiments: Vec::new(),
         }
     }
 
@@ -114,7 +113,7 @@ mod tests {
             status: RunStatus::Failed,
             finished_at: Some("2026-10-06T14:31:40Z".into()),
             error: Some("out of memory".into()),
-            experiment: Some(console_experiment()),
+            experiments: vec![console_experiment()],
             ..RunReport::new("mnist", STARTED_AT)
         };
 
@@ -127,10 +126,12 @@ mod tests {
   "started_at": "2026-10-06T14:02:11Z",
   "finished_at": "2026-10-06T14:31:40Z",
   "error": "out of memory",
-  "experiment": {
-    "num": 42,
-    "url": "https://console.tracel.ai/users/me/projects/mnist/experiments/42"
-  }
+  "experiments": [
+    {
+      "num": 42,
+      "url": "https://console.tracel.ai/users/me/projects/mnist/experiments/42"
+    }
+  ]
 }
 "#;
         assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
@@ -138,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_report_is_running_with_no_experiment() {
+    fn a_new_report_is_running_with_no_experiments() {
         let report = RunReport::new("mnist", STARTED_AT);
 
         assert_eq!(report.protocol, PROTOCOL);
@@ -147,32 +148,31 @@ mod tests {
         assert_eq!(report.started_at, STARTED_AT);
         assert_eq!(report.finished_at, None);
         assert_eq!(report.error, None);
-        assert_eq!(report.experiment, None);
+        assert!(report.experiments.is_empty());
     }
 
     #[test]
-    fn a_report_without_an_experiment_gives_it_as_null() {
+    fn a_report_without_experiments_gives_them_as_an_empty_list() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
 
-        RunReport::new("wordtok", STARTED_AT).write(&path).unwrap();
+        RunReport::new("evaluate", STARTED_AT).write(&path).unwrap();
 
         let fields: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(fields["experiment"], serde_json::Value::Null);
-        assert!(fields.as_object().unwrap().contains_key("experiment"));
+        assert_eq!(fields["experiments"], serde_json::json!([]));
     }
 
     #[test]
-    fn a_report_that_leaves_out_the_experiment_reads_as_having_none() {
+    fn a_report_that_leaves_out_the_experiments_reads_as_having_none() {
         let report: RunReport = serde_json::from_str(
-            r#"{"protocol": 1, "job": "wordtok", "status": "completed",
+            r#"{"protocol": 1, "job": "evaluate", "status": "completed",
                 "started_at": "2026-10-06T14:02:11Z", "finished_at": "2026-10-06T14:02:12Z",
                 "error": null}"#,
         )
         .unwrap();
 
-        assert_eq!(report.experiment, None);
+        assert!(report.experiments.is_empty());
         assert_eq!(report.status, RunStatus::Completed);
     }
 
@@ -203,7 +203,7 @@ mod tests {
         };
 
         RunReport {
-            experiment: Some(experiment.clone()),
+            experiments: vec![experiment.clone()],
             ..RunReport::new("mnist", STARTED_AT)
         }
         .write(&path)
@@ -212,8 +212,8 @@ mod tests {
         let contents = std::fs::read_to_string(&path).unwrap();
         let report: RunReport = serde_json::from_str(&contents).unwrap();
         let fields: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(report.experiment, Some(experiment));
-        assert_eq!(fields["experiment"]["url"], serde_json::Value::Null);
+        assert_eq!(report.experiments, [experiment]);
+        assert_eq!(fields["experiments"][0]["url"], serde_json::Value::Null);
         assert!(contents.ends_with('\n'));
     }
 

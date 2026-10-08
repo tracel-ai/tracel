@@ -643,7 +643,7 @@ mod tests {
         (
             report["status"].clone(),
             report["error"].clone(),
-            report["experiment"].clone(),
+            report["experiments"].clone(),
         )
     }
 
@@ -663,11 +663,8 @@ mod tests {
         let running = running.lock().unwrap().take().unwrap();
         assert_eq!(running["job"], "evaluate");
         assert_eq!(running["status"], "running");
-        assert_eq!(running["experiment"], Value::Null);
-        assert_eq!(
-            status(&path),
-            (json!("completed"), Value::Null, Value::Null)
-        );
+        assert_eq!(running["experiments"], json!([]));
+        assert_eq!(status(&path), (json!("completed"), Value::Null, json!([])));
         assert!(read_json(&path)["finished_at"].is_string());
     }
 
@@ -720,8 +717,8 @@ mod tests {
         for (num, report) in [(1, &linked[0]), (2, &linked[1])] {
             assert_eq!(report["status"], "running");
             assert_eq!(
-                report["experiment"],
-                json!({"num": num, "url": null, "dir": runs.join(format!("train/{num}"))})
+                report["experiments"],
+                json!([{"num": num, "url": null, "dir": runs.join(format!("train/{num}"))}])
             );
         }
         assert_eq!(
@@ -729,7 +726,7 @@ mod tests {
             (
                 json!("completed"),
                 Value::Null,
-                linked[0]["experiment"].clone()
+                linked[0]["experiments"].clone()
             )
         );
         assert!(matches!(failed, Err(CliError::JobFailed(_))));
@@ -738,7 +735,7 @@ mod tests {
             (
                 json!("failed"),
                 json!("loss is NaN"),
-                linked[1]["experiment"].clone()
+                linked[1]["experiments"].clone()
             )
         );
     }
@@ -759,11 +756,11 @@ mod tests {
 
         assert_eq!(
             report(Outcome::Stop),
-            (json!("completed"), Value::Null, Value::Null)
+            (json!("completed"), Value::Null, json!([]))
         );
         assert_eq!(
             report(Outcome::Cancel),
-            (json!("failed"), json!("interrupted"), Value::Null)
+            (json!("failed"), json!("interrupted"), json!([]))
         );
     }
 
@@ -783,14 +780,14 @@ mod tests {
 
         assert_eq!(
             report(Outcome::Fail),
-            (json!("failed"), json!("boom"), Value::Null)
+            (json!("failed"), json!("boom"), json!([]))
         );
         assert_eq!(
             report(Outcome::Panic),
             (
                 json!("failed"),
                 json!("the job panicked: kernel exploded"),
-                Value::Null
+                json!([])
             )
         );
     }

@@ -22,8 +22,8 @@ fn path_from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> 
         .map(PathBuf::from)
 }
 
-/// The run report of a job, kept at a path: written when the job starts, again when it records an
-/// experiment, and again when it ends.
+/// The run report of a job, kept at a path: written when the job starts, again each time it records
+/// an experiment, and again when it ends.
 ///
 /// It is the report's one writer: the reporter it gives the job rewrites the report through it.
 pub struct ReportFile {
@@ -49,7 +49,7 @@ impl Kept {
 }
 
 impl ReportFile {
-    /// Writes to `path` the report of `job`, started now: running, with no experiment.
+    /// Writes to `path` the report of `job`, started now: running, with no experiments.
     pub fn start(path: PathBuf, job: &str) -> Result<Self, ReportError> {
         let report = RunReport::new(job, now());
         if let Err(source) = report.write(&path) {
@@ -63,7 +63,7 @@ impl ReportFile {
         })
     }
 
-    /// The reporter the job is given: it links the experiment the job records to the report and
+    /// The reporter the job is given: it adds each experiment the job records to the report and
     /// rewrites it, and once the job has ended, does nothing.
     pub fn experiment_reporter(&self) -> ExperimentReporter {
         let kept = Arc::downgrade(&self.kept);
@@ -71,7 +71,7 @@ impl ReportFile {
             let Some(kept) = kept.upgrade() else {
                 return;
             };
-            if let Err(error) = kept.rewrite(|report| report.experiment = Some(experiment)) {
+            if let Err(error) = kept.rewrite(|report| report.experiments.push(experiment)) {
                 eprintln!("warning: {error}");
             }
         })
@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn a_started_job_is_reported_running_with_no_experiment() {
+    fn a_started_job_is_reported_running_with_no_experiments() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
 
@@ -162,43 +162,48 @@ mod tests {
                 "started_at": null,
                 "finished_at": null,
                 "error": null,
-                "experiment": null
+                "experiments": []
             })
         );
     }
 
     #[test]
-    fn the_experiment_the_job_records_is_linked_until_the_job_ends() {
+    fn each_experiment_the_job_records_is_added_until_the_job_ends() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
         let report = ReportFile::start(path.clone(), "mnist").unwrap();
         let reporter = report.experiment_reporter();
-        let experiment = ReportedExperiment {
-            num: Some(3),
+        let offline = |num: u64| ReportedExperiment {
+            num: Some(num),
             url: None,
-            dir: Some("runs/mnist/3".into()),
+            dir: Some(format!("runs/mnist/{num}").into()),
         };
 
-        reporter.report(experiment);
-        let linked = read(&path);
+        reporter.report(offline(3));
+        let first = read(&path);
+        reporter.report(offline(4));
+        let second = read(&path);
         report.finish(&Err("loss is NaN".into())).unwrap();
         let failed = read(&path);
-        reporter.report(ReportedExperiment {
-            num: Some(4),
-            url: None,
-            dir: None,
-        });
+        reporter.report(offline(5));
 
-        assert_eq!(linked["status"], "running");
+        assert_eq!(first["status"], "running");
         assert_eq!(
-            linked["experiment"],
-            json!({"num": 3, "url": null, "dir": "runs/mnist/3"})
+            first["experiments"],
+            json!([{"num": 3, "url": null, "dir": "runs/mnist/3"}])
+        );
+        assert_eq!(
+            second["experiments"],
+            json!([
+                {"num": 3, "url": null, "dir": "runs/mnist/3"},
+                {"num": 4, "url": null, "dir": "runs/mnist/4"}
+            ])
         );
         assert_eq!(failed["status"], "failed");
         assert_eq!(failed["error"], "loss is NaN");
-        assert_eq!(failed["started_at"], linked["started_at"]);
+        assert_eq!(failed["started_at"], first["started_at"]);
         assert!(is_utc_seconds(&failed["finished_at"]), "{failed}");
-        assert_eq!(failed["experiment"], linked["experiment"]);
+        assert_eq!(failed["experiments"], second["experiments"]);
         assert_eq!(read(&path), failed);
     }
 
@@ -207,7 +212,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
 
-        ReportFile::start(path.clone(), "wordtok")
+        ReportFile::start(path.clone(), "evaluate")
             .unwrap()
             .finish(&Ok(()))
             .unwrap();
@@ -215,7 +220,7 @@ mod tests {
         let report = read(&path);
         assert_eq!(report["status"], "completed");
         assert_eq!(report["error"], Value::Null);
-        assert_eq!(report["experiment"], Value::Null);
+        assert_eq!(report["experiments"], json!([]));
         assert!(is_utc_seconds(&report["finished_at"]), "{report}");
     }
 
