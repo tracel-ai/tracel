@@ -93,13 +93,14 @@ mod execution;
 mod job;
 mod jobs;
 mod panics;
+mod process;
 mod scope;
+#[cfg(feature = "station")]
+pub mod station;
 mod stop;
 
 pub use execution::{Execution, JobStatus, Outcome, PreparedJob};
 pub use job::{BoxError, IntoJob, Job};
-#[cfg(feature = "station")]
-pub use jobs::station;
 pub use jobs::{Jobs, PrepareError};
 pub use scope::{JobScope, job_input, job_num, job_running, on_stop, stop_requested};
 pub use stop::Stop;

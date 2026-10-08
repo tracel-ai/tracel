@@ -1,6 +1,6 @@
 use tracel_job_proto::ConfigError;
 
-use crate::jobs::process::describe::DescribeError;
+use crate::process::describe::DescribeError;
 use crate::{BoxError, PrepareError};
 
 /// The exit code of a job that failed, or of a definitions file that could not be written.

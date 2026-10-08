@@ -119,14 +119,6 @@ pub fn job_input() -> Option<Value> {
     JobScope::current().map(|scope| scope.input().clone())
 }
 
-/// Asks the job the current thread runs to stop, as its adapter does.
-#[cfg(test)]
-pub fn request_stop() {
-    if let Some(scope) = JobScope::current() {
-        scope.inner.stop.request();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};

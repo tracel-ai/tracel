@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use tracel_job_proto::{DefinitionsFile, JobDefinition, TRACEL_DESCRIBE};
 
-use crate::jobs::process::file::write_atomically;
+use crate::process::file::write_atomically;
 
 /// Writes the definitions file of the jobs `definitions` gives when `TRACEL_DESCRIBE`, among the
 /// environment variables `lookup` gives, names a path.

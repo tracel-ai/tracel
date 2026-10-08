@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::jobs::station::error::RunnerError;
-use crate::jobs::station::infrastructure::protocol::{
+use crate::station::error::RunnerError;
+use crate::station::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
-use crate::jobs::station::infrastructure::{ClientError, StationRunnerClient};
+use crate::station::infrastructure::{ClientError, StationRunnerClient};
 use crate::{Execution, Jobs, Stop};
 
 /// Reports job outcomes back to the station. Split out so the loop is testable with a fake.

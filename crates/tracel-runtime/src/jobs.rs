@@ -1,9 +1,4 @@
-//! A program's jobs, and the adapters that run them: [`process`], the process the program runs as,
-//! and [`station`], a Station runner (requires the `station` feature).
-
-mod process;
-#[cfg(feature = "station")]
-pub mod station;
+//! A program's jobs, by name.
 
 use std::collections::BTreeMap;
 
@@ -124,6 +119,17 @@ impl Jobs {
     /// The definitions of the registered jobs, ordered by name.
     pub fn definitions(&self) -> impl Iterator<Item = &JobDefinition> {
         self.jobs.values().map(Registered::definition)
+    }
+
+    /// The program's version, when [`version`](Self::version) gave one.
+    pub fn get_version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
+    /// The job to run when the command line names none, when
+    /// [`default_job`](Self::default_job) named one.
+    pub fn get_default_job(&self) -> Option<&str> {
+        self.default.as_deref()
     }
 
     /// The names of the registered jobs, in order.

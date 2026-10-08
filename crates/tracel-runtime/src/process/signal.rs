@@ -1,7 +1,7 @@
 //! Asking the running job to stop when the process gets a termination signal.
 
 use crate::Stop;
-use crate::jobs::process::error::STOPPED;
+use crate::process::error::STOPPED;
 
 /// Requests `stop`, which asks the job to stop, on the first termination signal: SIGTERM, SIGINT
 /// or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows. A second one ends the

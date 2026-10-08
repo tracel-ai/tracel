@@ -75,7 +75,7 @@ impl Jobs {
     /// signal ends the process at once, also with exit code 130. `tracel run` sends SIGKILL after
     /// a 30-second grace period.
     pub fn run(self) -> ExitCode {
-        match self.execute() {
+        match execute(&self) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 error.print();
@@ -83,95 +83,104 @@ impl Jobs {
             }
         }
     }
+}
 
-    fn execute(self) -> Result<(), RunError> {
-        let vars = |name: &str| std::env::var_os(name);
-        if describe(self.definitions(), vars)? {
-            return Ok(());
+/// Does what the process's environment and command line ask of `jobs`: writes their definitions,
+/// prints the help, the version or a completion script, or runs the job named.
+fn execute(jobs: &Jobs) -> Result<(), RunError> {
+    let vars = |name: &str| std::env::var_os(name);
+    if describe(jobs.definitions(), vars)? {
+        return Ok(());
+    }
+    let mut command = command_line(jobs, program_name());
+    match read_request(jobs, &mut command, std::env::args_os())? {
+        Request::Run { job, input } => {
+            let stop = Stop::new();
+            signal::stop_on_termination(stop.clone());
+            dispatch(jobs, &job, input, ProcessLaunch::from_vars(stop, vars))
         }
-        let mut command = self.command_line(program_name());
-        match self.parse(&mut command, std::env::args_os())? {
-            Request::Run { job, input } => {
-                let stop = Stop::new();
-                signal::stop_on_termination(stop.clone());
-                self.dispatch(&job, input, ProcessLaunch::from_vars(stop, vars))
-            }
-            Request::Completions(shell) => {
-                let name = command.get_name().to_string();
-                clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
-                Ok(())
-            }
-            Request::Print(text) => {
-                let _ = text.print();
-                Ok(())
-            }
+        Request::Completions(shell) => {
+            let name = command.get_name().to_string();
+            clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
+            Ok(())
+        }
+        Request::Print(text) => {
+            let _ = text.print();
+            Ok(())
         }
     }
+}
 
-    /// The command line of the program `name`: its jobs' [`command`], with `--version` when the
-    /// program gives its version.
-    fn command_line(&self, name: impl Into<String>) -> Command {
-        let command = command(name, self.definitions());
-        match &self.version {
-            Some(version) => command.version(version.clone()),
-            None => command,
-        }
+/// The command line of the program `name`: the [`command`] of `jobs`, with `--version` when the
+/// program gives its version.
+fn command_line(jobs: &Jobs, name: impl Into<String>) -> Command {
+    let command = command(name, jobs.definitions());
+    match jobs.get_version() {
+        Some(version) => command.version(version.to_string()),
+        None => command,
     }
+}
 
-    /// Reads what the command-line arguments `args`, the program's name first, ask for.
-    fn parse<I, T>(&self, command: &mut Command, args: I) -> Result<Request, RunError>
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<OsString> + Clone,
-    {
-        let matches = match command.try_get_matches_from_mut(args) {
-            Ok(matches) => matches,
-            Err(error) if !error.use_stderr() => return Ok(Request::Print(error)),
-            Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
-                let name = match error.get(ContextKind::InvalidSubcommand) {
-                    Some(ContextValue::String(name)) => name.clone(),
-                    _ => String::new(),
-                };
-                return Err(RunError::UnknownJob {
-                    name,
-                    available: self.names(),
-                });
-            }
-            Err(error) => return Err(RunError::Usage(error)),
-        };
-        if let Some(shell) = completions(&matches) {
-            return Ok(Request::Completions(shell));
-        }
-        match (matches.subcommand(), &self.default) {
-            (Some((job, matches)), _) => Ok(Request::Run {
-                job: job.to_string(),
-                input: job_input(matches, |path| std::fs::read_to_string(path))
-                    .map_err(RunError::Config)?,
-            }),
-            (None, Some(job)) => Ok(Request::Run {
-                job: job.clone(),
-                input: Value::Null,
-            }),
-            (None, None) => Err(RunError::MissingJob {
-                available: self.names(),
-            }),
-        }
-    }
+/// The names of the jobs of `jobs`, in order.
+fn names(jobs: &Jobs) -> Vec<String> {
+    jobs.definitions()
+        .map(|definition| definition.name.clone())
+        .collect()
+}
 
-    /// Runs the job `name` with `input`, as `launch` launches it.
-    fn dispatch(&self, name: &str, input: Value, launch: ProcessLaunch) -> Result<(), RunError> {
-        let prepared = self.prepare(name, input)?;
-        let execution = Execution::new().with_stop(launch.stop);
-        let execution = match launch.num {
-            Some(num) => execution.with_num(num),
-            None => execution,
-        };
-        let outcome = prepared.run(execution);
-        if outcome.stop_requested() {
-            return Err(RunError::Stopped);
+/// Reads what the command-line arguments `args`, the program's name first, ask of `jobs`.
+fn read_request<I, T>(jobs: &Jobs, command: &mut Command, args: I) -> Result<Request, RunError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let matches = match command.try_get_matches_from_mut(args) {
+        Ok(matches) => matches,
+        Err(error) if !error.use_stderr() => return Ok(Request::Print(error)),
+        Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
+            let name = match error.get(ContextKind::InvalidSubcommand) {
+                Some(ContextValue::String(name)) => name.clone(),
+                _ => String::new(),
+            };
+            return Err(RunError::UnknownJob {
+                name,
+                available: names(jobs),
+            });
         }
-        outcome.into_result().map_err(RunError::JobFailed)
+        Err(error) => return Err(RunError::Usage(error)),
+    };
+    if let Some(shell) = completions(&matches) {
+        return Ok(Request::Completions(shell));
     }
+    match (matches.subcommand(), jobs.get_default_job()) {
+        (Some((job, matches)), _) => Ok(Request::Run {
+            job: job.to_string(),
+            input: job_input(matches, |path| std::fs::read_to_string(path))
+                .map_err(RunError::Config)?,
+        }),
+        (None, Some(job)) => Ok(Request::Run {
+            job: job.to_string(),
+            input: Value::Null,
+        }),
+        (None, None) => Err(RunError::MissingJob {
+            available: names(jobs),
+        }),
+    }
+}
+
+/// Runs the job `name` of `jobs` with `input`, as `launch` launches it.
+fn dispatch(jobs: &Jobs, name: &str, input: Value, launch: ProcessLaunch) -> Result<(), RunError> {
+    let prepared = jobs.prepare(name, input)?;
+    let execution = Execution::new().with_stop(launch.stop);
+    let execution = match launch.num {
+        Some(num) => execution.with_num(num),
+        None => execution,
+    };
+    let outcome = prepared.run(execution);
+    if outcome.stop_requested() {
+        return Err(RunError::Stopped);
+    }
+    outcome.into_result().map_err(RunError::JobFailed)
 }
 
 /// The name the program was run as, without its extension, or `job` when it has none.
@@ -187,6 +196,7 @@ fn program_name() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::ffi::OsStr;
     use std::sync::{Arc, Mutex};
 
@@ -194,8 +204,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::scope::request_stop;
     use crate::{BoxError, IntoJob, Job, job_input, job_num, job_running, on_stop, stop_requested};
+
+    thread_local! {
+        /// The stop of the job this test thread runs as the process does, as the process's
+        /// termination signal handler holds it.
+        static LAUNCHED: RefCell<Stop> = RefCell::new(Stop::new());
+    }
+
+    /// Asks the job this test thread runs to stop, as a termination signal does.
+    fn request_stop() {
+        LAUNCHED.with(|stop| stop.borrow().request());
+    }
 
     #[derive(Clone, Copy)]
     enum Outcome {
@@ -280,8 +300,8 @@ mod tests {
 
     /// What the command line `program <args>` asks of `jobs`.
     fn parse(jobs: &Jobs, args: &[&str]) -> Result<Request, RunError> {
-        let mut command = jobs.command_line("program");
-        jobs.parse(&mut command, ["program"].iter().chain(args))
+        let mut command = command_line(jobs, "program");
+        read_request(jobs, &mut command, ["program"].iter().chain(args))
     }
 
     /// Runs the command line `program <args>` as [`Jobs::run`] does, printing nothing.
@@ -294,12 +314,14 @@ mod tests {
     fn run_launched(jobs: Jobs, args: &[&str], vars: &[(&str, &OsStr)]) -> Result<(), RunError> {
         match parse(&jobs, args)? {
             Request::Run { job, input } => {
-                let launch = ProcessLaunch::from_vars(Stop::default(), |name| {
+                let stop = Stop::new();
+                LAUNCHED.with(|launched| *launched.borrow_mut() = stop.clone());
+                let launch = ProcessLaunch::from_vars(stop, |name| {
                     vars.iter()
                         .find(|(variable, _)| *variable == name)
                         .map(|(_, value)| value.to_os_string())
                 });
-                jobs.dispatch(&job, input, launch)
+                dispatch(&jobs, &job, input, launch)
             }
             Request::Completions(_) | Request::Print(_) => Ok(()),
         }
@@ -709,7 +731,8 @@ mod tests {
         .with_schema();
         let jobs = Jobs::new().job("train", train);
 
-        let help = tracel_job_proto::job_command(jobs.jobs["train"].definition())
+        let definition = jobs.definitions().find(|job| job.name == "train").unwrap();
+        let help = tracel_job_proto::job_command(definition)
             .render_long_help()
             .to_string();
         for line in [
