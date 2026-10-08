@@ -5,7 +5,7 @@ version.workspace = true
 publish = false
 
 [features]
-station = ["tracel/station", "tracel/runner"]
+station = ["tracel/station"]
 
 [dependencies]
 tracel = { workspace = true, features = ["schema"] }

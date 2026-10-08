@@ -14,6 +14,13 @@ categories.workspace = true
 [features]
 default = []
 schema = ["dep:schemars"]
+station = [
+    "dep:reqwest",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:url",
+    "dep:uuid",
+]
 
 [dependencies]
 chrono.workspace = true
@@ -27,7 +34,13 @@ serde_json.workspace = true
 json-patch.workspace = true
 schemars = { workspace = true, optional = true }
 thiserror.workspace = true
+reqwest = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 tracel-experiment = { workspace = true, features = ["local"] }
+uuid = { workspace = true, features = ["v4"] }

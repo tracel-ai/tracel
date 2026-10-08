@@ -75,7 +75,6 @@ tracel-client = { version = "0.21.0", default-features = false, features = [
 ] }
 
 ## Crate
-tracel-runner = { path = "crates/tracel-runner", version = "0.11.0" }
 tracel-console = { path = "crates/tracel-console", version = "0.11.0" }
 tracel-models = { path = "crates/tracel-models", version = "0.11.0" }
 tracel-station = { path = "crates/tracel-station", version = "0.11.0" }

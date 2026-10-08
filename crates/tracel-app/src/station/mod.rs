@@ -2,11 +2,11 @@
 //!
 //! [`StationRunner`] registers experiment jobs with a station and executes the jobs the station
 //! dispatches — one at a time, with results reported back as job outcomes. Registration mirrors
-//! the command-line runner in `tracel-app`:
+//! [`Cli`](crate::cli::Cli)'s (requires the `station` feature):
 //!
 //! ```ignore
 //! use tracel_app::mapper::JsonMapper;
-//! use tracel_runner::StationRunner;
+//! use tracel_app::station::StationRunner;
 //!
 //! StationRunner::new("http://localhost:9000")
 //!     .name("vision-runner")
@@ -29,10 +29,10 @@ pub use error::RunnerError;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use tracel_app::{IntoJob, JobRegistry};
 use tracel_experiment::ExperimentJob;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::{IntoJob, JobRegistry};
 use infrastructure::StationRunnerClient;
 use infrastructure::protocol::RegisterRunner;
 use runtime::Executor;
@@ -81,7 +81,7 @@ impl StationRunner {
     /// use tracel_app::mapper::JsonMapper;
     /// use tracel_experiment::local::LocalExperiments;
     /// use tracel_experiment::{ExperimentRun, Experiments};
-    /// use tracel_runner::StationRunner;
+    /// use tracel_app::station::StationRunner;
     ///
     /// let train = Experiments::new(Arc::new(LocalExperiments::new("./runs")))
     ///     .create("train", |_run: &ExperimentRun, epochs: u32| {
@@ -92,7 +92,7 @@ impl StationRunner {
     /// StationRunner::new("http://localhost:8000")
     ///     .register(train, JsonMapper::with_default(10u32))
     ///     .run()?;
-    /// # Ok::<(), tracel_runner::RunnerError>(())
+    /// # Ok::<(), tracel_app::station::RunnerError>(())
     /// ```
     ///
     /// # Panics
@@ -149,11 +149,11 @@ mod tests {
     use std::collections::HashMap;
 
     use serde_json::Value;
-    use tracel_app::mapper::JsonMapper;
     use tracel_experiment::error::ExperimentError;
     use tracel_experiment::{ExperimentProvider, ExperimentRun, Experiments};
 
     use super::*;
+    use crate::mapper::JsonMapper;
 
     /// A provider for experiment jobs that are registered, never run.
     struct NeverRuns;

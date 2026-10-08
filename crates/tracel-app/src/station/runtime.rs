@@ -6,14 +6,14 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tracel_app::{JobContext, JobRegistry};
 use uuid::Uuid;
 
-use crate::error::RunnerError;
-use crate::infrastructure::protocol::{
+use crate::station::error::RunnerError;
+use crate::station::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
-use crate::infrastructure::{ClientError, StationRunnerClient};
+use crate::station::infrastructure::{ClientError, StationRunnerClient};
+use crate::{JobContext, JobRegistry};
 
 /// Reports job outcomes back to the station. Split out so the loop is testable with a fake.
 pub trait FinishSink: Send + Sync + 'static {
@@ -234,10 +234,10 @@ pub fn serve_forever(
 
 #[cfg(test)]
 mod tests {
-    use tracel_app::{BoxError, Job, PreparedJob};
     use tracel_job::JobDefinition;
 
     use super::*;
+    use crate::{BoxError, Job, PreparedJob};
 
     #[allow(clippy::type_complexity)]
     type RecordedFinish = (Uuid, Uuid, FinishStatus, Option<String>);

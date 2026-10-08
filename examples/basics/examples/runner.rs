@@ -11,7 +11,7 @@
 use basics::training::{self, TrainingConfig};
 use tracel::Target;
 use tracel::app::mapper::JsonMapper;
-use tracel::runner::StationRunner;
+use tracel::app::station::StationRunner;
 
 fn main() -> anyhow::Result<()> {
     let target = Target::from_env()?;

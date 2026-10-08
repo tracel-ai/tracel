@@ -46,6 +46,8 @@ mod job;
 pub mod mapper;
 mod panics;
 mod registry;
+#[cfg(feature = "station")]
+pub mod station;
 #[cfg(test)]
 mod test_support;
 

@@ -1,4 +1,4 @@
-use tracel_app::DescribeError;
+use crate::DescribeError;
 
 /// Fatal runner errors.
 ///

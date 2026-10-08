@@ -223,9 +223,3 @@ pub use tracel_app as app;
 /// The job definitions file, the run report, and the command line built from job definitions.
 #[doc(inline)]
 pub use tracel_job as job;
-
-/// Station runner: serve registered jobs to a Tracel Station job queue (requires the `runner`
-/// feature).
-#[cfg(feature = "runner")]
-#[doc(inline)]
-pub use tracel_runner as runner;

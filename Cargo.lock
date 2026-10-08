@@ -7220,7 +7220,6 @@ dependencies = [
  "tracel-inference",
  "tracel-job",
  "tracel-models",
- "tracel-runner",
  "tracel-station",
  "url",
 ]
@@ -7234,6 +7233,7 @@ dependencies = [
  "clap_complete",
  "ctrlc",
  "json-patch",
+ "reqwest",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -7241,6 +7241,10 @@ dependencies = [
  "thiserror 2.0.21",
  "tracel-experiment",
  "tracel-job",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -7353,7 +7357,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-job"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -7391,23 +7395,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracel-artifact",
-]
-
-[[package]]
-name = "tracel-runner"
-version = "0.11.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tracel-app",
- "tracel-experiment",
- "tracel-job",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
 ]
 
 [[package]]
