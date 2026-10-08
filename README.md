@@ -89,10 +89,11 @@ instead, for code that ends it with `finish()` or `fail()`; a run dropped before
 failed. `log_args` records the input as the experiment's arguments, which the console lists as its
 config. A job starts as many experiments as its code does, or none.
 
-The experiments `Target::experiments` builds while a job runs are linked to the job: each one
-started from them records the job's number, is asked to stop when the job is, and is listed in the
-job's run report, as [Launching jobs](#launching-jobs) describes. Experiments built another way,
-such as `ProjectHandle::experiments`, are not linked unless the code links them, through
+The experiments `Target::experiments` builds in a job, on the thread that runs it, are linked to
+that job, even for runs started on other threads: each one started from them records the job's
+number, is asked to stop when the job is, and is listed in the job's run report, as
+[Launching jobs](#launching-jobs) describes. Experiments built another way, such as
+`ProjectHandle::experiments`, are not linked unless the code links them, through
 `Experiments::attribute`, `cancel_token` and `on_start`.
 
 The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a

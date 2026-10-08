@@ -75,7 +75,7 @@ impl Jobs {
     /// and again when it ends, as completed or failed by what the job returns. None is written
     /// for a command line or an input that is rejected.
     ///
-    /// While the job runs, it is the job this process runs:
+    /// The job runs on this thread, in its [`JobScope`](crate::JobScope):
     /// [`stop_requested`](crate::stop_requested) says whether it was asked to stop,
     /// [`on_stop`](crate::on_stop) runs code once it is, and [`job_num`](crate::job_num) gives the
     /// number `TRACEL_JOB_NUM` gives it.
@@ -232,8 +232,7 @@ mod tests {
     use tracel_job::{ReportedExperiment, TRACEL_REPORT_FILE};
 
     use super::*;
-    use crate::running::request_stop;
-    use crate::test_support::one_job_at_a_time;
+    use crate::scope::request_stop;
     use crate::{
         BoxError, IntoJob, Job, job_num, job_running, on_stop, report_experiment, stop_requested,
     };
@@ -333,7 +332,6 @@ mod tests {
     /// Runs the command line `program <args>` as [`run`] does, launched with the environment
     /// variables `vars`.
     fn run_launched(jobs: Jobs, args: &[&str], vars: &[(&str, &OsStr)]) -> Result<(), RunError> {
-        let _one = one_job_at_a_time();
         match parse(&jobs, args)? {
             Request::Run { job, input } => {
                 let launch = ProcessLaunch::from_vars(Stop::default(), |name| {
@@ -621,10 +619,7 @@ mod tests {
 
         numbered("12");
         numbered("");
-        let after = {
-            let _one = one_job_at_a_time();
-            (job_running(), job_num())
-        };
+        let after = (job_running(), job_num());
 
         assert_eq!(
             *given.lock().unwrap(),

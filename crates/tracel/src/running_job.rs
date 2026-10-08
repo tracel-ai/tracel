@@ -1,14 +1,15 @@
-//! Linking the experiments a job starts to the job this process runs.
+//! Linking the experiments a job starts to the job.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
+use tracel_app::JobScope;
 use tracel_experiment::{ExperimentLocation, ExperimentRun, Experiments};
 use tracel_job::{JOB_NUM_ATTRIBUTE, ReportedExperiment};
 
-/// `experiments`, linked to the job this process runs when [`tracel_app::Jobs::run`] runs one,
-/// as [`link`] links them; as they are otherwise.
+/// `experiments`, linked to the job the current thread runs, when it runs one, as [`link`] links
+/// them; as they are otherwise. The link holds on any thread a run is started on.
 pub fn linked(experiments: Experiments) -> Experiments {
     match RunningJob::current() {
         Some(job) => link(experiments, job),
@@ -19,7 +20,7 @@ pub fn linked(experiments: Experiments) -> Experiments {
 /// What runs once the job is asked to stop.
 type StopAction = Box<dyn FnOnce() + Send>;
 
-/// What the job this process runs gives the experiments started in it.
+/// What a job gives the experiments started in it.
 struct RunningJob {
     /// The number the job's launcher gave it.
     num: Option<String>,
@@ -30,12 +31,16 @@ struct RunningJob {
 }
 
 impl RunningJob {
-    /// The job this process runs, while [`tracel_app::Jobs::run`] runs one.
+    /// The job the current thread runs, as its [`JobScope`] gives it, while it runs one.
     fn current() -> Option<Self> {
-        tracel_app::job_running().then(|| Self {
-            num: tracel_app::job_num(),
-            on_stop: Box::new(|action: StopAction| tracel_app::on_stop(action)),
-            report: Arc::new(tracel_app::report_experiment),
+        let scope = JobScope::current()?;
+        Some(Self {
+            num: scope.num().map(str::to_string),
+            on_stop: Box::new({
+                let scope = scope.clone();
+                move |action: StopAction| scope.on_stop(action)
+            }),
+            report: Arc::new(move |experiment| scope.report_experiment(experiment)),
         })
     }
 }

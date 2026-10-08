@@ -35,24 +35,25 @@
 //!
 //! ## The running job
 //!
-//! An adapter runs one job at a time, so while it runs a job, what the job is given is the
-//! process's, for code on any thread: [`job_running`] says whether there is one,
-//! [`stop_requested`] whether it was asked to stop, [`on_stop`] runs code once it is, [`job_num`]
-//! gives the number `TRACEL_JOB_NUM` gives it, and [`report_experiment`] adds an experiment to its
-//! run report. The `tracel` crate links the experiments a job starts to it through them. While no
-//! job runs, such as in a plain binary or a unit test, there is none: [`job_running`] and
+//! Each execution of a job has its own [`JobScope`]: the number or id its launcher gave it, the
+//! request that it stop, and where the experiments it starts are reported, which its adapter
+//! decides. The scope is current on the thread that runs the job's function, while it runs, so
+//! jobs a Station runner runs at once each see their own. The functions read it: [`job_running`]
+//! says whether there is one, [`stop_requested`] whether the job was asked to stop, [`on_stop`]
+//! runs code once it is, [`job_num`] gives its number, and [`report_experiment`] reports an
+//! experiment it started. To read it on another thread, hold [`JobScope::current`]. The `tracel`
+//! crate links the experiments a job starts to it through its scope. While a thread runs no job,
+//! such as in a plain binary or a unit test, there is none: [`job_running`] and
 //! [`stop_requested`] give `false`, [`job_num`] gives `None`, and the rest do nothing.
 
 mod job;
 mod jobs;
 mod panics;
-mod running;
+mod scope;
 mod stop;
-#[cfg(test)]
-mod test_support;
 
 pub use job::{BoxError, IntoJob, Job};
 pub use jobs::Jobs;
 #[cfg(feature = "station")]
 pub use jobs::station;
-pub use running::{job_num, job_running, on_stop, report_experiment, stop_requested};
+pub use scope::{JobScope, job_num, job_running, on_stop, report_experiment, stop_requested};

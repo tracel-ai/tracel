@@ -2,7 +2,8 @@
 //! feature).
 //!
 //! [`StationRunner`] registers the jobs' definitions with a station and runs the jobs the station
-//! dispatches, one at a time, reporting each one's outcome back as completed or failed:
+//! dispatches, each on a thread of its own, reporting each one's outcome back as completed or
+//! failed:
 //!
 //! ```no_run
 //! use tracel_app::station::StationRunner;
@@ -25,12 +26,13 @@
 //! closes and the station immediately fails whatever this runner was doing. [`StationRunner::run`]
 //! serves forever, reconnecting with backoff when the station is unreachable or restarts.
 //!
-//! While a job runs, it is the job the process runs: [`job_num`](crate::job_num) gives the
-//! station's id for it, and the experiments it reports are logged to stderr.
+//! Each job runs on a thread of its own, in its [`JobScope`](crate::JobScope):
+//! [`job_num`](crate::job_num) gives the station's id for it, and the experiments it reports are
+//! logged to stderr.
 
 mod error;
 mod infrastructure;
-mod runtime;
+mod serve;
 
 pub use error::RunnerError;
 
@@ -41,7 +43,7 @@ use serde_json::{Map, Value};
 use crate::Jobs;
 use infrastructure::StationRunnerClient;
 use infrastructure::protocol::RegisterRunner;
-use runtime::Executor;
+use serve::Executor;
 
 /// A runner process serving a program's jobs to one station.
 pub struct StationRunner {
@@ -95,8 +97,8 @@ impl StationRunner {
             jobs: jobs.definitions().cloned().collect(),
         };
         let client = StationRunnerClient::new(url);
-        let executor = Executor::spawn(Arc::new(jobs), Arc::new(client.clone()));
-        Err(runtime::serve_forever(client, register, executor))
+        let executor = Executor::new(Arc::new(jobs), Arc::new(client.clone()));
+        Err(serve::serve_forever(client, register, executor))
     }
 }
 

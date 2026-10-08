@@ -144,11 +144,12 @@ impl Target {
     ///
     /// Offline, the first run creates its directory.
     ///
-    /// Built while a job runs in the process, under [`Jobs::run`](crate::app::Jobs::run), the
-    /// experiments are linked to the job: each experiment started from them records the job's
-    /// number, when its launcher gave one, as its `tracel.job_num` attribute, is asked to stop
-    /// once the job is, and is listed in the job's run report; once the job was asked to stop, no
-    /// more start. Experiments built another way, such as
+    /// Built in a job, on the thread its adapter runs it on, the experiments are linked to that
+    /// job, as its [`JobScope`](crate::app::JobScope) gives it, wherever runs are started from
+    /// them: each experiment records the job's number, when its launcher gave one, as its
+    /// `tracel.job_num` attribute, is asked to stop once the job is, and is reported as the job's
+    /// adapter reports experiments, such as in the job's run report; once the job was asked to
+    /// stop, no more start. Experiments built another way, such as
     /// [`ProjectHandle::experiments`] or [`Experiments::new`], are not linked unless the code
     /// links them through [`Experiments::attribute`], [`Experiments::cancel_token`] and
     /// [`Experiments::on_start`].

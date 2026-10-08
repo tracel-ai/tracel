@@ -14,7 +14,7 @@ use tracel_job::JobDefinition;
 use crate::BoxError;
 use crate::job::{IntoJob, Ready, Registered};
 use crate::panics::catch_panic;
-use crate::running::{self, ExperimentSink, RunningJob};
+use crate::scope::{self, ExperimentSink};
 use crate::stop::Stop;
 
 /// A program's jobs, by name, and how the program runs the one its command line names: `main`
@@ -161,9 +161,9 @@ struct Launch {
     experiments: ExperimentSink,
 }
 
-/// Runs `ready`, the job `launch` launches, as the job this process runs, and returns how it
-/// ended: a panic is a failure with the panic's message.
+/// Runs `ready`, the job `launch` launches, on this thread, in a scope of its own, and returns
+/// how it ended: a panic is a failure with the panic's message.
 fn run(ready: Ready, launch: Launch) -> Result<(), BoxError> {
-    let _running = running::enter(RunningJob::new(launch.stop, launch.num, launch.experiments));
+    let _entered = scope::enter(scope::new(launch.num, launch.stop, launch.experiments));
     catch_panic(ready)
 }

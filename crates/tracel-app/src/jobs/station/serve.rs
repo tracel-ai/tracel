@@ -1,6 +1,6 @@
-//! The runner loop: SSE reader, single-job executor, reconnect with backoff.
+//! The runner loop: SSE reader, an executor running each dispatched job on a thread of its own,
+//! reconnect with backoff.
 
-use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -31,29 +31,36 @@ impl FinishSink for StationRunnerClient {
     }
 }
 
-struct Dispatch {
-    runner_id: Uuid,
-    job: DispatchedJob,
-}
-
 /// In-flight job count, paired with a condvar so [`Executor::wait_idle`] can block until it drains.
 type InFlight = Arc<(Mutex<usize>, Condvar)>;
 
-/// Executes dispatched jobs one at a time on a dedicated thread, so the event stream keeps being
-/// read (for liveness) while user code runs.
+/// Runs each dispatched job on a thread of its own, in a scope of its own, so the event stream
+/// keeps being read (for liveness) while user code runs, and jobs the station dispatches at once
+/// run at once.
 pub struct Executor {
-    sender: mpsc::Sender<Dispatch>,
+    jobs: Arc<Jobs>,
+    sink: Arc<dyn FinishSink>,
     in_flight: InFlight,
 }
 
 impl Executor {
-    pub fn spawn(jobs: Arc<Jobs>, sink: Arc<dyn FinishSink>) -> Self {
-        let (sender, receiver) = mpsc::channel::<Dispatch>();
-        let in_flight: InFlight = Arc::default();
+    pub fn new(jobs: Arc<Jobs>, sink: Arc<dyn FinishSink>) -> Self {
+        Self {
+            jobs,
+            sink,
+            in_flight: Arc::default(),
+        }
+    }
 
-        let worker_in_flight = in_flight.clone();
-        std::thread::spawn(move || {
-            for Dispatch { runner_id, job } in receiver {
+    /// Runs `job` on a thread of its own, and reports how it ended to the station once it ends.
+    pub fn dispatch(&self, runner_id: Uuid, job: DispatchedJob) {
+        *self.in_flight.0.lock().unwrap() += 1;
+        let (jobs, sink, in_flight) =
+            (self.jobs.clone(), self.sink.clone(), self.in_flight.clone());
+        let job_id = job.id;
+        let spawned = std::thread::Builder::new()
+            .name(format!("job-{job_id}"))
+            .spawn(move || {
                 let (status, reason) = execute(&jobs, &job);
                 sink.finish_job(
                     job.id,
@@ -63,30 +70,17 @@ impl Executor {
                         reason,
                     },
                 );
-                finish_in_flight(&worker_in_flight);
-            }
-        });
-
-        Self { sender, in_flight }
-    }
-
-    pub fn dispatch(&self, runner_id: Uuid, job: DispatchedJob) {
-        {
-            let (count, _) = &*self.in_flight;
-            let mut count = count.lock().unwrap();
-            if *count > 0 {
-                eprintln!(
-                    "warning: job {} dispatched while another is still running",
-                    job.id
-                );
-            }
-            *count += 1;
-        }
-        let job_id = job.id;
-        if self.sender.send(Dispatch { runner_id, job }).is_err() {
-            eprintln!(
-                "error: the executor thread is gone; dropping job {}",
-                job_id
+                finish_in_flight(&in_flight);
+            });
+        if let Err(error) = spawned {
+            let reason = format!("the job could not start: {error}");
+            self.sink.finish_job(
+                job_id,
+                &FinishJob {
+                    runner_id,
+                    status: FinishStatus::Failed,
+                    reason: Some(reason),
+                },
             );
             finish_in_flight(&self.in_flight);
         }
@@ -235,8 +229,8 @@ pub fn serve_forever(
                 if let StreamOutcome::Served = serve_stream(stream, &executor) {
                     backoff.reset();
                 }
-                // Never re-register while user code still runs — a fresh session would get a
-                // concurrent dispatch. Drain the in-flight job first.
+                // Never re-register while user code still runs: the station failed those jobs when
+                // the stream dropped, and a fresh session would get new ones. Drain them first.
                 executor.wait_idle();
             }
             Err(e) if e.is_permanent() => return RunnerError::Registration(e.to_string()),
@@ -253,7 +247,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::test_support::one_job_at_a_time;
     use crate::{BoxError, job_num};
 
     #[allow(clippy::type_complexity)]
@@ -301,7 +294,7 @@ mod tests {
     fn setup() -> Setup {
         let nums = Arc::default();
         let sink = Arc::new(RecordingSink::default());
-        let executor = Executor::spawn(Arc::new(jobs(Arc::clone(&nums))), sink.clone());
+        let executor = Executor::new(Arc::new(jobs(Arc::clone(&nums))), sink.clone());
         Setup {
             executor,
             sink,
@@ -329,7 +322,6 @@ mod tests {
 
     /// Serves `jobs`, dispatched in order, and returns the finishes reported.
     fn serve(setup: &Setup, jobs: Vec<DispatchedJob>) -> Vec<RecordedFinish> {
-        let _one = one_job_at_a_time();
         let rest = jobs.into_iter().map(RunnerEvent::Job).collect();
         serve_stream(events(setup.runner_id, rest), &setup.executor);
         setup.executor.wait_idle();
@@ -392,6 +384,52 @@ mod tests {
         serve(&setup, vec![job.clone()]);
 
         assert_eq!(*setup.nums.lock().unwrap(), [Some(job.id.to_string())]);
+    }
+
+    #[test]
+    fn jobs_dispatched_at_once_run_at_once_each_in_its_own_scope() {
+        let started = Arc::new((Mutex::new(0), Condvar::new()));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let jobs = Jobs::new().job("wait", {
+            let (started, seen) = (started.clone(), seen.clone());
+            move |_: Value| {
+                let (count, both) = &*started;
+                *count.lock().unwrap() += 1;
+                both.notify_all();
+                let (count, _) = both
+                    .wait_timeout_while(count.lock().unwrap(), Duration::from_secs(10), |count| {
+                        *count < 2
+                    })
+                    .unwrap();
+                seen.lock().unwrap().push((job_num(), *count == 2));
+                Ok::<_, BoxError>(())
+            }
+        });
+        let sink = Arc::new(RecordingSink::default());
+        let executor = Executor::new(Arc::new(jobs), sink.clone());
+        let (first, second) = (dispatched("wait"), dispatched("wait"));
+
+        serve_stream(
+            events(
+                Uuid::new_v4(),
+                vec![
+                    RunnerEvent::Job(first.clone()),
+                    RunnerEvent::Job(second.clone()),
+                ],
+            ),
+            &executor,
+        );
+        executor.wait_idle();
+
+        let mut seen = seen.lock().unwrap().clone();
+        seen.sort();
+        let mut expected = vec![
+            (Some(first.id.to_string()), true),
+            (Some(second.id.to_string()), true),
+        ];
+        expected.sort();
+        assert_eq!(seen, expected);
+        assert_eq!(sink.finishes.lock().unwrap().len(), 2);
     }
 
     #[test]
