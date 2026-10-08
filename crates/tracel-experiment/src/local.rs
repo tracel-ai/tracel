@@ -947,17 +947,22 @@ mod tests {
     fn a_run_says_how_it_ended_in_its_status() {
         let dir = tempfile::tempdir().unwrap();
         run(dir.path(), "mnist").fail("diverged").unwrap();
-        {
-            let cancelled = run(dir.path(), "mnist");
-            cancelled.cancel().unwrap();
-        }
+        let cancelled = run(dir.path(), "mnist");
+        cancelled.cancel().unwrap();
+        cancelled.finish().unwrap();
+        drop(run(dir.path(), "mnist"));
 
-        let failed = read_json(&dir.path().join("mnist/1/status.json"));
-        let cancelled = read_json(&dir.path().join("mnist/2/status.json"));
+        let status = |num: u32| read_json(&dir.path().join(format!("mnist/{num}/status.json")));
+        let (failed, cancelled, dropped) = (status(1), status(2), status(3));
         assert_eq!(failed["status"], "failed");
         assert_eq!(failed["error"], "diverged");
         assert_eq!(cancelled["status"], "completed");
         assert_eq!(cancelled["error"], Value::Null);
+        assert_eq!(dropped["status"], "failed");
+        assert_eq!(
+            dropped["error"],
+            "the run was dropped without finish() or fail()"
+        );
     }
 
     #[test]

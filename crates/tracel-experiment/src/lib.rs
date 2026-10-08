@@ -186,8 +186,11 @@ struct ExperimentMetadata {
 /// cancelled while the run is active, the run logs a warning that a stop was requested, once.
 ///
 /// Use [`ExperimentRun::handle`] when you need to share logging and artifact access without
-/// transferring lifecycle ownership. If the run is dropped without an explicit completion, it is
-/// finalized automatically.
+/// transferring lifecycle ownership.
+///
+/// A run ends as completed only through [`Self::finish`]. One dropped before [`Self::finish`] or
+/// [`Self::fail`] ends as failed: with the panic's message while a panic unwinds it, and otherwise
+/// because nothing said it succeeded, as when an error returns early past it.
 ///
 /// Use [`ExperimentGlobalExt`] when you want to make the run available as the ambient
 /// thread-local experiment for tracing or other integrations.
@@ -357,8 +360,8 @@ impl ExperimentRun {
 
     /// Mark the run as successful and finalize the backend session.
     ///
-    /// If the run is dropped without calling [`Self::finish`] or [`Self::fail`], it is finalized
-    /// as successful by default. Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
+    /// A run dropped without calling [`Self::finish`] or [`Self::fail`] is finalized as failed.
+    /// Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn finish(self) -> Result<(), ExperimentError> {
         self.complete(ExperimentCompletion::Success)
     }
@@ -853,19 +856,20 @@ impl Cancellable for StopRequestLog {
     }
 }
 
-/// Finalize the run on drop if it has not already been completed: as failed while a panic
-/// unwinds it, as successful otherwise.
+/// Why a run dropped before it was finished or failed fails, when no panic unwinds it.
+const DROPPED_UNFINISHED: &str = "the run was dropped without finish() or fail()";
+
+/// Finalize the run on drop if it has not already been completed: as failed, with the panic's
+/// message while a panic unwinds it.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
-        let completion = if std::thread::panicking() {
-            let reason =
-                panic_watch::take_thread_panic().unwrap_or_else(|| "the run panicked".to_string());
-            ExperimentCompletion::Failed(reason)
+        let reason = if std::thread::panicking() {
+            panic_watch::take_thread_panic().unwrap_or_else(|| "the run panicked".to_string())
         } else {
-            ExperimentCompletion::Success
+            DROPPED_UNFINISHED.to_string()
         };
 
-        let _ = self.complete(completion);
+        let _ = self.complete(ExperimentCompletion::Failed(reason));
     }
 }
 
@@ -1182,25 +1186,30 @@ mod tests {
     }
 
     #[test]
-    fn drop_marks_run_as_finished_successfully() {
+    fn a_run_dropped_before_it_finishes_fails() {
         let session = Arc::new(MockSession::default());
+        let finished = create_run(session.clone());
 
-        {
-            let _run = create_run(session.clone());
-        }
+        drop(create_run(session.clone()));
+        finished.finish().unwrap();
 
         let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
+        assert_eq!(
+            completions.as_slice(),
+            &[
+                ExperimentCompletion::Failed(DROPPED_UNFINISHED.to_string()),
+                ExperimentCompletion::Success,
+            ]
+        );
     }
 
     #[test]
     fn a_cancelled_run_ends_by_how_it_is_finished() {
         let session = Arc::new(MockSession::default());
 
-        {
-            let dropped = create_run(session.clone());
-            dropped.cancel().unwrap();
-        }
+        let completed = create_run(session.clone());
+        completed.cancel().unwrap();
+        completed.finish().unwrap();
         let failed = create_run(session.clone());
         failed.cancel().unwrap();
         failed.fail("interrupted").unwrap();
