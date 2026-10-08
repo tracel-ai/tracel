@@ -1,52 +1,15 @@
 use std::error::Error;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::Value;
 use tracel_experiment::CancelToken;
-use tracel_inference::{OutputWriter, OutputWriterError};
 use tracel_job::{JobDefinition, ReportedExperiment};
 
 /// The error a job or a mapper fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
 
-/// The input a runner hands a job: JSON documents.
-///
-/// Every job takes either form. A job that takes one input takes the document, or the stream's
-/// one document; a job that takes several takes each document in turn.
-pub enum JobInput {
-    /// One JSON document. `Value::Null` stands for no input.
-    Document(Value),
-    /// JSON documents taken as they arrive, or why the next one could not be read, which ends
-    /// the input.
-    Stream(Box<dyn Iterator<Item = Result<Value, BoxError>> + Send>),
-}
-
-impl JobInput {
-    /// The input of a job that takes one: the document, or the stream's one document, read to the
-    /// stream's end. A stream with no document gives `Value::Null`.
-    ///
-    /// Fails when the stream has a second document, or a document could not be read.
-    pub fn one(self) -> Result<Value, BoxError> {
-        match self {
-            Self::Document(input) => Ok(input),
-            Self::Stream(mut inputs) => {
-                let input = inputs.next().transpose()?.unwrap_or(Value::Null);
-                match inputs.next() {
-                    None => Ok(input),
-                    Some(Ok(_)) => Err("the job takes one input, but was given more".into()),
-                    Some(Err(error)) => Err(error),
-                }
-            }
-        }
-    }
-}
-
-/// Where a job sends its outputs.
-pub type JobOutput = Box<dyn OutputWriter<Value> + Send + Sync>;
-
-/// What a runner gives the job it runs, besides where its outputs go: the token that asks the job
-/// to stop, and the reporter the job hands the experiment it records.
+/// What a runner gives the job it runs: the token that asks the job to stop, and the reporter the
+/// job hands the experiment it records.
 #[derive(Clone, Default)]
 pub struct JobContext {
     cancel_token: CancelToken,
@@ -109,80 +72,58 @@ impl ExperimentReporter {
 
 /// A job whose input is decoded, ready to run.
 pub struct PreparedJob {
-    run: Box<dyn FnOnce(JobOutput, JobContext) -> Result<(), BoxError> + Send>,
+    run: Box<dyn FnOnce(JobContext) -> Result<(), BoxError> + Send>,
 }
 
 impl PreparedJob {
-    /// Wraps `run`, which runs the job, sends its outputs to the writer it is given, and stops
-    /// once the cancel token of the context it is given is cancelled.
+    /// Wraps `run`, which runs the job and stops once the cancel token of the context it is given
+    /// is cancelled.
     pub fn new<F>(run: F) -> Self
     where
-        F: FnOnce(JobOutput, JobContext) -> Result<(), BoxError> + Send + 'static,
+        F: FnOnce(JobContext) -> Result<(), BoxError> + Send + 'static,
     {
         Self { run: Box::new(run) }
     }
 
-    /// Runs the job in `context`, sending its outputs to `output`.
+    /// Runs the job in `context`.
     ///
     /// Cancelling the context's cancel token asks the job to stop: a job that records an experiment
     /// cancels the experiment's cancel token and ends as completed or failed by what its function
-    /// returns, and a job that takes several inputs takes no more. A job that records an
-    /// experiment hands it to the context's reporter once it is created.
-    pub fn run<W>(self, output: W, context: JobContext) -> Result<(), BoxError>
-    where
-        W: OutputWriter<Value> + Send + Sync + 'static,
-    {
-        (self.run)(Box::new(output), context)
+    /// returns. A job that records an experiment hands it to the context's reporter once it is
+    /// created.
+    pub fn run(self, context: JobContext) -> Result<(), BoxError> {
+        (self.run)(context)
     }
 }
 
-/// A job a runner can run: given its input, it runs to its end, writing its outputs as it goes.
+/// A job a runner can run: given its input, it runs to its end.
 ///
 /// What a job does as it runs is its own: it may record an experiment, which it hands to the
-/// reporter of its [`JobContext`], or answer each of its inputs with outputs. Runners build one
-/// with [`IntoJob`] from an experiment or inference job and the
-/// [`Mapper`](crate::mapper::Mapper) that decodes its input. Implement it directly only for a job
-/// neither covers.
+/// reporter of its [`JobContext`]. Runners build one with [`IntoJob`] from an experiment job and
+/// the [`Mapper`](crate::mapper::Mapper) that decodes its input. Implement it directly for any
+/// other job.
 pub trait Job: Send + Sync {
     /// The job's definition.
     fn definition(&self) -> &JobDefinition;
 
-    /// Decodes `input` and returns the job, ready to run with it.
+    /// Decodes `input`, a JSON document or `Value::Null` for no input, and returns the job, ready
+    /// to run with it.
     ///
-    /// Fails without running anything when `input` does not decode. A job that takes one input
-    /// reads it here, so it waits for a [`JobInput::Stream`] to end.
-    fn prepare(&self, input: JobInput) -> Result<PreparedJob, BoxError>;
+    /// Fails without running anything when `input` does not decode.
+    fn prepare(&self, input: Value) -> Result<PreparedJob, BoxError>;
 }
 
-/// Turns a capability job and the mapper that decodes its input into a [`Job`].
+/// Turns an experiment job and the mapper that decodes its input into a [`Job`].
 ///
-/// Implemented for `ExperimentJob` and `InferenceJob`, so every runner's `register(job, mapper)`
-/// takes either.
+/// Implemented for `ExperimentJob`, so a runner's `register(job, mapper)` takes one.
 pub trait IntoJob<M> {
     /// Builds the job.
     fn into_job(self, mapper: M) -> Box<dyn Job>;
 }
 
-/// An output writer that drops what it is given, for a runner that returns no outputs.
-pub struct DiscardOutput;
-
-impl OutputWriter<Value> for DiscardOutput {
-    fn write(&self, _output: Value) -> Result<(), OutputWriterError> {
-        Ok(())
-    }
-
-    fn error(&self, _error: BoxError) -> Result<(), OutputWriterError> {
-        Ok(())
-    }
-
-    fn finish(&self, _duration: Duration) {}
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-
-    use serde_json::json;
 
     use super::*;
 
@@ -192,35 +133,6 @@ mod tests {
             url: None,
             dir: Some("runs/mnist/3".into()),
         }
-    }
-
-    fn stream(inputs: Vec<Result<Value, &'static str>>) -> JobInput {
-        JobInput::Stream(Box::new(
-            inputs
-                .into_iter()
-                .map(|input| input.map_err(BoxError::from)),
-        ))
-    }
-
-    #[test]
-    fn the_one_input_is_the_document_or_the_streams_one_document() {
-        let one = |input: JobInput| input.one().map_err(|error| error.to_string());
-
-        assert_eq!(one(JobInput::Document(json!(3))), Ok(json!(3)));
-        assert_eq!(one(stream(vec![Ok(json!(3))])), Ok(json!(3)));
-        assert_eq!(one(stream(vec![])), Ok(Value::Null));
-        assert_eq!(
-            one(stream(vec![Ok(json!(3)), Ok(json!(4))])),
-            Err("the job takes one input, but was given more".to_string())
-        );
-        assert_eq!(
-            one(stream(vec![Err("invalid JSON")])),
-            Err("invalid JSON".to_string())
-        );
-        assert_eq!(
-            one(stream(vec![Ok(json!(3)), Err("invalid JSON")])),
-            Err("invalid JSON".to_string())
-        );
     }
 
     #[test]

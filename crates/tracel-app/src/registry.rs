@@ -5,9 +5,7 @@ use tracel_job::JobDefinition;
 
 use crate::job::Job;
 
-/// The jobs a runner can run, by name.
-///
-/// Each runner keeps one, filled by its `register` methods.
+/// The jobs the command line can run, by name, filled by its `register` and `job` methods.
 #[derive(Default)]
 pub struct JobRegistry {
     jobs: BTreeMap<String, Arc<dyn Job>>,
@@ -55,10 +53,10 @@ impl JobRegistry {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
-    use crate::job::{BoxError, JobInput, PreparedJob};
+    use crate::job::{BoxError, PreparedJob};
 
     struct Named(JobDefinition);
 
@@ -67,8 +65,8 @@ mod tests {
             &self.0
         }
 
-        fn prepare(&self, _input: JobInput) -> Result<PreparedJob, BoxError> {
-            Ok(PreparedJob::new(|_output, _context| Ok(())))
+        fn prepare(&self, _input: Value) -> Result<PreparedJob, BoxError> {
+            Ok(PreparedJob::new(|_context| Ok(())))
         }
     }
 

@@ -2,7 +2,7 @@
 //!
 //! [`StationRunner`] registers experiment jobs with a station and executes the jobs the station
 //! dispatches — one at a time, with results reported back as job outcomes. Registration mirrors
-//! the command-line and HTTP runners in `tracel-app`:
+//! the command-line runner in `tracel-app`:
 //!
 //! ```ignore
 //! use tracel_app::mapper::JsonMapper;
@@ -73,8 +73,7 @@ impl StationRunner {
 
     /// Register an experiment job, decoding its dispatched input with `mapper`.
     ///
-    /// Only experiments run on a station, since a station job reports an outcome rather than
-    /// outputs:
+    /// A station job reports an outcome, completed or failed:
     ///
     /// ```no_run
     /// use std::sync::Arc;
@@ -92,34 +91,6 @@ impl StationRunner {
     ///
     /// StationRunner::new("http://localhost:8000")
     ///     .register(train, JsonMapper::with_default(10u32))
-    ///     .run()?;
-    /// # Ok::<(), tracel_runner::RunnerError>(())
-    /// ```
-    ///
-    /// An inference job does not compile:
-    ///
-    /// ```compile_fail,E0308
-    /// use std::sync::Arc;
-    ///
-    /// use tracel_app::mapper::JsonMapper;
-    /// use tracel_inference::{
-    ///     InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
-    /// };
-    /// use tracel_runner::StationRunner;
-    ///
-    /// let echo = InferenceModule::new(Arc::new(NoopInferenceProvider::new())).create(
-    ///     "echo",
-    ///     |_session: &InferenceSession,
-    ///      input: InferenceInput<String>,
-    ///      output: InferenceOutput<String>| {
-    ///         for text in input {
-    ///             let _ = output.write(text);
-    ///         }
-    ///     },
-    /// );
-    ///
-    /// StationRunner::new("http://localhost:8000")
-    ///     .register(echo, JsonMapper::<String>::new())
     ///     .run()?;
     /// # Ok::<(), tracel_runner::RunnerError>(())
     /// ```

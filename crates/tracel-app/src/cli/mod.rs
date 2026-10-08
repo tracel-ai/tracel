@@ -5,19 +5,16 @@ mod signal;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap_complete::Shell;
 use serde_json::Value;
 use tracel_experiment::CancelToken;
-use tracel_inference::{OutputWriter, OutputWriterError};
 use tracel_job::{command, completions, job_input};
 
 use crate::panics::catch_panic;
-use crate::{BoxError, IntoJob, Job, JobContext, JobInput, JobRegistry};
+use crate::{IntoJob, Job, JobContext, JobRegistry};
 use error::CliError;
 use report::ReportFile;
 
@@ -36,7 +33,7 @@ use report::ReportFile;
 ///
 /// The input is the `--config` file, the JSON document and the flags, each merged onto the one
 /// before, as [`job_input`] reads it. With none, the job runs with no input, which a mapper with
-/// a default reads as that default. Each output the job writes is printed as a line of JSON.
+/// a default reads as that default.
 ///
 /// When `TRACEL_REPORT_FILE` names a path, the job's [`RunReport`](tracel_job::RunReport) is
 /// written there when the job starts, again when the job records an experiment, and again when it
@@ -94,8 +91,7 @@ impl Cli {
         Self::default()
     }
 
-    /// Registers a capability job (an experiment or an inference), decoding its input with
-    /// `mapper`.
+    /// Registers an experiment job, decoding its input with `mapper`.
     ///
     /// # Panics
     ///
@@ -246,9 +242,7 @@ impl Cli {
             available: self.jobs.names(),
         })?;
 
-        let prepared = job
-            .prepare(JobInput::Document(input))
-            .map_err(CliError::InvalidInput)?;
+        let prepared = job.prepare(input).map_err(CliError::InvalidInput)?;
         let report = report_path
             .map(|path| ReportFile::start(path, name))
             .transpose()?;
@@ -256,10 +250,7 @@ impl Cli {
         if let Some(report) = &report {
             context = context.with_reporter(report.experiment_reporter());
         }
-        let output = Stdout::default();
-        let failure = output.failure.clone();
-        let outcome = catch_panic(|| prepared.run(output, context))
-            .and_then(|()| failure.lock().unwrap().take().map_or(Ok(()), Err));
+        let outcome = catch_panic(|| prepared.run(context));
 
         if let Some(report) = report
             && let Err(error) = report.finish(&outcome)
@@ -284,45 +275,23 @@ fn program_name() -> String {
         .unwrap_or_else(|| "job".to_string())
 }
 
-/// Prints each output as a line of JSON. The first error stops the job and becomes its failure.
-#[derive(Default)]
-struct Stdout {
-    failure: Arc<Mutex<Option<BoxError>>>,
-}
-
-impl OutputWriter<Value> for Stdout {
-    fn write(&self, output: Value) -> Result<(), OutputWriterError> {
-        println!("{output}");
-        Ok(())
-    }
-
-    fn error(&self, error: BoxError) -> Result<(), OutputWriterError> {
-        self.failure.lock().unwrap().get_or_insert(error);
-        Err(OutputWriterError::Cancelled)
-    }
-
-    fn finish(&self, _duration: Duration) {}
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use serde_json::json;
     use tracel_experiment::local::LocalExperiments;
     use tracel_experiment::{ExperimentRun, Experiments};
-    use tracel_inference::{
-        InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
-    };
     use tracel_job::{JobDefinition, job_command};
 
     use super::*;
-    use crate::PreparedJob;
     use crate::mapper::{ClapMapper, JsonMapper, Mapper, PresetMapper};
+    use crate::{BoxError, PreparedJob};
 
     #[derive(Clone, Copy)]
     enum Outcome {
         Succeed,
         Fail,
-        ReportError,
         Panic,
         /// Asks itself to stop, then fails.
         Cancel,
@@ -369,22 +338,17 @@ mod tests {
             &self.definition
         }
 
-        fn prepare(&self, input: JobInput) -> Result<PreparedJob, BoxError> {
-            let input = input.one()?;
+        fn prepare(&self, input: Value) -> Result<PreparedJob, BoxError> {
             if !(input.is_object() || input.is_null()) {
                 return Err("not an object".into());
             }
             let ran_with = self.ran_with.clone();
             let outcome = self.outcome;
-            Ok(PreparedJob::new(move |output, context| {
+            Ok(PreparedJob::new(move |context| {
                 *ran_with.lock().unwrap() = Some(input);
                 match outcome {
                     Outcome::Succeed => Ok(()),
                     Outcome::Fail => Err("boom".into()),
-                    Outcome::ReportError => {
-                        let _ = output.error("bad output".into());
-                        Ok(())
-                    }
                     Outcome::Panic => panic!("kernel exploded"),
                     Outcome::Cancel => {
                         context.cancel_token().cancel();
@@ -621,15 +585,10 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_job_or_an_error_output_fails() {
+    fn a_failing_job_fails() {
         let failing = run(&cli(FakeJob::new("train", Outcome::Fail)), &["train"]);
-        let reporting = run(
-            &cli(FakeJob::new("train", Outcome::ReportError)),
-            &["train"],
-        );
 
         assert!(matches!(failing, Err(CliError::JobFailed(e)) if e.to_string() == "boom"));
-        assert!(matches!(reporting, Err(CliError::JobFailed(e)) if e.to_string() == "bad output"));
     }
 
     #[test]
@@ -665,7 +624,6 @@ mod tests {
         assert_eq!(exit_code(run(&cli, &["train", "[1, 2]"])), 2);
         for (outcome, code) in [
             (Outcome::Fail, 1),
-            (Outcome::ReportError, 1),
             (Outcome::Panic, 1),
             (Outcome::Cancel, 130),
             (Outcome::Stop, 130),
@@ -690,27 +648,20 @@ mod tests {
     }
 
     #[test]
-    fn an_inference_is_reported_running_then_completed_with_no_experiment() {
+    fn a_job_that_records_no_experiment_is_reported_running_then_completed_with_none() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
         let running = Arc::new(Mutex::new(None));
-        let words = InferenceModule::new(Arc::new(NoopInferenceProvider::new())).create("words", {
-            let (path, running) = (path.clone(), running.clone());
-            move |_session: &InferenceSession,
-                  input: InferenceInput<String>,
-                  output: InferenceOutput<String>| {
-                *running.lock().unwrap() = Some(read_json(&path));
-                for text in input {
-                    let _ = output.write(text);
-                }
-            }
-        });
-        let cli = Cli::new().register(words, JsonMapper::<String>::new());
+        let job = ReadsReport {
+            definition: definition("evaluate", None, None),
+            path: path.clone(),
+            running: running.clone(),
+        };
 
-        run_reporting(&cli, &["words", r#""hello""#], Some(&path)).unwrap();
+        run_reporting(&Cli::new().job(job), &["evaluate"], Some(&path)).unwrap();
 
         let running = running.lock().unwrap().take().unwrap();
-        assert_eq!(running["job"], "words");
+        assert_eq!(running["job"], "evaluate");
         assert_eq!(running["status"], "running");
         assert_eq!(running["experiment"], Value::Null);
         assert_eq!(
@@ -718,6 +669,27 @@ mod tests {
             (json!("completed"), Value::Null, Value::Null)
         );
         assert!(read_json(&path)["finished_at"].is_string());
+    }
+
+    /// Keeps the run report at `path` as it reads while the job runs.
+    struct ReadsReport {
+        definition: JobDefinition,
+        path: PathBuf,
+        running: Arc<Mutex<Option<Value>>>,
+    }
+
+    impl Job for ReadsReport {
+        fn definition(&self) -> &JobDefinition {
+            &self.definition
+        }
+
+        fn prepare(&self, _input: Value) -> Result<PreparedJob, BoxError> {
+            let (path, running) = (self.path.clone(), self.running.clone());
+            Ok(PreparedJob::new(move |_context| {
+                *running.lock().unwrap() = Some(read_json(&path));
+                Ok(())
+            }))
+        }
     }
 
     #[test]
@@ -812,10 +784,6 @@ mod tests {
         assert_eq!(
             report(Outcome::Fail),
             (json!("failed"), json!("boom"), Value::Null)
-        );
-        assert_eq!(
-            report(Outcome::ReportError),
-            (json!("failed"), json!("bad output"), Value::Null)
         );
         assert_eq!(
             report(Outcome::Panic),

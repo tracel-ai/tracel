@@ -22,7 +22,7 @@
 //!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
-//! - [`app`]: job registration, plus the command-line and HTTP runners that run those jobs.
+//! - [`app`]: job registration, and the command-line runner that runs those jobs.
 //! - [`job`]: the job definitions file, the run report, and the command line built from job
 //!   definitions, which programs that launch jobs share with the SDK.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
@@ -32,9 +32,8 @@
 //!
 //! ## Registering Jobs
 //!
-//! Wrap a routine into a job with [`experiment::Experiments::create`], then register it with a
-//! runner: an [`app::cli::Cli`] runs it from the command line, and an `app::server::Server` serves
-//! it over HTTP (requires the `server` feature). A mapper decodes the job's JSON input:
+//! Wrap a routine into a job with [`experiment::Experiments::create`], then register it with an
+//! [`app::cli::Cli`], which runs it from the command line. A mapper decodes the job's JSON input:
 //!
 //! ```no_run
 //! use std::process::ExitCode;
@@ -72,11 +71,9 @@
 //! ```
 //!
 //! Run it as `<binary> train '{"epochs": 5}'`: the job's name selects it, and its input, one JSON
-//! document, is merged onto the default. Left out, the job runs with the default. Over HTTP, the
-//! same input is the body of `POST /train`, answered with the job's outputs, the experiment it
-//! records and how it ended, as Server-Sent Events. The experiment records the merged input as its
-//! arguments, which the console lists as the experiment's config; `ExperimentJob::run` records
-//! the input it is given.
+//! document, is merged onto the default. Left out, the job runs with the default. The experiment
+//! records the merged input as its arguments, which the console lists as the experiment's config;
+//! `ExperimentJob::run` records the input it is given.
 //!
 //! [`version`](app::cli::Cli::version) gives the binary its `--version`, which prints the
 //! binary's name and that version; without it, the binary has no `--version`.
@@ -128,8 +125,8 @@
 //!
 //! ## Describing Jobs
 //!
-//! With `TRACEL_DESCRIBE=<path>` set, every runner writes the definitions of its jobs to `<path>`
-//! as JSON, then returns without running a job or serving: see [`job::DefinitionsFile`]. Each
+//! With `TRACEL_DESCRIBE=<path>` set, the runner writes the definitions of its jobs to `<path>` as
+//! JSON, then returns without running a job: see [`job::DefinitionsFile`]. Each
 //! definition gives the job's name, description, input schema and example input. The example
 //! input is the mapper's default, and the input schema needs `JsonMapper::with_schema` and the
 //! `schema` feature. While the variable is set, `ExperimentJob::run` returns an
@@ -150,10 +147,9 @@
 //!
 //! With `TRACEL_REPORT_FILE=<path>` set, the program writes the job's [`RunReport`](job::RunReport)
 //! to `<path>`: how the job is going and how it ended, and the experiment it recorded, if any.
-//! Every job writes it, an inference too. It is written when the job starts, again when the job
-//! records an experiment, and again when the job ends, each time to `<path>.tmp` first, renamed to
-//! `<path>`. Without the variable, or when the program rejects the job or its input, nothing is
-//! written:
+//! It is written when the job starts, again when the job records an experiment, and again when the
+//! job ends, each time to `<path>.tmp` first, renamed to `<path>`. Without the variable, or when
+//! the program rejects the job or its input, nothing is written:
 //!
 //! ```json
 //! {
@@ -169,9 +165,9 @@
 //!
 //! `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why
 //! a job failed. `experiment` is `null` until the job records an experiment, and stays `null` for
-//! a job that records none, such as an inference. `url` is the experiment's page on the console;
-//! offline it is `null`, and `dir` gives the experiment's directory instead, where `status.json`
-//! says how the experiment went and `events.jsonl` holds its events, one JSON object per line, as
+//! a job that records none. `url` is the experiment's page on the console; offline it is `null`,
+//! and `dir` gives the experiment's directory instead, where `status.json` says how the experiment
+//! went and `events.jsonl` holds its events, one JSON object per line, as
 //! [`LocalExperiments`](experiment::local::LocalExperiments) describes.
 //!
 //! With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which
@@ -218,7 +214,7 @@ pub use tracel_inference as inference;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
-/// Job registration, input mappers, and the command-line and HTTP runners.
+/// Job registration, input mappers, and the command-line runner.
 #[doc(inline)]
 pub use tracel_app as app;
 

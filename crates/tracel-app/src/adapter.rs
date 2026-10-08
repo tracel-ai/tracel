@@ -1,25 +1,11 @@
-//! [`IntoJob`] for the capability jobs: experiments and inferences.
+//! [`IntoJob`] for experiment jobs.
 
-use std::sync::Arc;
-use std::time::Duration;
-
-use serde::Serialize;
 use serde_json::Value;
 use tracel_experiment::{ExperimentJob, ExperimentLocation, ExperimentRun};
-use tracel_inference::{InferenceJob, OutputWriter, OutputWriterError};
 use tracel_job::{JobDefinition, ReportedExperiment};
 
-use crate::job::{BoxError, IntoJob, Job, JobInput, PreparedJob};
+use crate::job::{BoxError, IntoJob, Job, PreparedJob};
 use crate::mapper::Mapper;
-
-fn definition<I>(name: &str, description: Option<&str>, mapper: &dyn Mapper<I>) -> JobDefinition {
-    JobDefinition {
-        name: name.to_string(),
-        description: description.map(str::to_string),
-        input_schema: mapper.schema(),
-        input_example: mapper.example(),
-    }
-}
 
 impl<I, O, M> IntoJob<M> for ExperimentJob<I, O>
 where
@@ -29,7 +15,12 @@ where
 {
     fn into_job(self, mapper: M) -> Box<dyn Job> {
         Box::new(Experiment {
-            definition: definition(self.name(), self.description(), &mapper),
+            definition: JobDefinition {
+                name: self.name().to_string(),
+                description: self.description().map(str::to_string),
+                input_schema: mapper.schema(),
+                input_example: mapper.example(),
+            },
             job: self,
             mapper,
         })
@@ -53,12 +44,12 @@ where
         &self.definition
     }
 
-    fn prepare(&self, input: JobInput) -> Result<PreparedJob, BoxError> {
+    fn prepare(&self, input: Value) -> Result<PreparedJob, BoxError> {
         // The experiment records the input it runs with: the JSON the mapper resolved.
-        let arguments = self.mapper.resolve(input.one()?);
+        let arguments = self.mapper.resolve(input);
         let input = self.mapper.decode(arguments.clone())?;
         let job = self.job.clone();
-        Ok(PreparedJob::new(move |_output, context| {
+        Ok(PreparedJob::new(move |context| {
             job.run_with(input, arguments, context.cancel_token().clone(), |run| {
                 context.reporter().report(reported(run));
             })
@@ -81,152 +72,20 @@ fn reported(run: &ExperimentRun) -> ReportedExperiment {
     }
 }
 
-impl<I, O, M> IntoJob<M> for InferenceJob<I, O>
-where
-    I: Send + 'static,
-    O: Serialize + Send + Sync + 'static,
-    M: Mapper<I> + 'static,
-{
-    fn into_job(self, mapper: M) -> Box<dyn Job> {
-        Box::new(Inference {
-            definition: definition(self.name(), self.description(), &mapper),
-            job: self,
-            mapper: Arc::new(mapper),
-        })
-    }
-}
-
-/// An inference job: each decoded input is answered with outputs, sent on as JSON.
-struct Inference<I, O, M> {
-    definition: JobDefinition,
-    job: InferenceJob<I, O>,
-    mapper: Arc<M>,
-}
-
-impl<I, O, M> Job for Inference<I, O, M>
-where
-    I: Send + 'static,
-    O: Serialize + Send + Sync + 'static,
-    M: Mapper<I> + 'static,
-{
-    fn definition(&self) -> &JobDefinition {
-        &self.definition
-    }
-
-    fn prepare(&self, input: JobInput) -> Result<PreparedJob, BoxError> {
-        let job = self.job.clone();
-        match input {
-            JobInput::Document(input) => {
-                let input = self.mapper.map(input)?;
-                Ok(PreparedJob::new(move |output, _context| {
-                    let output = JsonOutput(Arc::from(output));
-                    Ok(job.run(std::iter::once(input), output)?)
-                }))
-            }
-            JobInput::Stream(inputs) => {
-                let mapper = self.mapper.clone();
-                Ok(PreparedJob::new(move |output, context| {
-                    let cancel_token = context.cancel_token().clone();
-                    let output: Arc<dyn OutputWriter<Value> + Send + Sync> = Arc::from(output);
-                    let errors = output.clone();
-                    // An input that cannot be read or does not decode is reported as an error and
-                    // ends the stream, and cancelling ends it before the next input.
-                    let inputs = inputs
-                        .take_while(move |_| !cancel_token.is_cancelled())
-                        .map_while(
-                            move |input| match input.and_then(|input| mapper.map(input)) {
-                                Ok(input) => Some(input),
-                                Err(error) => {
-                                    let _ = errors.error(error);
-                                    None
-                                }
-                            },
-                        );
-                    Ok(job.run(inputs, JsonOutput(output))?)
-                }))
-            }
-        }
-    }
-}
-
-/// Sends an inference's typed outputs on to a job's output as JSON.
-struct JsonOutput(Arc<dyn OutputWriter<Value> + Send + Sync>);
-
-impl<O: Serialize> OutputWriter<O> for JsonOutput {
-    fn write(&self, output: O) -> Result<(), OutputWriterError> {
-        match serde_json::to_value(output) {
-            Ok(output) => self.0.write(output),
-            Err(error) => self.0.error(Box::new(error)),
-        }
-    }
-
-    fn error(&self, error: BoxError) -> Result<(), OutputWriterError> {
-        self.0.error(error)
-    }
-
-    fn finish(&self, duration: Duration) {
-        self.0.finish(duration);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    use serde::Deserialize;
     use serde_json::json;
     use tracel_experiment::local::LocalExperiments;
     use tracel_experiment::{CancelToken, ExperimentProvider, Experiments};
-    use tracel_inference::{
-        InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
-    };
 
     use super::*;
     use crate::mapper::JsonMapper;
     use crate::test_support::NeverRuns;
-    use crate::{DiscardOutput, ExperimentReporter, JobContext};
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Prompt {
-        text: String,
-    }
-
-    #[derive(Default, Clone)]
-    struct Collected(Arc<Mutex<Vec<Result<Value, String>>>>);
-
-    impl OutputWriter<Value> for Collected {
-        fn write(&self, output: Value) -> Result<(), OutputWriterError> {
-            self.0.lock().unwrap().push(Ok(output));
-            Ok(())
-        }
-
-        fn error(&self, error: BoxError) -> Result<(), OutputWriterError> {
-            self.0.lock().unwrap().push(Err(error.to_string()));
-            Ok(())
-        }
-
-        fn finish(&self, _duration: Duration) {}
-    }
-
-    fn words() -> Box<dyn Job> {
-        InferenceModule::new(Arc::new(NoopInferenceProvider::new()))
-            .create(
-                "words",
-                |_session: &InferenceSession,
-                 input: InferenceInput<Prompt>,
-                 output: InferenceOutput<String>| {
-                    for prompt in input {
-                        for word in prompt.text.split_whitespace() {
-                            let _ = output.write(word.to_string());
-                        }
-                    }
-                },
-            )
-            .with_description("Split prompts into words")
-            .into_job(JsonMapper::<Prompt>::new())
-    }
+    use crate::{ExperimentReporter, JobContext};
 
     #[test]
     fn an_experiment_is_defined_by_its_job_and_mapper() {
@@ -246,21 +105,15 @@ mod tests {
         );
     }
 
-    fn stream(inputs: Vec<Value>) -> JobInput {
-        JobInput::Stream(Box::new(inputs.into_iter().map(Ok)))
-    }
-
     #[test]
-    fn an_experiment_takes_one_input_that_decodes() {
+    fn an_experiment_takes_an_input_that_decodes() {
         let job = Experiments::new(Arc::new(NeverRuns))
             .create("train", |_run: &ExperimentRun, _epochs: u32| Ok(()))
             .into_job(JsonMapper::with_default(10u32));
 
-        assert!(job.prepare(JobInput::Document(json!(3))).is_ok());
-        assert!(job.prepare(stream(vec![json!(3)])).is_ok());
-        assert!(job.prepare(stream(vec![])).is_ok());
-        assert!(job.prepare(JobInput::Document(json!("ten"))).is_err());
-        assert!(job.prepare(stream(vec![json!(3), json!(4)])).is_err());
+        assert!(job.prepare(json!(3)).is_ok());
+        assert!(job.prepare(Value::Null).is_ok());
+        assert!(job.prepare(json!("ten")).is_err());
     }
 
     fn read_json(path: &Path) -> Value {
@@ -276,9 +129,9 @@ mod tests {
                 json!({"epochs": 10, "optimizer": {"lr": 0.001}}),
             ));
 
-        job.prepare(JobInput::Document(json!({"epochs": 2})))
+        job.prepare(json!({"epochs": 2}))
             .unwrap()
-            .run(DiscardOutput, JobContext::default())
+            .run(JobContext::default())
             .unwrap();
 
         let events = std::fs::read_to_string(dir.path().join("train/1/events.jsonl")).unwrap();
@@ -311,9 +164,9 @@ mod tests {
             })
             .into_job(JsonMapper::with_default(10u32));
 
-        job.prepare(JobInput::Document(Value::Null))
+        job.prepare(Value::Null)
             .unwrap()
-            .run(DiscardOutput, JobContext::new(cancel_token))
+            .run(JobContext::new(cancel_token))
             .unwrap();
 
         let status = read_json(&dir.path().join("train/1/status.json"));
@@ -338,9 +191,9 @@ mod tests {
             })
             .into_job(JsonMapper::with_default(10u32));
 
-        job.prepare(JobInput::Document(Value::Null))
+        job.prepare(Value::Null)
             .unwrap()
-            .run(DiscardOutput, JobContext::default().with_reporter(reporter))
+            .run(JobContext::default().with_reporter(reporter))
             .unwrap();
 
         assert_eq!(
@@ -382,68 +235,6 @@ mod tests {
                 url: Some(page.to_string()),
                 dir: None,
             }
-        );
-    }
-
-    #[test]
-    fn an_inference_sends_its_outputs_as_json() {
-        let output = Collected::default();
-
-        words()
-            .prepare(JobInput::Document(json!({"text": "hello streaming world"})))
-            .unwrap()
-            .run(output.clone(), JobContext::default())
-            .unwrap();
-
-        assert_eq!(
-            *output.0.lock().unwrap(),
-            vec![
-                Ok(json!("hello")),
-                Ok(json!("streaming")),
-                Ok(json!("world"))
-            ]
-        );
-    }
-
-    #[test]
-    fn an_inference_stream_ends_at_the_first_input_that_does_not_decode() {
-        let output = Collected::default();
-        let inputs = vec![
-            json!({"text": "one two"}),
-            json!({"prompt": "three"}),
-            json!({"text": "four"}),
-        ];
-
-        words()
-            .prepare(stream(inputs))
-            .unwrap()
-            .run(output.clone(), JobContext::default())
-            .unwrap();
-
-        let output = output.0.lock().unwrap();
-        assert_eq!(output[..2], [Ok(json!("one")), Ok(json!("two"))]);
-        assert!(matches!(&output[2], Err(error) if error.contains("text")));
-        assert_eq!(output.len(), 3);
-    }
-
-    #[test]
-    fn an_inference_stream_ends_at_the_first_input_that_cannot_be_read() {
-        let output = Collected::default();
-        let inputs: Vec<Result<Value, BoxError>> = vec![
-            Ok(json!({"text": "one"})),
-            Err("invalid JSON".into()),
-            Ok(json!({"text": "two"})),
-        ];
-
-        words()
-            .prepare(JobInput::Stream(Box::new(inputs.into_iter())))
-            .unwrap()
-            .run(output.clone(), JobContext::default())
-            .unwrap();
-
-        assert_eq!(
-            *output.0.lock().unwrap(),
-            [Ok(json!("one")), Err("invalid JSON".to_string())]
         );
     }
 }

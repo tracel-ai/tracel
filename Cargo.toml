@@ -54,9 +54,6 @@ json-patch = { version = "4.1.0", default-features = false }
 schemars = "1.2.2"
 reqwest = { version = "0.13.4", features = ["blocking", "json"] }
 uuid = { version = "1.23.4", features = ["serde"] }
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
-tokio-stream = "0.1"
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
 derive_more = { version = "2.1.1", default-features = false, features = [

@@ -50,9 +50,6 @@ mod tests {
 
     use serde_json::{Value, json};
     use tracel_experiment::{ExperimentRun, Experiments};
-    use tracel_inference::{
-        InferenceInput, InferenceModule, InferenceOutput, InferenceSession, NoopInferenceProvider,
-    };
 
     use super::*;
     use crate::job::IntoJob;
@@ -70,17 +67,8 @@ mod tests {
                 )),
         );
         registry.add(
-            InferenceModule::new(Arc::new(NoopInferenceProvider::new()))
-                .create(
-                    "echo",
-                    |_session: &InferenceSession,
-                     input: InferenceInput<String>,
-                     output: InferenceOutput<String>| {
-                        for text in input {
-                            let _ = output.write(text);
-                        }
-                    },
-                )
+            Experiments::new(Arc::new(NeverRuns))
+                .create("evaluate", |_run: &ExperimentRun, _input: String| Ok(()))
                 .into_job(JsonMapper::<String>::new()),
         );
         registry
@@ -109,7 +97,7 @@ mod tests {
                 "runner": "cli",
                 "jobs": [
                     {
-                        "name": "echo",
+                        "name": "evaluate",
                         "description": null,
                         "input_schema": null,
                         "input_example": null

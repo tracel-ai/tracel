@@ -59,7 +59,6 @@ impl InferenceModule {
 pub struct InferenceJob<I, O> {
     provider: Arc<dyn InferenceProvider>,
     name: String,
-    description: Option<String>,
     inference: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
 }
 
@@ -68,7 +67,6 @@ impl<I, O> Clone for InferenceJob<I, O> {
         Self {
             provider: self.provider.clone(),
             name: self.name.clone(),
-            description: self.description.clone(),
             inference: self.inference.clone(),
         }
     }
@@ -83,25 +81,13 @@ impl<I, O> InferenceJob<I, O> {
         Self {
             provider,
             name,
-            description: None,
             inference,
         }
     }
 
-    /// The job's name, used to select it from a runner.
+    /// The inference's name, which names the sessions it opens.
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// The job's description, as runners list it.
-    pub fn description(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-
-    /// Sets the job's description.
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
     }
 }
 

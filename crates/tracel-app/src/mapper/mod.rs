@@ -14,11 +14,11 @@ use crate::BoxError;
 
 /// Decodes a job's JSON input into the type its job takes.
 ///
-/// Every runner hands a job its input as JSON. The mapper first [resolves](Self::resolve) it into
+/// The runner hands a job its input as JSON. The mapper first [resolves](Self::resolve) it into
 /// the input the job runs with, which an experiment records as its arguments, then
 /// [decodes](Self::decode) that. [`JsonMapper`] merges the input onto a default and decodes it as
 /// the input type; [`ClapMapper`] and [`PresetMapper`] take a JSON string as given. The mapper
-/// also tells runners what input to expect, through [`example`](Self::example) and
+/// also tells the runner what input to expect, through [`example`](Self::example) and
 /// [`schema`](Self::schema).
 pub trait Mapper<I>: Send + Sync {
     /// Completes `input` into the input the job runs with, such as by merging it onto a

@@ -15,7 +15,7 @@
 
 Tracel is a new way of using Burn. It aims at providing a central platform for experiment tracking, model sharing, and deployment for all Burn users!
 
-This repository contains the SDK associated with the project. It provides a Rust API to register your training and inference routines as jobs and dispatch them from a CLI or an HTTP server, sending training data to our application as they run. To use this project you must first create an account on the [console](https://console.tracel.ai/).
+This repository contains the SDK associated with the project. It provides a Rust API to register your training routines as jobs and run them from the command line, sending training data to our application as they run. To use this project you must first create an account on the [application](https://s1-central.burn.dev/).
 
 You'll also want the [tracel-cli](https://github.com/tracel-ai/tracel-cli) to log in (`tracel login`) and store your credentials locally.
 
@@ -41,7 +41,7 @@ Here's how to integrate Tracel into a Burn training workflow:
 ### 1. Register your training function
 
 Wrap your training function into a job with `Experiments::create`, then register it with a
-`Cli` (to run it from the command line) or a `Server` (to dispatch it over HTTP):
+`Cli`, which runs it from the command line:
 
 ```rust
 use std::process::ExitCode;
@@ -80,11 +80,8 @@ out, the input is the default. The experiment records the merged input as its ar
 console lists as its config. `version` gives the binary its `--version`, which prints the binary's
 name and that version, such as `mnist 0.1.0`; without it, the binary has no `--version`.
 
-Swap `Cli` for `tracel::app::server::Server` (with the optional `server` feature) to dispatch the
-same job over HTTP instead of the command line, as [Serving jobs over HTTP](#serving-jobs-over-http)
-describes. The [`cli`](examples/basics/examples/cli.rs) and
-[`serve`](examples/basics/examples/serve.rs) examples in [`examples/basics`](examples/basics) are
-complete, runnable versions of both.
+The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a
+complete, runnable version.
 
 `Target::from_env` records offline under `./runs` unless `TRACEL_TARGET` says otherwise:
 
@@ -146,8 +143,8 @@ instead, through `ClapMapper`, from a JSON string: `cargo run -- <job> '"--epoch
 #### Describing jobs
 
 With `TRACEL_DESCRIBE=<path>` set, `run()` writes the definitions of the binary's jobs to `<path>`
-and returns successfully without running a job or serving. `Cli` and `Server` both do this, writing
-the file to `<path>.tmp` first and renaming it, so it is never read half written:
+and returns successfully without running a job, writing the file to `<path>.tmp` first and
+renaming it, so it is never read half written:
 
 ```json
 {
@@ -184,10 +181,10 @@ A binary whose `main` returns `Cli::run()` can be launched by another program, s
 | 130 | The job was asked to stop |
 
 With `TRACEL_REPORT_FILE=<path>` set, the binary writes the job's run report to `<path>`: how the
-job is going and how it ended, and the experiment it recorded, if any. Every job writes it, an
-inference too. It is written when the job starts, again when the job records an experiment, and
-again when the job ends, each time to `<path>.tmp` first, renamed to `<path>`. Without the
-variable, or when the binary rejects the job or its input, nothing is written:
+job is going and how it ended, and the experiment it recorded, if any. It is written when the job
+starts, again when the job records an experiment, and again when the job ends, each time to
+`<path>.tmp` first, renamed to `<path>`. Without the variable, or when the binary rejects the job or
+its input, nothing is written:
 
 ```json
 {
@@ -203,7 +200,7 @@ variable, or when the binary rejects the job or its input, nothing is written:
 
 `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why a
 job failed. `experiment` is `null` until the job records an experiment, and stays `null` for a job
-that records none, such as an inference. `url` is the experiment's page on the console; offline it
+that records none. `url` is the experiment's page on the console; offline it
 is `null`, and `dir` gives the experiment's directory instead, where `status.json` says how the
 experiment went and `events.jsonl` holds its events, one JSON object per line.
 
@@ -215,33 +212,6 @@ experiment's cancel token, which stops a learner given `experiment.interrupter()
 experiment logs a warning that a stop was requested. The job ends as `completed` or `failed` by
 what its function returns, and the binary exits with code 130. A second signal ends the
 binary at once. Launchers send SIGKILL after a 30-second grace period.
-
-#### Serving jobs over HTTP
-
-`Server` serves every job at `POST /<job>`, and runs each the same way. The request body is the
-job's input: one JSON document per line (NDJSON), each handed to the job once its line has
-arrived, or one document over several lines, such as a pretty-printed one, handed over once the
-body has ended. An empty body is a `null` input, which the mapper reads as its default. A job that
-takes one input, such as an experiment, takes the body's one document; a job that takes several,
-such as an inference, takes each as it arrives.
-
-The response streams the job's events as Server-Sent Events while it runs: each output the job
-writes, as JSON in an unnamed event; each error it reports, as text in an `error` event; the
-experiment it records, in an `experiment` event; and last, how it ended, in a `done` event:
-
-```text
-event: experiment
-data: {"num":4,"url":null,"dir":"/home/me/demo/runs/mnist/4"}
-
-event: done
-data: {"status":"completed","error":null,"experiment":{"num":4,"url":null,"dir":"/home/me/demo/runs/mnist/4"}}
-```
-
-The experiment is given as the run report links it. In `done`, `status` is `completed` or `failed`,
-by what the job returned, `error` says why a job failed, and `experiment` is `null` for a job that
-records none. An unknown job is answered with `404 Not Found`, and an input the job rejects before
-it runs, such as one that does not decode, with `400 Bad Request` and the reason. A client that
-disconnects asks the job to stop, as a termination signal does for `Cli`.
 
 ### 2. Integrate with your Learner
 

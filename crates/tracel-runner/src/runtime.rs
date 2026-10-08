@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tracel_app::{DiscardOutput, JobContext, JobInput, JobRegistry};
+use tracel_app::{JobContext, JobRegistry};
 use uuid::Uuid;
 
 use crate::error::RunnerError;
@@ -111,10 +111,10 @@ fn execute(jobs: &JobRegistry, job: &DispatchedJob) -> (FinishStatus, Option<Str
     tracing::info!(job_id = %job.id, job_name = %job.job_name, "Running job");
     let result = catch_unwind(AssertUnwindSafe(|| {
         let prepared = runner_job
-            .prepare(JobInput::Document(job.input.clone()))
+            .prepare(job.input.clone())
             .map_err(|e| format!("invalid input: {e}"))?;
         prepared
-            .run(DiscardOutput, JobContext::default())
+            .run(JobContext::default())
             .map_err(|e| e.to_string())
     }));
     match result {
@@ -290,12 +290,12 @@ mod tests {
             &self.definition
         }
 
-        fn prepare(&self, _input: JobInput) -> Result<PreparedJob, BoxError> {
+        fn prepare(&self, _input: serde_json::Value) -> Result<PreparedJob, BoxError> {
             let behaviour = self.behaviour;
             if let FakeBehaviour::RejectInput(reason) = behaviour {
                 return Err(reason.into());
             }
-            Ok(PreparedJob::new(move |_output, _context| match behaviour {
+            Ok(PreparedJob::new(move |_context| match behaviour {
                 FakeBehaviour::Fail(reason) => Err(reason.into()),
                 FakeBehaviour::Panic(message) => panic!("{message}"),
                 FakeBehaviour::Succeed | FakeBehaviour::RejectInput(_) => Ok(()),

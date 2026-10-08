@@ -13,7 +13,6 @@ rust-version.workspace = true
 
 [features]
 default = []
-server = ["tracel-app/server"]
 station = ["dep:tracel-station", "dep:url"]
 runner = ["dep:tracel-runner"]
 burn = ["tracel-experiment/burn", "tracel-datasets/burn"]

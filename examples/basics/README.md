@@ -24,9 +24,7 @@ The `mnist` example shows the same experiment tracking driven from the Burn `tra
 | --- | --- |
 | `infer` | Streaming inference: prompts fed over time, tokens streamed back. |
 | `train` | An experiment run: activity tracking, metrics, cancellation. |
-| `cli` | A CLI serving both jobs, each with flags built from its input schema. |
-| `serve` | An HTTP server serving both jobs, each answering with its outputs and how it ended as SSE. |
-| `infer-client` | Streaming HTTP client for `serve`. |
+| `cli` | A CLI serving the training job, with flags built from its input schema. |
 | `console` | The signed-in user and the project's models, read from the console. |
 
 ## Run
@@ -38,15 +36,9 @@ cargo run -p basics --example train
 cargo run -p basics --example cli -- --help                  # lists the jobs
 cargo run -p basics --example cli -- --version               # prints cli 0.10.0
 cargo run -p basics --example cli -- toy-training --help     # lists the job's flags
-cargo run -p basics --example cli -- wordtok --text "hello streaming world"
 cargo run -p basics --example cli -- toy-training --epochs 2 --batches-per-epoch 4
 cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'  # the same input as JSON
 cargo run -p basics --example cli -- --completions bash > cli.bash  # a bash completion script
 TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli  # writes the job definitions to jobs.json
 TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training  # writes the job's run report to report.json
-
-cargo run -p basics --example serve
-curl -N -X POST localhost:3000/wordtok -d '{"text":"hello streaming world"}'
-curl -N -X POST localhost:3000/toy-training -d '{"epochs":2,"batches_per_epoch":4}'
-cargo run -p basics --example infer-client
 ```

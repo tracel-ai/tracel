@@ -26,5 +26,4 @@ reqwest.workspace = true
 
 [dev-dependencies]
 tracel-experiment = { workspace = true, features = ["local"] }
-tracel-inference.workspace = true
 uuid = { workspace = true, features = ["v4"] }
