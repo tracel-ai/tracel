@@ -7,12 +7,13 @@ use tracel::Target;
 
 fn main() -> anyhow::Result<()> {
     let experiments = Target::from_env()?.experiments()?;
+    let config = TrainingConfig::default();
 
     experiments
-        .create("toy-training", training::train)
         .attribute("kind", "example")?
-        .run(TrainingConfig::default())
-        .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
-
-    Ok(())
+        .run("toy-training", |run| {
+            run.log_args(&config)?;
+            training::train(run, config)
+        })
+        .map_err(|e| anyhow::anyhow!("training failed: {e}"))
 }

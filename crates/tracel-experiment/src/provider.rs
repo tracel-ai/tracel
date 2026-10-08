@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
+use std::fmt;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -38,17 +39,105 @@ where
     }
 }
 
-/// Entry point for building experiment jobs against a backend.
+/// The experiments of a backend, with the attributes each experiment started from it records.
+///
+/// [`run`](Self::run) runs code in a new experiment and ends the experiment by what the code
+/// returns. [`start`](Self::start) starts one and returns its run, for code that ends it itself.
+///
+/// ```no_run
+/// use tracel_experiment::{ExperimentRun, Experiments};
+///
+/// type BoxError = Box<dyn std::error::Error + Send + Sync>;
+///
+/// fn train(run: &ExperimentRun) -> Result<(), BoxError> {
+///     run.log_info("training");
+///     Ok(())
+/// }
+///
+/// fn train_tracked(experiments: Experiments) -> Result<(), BoxError> {
+///     experiments.attribute("dataset", "mnist")?.run("train", train)
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
+    attributes: HashMap<String, Value>,
 }
 
 impl Experiments {
-    // TODO: Add settings here (e.g., an Experiments builder).
-    /// Create experiments backed by the given provider.
+    /// Experiments backed by `provider`, recording no attributes.
     pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            attributes: HashMap::new(),
+        }
+    }
+
+    /// Records `value`, as JSON, as the attribute `key` of each experiment started from the
+    /// returned experiments.
+    ///
+    /// Fails when `value` does not serialize.
+    pub fn attribute(
+        mut self,
+        key: impl Into<String>,
+        value: impl Serialize,
+    ) -> Result<Self, ExperimentError> {
+        let value = serde_json::to_value(value).map_err(|e| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Internal,
+                "Failed to serialize experiment attribute",
+                e,
+            )
+        })?;
+
+        self.attributes.insert(key.into(), value);
+        Ok(self)
+    }
+
+    /// Records `attributes` on each experiment started from the returned experiments.
+    pub fn attributes(mut self, attributes: HashMap<String, Value>) -> Self {
+        self.attributes.extend(attributes);
+        self
+    }
+
+    /// Starts the experiment `name` and returns its run.
+    ///
+    /// The run ends as completed through [`ExperimentRun::finish`], and as failed through
+    /// [`ExperimentRun::fail`] or when it is dropped before either. Unless the program has
+    /// installed a `tracing` subscriber, this installs one that forwards events to experiments.
+    pub fn start(&self, name: &str) -> Result<ExperimentRun, ExperimentError> {
+        self.start_with(name, self.attributes.clone())
+    }
+
+    /// [`start`](Self::start), recording `attributes`.
+    fn start_with(
+        &self,
+        name: &str,
+        attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError> {
+        let _ = try_init_tracing_subscriber();
+        self.provider
+            .create_experiment(name.to_string(), attributes)
+    }
+
+    /// Runs `f` in a new experiment `name`, as [`start`](Self::start) starts it, and ends the
+    /// experiment by what `f` returns: completed when it returns `Ok`, and failed with the
+    /// error's message when it returns `Err`, or with the panic's message when it panics.
+    ///
+    /// While `f` runs, the run is the current experiment, as
+    /// [`ExperimentGlobalExt::in_scope`](crate::ExperimentGlobalExt::in_scope) makes it, so
+    /// `tracing` events reach it, and a panic on any thread is logged to it, as
+    /// [`ExperimentRun::capture_panics`] logs it. Fails without running `f` when the experiment
+    /// does not start, and with the backend's error when it cannot be finished.
+    pub fn run<T, E>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&ExperimentRun) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<ExperimentError> + fmt::Display,
+    {
+        end_by(self.start(name)?, f)
     }
 
     pub fn create<I, O>(
@@ -56,40 +145,58 @@ impl Experiments {
         name: &str,
         f: impl ExperimentFn<I, O> + 'static,
     ) -> ExperimentJob<I, O> {
-        ExperimentJob::new(self.provider.clone(), name.to_string(), f)
+        ExperimentJob::new(self.clone(), name.to_string(), f)
+    }
+}
+
+/// Runs `f` with `run`, as [`Experiments::run`] does, and ends `run` by what `f` returns.
+fn end_by<T, E>(run: ExperimentRun, f: impl FnOnce(&ExperimentRun) -> Result<T, E>) -> Result<T, E>
+where
+    E: From<ExperimentError> + fmt::Display,
+{
+    let handle = run.handle();
+    // Worker-thread panics (a kernel compiler, a data loader) land in the
+    // run's log even when they never unwind the run itself.
+    let _panic_watch = run.capture_panics();
+    match handle.in_scope(|| f(&run)) {
+        Ok(output) => {
+            run.finish()?;
+            Ok(output)
+        }
+        Err(error) => {
+            let _ = run.fail(error.to_string());
+            Err(error)
+        }
     }
 }
 
 pub struct ExperimentJob<I, O> {
-    provider: Arc<dyn ExperimentProvider>,
+    experiments: Experiments,
     name: String,
     description: Option<String>,
-    attributes: HashMap<String, Value>,
     f: Arc<dyn ExperimentFn<I, O>>,
 }
 
 impl<I, O> Clone for ExperimentJob<I, O> {
     fn clone(&self) -> Self {
         Self {
-            provider: self.provider.clone(),
+            experiments: self.experiments.clone(),
             name: self.name.clone(),
             description: self.description.clone(),
-            attributes: self.attributes.clone(),
             f: self.f.clone(),
         }
     }
 }
 
 impl<I, O> ExperimentJob<I, O> {
-    fn new<F>(provider: Arc<dyn ExperimentProvider>, name: String, f: F) -> Self
+    fn new<F>(experiments: Experiments, name: String, f: F) -> Self
     where
         F: ExperimentFn<I, O> + 'static,
     {
         Self {
-            provider,
+            experiments,
             name,
             description: None,
-            attributes: HashMap::new(),
             f: Arc::new(f),
         }
     }
@@ -115,20 +222,12 @@ impl<I, O> ExperimentJob<I, O> {
         key: impl Into<String>,
         value: impl Serialize,
     ) -> Result<Self, ExperimentError> {
-        let value = serde_json::to_value(value).map_err(|e| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Internal,
-                "Failed to serialize experiment attribute",
-                e,
-            )
-        })?;
-
-        self.attributes.insert(key.into(), value);
+        self.experiments = self.experiments.attribute(key, value)?;
         Ok(self)
     }
 
     pub fn attributes(mut self, attrs: HashMap<String, Value>) -> Self {
-        self.attributes.extend(attrs);
+        self.experiments = self.experiments.attributes(attrs);
         self
     }
 
@@ -185,8 +284,7 @@ impl<I, O> ExperimentJob<I, O> {
         cancel_token: CancelToken,
         on_created: impl FnOnce(&ExperimentRun),
     ) -> Result<O, Box<dyn Error + Send + Sync>> {
-        let var = |name: &str| lookup(name).filter(|value| !value.is_empty());
-        if var(TRACEL_DESCRIBE).is_some() {
+        if lookup(TRACEL_DESCRIBE).is_some_and(|value| !value.is_empty()) {
             return Err(ExperimentError::new(
                 ExperimentErrorKind::Describing,
                 format!(
@@ -204,37 +302,18 @@ impl<I, O> ExperimentJob<I, O> {
             .into());
         }
 
-        let _ = try_init_tracing_subscriber();
-
-        let mut attributes = self.attributes.clone();
-        if let Some(job_num) = job_num(var(TRACEL_JOB_NUM)) {
-            attributes.insert(JOB_NUM_ATTRIBUTE.to_string(), job_num);
+        let mut attributes = self.experiments.attributes.clone();
+        if let Some(num) = job_num(lookup(TRACEL_JOB_NUM).filter(|value| !value.is_empty())) {
+            attributes.insert(JOB_NUM_ATTRIBUTE.to_string(), num);
         }
-        let experiment = self
-            .provider
-            .create_experiment(self.name.clone(), attributes)?;
+        let experiment = self.experiments.start_with(&self.name, attributes)?;
         cancel_token.link(experiment.cancel_token());
         if !arguments.is_null() {
             experiment.record_args(arguments);
         }
         on_created(&experiment);
 
-        let handle = experiment.handle();
-        // Worker-thread panics (a kernel compiler, a data loader) land in the
-        // run's log even when they never unwind the run itself.
-        let _panic_watch = experiment.capture_panics();
-        let result = handle.in_scope(|| self.f.call(&experiment, input));
-
-        match result {
-            Ok(output) => {
-                experiment.finish()?;
-                Ok(output)
-            }
-            Err(e) => {
-                let _ = experiment.fail(e.to_string());
-                Err(e)
-            }
-        }
+        end_by(experiment, |run| self.f.call(run, input))
     }
 }
 
@@ -255,9 +334,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::ExperimentId;
     use crate::session::{Event, ExperimentCompletion};
     use crate::test_support::{MockSession, create_run_with_id};
+    use crate::{ExperimentGlobalExt, ExperimentId};
 
     /// Creates runs numbered 7 on one session, and keeps the attributes each was created with.
     struct MockProvider {
@@ -336,6 +415,114 @@ mod tests {
             move |run: &ExperimentRun| created.lock().unwrap().push(run.id().clone())
         };
         (hook, created)
+    }
+
+    type BoxError = Box<dyn Error + Send + Sync>;
+
+    #[test]
+    fn run_ends_the_experiment_by_what_its_code_returns() {
+        let fixture = Fixture::new();
+
+        let output = fixture
+            .experiments
+            .run("train", |_run| Ok::<_, BoxError>(3));
+        let failed = fixture
+            .experiments
+            .run("train", |_run| Err::<(), BoxError>("diverged".into()));
+
+        assert_eq!(output.unwrap(), 3);
+        assert_eq!(failed.unwrap_err().to_string(), "diverged");
+        assert_eq!(
+            fixture.completions(),
+            [
+                ExperimentCompletion::Success,
+                ExperimentCompletion::Failed("diverged".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_panic_in_run_fails_the_experiment_with_its_message() {
+        let fixture = Fixture::new();
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fixture
+                .experiments
+                .run("train", |_run| -> Result<(), BoxError> {
+                    panic!("loss is NaN")
+                })
+        }));
+
+        assert!(panicked.is_err());
+        match fixture.completions().as_slice() {
+            [ExperimentCompletion::Failed(reason)] => {
+                assert!(reason.contains("loss is NaN"), "{reason}");
+            }
+            other => panic!("unexpected completions: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_makes_the_run_the_current_experiment() {
+        let fixture = Fixture::new();
+
+        let current = fixture.experiments.run("train", |run| {
+            let current = ExperimentRun::current().map(|current| current.id().clone());
+            Ok::<_, BoxError>(current == Some(run.id().clone()))
+        });
+
+        assert!(current.unwrap());
+        assert!(ExperimentRun::current().is_none());
+    }
+
+    #[test]
+    fn run_runs_nothing_when_the_experiment_does_not_start() {
+        struct Unreachable;
+
+        impl ExperimentProvider for Unreachable {
+            fn create_experiment(
+                &self,
+                _name: String,
+                _attributes: HashMap<String, Value>,
+            ) -> Result<ExperimentRun, ExperimentError> {
+                Err(ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "the backend is unreachable",
+                ))
+            }
+        }
+        let ran = AtomicBool::new(false);
+
+        let error = Experiments::new(Arc::new(Unreachable))
+            .run("train", |_run| -> Result<(), BoxError> {
+                ran.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "the backend is unreachable");
+        assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_started_experiment_records_the_attributes() {
+        let fixture = Fixture::new();
+        let experiments = fixture
+            .experiments
+            .clone()
+            .attribute("kind", "example")
+            .unwrap()
+            .attributes(HashMap::from([("seed".to_string(), json!(42))]));
+
+        experiments.start("train").unwrap().finish().unwrap();
+
+        assert_eq!(
+            *fixture.attributes.lock().unwrap(),
+            [HashMap::from([
+                ("kind".to_string(), json!("example")),
+                ("seed".to_string(), json!(42)),
+            ])]
+        );
     }
 
     #[test]

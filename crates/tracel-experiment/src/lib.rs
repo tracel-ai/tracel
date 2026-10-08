@@ -22,9 +22,11 @@
 //!   (behind the `burn` feature).
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
-//! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] and
-//! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
-//! With the `local` feature, `local::LocalExperiments` records experiments on this machine.
+//! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] is the
+//! user-facing entry point: [`Experiments::run`] runs code in a new experiment and ends it by what
+//! the code returns, and [`Experiments::start`] starts one and returns its run. An
+//! [`ExperimentJob`] wraps a function into a job a runner runs. With the `local` feature,
+//! `local::LocalExperiments` records experiments on this machine.
 
 use std::fmt;
 use std::path::PathBuf;
