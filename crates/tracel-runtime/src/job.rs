@@ -13,8 +13,9 @@ pub type BoxError = Box<dyn Error + Send + Sync>;
 ///
 /// The function takes the job's input, decoded from JSON. The job completes when the function
 /// returns `Ok`, and fails when it returns `Err` or panics. A function alone is a job with no
-/// description, default input or input schema; `Job` adds them. A job may run more than once, on
-/// any thread, as a Station runner runs it.
+/// description, default input or input schema; `Job` adds them. A job may run more than once, and
+/// on any thread, as its transport runs it: its input is decoded where the job is prepared and
+/// sent to the thread that runs it.
 pub struct Job<I> {
     run: Arc<dyn Fn(I) -> Result<(), BoxError> + Send + Sync>,
     description: Option<String>,
@@ -110,8 +111,8 @@ pub struct Registered {
 /// Decodes a job's input, and gives the job ready to run with it.
 type Decode = Box<dyn Fn(&Value) -> Result<Ready, serde_json::Error> + Send + Sync>;
 
-/// A job given its input, ready to run.
-pub type Ready = Box<dyn FnOnce() -> Result<(), BoxError>>;
+/// A job given its input, ready to run on the thread it is sent to.
+pub type Ready = Box<dyn FnOnce() -> Result<(), BoxError> + Send>;
 
 /// A job given its input, ready to run, and that input.
 pub struct Prepared {
@@ -125,7 +126,7 @@ impl Registered {
     /// `job`, registered as `name`.
     pub fn new<I>(name: String, job: Job<I>) -> Self
     where
-        I: DeserializeOwned + 'static,
+        I: DeserializeOwned + Send + 'static,
     {
         let Job {
             run,
@@ -232,7 +233,7 @@ mod tests {
     /// Runs `job`, registered as `train`, with `input`.
     fn run<I>(job: Job<I>, input: Value) -> Result<(), BoxError>
     where
-        I: DeserializeOwned + 'static,
+        I: DeserializeOwned + Send + 'static,
     {
         (Registered::new("train".to_string(), job)
             .prepare(input)?

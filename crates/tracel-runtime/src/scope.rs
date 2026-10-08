@@ -57,7 +57,7 @@ impl JobScope {
     /// Runs `action` once the job is asked to stop, on the thread that asks it, or at once when it
     /// already was.
     pub fn on_stop(&self, action: impl FnOnce() + Send + 'static) {
-        self.inner.stop.on_request(Box::new(action));
+        self.inner.stop.on_request(action);
     }
 }
 

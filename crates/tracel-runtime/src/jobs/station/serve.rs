@@ -7,14 +7,12 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::Jobs;
 use crate::jobs::station::error::RunnerError;
 use crate::jobs::station::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
 use crate::jobs::station::infrastructure::{ClientError, StationRunnerClient};
-use crate::jobs::{Launch, PrepareError};
-use crate::stop::Stop;
+use crate::{Execution, Jobs, Stop};
 
 /// Reports job outcomes back to the station. Split out so the loop is testable with a fake.
 pub trait FinishSink: Send + Sync + 'static {
@@ -55,7 +53,7 @@ impl Executor {
 
     /// Runs `job` on a thread of its own, and reports how it ended to the station once it ends.
     pub fn dispatch(&self, runner_id: Uuid, job: DispatchedJob) {
-        let stop = Stop::default();
+        let stop = Stop::new();
         self.in_flight
             .0
             .lock()
@@ -128,27 +126,17 @@ fn finish_in_flight(in_flight: &InFlight, job_id: Uuid) {
 fn execute(jobs: &Jobs, job: &DispatchedJob, stop: Stop) -> (FinishStatus, Option<String>) {
     let prepared = match jobs.prepare(&job.job_name, job.input.clone()) {
         Ok(prepared) => prepared,
-        // Unreachable under the station's strict policy; defend anyway.
-        Err(PrepareError::UnknownJob) => {
-            return (
-                FinishStatus::Failed,
-                Some(format!("unknown job '{}'", job.job_name)),
-            );
-        }
-        Err(PrepareError::InvalidInput(error)) => {
-            return (
-                FinishStatus::Failed,
-                Some(format!("invalid input: {error}")),
-            );
-        }
+        // An unknown job is unreachable under the station's strict policy; defend anyway.
+        Err(error) => return (FinishStatus::Failed, Some(error.to_string())),
     };
     eprintln!("Running job {} ({})", job.job_name, job.id);
-    let launch = Launch {
-        stop: stop.clone(),
-        num: Some(job.id.to_string()),
-    };
-    match crate::jobs::run(prepared, launch) {
-        Ok(()) if stop.is_requested() => (FinishStatus::Cancelled, None),
+    let execution = Execution::new()
+        .with_num(job.id.to_string())
+        .with_stop(stop);
+    let outcome = prepared.run(execution);
+    let stopped = outcome.stop_requested();
+    match outcome.into_result() {
+        Ok(()) if stopped => (FinishStatus::Cancelled, None),
         Ok(()) => (FinishStatus::Completed, None),
         Err(error) => (FinishStatus::Failed, Some(error.to_string())),
     }

@@ -16,8 +16,7 @@ use clap_complete::Shell;
 use serde_json::Value;
 use tracel_job_proto::{TRACEL_JOB_NUM, command, completions, job_input};
 
-use crate::jobs::{Jobs, Launch, PrepareError};
-use crate::stop::Stop;
+use crate::{Execution, Jobs, Stop};
 use describe::describe;
 use error::RunError;
 
@@ -93,7 +92,7 @@ impl Jobs {
         let mut command = self.command_line(program_name());
         match self.parse(&mut command, std::env::args_os())? {
             Request::Run { job, input } => {
-                let stop = Stop::default();
+                let stop = Stop::new();
                 signal::stop_on_termination(stop.clone());
                 self.dispatch(&job, input, ProcessLaunch::from_vars(stop, vars))
             }
@@ -161,24 +160,17 @@ impl Jobs {
 
     /// Runs the job `name` with `input`, as `launch` launches it.
     fn dispatch(&self, name: &str, input: Value, launch: ProcessLaunch) -> Result<(), RunError> {
-        let prepared = self.prepare(name, input).map_err(|error| match error {
-            PrepareError::UnknownJob => RunError::UnknownJob {
-                name: name.to_string(),
-                available: self.names(),
-            },
-            PrepareError::InvalidInput(error) => RunError::InvalidInput(error),
-        })?;
-        let outcome = crate::jobs::run(
-            prepared,
-            Launch {
-                stop: launch.stop.clone(),
-                num: launch.num,
-            },
-        );
-        if launch.stop.is_requested() {
+        let prepared = self.prepare(name, input)?;
+        let execution = Execution::new().with_stop(launch.stop);
+        let execution = match launch.num {
+            Some(num) => execution.with_num(num),
+            None => execution,
+        };
+        let outcome = prepared.run(execution);
+        if outcome.stop_requested() {
             return Err(RunError::Stopped);
         }
-        outcome.map_err(RunError::JobFailed)
+        outcome.into_result().map_err(RunError::JobFailed)
     }
 }
 

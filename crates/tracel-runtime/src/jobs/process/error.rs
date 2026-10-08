@@ -1,7 +1,7 @@
 use tracel_job_proto::ConfigError;
 
-use crate::BoxError;
 use crate::jobs::process::describe::DescribeError;
+use crate::{BoxError, PrepareError};
 
 /// The exit code of a job that failed, or of a definitions file that could not be written.
 const FAILED: u8 = 1;
@@ -54,6 +54,15 @@ pub enum RunError {
     /// `TRACEL_DESCRIBE` names a path the definitions file could not be written to.
     #[error(transparent)]
     Describe(#[from] DescribeError),
+}
+
+impl From<PrepareError> for RunError {
+    fn from(error: PrepareError) -> Self {
+        match error {
+            PrepareError::UnknownJob { name, available } => Self::UnknownJob { name, available },
+            PrepareError::InvalidInput(error) => Self::InvalidInput(error),
+        }
+    }
 }
 
 impl RunError {

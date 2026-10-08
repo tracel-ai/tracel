@@ -11,11 +11,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracel_job_proto::JobDefinition;
 
-use crate::BoxError;
+use crate::execution::{self, PreparedJob};
 use crate::job::{IntoJob, Prepared, Registered};
-use crate::panics::catch_panic;
-use crate::scope;
-use crate::stop::Stop;
 
 /// A program's jobs, by name, and how the program runs the one its command line names: `main`
 /// returns [`run`](Self::run).
@@ -99,7 +96,7 @@ impl Jobs {
     /// When a job named `name` is already registered.
     pub fn job<I>(mut self, name: impl Into<String>, job: impl IntoJob<I>) -> Self
     where
-        I: DeserializeOwned + 'static,
+        I: DeserializeOwned + Send + 'static,
     {
         let name = name.into();
         if self.jobs.contains_key(&name) {
@@ -134,35 +131,43 @@ impl Jobs {
         self.jobs.keys().cloned().collect()
     }
 
-    /// The job `name`, ready to run with `input` merged onto its default.
+    /// The job `name`, ready to run with `input` merged onto its default input; `Value::Null`
+    /// stands for no input.
     ///
-    /// Fails without running anything when no job has that name, or the input does not decode.
-    fn prepare(&self, name: &str, input: Value) -> Result<Prepared, PrepareError> {
-        let job = self.jobs.get(name).ok_or(PrepareError::UnknownJob)?;
-        job.prepare(input).map_err(PrepareError::InvalidInput)
+    /// This is how a transport runs a job: prepare it with the name and input its launcher gave,
+    /// then [`run`](PreparedJob::run) it, launched as an [`Execution`](crate::Execution) says.
+    ///
+    /// # Errors
+    ///
+    /// [`PrepareError::UnknownJob`] when no job has that name, and
+    /// [`PrepareError::InvalidInput`] when the input does not decode as the job's input. Nothing
+    /// runs either way.
+    pub fn prepare(&self, name: &str, input: Value) -> Result<PreparedJob, PrepareError> {
+        let job = self
+            .jobs
+            .get(name)
+            .ok_or_else(|| PrepareError::UnknownJob {
+                name: name.to_string(),
+                available: self.names(),
+            })?;
+        let Prepared { input, run } = job.prepare(input).map_err(PrepareError::InvalidInput)?;
+        Ok(execution::prepared(name.to_string(), input, run))
     }
 }
 
-/// Why a job did not get ready to run.
-#[derive(Debug)]
-enum PrepareError {
-    /// No job has the name given.
-    UnknownJob,
+/// Why [`Jobs::prepare`] gave no job to run.
+#[derive(Debug, thiserror::Error)]
+pub enum PrepareError {
+    /// No registered job has the name given.
+    #[error("unknown job '{name}'")]
+    UnknownJob {
+        /// The name given.
+        name: String,
+        /// The names of the registered jobs, in order.
+        available: Vec<String>,
+    },
+
     /// The input does not decode as the job's input.
-    InvalidInput(serde_json::Error),
-}
-
-/// How an adapter launches a job: the request that it stop, and the number or id its launcher
-/// gave it.
-struct Launch {
-    stop: Stop,
-    num: Option<String>,
-}
-
-/// Runs `prepared`, the job `launch` launches, on this thread, in a scope of its own, and returns
-/// how it ended: a panic is a failure with the panic's message.
-fn run(prepared: Prepared, launch: Launch) -> Result<(), BoxError> {
-    let scope = scope::new(launch.num, prepared.input, launch.stop);
-    let _entered = scope::enter(scope);
-    catch_panic(prepared.run)
+    #[error("invalid input: {0}")]
+    InvalidInput(#[source] serde_json::Error),
 }

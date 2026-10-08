@@ -1,12 +1,13 @@
-//! The request that the job stop.
+//! The request that a job stop.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// What runs once a stop is requested.
 type Action = Box<dyn FnOnce() + Send>;
 
-/// The request that the job stop: requested once, by the first termination signal, when it runs
-/// each action registered on it. Clones share the request.
+/// The request that a job stop, which its transport makes: on a termination signal for a process,
+/// on a cancel from its server for another. Requested once, when it runs each action registered on
+/// it. Clones share the request.
 #[derive(Clone, Default)]
 pub struct Stop {
     state: Arc<Mutex<State>>,
@@ -19,7 +20,13 @@ struct State {
 }
 
 impl Stop {
-    /// Requests the stop: runs each action registered, once. Requesting it again does nothing.
+    /// A stop not yet requested.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests the stop: runs each action registered, once, on this thread. Requesting it again
+    /// does nothing.
     pub fn request(&self) {
         let actions = {
             let mut state = self.lock();
@@ -39,14 +46,15 @@ impl Stop {
         self.lock().requested
     }
 
-    /// Runs `action` once the stop is requested, at once when it already was.
-    pub fn on_request(&self, action: Action) {
+    /// Runs `action` once the stop is requested, on the thread that requests it, or at once when
+    /// it already was.
+    pub fn on_request(&self, action: impl FnOnce() + Send + 'static) {
         let mut state = self.lock();
         if state.requested {
             drop(state);
             action();
         } else {
-            state.actions.push(action);
+            state.actions.push(Box::new(action));
         }
     }
 
