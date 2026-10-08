@@ -24,7 +24,7 @@ pub struct RegisterRunner {
 pub enum FinishStatus {
     Completed,
     Failed,
-    /// The job returned after the station asked it to stop.
+    /// The job ended after the station asked it to stop, whatever it returned.
     Cancelled,
 }
 
@@ -33,7 +33,7 @@ pub struct FinishJob {
     /// The session id received in the `registered` event.
     pub runner_id: Uuid,
     pub status: FinishStatus,
-    /// Failure detail when status is `failed`.
+    /// Why the job failed, when it did, cancelled or not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

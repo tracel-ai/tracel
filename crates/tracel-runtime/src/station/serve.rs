@@ -121,8 +121,9 @@ fn finish_in_flight(in_flight: &InFlight, job_id: Uuid) {
     finished.notify_all();
 }
 
-/// Runs `job`, asked to stop once `stop` is requested, and returns how it ended: completed or
-/// failed by what it returned, and cancelled when it returned `Ok` after it was asked to stop.
+/// Runs `job`, asked to stop once `stop` is requested, and returns how it ended: cancelled once it
+/// was asked to stop, whatever it returned, and otherwise completed or failed by what it returned;
+/// with its error when it failed, cancelled or not.
 fn execute(jobs: &Jobs, job: &DispatchedJob, stop: Stop) -> (FinishStatus, Option<String>) {
     let prepared = match jobs.prepare(&job.job_name, job.input.clone()) {
         Ok(prepared) => prepared,
@@ -134,12 +135,15 @@ fn execute(jobs: &Jobs, job: &DispatchedJob, stop: Stop) -> (FinishStatus, Optio
         .with_num(job.id.to_string())
         .with_stop(stop);
     let outcome = prepared.run(execution);
-    let stopped = outcome.stop_requested();
-    match outcome.into_result() {
-        Ok(()) if stopped => (FinishStatus::Cancelled, None),
-        Ok(()) => (FinishStatus::Completed, None),
-        Err(error) => (FinishStatus::Failed, Some(error.to_string())),
-    }
+    let reason = outcome.error().map(ToString::to_string);
+    let status = if outcome.stop_requested() {
+        FinishStatus::Cancelled
+    } else if reason.is_some() {
+        FinishStatus::Failed
+    } else {
+        FinishStatus::Completed
+    };
+    (status, reason)
 }
 
 pub enum StreamOutcome {
@@ -516,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_that_fails_once_cancelled_is_reported_failed() {
+    fn a_job_that_fails_once_cancelled_is_reported_cancelled_with_its_error() {
         let (job, _) = stoppable(Err("interrupted"));
         let cancelled = dispatched("stoppable");
 
@@ -530,7 +534,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
+        assert_eq!(finishes[0].2, FinishStatus::Cancelled);
         assert_eq!(finishes[0].3.as_deref(), Some("interrupted"));
     }
 
