@@ -7376,7 +7376,6 @@ dependencies = [
 name = "tracel-runtime"
 version = "0.11.0"
 dependencies = [
- "chrono",
  "clap",
  "clap_complete",
  "ctrlc",

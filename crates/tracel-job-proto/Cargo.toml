@@ -1,6 +1,6 @@
 [package]
 name = "tracel-job-proto"
-description = "The contract between Tracel job binaries and the programs that launch them: job definitions, run reports, launch environment variables and the generated command line."
+description = "The contract between Tracel job binaries and the programs that launch them: job definitions, launch environment variables, exit codes and the generated command line."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

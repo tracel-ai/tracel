@@ -148,8 +148,9 @@ impl Target {
     /// job, as its [`JobScope`](crate::runtime::JobScope) gives it, wherever runs are started from
     /// them: each experiment records the job's number, when its launcher gave one, as its
     /// `tracel.job_num` attribute and the job's input as its arguments, is asked to stop once the
-    /// job is, and is reported as the job's adapter reports experiments, such as to `tracel run`;
-    /// once the job was asked to stop, no more start. Experiments built another way, such
+    /// job is, and prints where it records to stderr as it starts, such as
+    /// `Recording experiment 42: <url>` or `Recording offline in <dir>`; once the job was asked to
+    /// stop, no more start. Experiments built another way, such
     /// as [`ProjectHandle::experiments`] or [`Experiments::new`], are not linked unless the code
     /// links them through [`Experiments::attribute`], [`Experiments::arguments`],
     /// [`Experiments::cancel_token`] and [`Experiments::on_start`].

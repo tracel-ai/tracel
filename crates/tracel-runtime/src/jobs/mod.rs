@@ -14,7 +14,7 @@ use tracel_job_proto::JobDefinition;
 use crate::BoxError;
 use crate::job::{IntoJob, Prepared, Registered};
 use crate::panics::catch_panic;
-use crate::scope::{self, ExperimentSink};
+use crate::scope;
 use crate::stop::Stop;
 
 /// A program's jobs, by name, and how the program runs the one its command line names: `main`
@@ -152,18 +152,17 @@ enum PrepareError {
     InvalidInput(serde_json::Error),
 }
 
-/// How an adapter launches a job: the request that it stop, the number or id its launcher gave
-/// it, and where the experiments it starts are reported.
+/// How an adapter launches a job: the request that it stop, and the number or id its launcher
+/// gave it.
 struct Launch {
     stop: Stop,
     num: Option<String>,
-    experiments: ExperimentSink,
 }
 
 /// Runs `prepared`, the job `launch` launches, on this thread, in a scope of its own, and returns
 /// how it ended: a panic is a failure with the panic's message.
 fn run(prepared: Prepared, launch: Launch) -> Result<(), BoxError> {
-    let scope = scope::new(launch.num, prepared.input, launch.stop, launch.experiments);
+    let scope = scope::new(launch.num, prepared.input, launch.stop);
     let _entered = scope::enter(scope);
     catch_panic(prepared.run)
 }

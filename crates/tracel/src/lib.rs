@@ -83,8 +83,9 @@
 //!
 //! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
 //! to that job, even for runs started on other threads: each one started from them records the
-//! job's number and input, is asked to stop when the job is, and is shown with the job by
-//! `tracel run`. Experiments built another way, such as
+//! job's number and input, is asked to stop when the job is, and prints where it records to
+//! stderr as it starts, such as `Recording experiment 42: <url>`, which `tracel run` and a remote
+//! job's logs show. Experiments built another way, such as
 //! [`console::ProjectHandle::experiments`], are not linked unless the code links them, through
 //! [`Experiments::attribute`](experiment::Experiments::attribute),
 //! [`arguments`](experiment::Experiments::arguments),

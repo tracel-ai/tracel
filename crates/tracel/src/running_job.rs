@@ -1,18 +1,18 @@
 //! Linking the experiments a job starts to the job.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use serde_json::Value;
 use tracel_experiment::{ExperimentLocation, ExperimentRun, Experiments};
-use tracel_job_proto::{JOB_NUM_ATTRIBUTE, ReportedExperiment};
+use tracel_job_proto::JOB_NUM_ATTRIBUTE;
 use tracel_runtime::JobScope;
 
 /// `experiments`, linked to the job the current thread runs, when it runs one, as [`link`] links
-/// them; as they are otherwise. The link holds on any thread a run is started on.
+/// them, each run started from them printing where it records to stderr; as they are otherwise.
+/// The link holds on any thread a run is started on.
 pub fn linked(experiments: Experiments) -> Experiments {
     match RunningJob::current() {
-        Some(job) => link(experiments, job),
+        Some(job) => link(experiments, job, |line| eprintln!("{line}")),
         None => experiments,
     }
 }
@@ -28,8 +28,6 @@ struct RunningJob {
     input: Value,
     /// Registers an action to run once the job is asked to stop.
     on_stop: Box<dyn FnOnce(StopAction)>,
-    /// Reports an experiment the job started, as the job's adapter reports experiments.
-    report: Arc<dyn Fn(ReportedExperiment) + Send + Sync>,
 }
 
 impl RunningJob {
@@ -39,20 +37,20 @@ impl RunningJob {
         Some(Self {
             num: scope.num().map(str::to_string),
             input: scope.input().clone(),
-            on_stop: Box::new({
-                let scope = scope.clone();
-                move |action: StopAction| scope.on_stop(action)
-            }),
-            report: Arc::new(move |experiment| scope.report_experiment(experiment)),
+            on_stop: Box::new(move |action: StopAction| scope.on_stop(action)),
         })
     }
 }
 
 /// `experiments`, each started from which belongs to `job`: it records the job's number as its
 /// `tracel.job_num` attribute and the job's input, unless it is `null`, as its arguments, it is
-/// asked to stop once the job is, and no more start then, and it is reported as the job reports
-/// experiments.
-fn link(experiments: Experiments, job: RunningJob) -> Experiments {
+/// asked to stop once the job is, and no more start then, and it gives `announce` the line saying
+/// where it records as it starts.
+fn link(
+    experiments: Experiments,
+    job: RunningJob,
+    announce: impl Fn(&str) + Send + Sync + 'static,
+) -> Experiments {
     let cancel_token = experiments.cancel_token();
     (job.on_stop)(Box::new(move || cancel_token.cancel()));
     let attributes = job
@@ -62,23 +60,18 @@ fn link(experiments: Experiments, job: RunningJob) -> Experiments {
         Value::Null => experiments,
         input => experiments.arguments(input),
     };
-    let report = job.report;
     experiments
         .attributes(HashMap::from_iter(attributes))
-        .on_start(move |run| report(reported(run)))
+        .on_start(move |run| announce(&recording(run)))
 }
 
-/// `run` as a job reports it: its number, and its page or its directory.
-fn reported(run: &ExperimentRun) -> ReportedExperiment {
-    let (url, dir) = match run.location() {
-        Some(ExperimentLocation::Url(url)) => (Some(url.clone()), None),
-        Some(ExperimentLocation::Dir(dir)) => (None, Some(dir.clone())),
-        None => (None, None),
-    };
-    ReportedExperiment {
-        num: run.id().parse(),
-        url,
-        dir,
+/// The line saying where `run` records: its number and its page on the console, or its directory
+/// offline.
+fn recording(run: &ExperimentRun) -> String {
+    match run.location() {
+        Some(ExperimentLocation::Url(url)) => format!("Recording experiment {}: {url}", run.id()),
+        Some(ExperimentLocation::Dir(dir)) => format!("Recording offline in {}", dir.display()),
+        None => format!("Recording experiment {}", run.id()),
     }
 }
 
@@ -93,7 +86,7 @@ fn job_num(num: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use serde_json::json;
     use tracel_experiment::ExperimentProvider;
@@ -105,14 +98,9 @@ mod tests {
     /// What a test keeps of what it is given.
     type Kept<T> = Arc<Mutex<Vec<T>>>;
 
-    /// A job numbered `num`, running with `input`, the actions it runs once asked to stop, and the
-    /// experiments it reports.
-    fn job(
-        num: Option<&str>,
-        input: Value,
-    ) -> (RunningJob, Kept<StopAction>, Kept<ReportedExperiment>) {
+    /// A job numbered `num`, running with `input`, and the actions it runs once asked to stop.
+    fn job(num: Option<&str>, input: Value) -> (RunningJob, Kept<StopAction>) {
         let on_stop = Arc::new(Mutex::new(Vec::new()));
-        let reported = Arc::new(Mutex::new(Vec::new()));
         let job = RunningJob {
             num: num.map(str::to_string),
             input,
@@ -120,16 +108,22 @@ mod tests {
                 let on_stop = on_stop.clone();
                 move |action| on_stop.lock().unwrap().push(action)
             }),
-            report: Arc::new({
-                let reported = reported.clone();
-                move |experiment| reported.lock().unwrap().push(experiment)
-            }),
         };
-        (job, on_stop, reported)
+        (job, on_stop)
     }
 
     fn offline(dir: &Path) -> Experiments {
         Experiments::new(Arc::new(LocalExperiments::new(dir)))
+    }
+
+    /// `experiments` linked to `job`, and the lines its runs announce.
+    fn linked_to(experiments: Experiments, job: RunningJob) -> (Experiments, Kept<String>) {
+        let announced = Arc::new(Mutex::new(Vec::new()));
+        let experiments = link(experiments, job, {
+            let announced = announced.clone();
+            move |line| announced.lock().unwrap().push(line.to_string())
+        });
+        (experiments, announced)
     }
 
     /// The lines of the events file of run `num` of `train`, under `dir`.
@@ -144,9 +138,9 @@ mod tests {
     #[test]
     fn an_experiment_started_in_a_job_belongs_to_it() {
         let dir = tempfile::tempdir().unwrap();
-        let (job, on_stop, reported) = job(Some("12"), json!({"epochs": 2}));
+        let (job, on_stop) = job(Some("12"), json!({"epochs": 2}));
 
-        let experiments = link(offline(dir.path()), job);
+        let (experiments, announced) = linked_to(offline(dir.path()), job);
         let run = experiments.start("train").unwrap();
         let actions: Vec<StopAction> = on_stop.lock().unwrap().drain(..).collect();
         for action in actions {
@@ -176,32 +170,28 @@ mod tests {
             Err(error) if error.kind == ExperimentErrorKind::Cancelled
         ));
         assert_eq!(
-            *reported.lock().unwrap(),
-            [ReportedExperiment {
-                num: Some(1),
-                url: None,
-                dir: Some(runs.join("train/1")),
-            }]
+            *announced.lock().unwrap(),
+            [format!(
+                "Recording offline in {}",
+                runs.join("train/1").display()
+            )]
         );
     }
 
     #[test]
     fn an_experiment_started_in_a_job_without_a_number_or_input_records_neither() {
         let dir = tempfile::tempdir().unwrap();
-        let (job, _, reported) = job(None, Value::Null);
+        let (job, _) = job(None, Value::Null);
+        let (experiments, announced) = linked_to(offline(dir.path()), job);
 
-        link(offline(dir.path()), job)
-            .start("train")
-            .unwrap()
-            .finish()
-            .unwrap();
+        experiments.start("train").unwrap().finish().unwrap();
 
         assert!(
             events(dir.path(), 1)
                 .iter()
                 .all(|event| event["type"] != "attribute" && event["type"] != "arguments")
         );
-        assert_eq!(reported.lock().unwrap().len(), 1);
+        assert_eq!(announced.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -228,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn an_experiment_is_reported_with_its_page_or_its_directory() {
+    fn an_experiment_announces_its_page_or_its_directory() {
         let dir = tempfile::tempdir().unwrap();
         let experiments = LocalExperiments::new(dir.path());
         let page = "https://console.tracel.ai/users/me/projects/mnist/experiments/2";
@@ -242,20 +232,15 @@ mod tests {
             .with_location(ExperimentLocation::Url(page.to_string()));
 
         assert_eq!(
-            reported(&offline),
-            ReportedExperiment {
-                num: Some(1),
-                url: None,
-                dir: Some(dir.path().canonicalize().unwrap().join("mnist/1")),
-            }
+            recording(&offline),
+            format!(
+                "Recording offline in {}",
+                dir.path().canonicalize().unwrap().join("mnist/1").display()
+            )
         );
         assert_eq!(
-            reported(&on_the_console),
-            ReportedExperiment {
-                num: Some(2),
-                url: Some(page.to_string()),
-                dir: None,
-            }
+            recording(&on_the_console),
+            format!("Recording experiment 2: {page}")
         );
     }
 }

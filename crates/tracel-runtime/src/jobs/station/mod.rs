@@ -27,11 +27,10 @@
 //! serves forever, reconnecting with backoff when the station is unreachable or restarts.
 //!
 //! Each job runs on a thread of its own, in its [`JobScope`](crate::JobScope):
-//! [`job_num`](crate::job_num) gives the station's id for it, and the experiments it reports are
-//! logged to stderr. A `cancel` event asks the job it names to stop: its
-//! [`stop_requested`](crate::stop_requested) turns `true` and what it registered with
-//! [`on_stop`](crate::on_stop) runs. A job that then returns `Ok` is reported cancelled, and one
-//! that returns an error, failed with it.
+//! [`job_num`](crate::job_num) gives the station's id for it. A `cancel` event asks the job it
+//! names to stop: its [`stop_requested`](crate::stop_requested) turns `true` and what it
+//! registered with [`on_stop`](crate::on_stop) runs. A job that then returns `Ok` is reported
+//! cancelled, and one that returns an error, failed with it.
 
 mod error;
 mod infrastructure;

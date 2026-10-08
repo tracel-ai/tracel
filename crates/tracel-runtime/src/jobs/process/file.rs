@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn the_file_holds_the_contents_and_no_temporary_file_is_left() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
+        let path = dir.path().join("jobs.json");
 
         write_atomically(&path, "{}\n").unwrap();
 
@@ -35,19 +35,19 @@ mod tests {
     #[test]
     fn the_file_replaces_an_existing_one_through_a_temporary_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
+        let path = dir.path().join("jobs.json");
         fs::write(&path, "stale").unwrap();
 
         write_atomically(&path, "fresh").unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "fresh");
-        assert!(!dir.path().join("report.json.tmp").exists());
+        assert!(!dir.path().join("jobs.json.tmp").exists());
     }
 
     #[test]
     fn a_file_that_cannot_be_written_leaves_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing").join("report.json");
+        let path = dir.path().join("missing").join("jobs.json");
 
         assert!(write_atomically(&path, "{}").is_err());
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);

@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tracel_job_proto::ReportedExperiment;
 use uuid::Uuid;
 
 use crate::Jobs;
@@ -147,28 +146,11 @@ fn execute(jobs: &Jobs, job: &DispatchedJob, stop: Stop) -> (FinishStatus, Optio
     let launch = Launch {
         stop: stop.clone(),
         num: Some(job.id.to_string()),
-        experiments: Arc::new(log_experiment(job.id)),
     };
     match crate::jobs::run(prepared, launch) {
         Ok(()) if stop.is_requested() => (FinishStatus::Cancelled, None),
         Ok(()) => (FinishStatus::Completed, None),
         Err(error) => (FinishStatus::Failed, Some(error.to_string())),
-    }
-}
-
-/// Logs each experiment the job `job_id` reports, as the station keeps no record of them.
-fn log_experiment(job_id: Uuid) -> impl Fn(ReportedExperiment) + Send + Sync {
-    move |experiment| {
-        let num = experiment
-            .num
-            .map_or_else(|| "?".to_string(), |num| num.to_string());
-        let place = experiment
-            .url
-            .or_else(|| experiment.dir.map(|dir| dir.display().to_string()));
-        match place {
-            Some(place) => eprintln!("Job {job_id} started experiment {num}: {place}"),
-            None => eprintln!("Job {job_id} started experiment {num}"),
-        }
     }
 }
 

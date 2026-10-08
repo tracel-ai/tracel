@@ -1,16 +1,14 @@
 //! The process adapter: the program runs as a process, launched with the job and its input on
-//! its command line, and answers through its exit code, its run report and the definitions file.
+//! its command line, and answers through its exit code and the definitions file.
 
 mod describe;
 mod error;
 mod file;
-mod report;
 mod signal;
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
@@ -22,7 +20,6 @@ use crate::jobs::{Jobs, Launch, PrepareError};
 use crate::stop::Stop;
 use describe::describe;
 use error::RunError;
-use report::ReportFile;
 
 /// What a command line asks for.
 enum Request {
@@ -35,10 +32,9 @@ enum Request {
 }
 
 /// What the job the process runs is launched with: the request that it stop, and, through the
-/// environment, where its run report goes and the number its launcher gave it.
+/// environment, the number its launcher gave it.
 struct ProcessLaunch {
     stop: Stop,
-    report_path: Option<PathBuf>,
     num: Option<String>,
 }
 
@@ -47,7 +43,6 @@ impl ProcessLaunch {
     /// `lookup` gives describe it.
     fn from_vars(stop: Stop, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
         Self {
-            report_path: report::path_from_vars(&lookup),
             num: lookup(TRACEL_JOB_NUM)
                 .filter(|num| !num.is_empty())
                 .map(|num| num.to_string_lossy().into_owned()),
@@ -62,14 +57,13 @@ impl Jobs {
     /// | Exit code | Meaning |
     /// | --- | --- |
     /// | 0 | The job completed, or the help, version or completion script was printed |
-    /// | 1 | The job failed, or a file its launcher asked for could not be written |
+    /// | 1 | The job failed, or the job definitions its launcher asked for could not be written |
     /// | 2 | No job or an unknown job is named, a flag or the input is unusable, or the input does not decode |
     /// | 130 | The job was asked to stop |
     ///
     /// Why it did not complete is printed to stderr, with the registered job names when no job or
     /// an unknown one is named, and a stop request as a warning. Launched by `tracel run`, the
-    /// program also gives its launcher its jobs' definitions, how the job is going and the
-    /// experiments code in the job reports through [`report_experiment`](crate::report_experiment).
+    /// program also gives its launcher its jobs' definitions.
     ///
     /// The job runs on this thread, in its [`JobScope`](crate::JobScope):
     /// [`stop_requested`](crate::stop_requested) says whether it was asked to stop,
@@ -174,33 +168,13 @@ impl Jobs {
             },
             PrepareError::InvalidInput(error) => RunError::InvalidInput(error),
         })?;
-        let report = launch
-            .report_path
-            .map(|path| ReportFile::start(path, name))
-            .transpose()?
-            .map(Arc::new);
-
-        let experiments = report.clone();
         let outcome = crate::jobs::run(
             prepared,
             Launch {
                 stop: launch.stop.clone(),
                 num: launch.num,
-                experiments: Arc::new(move |experiment| {
-                    if let Some(report) = &experiments
-                        && let Err(error) = report.add_experiment(experiment)
-                    {
-                        eprintln!("warning: {error}");
-                    }
-                }),
             },
         );
-
-        if let Some(report) = report
-            && let Err(error) = report.finish(&outcome)
-        {
-            eprintln!("warning: {error}");
-        }
         if launch.stop.is_requested() {
             return Err(RunError::Stopped);
         }
@@ -222,18 +196,14 @@ fn program_name() -> String {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use tracel_job_proto::{ReportedExperiment, TRACEL_REPORT_FILE};
 
     use super::*;
     use crate::scope::request_stop;
-    use crate::{
-        BoxError, IntoJob, Job, job_input, job_num, job_running, on_stop, report_experiment,
-        stop_requested,
-    };
+    use crate::{BoxError, IntoJob, Job, job_input, job_num, job_running, on_stop, stop_requested};
 
     #[derive(Clone, Copy)]
     enum Outcome {
@@ -341,11 +311,6 @@ mod tests {
             }
             Request::Completions(_) | Request::Print(_) => Ok(()),
         }
-    }
-
-    /// Runs the command line `program <args>` as [`run`] does, keeping the run report at `path`.
-    fn run_reporting(jobs: Jobs, args: &[&str], path: &Path) -> Result<(), RunError> {
-        run_launched(jobs, args, &[(TRACEL_REPORT_FILE, path.as_os_str())])
     }
 
     #[test]
@@ -699,165 +664,6 @@ mod tests {
                 (Some(Value::Null), None)
             ]
         );
-    }
-
-    fn read_json(path: &Path) -> Value {
-        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-    }
-
-    /// The fields of the report at `path` that say how the job is going and how it ended.
-    fn status(path: &Path) -> (Value, Value, Value) {
-        let report = read_json(path);
-        (
-            report["status"].clone(),
-            report["error"].clone(),
-            report["experiments"].clone(),
-        )
-    }
-
-    fn offline(num: u64) -> ReportedExperiment {
-        ReportedExperiment {
-            num: Some(num),
-            url: None,
-            dir: Some(format!("runs/train/{num}").into()),
-        }
-    }
-
-    #[test]
-    fn a_job_that_starts_no_experiment_is_reported_running_then_completed_with_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        let running = Arc::new(Mutex::new(None));
-        let jobs = Jobs::new().job("evaluate", {
-            let (path, running) = (path.clone(), running.clone());
-            move |()| {
-                *running.lock().unwrap() = Some(read_json(&path));
-                Ok::<_, BoxError>(())
-            }
-        });
-
-        run_reporting(jobs, &["evaluate"], &path).unwrap();
-
-        let running = running.lock().unwrap().take().unwrap();
-        assert_eq!(running["job"], "evaluate");
-        assert_eq!(running["status"], "running");
-        assert_eq!(running["experiments"], json!([]));
-        assert_eq!(status(&path), (json!("completed"), Value::Null, json!([])));
-        assert!(read_json(&path)["finished_at"].is_string());
-    }
-
-    #[test]
-    fn each_experiment_the_job_reports_is_listed_as_it_starts() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        let listed = Arc::new(Mutex::new(Vec::new()));
-        let jobs = |fail: bool| {
-            Jobs::new().job("train", {
-                let (path, listed) = (path.clone(), listed.clone());
-                move |()| -> Result<(), BoxError> {
-                    for num in [1, 2] {
-                        report_experiment(offline(num));
-                        listed.lock().unwrap().push(read_json(&path));
-                    }
-                    if fail {
-                        Err("loss is NaN".into())
-                    } else {
-                        Ok(())
-                    }
-                }
-            })
-        };
-
-        run_reporting(jobs(false), &["train"], &path).unwrap();
-        let completed = status(&path);
-        let failed = run_reporting(jobs(true), &["train"], &path);
-
-        let both = json!([
-            {"num": 1, "url": null, "dir": "runs/train/1"},
-            {"num": 2, "url": null, "dir": "runs/train/2"}
-        ]);
-        let listed = listed.lock().unwrap();
-        assert_eq!(listed[0]["status"], "running");
-        assert_eq!(listed[0]["experiments"], json!([both[0]]));
-        assert_eq!(listed[1]["experiments"], both);
-        assert_eq!(completed, (json!("completed"), Value::Null, both.clone()));
-        assert!(matches!(failed, Err(RunError::JobFailed(_))));
-        assert_eq!(status(&path), (json!("failed"), json!("loss is NaN"), both));
-    }
-
-    #[test]
-    fn a_job_asked_to_stop_is_reported_by_what_it_returns() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        let report = |outcome| {
-            let stopped = run_reporting(ending(outcome).0, &["train"], &path);
-            assert!(matches!(stopped, Err(RunError::Stopped)));
-            status(&path)
-        };
-
-        assert_eq!(
-            report(Outcome::Stop),
-            (json!("completed"), Value::Null, json!([]))
-        );
-        assert_eq!(
-            report(Outcome::Cancel),
-            (json!("failed"), json!("interrupted"), json!([]))
-        );
-    }
-
-    #[test]
-    fn a_failing_or_panicking_job_is_reported_failed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-        let report = |outcome| {
-            let failed = run_reporting(ending(outcome).0, &["train"], &path);
-            assert!(matches!(failed, Err(RunError::JobFailed(_))));
-            status(&path)
-        };
-
-        assert_eq!(
-            report(Outcome::Fail),
-            (json!("failed"), json!("boom"), json!([]))
-        );
-        assert_eq!(
-            report(Outcome::Panic),
-            (
-                json!("failed"),
-                json!("the job panicked: kernel exploded"),
-                json!([])
-            )
-        );
-    }
-
-    #[test]
-    fn a_rejected_job_or_input_writes_no_report() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.json");
-
-        for args in [
-            &["infer"][..],
-            &["train", "[1, 2]"],
-            &["train", "--epochs", "ten"],
-        ] {
-            let rejected = run_reporting(typed().0, args, &path);
-
-            assert_eq!(rejected.unwrap_err().exit_code(), 2, "{args:?}");
-            assert!(!path.exists(), "{args:?}");
-        }
-    }
-
-    #[test]
-    fn a_report_that_cannot_be_written_fails_the_job_before_it_runs() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing").join("report.json");
-        let (jobs, ran_with) = ending(Outcome::Succeed);
-
-        let failed = run_reporting(jobs, &["train"], &path);
-
-        let failed = failed.unwrap_err();
-        assert!(matches!(failed, RunError::Report(_)), "{failed:?}");
-        assert_eq!(failed.exit_code(), 1);
-        assert!(ran_with.lock().unwrap().is_none());
     }
 
     #[cfg(feature = "schema")]

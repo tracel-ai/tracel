@@ -17,7 +17,6 @@ schema = ["dep:schemars"]
 station = ["dep:reqwest", "dep:url", "dep:uuid"]
 
 [dependencies]
-chrono.workspace = true
 clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 ctrlc = { workspace = true, features = ["termination"] }
