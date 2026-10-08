@@ -24,6 +24,8 @@ pub struct RegisterRunner {
 pub enum FinishStatus {
     Completed,
     Failed,
+    /// The job returned after the station asked it to stop.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +54,10 @@ pub enum RunnerEvent {
         runner_id: Uuid,
     },
     Job(DispatchedJob),
+    /// The station asks the job `job_id` to stop.
+    Cancel {
+        job_id: Uuid,
+    },
 }
 
 impl RunnerEvent {
@@ -63,12 +69,21 @@ impl RunnerEvent {
             runner_id: Uuid,
         }
 
+        #[derive(Deserialize)]
+        struct Cancel {
+            job_id: Uuid,
+        }
+
         Ok(match event {
             "registered" => {
                 let Registered { runner_id } = serde_json::from_str(data)?;
                 Some(Self::Registered { runner_id })
             }
             "job" => Some(Self::Job(serde_json::from_str(data)?)),
+            "cancel" => {
+                let Cancel { job_id } = serde_json::from_str(data)?;
+                Some(Self::Cancel { job_id })
+            }
             _ => None,
         })
     }
@@ -91,8 +106,12 @@ mod tests {
         )
         .unwrap()
         .unwrap();
+        let cancel = RunnerEvent::decode("cancel", &format!("{{\"job_id\":\"{id}\"}}"))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(registered, RunnerEvent::Registered { runner_id: id });
+        assert_eq!(cancel, RunnerEvent::Cancel { job_id: id });
         assert_eq!(
             job,
             RunnerEvent::Job(DispatchedJob {
@@ -111,5 +130,23 @@ mod tests {
     #[test]
     fn given_malformed_data_when_decoding_then_errors() {
         assert!(RunnerEvent::decode("job", "not json").is_err());
+        assert!(RunnerEvent::decode("cancel", "{}").is_err());
+    }
+
+    #[test]
+    fn a_finish_gives_its_status_in_snake_case() {
+        let finish = |status| {
+            serde_json::to_value(FinishJob {
+                runner_id: Uuid::nil(),
+                status,
+                reason: None,
+            })
+            .unwrap()["status"]
+                .clone()
+        };
+
+        assert_eq!(finish(FinishStatus::Completed), "completed");
+        assert_eq!(finish(FinishStatus::Failed), "failed");
+        assert_eq!(finish(FinishStatus::Cancelled), "cancelled");
     }
 }

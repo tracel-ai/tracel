@@ -1,6 +1,7 @@
 //! The runner loop: SSE reader, an executor running each dispatched job on a thread of its own,
 //! reconnect with backoff.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -31,12 +32,13 @@ impl FinishSink for StationRunnerClient {
     }
 }
 
-/// In-flight job count, paired with a condvar so [`Executor::wait_idle`] can block until it drains.
-type InFlight = Arc<(Mutex<usize>, Condvar)>;
+/// The request that each job running stop, by its station id, paired with a condvar so
+/// [`Executor::wait_idle`] can block until no job runs.
+type InFlight = Arc<(Mutex<HashMap<Uuid, Stop>>, Condvar)>;
 
 /// Runs each dispatched job on a thread of its own, in a scope of its own, so the event stream
-/// keeps being read (for liveness) while user code runs, and jobs the station dispatches at once
-/// run at once.
+/// keeps being read (for liveness and cancels) while user code runs, and jobs the station
+/// dispatches at once run at once.
 pub struct Executor {
     jobs: Arc<Jobs>,
     sink: Arc<dyn FinishSink>,
@@ -54,14 +56,19 @@ impl Executor {
 
     /// Runs `job` on a thread of its own, and reports how it ended to the station once it ends.
     pub fn dispatch(&self, runner_id: Uuid, job: DispatchedJob) {
-        *self.in_flight.0.lock().unwrap() += 1;
+        let stop = Stop::default();
+        self.in_flight
+            .0
+            .lock()
+            .unwrap()
+            .insert(job.id, stop.clone());
         let (jobs, sink, in_flight) =
             (self.jobs.clone(), self.sink.clone(), self.in_flight.clone());
         let job_id = job.id;
         let spawned = std::thread::Builder::new()
             .name(format!("job-{job_id}"))
             .spawn(move || {
-                let (status, reason) = execute(&jobs, &job);
+                let (status, reason) = execute(&jobs, &job, stop);
                 sink.finish_job(
                     job.id,
                     &FinishJob {
@@ -70,7 +77,7 @@ impl Executor {
                         reason,
                     },
                 );
-                finish_in_flight(&in_flight);
+                finish_in_flight(&in_flight, job.id);
             });
         if let Err(error) = spawned {
             let reason = format!("the job could not start: {error}");
@@ -82,27 +89,44 @@ impl Executor {
                     reason: Some(reason),
                 },
             );
-            finish_in_flight(&self.in_flight);
+            finish_in_flight(&self.in_flight, job_id);
+        }
+    }
+
+    /// Asks the job `job_id` to stop, when it runs here: requests its scope's stop, which runs
+    /// what the job registered with [`on_stop`](crate::on_stop).
+    pub fn cancel(&self, job_id: Uuid) {
+        let stop = self.in_flight.0.lock().unwrap().get(&job_id).cloned();
+        match stop {
+            Some(stop) => {
+                eprintln!("Asking job {job_id} to stop");
+                stop.request();
+            }
+            None => {
+                eprintln!("warning: the station cancelled job {job_id}, which does not run here")
+            }
         }
     }
 
     /// Block until every in-flight job has finished and reported.
     pub fn wait_idle(&self) {
-        let (count, finished) = &*self.in_flight;
-        let mut count = count.lock().unwrap();
-        while *count > 0 {
-            count = finished.wait(count).unwrap();
+        let (running, finished) = &*self.in_flight;
+        let mut running = running.lock().unwrap();
+        while !running.is_empty() {
+            running = finished.wait(running).unwrap();
         }
     }
 }
 
-fn finish_in_flight(in_flight: &InFlight) {
-    let (count, finished) = &**in_flight;
-    *count.lock().unwrap() -= 1;
+fn finish_in_flight(in_flight: &InFlight, job_id: Uuid) {
+    let (running, finished) = &**in_flight;
+    running.lock().unwrap().remove(&job_id);
     finished.notify_all();
 }
 
-fn execute(jobs: &Jobs, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
+/// Runs `job`, asked to stop once `stop` is requested, and returns how it ended: completed or
+/// failed by what it returned, and cancelled when it returned `Ok` after it was asked to stop.
+fn execute(jobs: &Jobs, job: &DispatchedJob, stop: Stop) -> (FinishStatus, Option<String>) {
     let prepared = match jobs.prepare(&job.job_name, job.input.clone()) {
         Ok(prepared) => prepared,
         // Unreachable under the station's strict policy; defend anyway.
@@ -121,11 +145,12 @@ fn execute(jobs: &Jobs, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
     };
     eprintln!("Running job {} ({})", job.job_name, job.id);
     let launch = Launch {
-        stop: Stop::default(),
+        stop: stop.clone(),
         num: Some(job.id.to_string()),
         experiments: Arc::new(log_experiment(job.id)),
     };
     match crate::jobs::run(prepared, launch) {
+        Ok(()) if stop.is_requested() => (FinishStatus::Cancelled, None),
         Ok(()) => (FinishStatus::Completed, None),
         Err(error) => (FinishStatus::Failed, Some(error.to_string())),
     }
@@ -180,6 +205,7 @@ pub fn serve_stream(
     for event in events {
         match event {
             Ok(RunnerEvent::Job(job)) => executor.dispatch(runner_id, job),
+            Ok(RunnerEvent::Cancel { job_id }) => executor.cancel(job_id),
             Ok(RunnerEvent::Registered { .. }) => {
                 eprintln!("warning: unexpected registered event mid-stream");
             }
@@ -247,7 +273,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::{BoxError, job_input, job_num};
+    use crate::{BoxError, job_input, job_num, on_stop, stop_requested};
 
     #[allow(clippy::type_complexity)]
     type RecordedFinish = (Uuid, Uuid, FinishStatus, Option<String>);
@@ -436,6 +462,160 @@ mod tests {
             );
         }
         assert_eq!(sink.finishes.lock().unwrap().len(), 2);
+    }
+
+    /// A flag a job raises and another job, or the test, waits for, up to ten seconds.
+    #[derive(Clone, Default)]
+    struct Flag(Arc<(Mutex<bool>, Condvar)>);
+
+    impl Flag {
+        fn raise(&self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+
+        /// Whether the flag was raised within ten seconds.
+        fn wait(&self) -> bool {
+            let (raised, changed) = &*self.0;
+            let raised = changed
+                .wait_timeout_while(raised.lock().unwrap(), Duration::from_secs(10), |raised| {
+                    !*raised
+                })
+                .unwrap()
+                .0;
+            *raised
+        }
+    }
+
+    /// A job that waits until it is asked to stop, then ends with `outcome`, and the flag it raises
+    /// once asked to stop.
+    fn stoppable(
+        outcome: Result<(), &'static str>,
+    ) -> (
+        impl Fn(Value) -> Result<(), BoxError> + Send + Sync + 'static,
+        Flag,
+    ) {
+        let stopped = Flag::default();
+        let job = {
+            let stopped = stopped.clone();
+            move |_: Value| {
+                let asked = Flag::default();
+                on_stop({
+                    let asked = asked.clone();
+                    move || asked.raise()
+                });
+                if asked.wait() {
+                    stopped.raise();
+                }
+                outcome.map_err(BoxError::from)
+            }
+        };
+        (job, stopped)
+    }
+
+    /// Serves `events` after registration, waits for the jobs to end, and returns the finishes.
+    fn serve_events(jobs: Jobs, rest: Vec<RunnerEvent>) -> Vec<RecordedFinish> {
+        let sink = Arc::new(RecordingSink::default());
+        let executor = Executor::new(Arc::new(jobs), sink.clone());
+        serve_stream(events(Uuid::new_v4(), rest), &executor);
+        executor.wait_idle();
+        sink.finishes.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn a_cancelled_job_is_asked_to_stop_and_reported_cancelled() {
+        let (job, stopped) = stoppable(Ok(()));
+        let cancelled = dispatched("stoppable");
+
+        let finishes = serve_events(
+            Jobs::new().job("stoppable", job),
+            vec![
+                RunnerEvent::Job(cancelled.clone()),
+                RunnerEvent::Cancel {
+                    job_id: cancelled.id,
+                },
+            ],
+        );
+
+        assert!(stopped.wait());
+        assert_eq!(finishes.len(), 1);
+        assert_eq!(
+            (finishes[0].0, finishes[0].2, finishes[0].3.clone()),
+            (cancelled.id, FinishStatus::Cancelled, None)
+        );
+    }
+
+    #[test]
+    fn a_job_that_fails_once_cancelled_is_reported_failed() {
+        let (job, _) = stoppable(Err("interrupted"));
+        let cancelled = dispatched("stoppable");
+
+        let finishes = serve_events(
+            Jobs::new().job("stoppable", job),
+            vec![
+                RunnerEvent::Job(cancelled.clone()),
+                RunnerEvent::Cancel {
+                    job_id: cancelled.id,
+                },
+            ],
+        );
+
+        assert_eq!(finishes[0].2, FinishStatus::Failed);
+        assert_eq!(finishes[0].3.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn a_cancel_stops_only_the_job_it_names() {
+        let (stoppable, stopped) = stoppable(Ok(()));
+        let seen = Arc::new(Mutex::new(None));
+        let waiting = {
+            let (stopped, seen) = (stopped.clone(), seen.clone());
+            move |_: Value| {
+                let other_stopped = stopped.wait();
+                *seen.lock().unwrap() = Some((other_stopped, stop_requested(), job_num()));
+                Ok::<_, BoxError>(())
+            }
+        };
+        let (cancelled, other) = (dispatched("stoppable"), dispatched("waiting"));
+
+        let finishes = serve_events(
+            Jobs::new()
+                .job("stoppable", stoppable)
+                .job("waiting", waiting),
+            vec![
+                RunnerEvent::Job(cancelled.clone()),
+                RunnerEvent::Job(other.clone()),
+                RunnerEvent::Cancel {
+                    job_id: cancelled.id,
+                },
+            ],
+        );
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((true, false, Some(other.id.to_string())))
+        );
+        let status = |id| finishes.iter().find(|finish| finish.0 == id).unwrap().2;
+        assert_eq!(status(cancelled.id), FinishStatus::Cancelled);
+        assert_eq!(status(other.id), FinishStatus::Completed);
+    }
+
+    #[test]
+    fn a_cancel_for_a_job_that_does_not_run_here_changes_nothing() {
+        let job = dispatched("train");
+
+        let finishes = serve_events(
+            jobs(Arc::default()),
+            vec![
+                RunnerEvent::Cancel {
+                    job_id: Uuid::new_v4(),
+                },
+                RunnerEvent::Job(job.clone()),
+            ],
+        );
+
+        assert_eq!(finishes.len(), 1);
+        assert_eq!(finishes[0].2, FinishStatus::Completed);
     }
 
     #[test]
