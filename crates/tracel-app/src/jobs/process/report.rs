@@ -1,51 +1,28 @@
-//! The run report of the job the command line runs, kept at the path `TRACEL_REPORT_FILE` names.
+//! The run report of the job the process runs, kept at the path `TRACEL_REPORT_FILE` names.
 
 use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use chrono::{SecondsFormat, Utc};
-use tracel_job::{RunReport, RunStatus, TRACEL_REPORT_FILE};
+use tracel_job::{ReportedExperiment, RunReport, RunStatus, TRACEL_REPORT_FILE};
 
-use crate::{BoxError, ExperimentReporter};
+use crate::BoxError;
 
-/// The path `TRACEL_REPORT_FILE` names, when it names one.
-pub fn path_from_env() -> Option<PathBuf> {
-    path_from_vars(|name| std::env::var_os(name))
-}
-
-/// [`path_from_env`] with the environment variables `lookup` gives.
-fn path_from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+/// The path `TRACEL_REPORT_FILE` names, among the environment variables `lookup` gives, when it
+/// names one.
+pub fn path_from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     lookup(TRACEL_REPORT_FILE)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
 }
 
-/// The run report of a job, kept at a path: written when the job starts, again each time it records
-/// an experiment, and again when it ends.
-///
-/// It is the report's one writer: the reporter it gives the job rewrites the report through it.
+/// The run report of a job, kept at a path: written when the job starts, again each time it adds
+/// an experiment, and again when the job ends, after which it changes no more.
 pub struct ReportFile {
-    kept: Arc<Kept>,
-}
-
-/// A report and the path it is kept at, shared with the reporter the job is given.
-struct Kept {
     path: PathBuf,
     report: Mutex<RunReport>,
-}
-
-impl Kept {
-    /// Changes the report with `change`, then rewrites it.
-    fn rewrite(&self, change: impl FnOnce(&mut RunReport)) -> Result<(), ReportError> {
-        let mut report = self.report.lock().unwrap();
-        change(&mut report);
-        report.write(&self.path).map_err(|source| ReportError {
-            path: self.path.clone(),
-            source,
-        })
-    }
 }
 
 impl ReportFile {
@@ -56,38 +33,41 @@ impl ReportFile {
             return Err(ReportError { path, source });
         }
         Ok(Self {
-            kept: Arc::new(Kept {
-                path,
-                report: Mutex::new(report),
-            }),
+            path,
+            report: Mutex::new(report),
         })
     }
 
-    /// The reporter the job is given: it adds each experiment the job records to the report and
-    /// rewrites it, and once the job has ended, does nothing.
-    pub fn experiment_reporter(&self) -> ExperimentReporter {
-        let kept = Arc::downgrade(&self.kept);
-        ExperimentReporter::new(move |experiment| {
-            let Some(kept) = kept.upgrade() else {
-                return;
-            };
-            if let Err(error) = kept.rewrite(|report| report.experiments.push(experiment)) {
-                eprintln!("warning: {error}");
-            }
-        })
+    /// Adds `experiment`, which the job started, to the report and rewrites it, unless the job
+    /// has ended.
+    pub fn add_experiment(&self, experiment: ReportedExperiment) -> Result<(), ReportError> {
+        self.rewrite(|report| report.experiments.push(experiment))
     }
 
     /// Rewrites the report as the job ended now with `outcome`: completed, or failed with its
     /// error.
-    pub fn finish(self, outcome: &Result<(), BoxError>) -> Result<(), ReportError> {
+    pub fn finish(&self, outcome: &Result<(), BoxError>) -> Result<(), ReportError> {
         let (status, error) = match outcome {
             Ok(()) => (RunStatus::Completed, None),
             Err(error) => (RunStatus::Failed, Some(error.to_string())),
         };
-        self.kept.rewrite(|report| {
+        self.rewrite(|report| {
             report.status = status;
             report.finished_at = Some(now());
             report.error = error;
+        })
+    }
+
+    /// Changes the report with `change`, then rewrites it, unless the job has ended.
+    fn rewrite(&self, change: impl FnOnce(&mut RunReport)) -> Result<(), ReportError> {
+        let mut report = self.report.lock().unwrap();
+        if report.status != RunStatus::Running {
+            return Ok(());
+        }
+        change(&mut report);
+        report.write(&self.path).map_err(|source| ReportError {
+            path: self.path.clone(),
+            source,
         })
     }
 }
@@ -110,7 +90,6 @@ mod tests {
     use std::path::Path;
 
     use serde_json::{Value, json};
-    use tracel_job::ReportedExperiment;
 
     use super::*;
 
@@ -168,24 +147,24 @@ mod tests {
     }
 
     #[test]
-    fn each_experiment_the_job_records_is_added_until_the_job_ends() {
+    fn each_experiment_the_job_starts_is_added_until_the_job_ends() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.json");
         let report = ReportFile::start(path.clone(), "mnist").unwrap();
-        let reporter = report.experiment_reporter();
         let offline = |num: u64| ReportedExperiment {
             num: Some(num),
             url: None,
             dir: Some(format!("runs/mnist/{num}").into()),
         };
 
-        reporter.report(offline(3));
+        report.add_experiment(offline(3)).unwrap();
         let first = read(&path);
-        reporter.report(offline(4));
+        report.add_experiment(offline(4)).unwrap();
         let second = read(&path);
         report.finish(&Err("loss is NaN".into())).unwrap();
         let failed = read(&path);
-        reporter.report(offline(5));
+        report.add_experiment(offline(5)).unwrap();
+        report.finish(&Ok(())).unwrap();
 
         assert_eq!(first["status"], "running");
         assert_eq!(

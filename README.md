@@ -15,7 +15,11 @@
 
 Tracel is a new way of using Burn. It aims at providing a central platform for experiment tracking, model sharing, and deployment for all Burn users!
 
-This repository contains the SDK associated with the project. It provides a Rust API to register your training routines as jobs and run them from the command line, sending training data to our application as they run. To use this project you must first create an account on the [application](https://s1-central.burn.dev/).
+This repository contains the SDK associated with the project. It gives your program clients for
+the platform's services, picked from the environment, and one job protocol: the functions your
+program registers as jobs run from the command line, locally or launched by the platform, sending
+training data to our application as they run. To use this project you must first create an
+account on the [application](https://s1-central.burn.dev/).
 
 You'll also want the [tracel-cli](https://github.com/tracel-ai/tracel-cli) to log in (`tracel login`) and store your credentials locally.
 
@@ -36,49 +40,60 @@ Optional features:
 
 ## Quick Start
 
-Here's how to integrate Tracel into a Burn training workflow:
+Here's how to integrate Tracel into your training workflow:
 
-### 1. Register your training function
+### 1. Register your training function as a job
 
-Wrap your training function into a job with `Experiments::create`, then register it with a
-`Cli`, which runs it from the command line:
+A job is a plain function of its typed input. Register it by name with `Jobs`, and return
+`Jobs::run` from `main`. The job tracks its training in an experiment it runs with the
+experiments `Target` picks from the environment:
 
 ```rust
 use std::process::ExitCode;
 
 use tracel::Target;
-use tracel::app::cli::Cli;
-use tracel::app::mapper::JsonMapper;
-use tracel::experiment::ExperimentRun;
+use tracel::app::{BoxError, Job, Jobs};
 
-fn training(
-    experiment: &ExperimentRun,
-    config: YourExperimentConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Your training logic here...
-    train(experiment, &config)?;
-
-    Ok(())
+fn training(config: YourExperimentConfig) -> Result<(), BoxError> {
+    let experiments = Target::from_env()?.experiments()?;
+    experiments.run("mnist", |experiment| {
+        experiment.log_args(&config)?;
+        // Your training logic here...
+        train(experiment, &config)
+    })
 }
 
-fn main() -> anyhow::Result<ExitCode> {
-    let experiments = Target::from_env()?.experiments()?;
-    let job = experiments
-        .create("mnist", training)
-        .with_description("Train the MNIST classifier");
-
-    Ok(Cli::new()
+fn main() -> ExitCode {
+    Jobs::new()
         .version(env!("CARGO_PKG_VERSION"))
-        .register(job, JsonMapper::with_default(YourExperimentConfig::default()))
-        .run())
+        .job(
+            "mnist",
+            Job::new(training)
+                .with_description("Train the MNIST classifier")
+                .with_default(YourExperimentConfig::default()),
+        )
+        .run()
 }
 ```
 
 The binary runs a job by name, with its input as flags or one JSON document merged onto the
 default: `cargo run -- mnist --num-epochs 5` or `cargo run -- mnist '{"num_epochs": 5}'`. Left
-out, the input is the default. The experiment records the merged input as its arguments, which the
-console lists as its config. `version` gives the binary its `--version`, which prints the binary's
-name and that version, such as `mnist 0.1.0`; without it, the binary has no `--version`.
+out, the input is the default. A function registered without `Job`, as in
+`.job("evaluate", evaluate)`, is a job with no description or default; a job with no input takes
+`()`. `version` gives the binary its `--version`, which prints the binary's name and that version,
+such as `mnist 0.1.0`; without it, the binary has no `--version`.
+
+`Experiments::run` ends the experiment by what its code returns: completed on `Ok`, and failed
+with the error on `Err` or with the message of a panic. `Experiments::start` returns the run
+instead, for code that ends it with `finish()` or `fail()`; a run dropped before either ends as
+failed. `log_args` records the input as the experiment's arguments, which the console lists as its
+config. A job starts as many experiments as its code does, or none.
+
+The experiments `Target::experiments` builds while a job runs are linked to the job: each one
+started from them records the job's number, is asked to stop when the job is, and is listed in the
+job's run report, as [Launching jobs](#launching-jobs) describes. Experiments built another way,
+such as `ProjectHandle::experiments`, are not linked unless the code links them, through
+`Experiments::attribute`, `cancel_token` and `on_start`.
 
 The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a
 complete, runnable version.
@@ -98,7 +113,7 @@ for a console project, or `tracel::experiment::local::LocalExperiments` to recor
 
 #### Command-line flags
 
-`Cli` builds its command line from the definitions of its jobs, so each field of a job's input is
+`Jobs` builds its command line from the definitions of its jobs, so each field of a job's input is
 also a flag: `cargo run -- mnist --num-epochs 5` runs with the same input as
 `cargo run -- mnist '{"num_epochs": 5}'`. `--help` lists the jobs, and `mnist --help` the job's
 flags with their defaults:
@@ -121,24 +136,23 @@ Options:
   -h, --help                            Print help
 ```
 
-- With an input schema (`JsonMapper::with_schema` and the `schema` feature), a flag takes its
-  field's type, allowed values and requiredness from the schema, and the field's doc comment as
-  its help. Without one, each field of the example input is a flag typed by its value: a boolean,
-  an integer, a number or a string. Burn `Config` types work this way.
+- With an input schema (`Job::with_schema` and the `schema` feature), a flag takes its field's
+  type, allowed values and requiredness from the schema, and the field's doc comment as its help.
+  Without one, each field of the default input is a flag typed by its value: a boolean, an
+  integer, a number or a string. Burn `Config` types work this way.
 - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, an object with
-  no fields of its own, or `null` in the example input takes a JSON literal, such as
+  no fields of its own, or `null` in the default input takes a JSON literal, such as
   `--layers '[64, 32]'`. A boolean flag given no value is `true`.
-- The input is the example input, then the `--config` file, then the JSON document, then the
+- The input is the default input, then the `--config` file, then the JSON document, then the
   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
-- `help`, `version` and `config` are the runner's names: a field with one of them has no flag, and
-  is set through `--config` or the JSON document.
+- `help`, `version` and `config` are the command line's names: a field with one of them has no
+  flag, and is set through `--config` or the JSON document.
 - `--completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`, `powershell`
   or `zsh`: `cargo run -- --completions bash > mnist.bash`.
 
 `tracel::job::command` builds the same command line from job definitions alone, such as those of
-a definitions file. A job whose input type derives `clap::Parser` can parse its own arguments
-instead, through `ClapMapper`, from a JSON string: `cargo run -- <job> '"--epochs 3"'`.
+a definitions file.
 
 #### Describing jobs
 
@@ -162,15 +176,13 @@ renaming it, so it is never read half written:
 }
 ```
 
-`input_example` is the default given to
-`JsonMapper::with_default`. `input_schema` is the input type's JSON Schema when the mapper is built
-with `JsonMapper::with_schema`, which needs the `schema` feature and an input type that derives
-`schemars::JsonSchema`. While `TRACEL_DESCRIBE` is set, `ExperimentJob::run` returns an error
-without creating an experiment, so describing a binary never trains.
+`input_example` is the default given to `Job::with_default`. `input_schema` is the input type's
+JSON Schema when the job is built with `Job::with_schema`, which needs the `schema` feature and an
+input type that derives `schemars::JsonSchema`.
 
 #### Launching jobs
 
-A binary whose `main` returns `Cli::run()` can be launched by another program, such as the
+A binary whose `main` returns `Jobs::run()` can be launched by another program, such as the
 `tracel` CLI, which reads its exit code:
 
 | Exit code | Meaning |
@@ -181,8 +193,8 @@ A binary whose `main` returns `Cli::run()` can be launched by another program, s
 | 130 | The job was asked to stop |
 
 With `TRACEL_REPORT_FILE=<path>` set, the binary writes the job's run report to `<path>`: how the
-job is going and how it ended, and the experiments it recorded. It is written when the job starts,
-again each time the job records an experiment, and again when the job ends, each time to
+job is going and how it ended, and the experiments it started. It is written when the job starts,
+again each time the job starts an experiment, and again when the job ends, each time to
 `<path>.tmp` first, renamed to `<path>`. Without the variable, or when the binary rejects the job or
 its input, nothing is written:
 
@@ -201,19 +213,21 @@ its input, nothing is written:
 ```
 
 `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why a
-job failed. `experiments` lists the experiments the job recorded, in order: `[]` until it records
-one, and for a job that records none. `url` is an experiment's page on the console; offline it is
+job failed. `experiments` lists the experiments the job started from the experiments a `Target`
+built, in order: `[]` until it starts one, and for a job that starts none. `url` is an
+experiment's page on the console; offline it is
 `null`, and `dir` gives the experiment's directory instead, where `status.json` says how the
 experiment went and `events.jsonl` holds its events, one JSON object per line.
 
-With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which links
-it to the job that ran it.
+With `TRACEL_JOB_NUM` set, each of these experiments records it as its `tracel.job_num`
+attribute, which links it to the job.
 
-SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop: it cancels the
-experiment's cancel token, which stops a learner given `experiment.interrupter()`, and the
-experiment logs a warning that a stop was requested. The job ends as `completed` or `failed` by
-what its function returns, and the binary exits with code 130. A second signal ends the
-binary at once. Launchers send SIGKILL after a 30-second grace period.
+SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
+`tracel::app::stop_requested()` turns `true`, and what `tracel::app::on_stop` registered runs.
+Through it, each of these experiments has its cancel token cancelled, which stops a learner given
+`experiment.interrupter()`, and logs a warning that a stop was requested; none starts after. The
+job ends as `completed` or `failed` by what it returns, and the binary exits with code 130. A
+second signal ends the binary at once. Launchers send SIGKILL after a 30-second grace period.
 
 ### 2. Integrate with your Learner
 

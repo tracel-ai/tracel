@@ -1,151 +1,360 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracel_experiment::CancelToken;
-use tracel_job::{JobDefinition, ReportedExperiment};
+use tracel_job::JobDefinition;
 
-/// The error a job or a mapper fails with.
+/// The error a job fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
 
-/// What a runner gives the job it runs: the token that asks the job to stop, and the reporter the
-/// job hands the experiment it records.
-#[derive(Clone, Default)]
-pub struct JobContext {
-    cancel_token: CancelToken,
-    reporter: ExperimentReporter,
+/// A job: a function of its input, with what a launcher reads about it in its definition.
+///
+/// The function takes the job's input, decoded from JSON. The job completes when the function
+/// returns `Ok`, and fails when it returns `Err` or panics. A function alone is a job with no
+/// description, default input or input schema; `Job` adds them. A job may run more than once, on
+/// any thread, as a Station runner runs it.
+pub struct Job<I> {
+    run: Arc<dyn Fn(I) -> Result<(), BoxError> + Send + Sync>,
+    description: Option<String>,
+    default: Option<Value>,
+    schema: Option<Value>,
 }
 
-impl JobContext {
-    /// The context of a job asked to stop once `cancel_token` is cancelled, whose runner links no
-    /// experiment.
-    pub fn new(cancel_token: CancelToken) -> Self {
+impl<I> Job<I>
+where
+    I: DeserializeOwned + 'static,
+{
+    /// The job that runs `run` with its input.
+    pub fn new<F, E>(run: F) -> Self
+    where
+        F: Fn(I) -> Result<(), E> + Send + Sync + 'static,
+        E: Into<BoxError>,
+    {
         Self {
-            cancel_token,
-            reporter: ExperimentReporter::default(),
+            run: Arc::new(move |input| run(input).map_err(Into::into)),
+            description: None,
+            default: None,
+            schema: None,
         }
     }
 
-    /// Hands the experiment the job records to `reporter`, through which the runner links it.
-    pub fn with_reporter(mut self, reporter: ExperimentReporter) -> Self {
-        self.reporter = reporter;
+    /// Describes what the job does, as its definition and its `--help` give it.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
         self
     }
 
-    /// The token cancelled to ask the job to stop.
-    pub fn cancel_token(&self) -> &CancelToken {
-        &self.cancel_token
-    }
-
-    /// The reporter the job hands the experiment it records.
-    pub fn reporter(&self) -> &ExperimentReporter {
-        &self.reporter
-    }
-}
-
-/// Hands the experiment a job records to its runner.
-///
-/// A runner that links the experiment a job records, such as in its run report, gives the job a
-/// reporter in its [`JobContext`], and a job that records an experiment hands it the experiment
-/// once it is created, so the runner links it while the job runs. The default reporter belongs to
-/// no runner: it drops what it is given.
-#[derive(Clone, Default)]
-pub struct ExperimentReporter {
-    report: Option<Arc<dyn Fn(ReportedExperiment) + Send + Sync>>,
-}
-
-impl ExperimentReporter {
-    /// A reporter that hands each experiment to `report`, which links it.
-    pub fn new(report: impl Fn(ReportedExperiment) + Send + Sync + 'static) -> Self {
-        Self {
-            report: Some(Arc::new(report)),
-        }
-    }
-
-    /// Hands `experiment`, the experiment the job records, to the runner.
-    pub fn report(&self, experiment: ReportedExperiment) {
-        if let Some(report) = &self.report {
-            report(experiment);
-        }
-    }
-}
-
-/// A job whose input is decoded, ready to run.
-pub struct PreparedJob {
-    run: Box<dyn FnOnce(JobContext) -> Result<(), BoxError> + Send>,
-}
-
-impl PreparedJob {
-    /// Wraps `run`, which runs the job and stops once the cancel token of the context it is given
-    /// is cancelled.
-    pub fn new<F>(run: F) -> Self
+    /// Runs the job with its input merged onto `default`, which its definition gives as its
+    /// example input, and from which its command line takes its flags and their defaults.
+    ///
+    /// With no input, the job runs with `default`. An input is merged onto it with JSON merge
+    /// patch (RFC 7386): its fields replace the default's, and a `null` field removes one.
+    ///
+    /// # Panics
+    ///
+    /// When `default` does not serialize to JSON.
+    pub fn with_default(mut self, default: I) -> Self
     where
-        F: FnOnce(JobContext) -> Result<(), BoxError> + Send + 'static,
+        I: Serialize,
     {
-        Self { run: Box::new(run) }
+        self.default =
+            Some(serde_json::to_value(default).expect("default input must serialize to JSON"));
+        self
     }
 
-    /// Runs the job in `context`.
-    ///
-    /// Cancelling the context's cancel token asks the job to stop: a job that records an experiment
-    /// cancels the experiment's cancel token and ends as completed or failed by what its function
-    /// returns. A job that records an experiment hands it to the context's reporter once it is
-    /// created.
-    pub fn run(self, context: JobContext) -> Result<(), BoxError> {
-        (self.run)(context)
+    /// Gives the JSON Schema of `I` as the job's input schema, from which its command line takes
+    /// the type, allowed values, requiredness and help of each flag (requires the `schema`
+    /// feature).
+    #[cfg(feature = "schema")]
+    pub fn with_schema(mut self) -> Self
+    where
+        I: schemars::JsonSchema,
+    {
+        self.schema = Some(schemars::schema_for!(I).to_value());
+        self
     }
 }
 
-/// A job a runner can run: given its input, it runs to its end.
-///
-/// What a job does as it runs is its own: it may record an experiment, which it hands to the
-/// reporter of its [`JobContext`]. Runners build one with [`IntoJob`] from an experiment job and
-/// the [`Mapper`](crate::mapper::Mapper) that decodes its input. Implement it directly for any
-/// other job.
-pub trait Job: Send + Sync {
+/// What [`Jobs::job`](crate::Jobs::job) registers: a [`Job`], or a function of the job's input.
+pub trait IntoJob<I> {
+    /// The job.
+    fn into_job(self) -> Job<I>;
+}
+
+impl<I> IntoJob<I> for Job<I> {
+    fn into_job(self) -> Job<I> {
+        self
+    }
+}
+
+impl<I, F, E> IntoJob<I> for F
+where
+    I: DeserializeOwned + 'static,
+    F: Fn(I) -> Result<(), E> + Send + Sync + 'static,
+    E: Into<BoxError>,
+{
+    fn into_job(self) -> Job<I> {
+        Job::new(self)
+    }
+}
+
+/// A job registered under a name, whatever its input type.
+pub struct Registered {
+    definition: JobDefinition,
+    default: Option<Value>,
+    decode: Decode,
+}
+
+/// Decodes a job's input, and gives the job ready to run with it.
+type Decode = Box<dyn Fn(Value) -> Result<Ready, serde_json::Error> + Send + Sync>;
+
+/// A job given its input, ready to run.
+pub type Ready = Box<dyn FnOnce() -> Result<(), BoxError>>;
+
+impl Registered {
+    /// `job`, registered as `name`.
+    pub fn new<I>(name: String, job: Job<I>) -> Self
+    where
+        I: DeserializeOwned + 'static,
+    {
+        let Job {
+            run,
+            description,
+            default,
+            schema,
+        } = job;
+        Self {
+            definition: JobDefinition {
+                name,
+                description,
+                input_schema: schema,
+                input_example: default.clone(),
+            },
+            default,
+            decode: Box::new(move |input| {
+                let input = serde_json::from_value::<I>(input)?;
+                let run = run.clone();
+                Ok(Box::new(move || run(input)) as Ready)
+            }),
+        }
+    }
+
     /// The job's definition.
-    fn definition(&self) -> &JobDefinition;
+    pub fn definition(&self) -> &JobDefinition {
+        &self.definition
+    }
 
-    /// Decodes `input`, a JSON document or `Value::Null` for no input, and returns the job, ready
-    /// to run with it.
+    /// The job, ready to run with `input` merged onto its default, when it has one.
+    /// `Value::Null` stands for no input.
     ///
-    /// Fails without running anything when `input` does not decode.
-    fn prepare(&self, input: Value) -> Result<PreparedJob, BoxError>;
+    /// Fails without running anything when the input does not decode as the job's input.
+    pub fn prepare(&self, input: Value) -> Result<Ready, serde_json::Error> {
+        (self.decode)(resolve(self.default.clone(), input))
+    }
 }
 
-/// Turns an experiment job and the mapper that decodes its input into a [`Job`].
-///
-/// Implemented for `ExperimentJob`, so a runner's `register(job, mapper)` takes one.
-pub trait IntoJob<M> {
-    /// Builds the job.
-    fn into_job(self, mapper: M) -> Box<dyn Job>;
+/// `input` merged onto `default`: `default` when there is no input, and `input` as given when
+/// there is no default.
+fn resolve(default: Option<Value>, input: Value) -> Value {
+    match default {
+        Some(default) if input.is_null() => default,
+        Some(mut default) => {
+            json_patch::merge(&mut default, &input);
+            default
+        }
+        None => input,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
+    use serde::Deserialize;
+    use serde_json::json;
+
     use super::*;
 
-    fn offline_run() -> ReportedExperiment {
-        ReportedExperiment {
-            num: Some(3),
-            url: None,
-            dir: Some("runs/mnist/3".into()),
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    struct Config {
+        epochs: u32,
+        optimizer: Optimizer,
+        tag: Option<String>,
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    struct Optimizer {
+        lr: f64,
+        weight_decay: f64,
+    }
+
+    fn default_config() -> Config {
+        Config {
+            epochs: 10,
+            optimizer: Optimizer {
+                lr: 0.001,
+                weight_decay: 0.0,
+            },
+            tag: Some("baseline".to_string()),
+        }
+    }
+
+    /// A job that keeps the input it runs with.
+    fn recording<I>() -> (Job<I>, Arc<Mutex<Option<I>>>)
+    where
+        I: DeserializeOwned + Send + 'static,
+    {
+        let ran_with = Arc::new(Mutex::new(None));
+        let job = Job::new({
+            let ran_with = ran_with.clone();
+            move |input| {
+                *ran_with.lock().unwrap() = Some(input);
+                Ok::<_, BoxError>(())
+            }
+        });
+        (job, ran_with)
+    }
+
+    /// Runs `job`, registered as `train`, with `input`.
+    fn run<I>(job: Job<I>, input: Value) -> Result<(), BoxError>
+    where
+        I: DeserializeOwned + 'static,
+    {
+        Registered::new("train".to_string(), job).prepare(input)?()
+    }
+
+    #[test]
+    fn a_job_is_defined_by_its_name_description_and_default() {
+        let (job, _) = recording::<Config>();
+        let job = job
+            .with_description("Train the model")
+            .with_default(default_config());
+        let (bare, _) = recording::<Config>();
+
+        assert_eq!(
+            Registered::new("train".to_string(), job).definition(),
+            &JobDefinition {
+                name: "train".to_string(),
+                description: Some("Train the model".to_string()),
+                input_schema: None,
+                input_example: Some(json!({
+                    "epochs": 10,
+                    "optimizer": {"lr": 0.001, "weight_decay": 0.0},
+                    "tag": "baseline"
+                })),
+            }
+        );
+        assert_eq!(
+            Registered::new("evaluate".to_string(), bare).definition(),
+            &JobDefinition {
+                name: "evaluate".to_string(),
+                description: None,
+                input_schema: None,
+                input_example: None,
+            }
+        );
+    }
+
+    #[test]
+    fn without_a_default_the_input_decodes_as_given() {
+        let (job, ran_with) = recording::<Optimizer>();
+        let (no_input, _) = recording::<Optimizer>();
+        let (unit, ran_with_unit) = recording::<()>();
+
+        run(job, json!({"lr": 0.1, "weight_decay": 0.01})).unwrap();
+        let missing = run(no_input, Value::Null);
+        run(unit, Value::Null).unwrap();
+
+        assert_eq!(
+            ran_with.lock().unwrap().take(),
+            Some(Optimizer {
+                lr: 0.1,
+                weight_decay: 0.01
+            })
+        );
+        assert!(missing.is_err());
+        assert_eq!(ran_with_unit.lock().unwrap().take(), Some(()));
+    }
+
+    #[test]
+    fn no_input_runs_the_job_with_its_default() {
+        let (job, ran_with) = recording();
+
+        run(job.with_default(default_config()), Value::Null).unwrap();
+
+        assert_eq!(ran_with.lock().unwrap().take(), Some(default_config()));
+    }
+
+    #[test]
+    fn an_input_is_merge_patched_onto_the_default() {
+        let (job, ran_with) = recording();
+
+        run(
+            job.with_default(default_config()),
+            json!({"epochs": 2, "optimizer": {"lr": 0.1}, "tag": null}),
+        )
+        .unwrap();
+
+        assert_eq!(
+            ran_with.lock().unwrap().take(),
+            Some(Config {
+                epochs: 2,
+                optimizer: Optimizer {
+                    lr: 0.1,
+                    weight_decay: 0.0,
+                },
+                tag: None,
+            })
+        );
+    }
+
+    #[test]
+    fn an_input_of_the_wrong_type_does_not_decode() {
+        for input in [json!({"epochs": "ten"}), json!([1, 2]), json!("ten")] {
+            let (job, ran_with) = recording();
+
+            let prepared = Registered::new("train".to_string(), job.with_default(default_config()))
+                .prepare(input.clone());
+
+            assert!(prepared.is_err(), "{input}");
+            assert!(ran_with.lock().unwrap().is_none());
         }
     }
 
     #[test]
-    fn a_reporter_hands_each_experiment_to_its_report() {
-        let reported = Arc::new(Mutex::new(Vec::new()));
-        let reporter = ExperimentReporter::new({
-            let reported = reported.clone();
-            move |experiment| reported.lock().unwrap().push(experiment)
-        });
-        let context = JobContext::default().with_reporter(reporter);
+    fn a_registered_job_runs_each_time_it_is_prepared() {
+        let (job, ran_with) = recording::<u32>();
+        let registered = Registered::new("train".to_string(), job);
 
-        context.clone().reporter().report(offline_run());
+        for epochs in [1, 2] {
+            registered.prepare(json!(epochs)).unwrap()().unwrap();
+            assert_eq!(ran_with.lock().unwrap().take(), Some(epochs));
+        }
+    }
 
-        assert_eq!(*reported.lock().unwrap(), [offline_run()]);
+    #[test]
+    fn a_job_fails_with_the_error_it_returns() {
+        let job = Job::new(|_: ()| Err::<(), _>(std::io::Error::other("disk full")));
+
+        let failed = run(job, Value::Null);
+
+        assert_eq!(failed.unwrap_err().to_string(), "disk full");
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn with_schema_gives_the_input_types_schema() {
+        let (job, _) = recording::<Config>();
+
+        let registered = Registered::new("train".to_string(), job.with_schema());
+
+        let schema = registered.definition().input_schema.clone().unwrap();
+        assert_eq!(schema["title"], "Config");
+        assert!(schema["properties"]["epochs"].is_object());
+        assert!(schema["properties"]["optimizer"].is_object());
     }
 }

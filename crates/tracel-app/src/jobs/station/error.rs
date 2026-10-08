@@ -1,5 +1,3 @@
-use crate::DescribeError;
-
 /// Fatal runner errors.
 ///
 /// Transient connection losses are retried with backoff and job failures are reported to the
@@ -16,7 +14,4 @@ pub enum RunnerError {
     NoJobs,
     #[error("station rejected runner registration: {0}")]
     Registration(String),
-    /// `TRACEL_DESCRIBE` names a path the definitions file could not be written to.
-    #[error(transparent)]
-    Describe(#[from] DescribeError),
 }

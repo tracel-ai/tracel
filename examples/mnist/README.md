@@ -22,12 +22,14 @@ cargo run -p mnist --example mnist -- mnist --num-epochs 5 --optimizer.weight-de
 cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5}'
 ```
 
-The example runs its `mnist` job with `tracel::app::cli::Cli`, so each field of
-`MnistTrainingConfig`, a Burn `Config`, is a flag typed by its default value, nested fields joined
-with dots. The flags, or one JSON document, are merged onto the small default configuration and
-recorded as the experiment's arguments.
-SIGTERM asks the run to stop: the interrupter stops training, the run ends as completed, and the
-program exits with code 130. Launchers send SIGKILL after a 30-second grace period.
+The example registers its `mnist` job, a function of `MnistTrainingConfig`, with
+`tracel::app::Jobs`, so each field of the config, a Burn `Config`, is a flag typed by its default
+value, nested fields joined with dots. The flags, or one JSON document, are merged onto the small
+default configuration. The job trains in an experiment it runs with `Experiments::run`, which
+records the config as the experiment's arguments and ends the experiment as completed or failed by
+what training returns.
+SIGTERM asks the job to stop: the interrupter stops training, the experiment ends as completed, and
+the program exits with code 130. Launchers send SIGKILL after a 30-second grace period.
 
 Runs offline by default, recording under `./runs`, so it needs no credentials. It reads its target
 with `tracel::Target::from_env`: set `TRACEL_TARGET=console` to ship metrics, checkpoints, and

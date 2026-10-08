@@ -1,22 +1,21 @@
 //! Asking the running job to stop when the process gets a termination signal.
 
-use tracel_experiment::CancelToken;
+use crate::jobs::process::error::STOPPED;
+use crate::stop::Stop;
 
-use super::error::STOPPED;
-
-/// Cancels `cancel_token` on the first termination signal: SIGTERM, SIGINT or SIGHUP, or Ctrl-C,
-/// Ctrl-Break or closing the console on Windows. A second one ends the process at once, with the
-/// exit code of a job asked to stop.
+/// Requests `stop`, which asks the job to stop, on the first termination signal: SIGTERM, SIGINT
+/// or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows. A second one ends the
+/// process at once, with the exit code of a job asked to stop.
 ///
 /// The handler is process-wide. When the program has installed its own, the job runs without
 /// this one.
-pub fn cancel_on_termination(cancel_token: CancelToken) {
+pub fn stop_on_termination(stop: Stop) {
     let installed = ctrlc::set_handler(move || {
-        if cancel_token.is_cancelled() {
+        if stop.is_requested() {
             std::process::exit(i32::from(STOPPED));
         }
         eprintln!("Asking the job to stop; signal again to stop it at once.");
-        cancel_token.cancel();
+        stop.request();
     });
     if let Err(error) = installed {
         eprintln!("warning: the job cannot be stopped by a signal: {error}");

@@ -5,8 +5,9 @@
 //!
 //! High-level Tracel SDK.
 //!
-//! This crate re-exports the main crates used to build training, experiment tracking, inference,
-//! and fleet workflows on top of Tracel.
+//! The SDK gives a program clients for the platform's services, which it picks from the
+//! environment, and the job protocol through which the program's jobs are run, launched remotely
+//! or run locally.
 //!
 //! Features:
 //! - Artifact creation and management
@@ -22,7 +23,7 @@
 //!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
-//! - [`app`]: job registration, and the command-line runner that runs those jobs.
+//! - [`app`]: jobs, plain functions of their input, and the entry point that runs one.
 //! - [`job`]: the job definitions file, the run report, and the command line built from job
 //!   definitions, which programs that launch jobs share with the SDK.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
@@ -30,53 +31,67 @@
 //! - [`models`]: the model domain and its registry.
 //! - [`artifact`]: bundle and artifact utilities.
 //!
-//! ## Registering Jobs
+//! ## Jobs
 //!
-//! Wrap a routine into a job with [`experiment::Experiments::create`], then register it with an
-//! [`app::cli::Cli`], which runs it from the command line. A mapper decodes the job's JSON input:
+//! A job is a function of its typed input. Register a program's jobs by name with
+//! [`app::Jobs`], and return its [`run`](app::Jobs::run) from `main`: the program runs the job its
+//! command line names. A job starts experiments, or none, with the clients a [`Target`] builds:
 //!
 //! ```no_run
 //! use std::process::ExitCode;
 //!
 //! use serde::{Deserialize, Serialize};
 //! use tracel::Target;
-//! use tracel::app::cli::Cli;
-//! use tracel::app::mapper::JsonMapper;
-//! use tracel::experiment::ExperimentRun;
+//! use tracel::app::{BoxError, Job, Jobs};
 //!
 //! #[derive(Default, Serialize, Deserialize)]
 //! struct TrainingConfig {
 //!     epochs: usize,
 //! }
 //!
-//! fn train(
-//!     experiment: &ExperimentRun,
-//!     config: TrainingConfig,
-//! ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//!     // Your training code here
-//!     Ok(())
+//! fn train(config: TrainingConfig) -> Result<(), BoxError> {
+//!     let experiments = Target::from_env()?.experiments()?;
+//!     experiments.run("train", |run| {
+//!         run.log_args(&config)?;
+//!         // Your training code here
+//!         Ok(())
+//!     })
 //! }
 //!
-//! fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
-//!     let train = Target::from_env()?
-//!         .experiments()?
-//!         .create("train", train)
-//!         .with_description("Train the model");
-//!
-//!     Ok(Cli::new()
+//! fn main() -> ExitCode {
+//!     Jobs::new()
 //!         .version(env!("CARGO_PKG_VERSION"))
-//!         .register(train, JsonMapper::with_default(TrainingConfig::default()))
-//!         .run())
+//!         .job(
+//!             "train",
+//!             Job::new(train)
+//!                 .with_description("Train the model")
+//!                 .with_default(TrainingConfig::default()),
+//!         )
+//!         .run()
 //! }
 //! ```
 //!
 //! Run it as `<binary> train '{"epochs": 5}'`: the job's name selects it, and its input, one JSON
-//! document, is merged onto the default. Left out, the job runs with the default. The experiment
-//! records the merged input as its arguments, which the console lists as the experiment's config;
-//! `ExperimentJob::run` records the input it is given.
+//! document, is merged onto its default. Left out, the job runs with the default. A function
+//! registered without [`Job`](app::Job) is a job with no description or default.
 //!
-//! [`version`](app::cli::Cli::version) gives the binary its `--version`, which prints the
-//! binary's name and that version; without it, the binary has no `--version`.
+//! [`Experiments::run`](experiment::Experiments::run) ends the experiment by what its code
+//! returns: completed on `Ok`, and failed on `Err` or a panic.
+//! [`Experiments::start`](experiment::Experiments::start) returns the run instead, for code that
+//! ends it with `finish()` or `fail()`; a run dropped before either ends as failed.
+//! [`log_args`](experiment::ExperimentRun::log_args) records the job's input as the experiment's
+//! arguments, which the console lists as the experiment's config.
+//!
+//! The experiments [`Target::experiments`] builds while a job runs are linked to the job: each one
+//! started from them records the job's number, is asked to stop when the job is, and is listed in
+//! the job's run report, as [Launching Jobs](#launching-jobs) describes. Experiments built another
+//! way, such as [`console::ProjectHandle::experiments`], are not linked unless the code links
+//! them, through [`Experiments::attribute`](experiment::Experiments::attribute),
+//! [`cancel_token`](experiment::Experiments::cancel_token) and
+//! [`on_start`](experiment::Experiments::on_start).
+//!
+//! [`version`](app::Jobs::version) gives the binary its `--version`, which prints the binary's
+//! name and that version; without it, the binary has no `--version`.
 //!
 //! Without a [`Target`], build the services from an adapter directly:
 //! [`console::ProjectHandle::from_env`] for a console project, or
@@ -84,7 +99,7 @@
 //!
 //! ## Command-Line Flags
 //!
-//! [`app::cli::Cli`] builds its command line from the definitions of its jobs, so each field of a
+//! [`app::Jobs`] builds its command line from the definitions of its jobs, so each field of a
 //! job's input is also a flag: `<binary> train --epochs 5` runs the job above with the same input
 //! as `<binary> train '{"epochs": 5}'`. `<binary> --help` lists the jobs, and
 //! `<binary> train --help` the job's flags with their defaults:
@@ -103,40 +118,35 @@
 //!   -h, --help           Print help
 //! ```
 //!
-//! - With an input schema (`JsonMapper::with_schema` and the `schema` feature), a flag takes its
-//!   field's type, allowed values and requiredness from the schema, and the field's doc comment
-//!   as its help. Without one, each field of the example input is a flag typed by its value: a
-//!   boolean, an integer, a number or a string. Burn `Config` types work this way.
+//! - With an input schema (`Job::with_schema` and the `schema` feature), a flag takes its field's
+//!   type, allowed values and requiredness from the schema, and the field's doc comment as its
+//!   help. Without one, each field of the default input is a flag typed by its value: a boolean,
+//!   an integer, a number or a string. Burn `Config` types work this way.
 //! - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
 //!   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, an object
-//!   with no fields of its own, or `null` in the example input takes a JSON literal, such as
+//!   with no fields of its own, or `null` in the default input takes a JSON literal, such as
 //!   `--layers '[64, 32]'`. A boolean flag given no value is `true`.
-//! - The input is the example input, then the `--config` file, then the JSON document, then the
+//! - The input is the default input, then the `--config` file, then the JSON document, then the
 //!   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
-//! - `help`, `version` and `config` are the runner's names: a field with one of them has no flag,
-//!   and is set through `--config` or the JSON document.
+//! - `help`, `version` and `config` are the command line's names: a field with one of them has no
+//!   flag, and is set through `--config` or the JSON document.
 //! - `<binary> --completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`,
 //!   `powershell` or `zsh`.
 //!
 //! [`job::command`] builds the same command line from job definitions alone, such as those of a
-//! definitions file, and [`job::job_input`] reads a job's input from its arguments. A job
-//! whose input type derives `clap::Parser` can parse its own arguments instead, through
-//! [`ClapMapper`](app::mapper::ClapMapper), from a JSON string: `<binary> train '"--epochs 3"'`.
+//! definitions file, and [`job::job_input`] reads a job's input from its arguments.
 //!
 //! ## Describing Jobs
 //!
-//! With `TRACEL_DESCRIBE=<path>` set, the runner writes the definitions of its jobs to `<path>` as
-//! JSON, then returns without running a job: see [`job::DefinitionsFile`]. Each
-//! definition gives the job's name, description, input schema and example input. The example
-//! input is the mapper's default, and the input schema needs `JsonMapper::with_schema` and the
-//! `schema` feature. While the variable is set, `ExperimentJob::run` returns an
-//! [`ExperimentErrorKind::Describing`](experiment::error::ExperimentErrorKind::Describing) error
-//! without creating an experiment, so describing a program never trains.
+//! With `TRACEL_DESCRIBE=<path>` set, the program writes the definitions of its jobs to `<path>`
+//! as JSON, then exits without running a job: see [`job::DefinitionsFile`]. Each definition gives
+//! the job's name, description, input schema and example input. The example input is the job's
+//! default, and the input schema needs `Job::with_schema` and the `schema` feature.
 //!
 //! ## Launching Jobs
 //!
-//! A program that runs its jobs with [`app::cli::Cli`] can be launched by another program, such
-//! as the `tracel` CLI. [`Cli::run`](app::cli::Cli::run) returns the exit code `main` returns:
+//! A program whose `main` returns [`Jobs::run`](app::Jobs::run) can be launched by another
+//! program, such as the `tracel` CLI, which reads its exit code:
 //!
 //! | Exit code | Meaning |
 //! | --- | --- |
@@ -146,8 +156,8 @@
 //! | 130 | The job was asked to stop |
 //!
 //! With `TRACEL_REPORT_FILE=<path>` set, the program writes the job's [`RunReport`](job::RunReport)
-//! to `<path>`: how the job is going and how it ended, and the experiments it recorded. It is
-//! written when the job starts, again each time the job records an experiment, and again when the
+//! to `<path>`: how the job is going and how it ended, and the experiments it started. It is
+//! written when the job starts, again each time the job starts an experiment, and again when the
 //! job ends, each time to `<path>.tmp` first, renamed to `<path>`. Without the variable, or when
 //! the program rejects the job or its input, nothing is written:
 //!
@@ -166,21 +176,24 @@
 //! ```
 //!
 //! `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why
-//! a job failed. `experiments` lists the experiments the job recorded, in order: `[]` until it
-//! records one, and for a job that records none. `url` is an experiment's page on the console;
-//! offline it is `null`, and `dir` gives the experiment's directory instead, where `status.json` says how the experiment
-//! went and `events.jsonl` holds its events, one JSON object per line, as
+//! a job failed. `experiments` lists the experiments the job started from the experiments a
+//! [`Target`] built, in order: `[]` until it starts one, and for a job that starts none. `url` is
+//! an experiment's page on the console; offline it is `null`, and `dir` gives the experiment's
+//! directory instead, where `status.json` says how the experiment went and `events.jsonl` holds
+//! its events, one JSON object per line, as
 //! [`LocalExperiments`](experiment::local::LocalExperiments) describes.
 //!
-//! With `TRACEL_JOB_NUM` set, the experiment records it as its `tracel.job_num` attribute, which
-//! links it to the job that ran it.
+//! With `TRACEL_JOB_NUM` set, each of these experiments records it as its `tracel.job_num`
+//! attribute, which links it to the job.
 //!
-//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop: it cancels the
-//! experiment's cancel token, which stops a Burn learner given its `interrupter()`, and the
-//! experiment logs a warning that a stop was requested. The job ends as `completed` or `failed` by
-//! what its function returns, and the program exits with code 130. A second signal ends the
-//! program at once. Launchers send SIGKILL after a 30-second grace period.
+//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
+//! [`app::stop_requested`] turns `true`, and what [`app::on_stop`] registered runs. Through it,
+//! each of these experiments has its cancel token cancelled, which stops a Burn learner given its
+//! `interrupter()`, and logs a warning that a stop was requested; none starts after. The job ends
+//! as `completed` or `failed` by what it returns, and the program exits with code 130. A second
+//! signal ends the program at once. Launchers send SIGKILL after a 30-second grace period.
 
+mod running_job;
 mod target;
 
 pub use target::{Target, TargetError};
@@ -216,7 +229,7 @@ pub use tracel_inference as inference;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
-/// Job registration, input mappers, and the command-line runner.
+/// Jobs, plain functions of their input, and the entry point that runs one.
 #[doc(inline)]
 pub use tracel_app as app;
 

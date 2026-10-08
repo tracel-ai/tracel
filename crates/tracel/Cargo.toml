@@ -27,6 +27,7 @@ tracel-console.workspace = true
 tracel-station = { workspace = true, optional = true }
 tracel-datasets.workspace = true
 tracel-models.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 url = { workspace = true, optional = true }
 

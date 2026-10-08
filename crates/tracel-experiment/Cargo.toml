@@ -20,7 +20,6 @@ local = []
 chrono.workspace = true
 thiserror.workspace = true
 tracel-artifact.workspace = true
-tracel-job.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true

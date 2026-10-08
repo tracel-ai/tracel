@@ -11,16 +11,16 @@ use crate::{PROTOCOL, json_file};
 /// Names the file a program writes its [`DefinitionsFile`] to, instead of running a job.
 pub const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
 
-/// Something a runner can run: its name and description, and the input it takes.
+/// A job a program can run: its name and description, and the input it takes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobDefinition {
     /// The name that selects the job.
     pub name: String,
     /// What the job does.
     pub description: Option<String>,
-    /// JSON Schema of the job's input, when its mapper provides one.
+    /// JSON Schema of the job's input, when the program gives one.
     pub input_schema: Option<Value>,
-    /// An example input, typically the job's default configuration.
+    /// An example input, typically the job's default input, which its input is merged onto.
     pub input_example: Option<Value>,
 }
 
@@ -31,7 +31,7 @@ pub struct DefinitionsFile {
     pub protocol: u32,
     /// The version of the Tracel SDK the program is built with.
     pub sdk_version: String,
-    /// The runner that wrote the file, such as `cli` or `server`.
+    /// The runner that wrote the file, such as `cli`, which runs a job from the command line.
     pub runner: String,
     /// The jobs the runner can run, ordered by name.
     pub jobs: Vec<JobDefinition>,

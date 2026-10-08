@@ -1,6 +1,6 @@
 [package]
 name = "tracel-app"
-description = "The runner for the Tracel SDK: run registered jobs from a command line."
+description = "The job protocol of the Tracel SDK: a program's jobs, plain functions of their input, and the entry point that runs one."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -14,20 +14,13 @@ categories.workspace = true
 [features]
 default = []
 schema = ["dep:schemars"]
-station = [
-    "dep:reqwest",
-    "dep:tracing",
-    "dep:tracing-subscriber",
-    "dep:url",
-    "dep:uuid",
-]
+station = ["dep:reqwest", "dep:url", "dep:uuid"]
 
 [dependencies]
 chrono.workspace = true
-clap = { workspace = true, features = ["derive", "string"] }
+clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 ctrlc = { workspace = true, features = ["termination"] }
-tracel-experiment.workspace = true
 tracel-job.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -35,12 +28,10 @@ json-patch.workspace = true
 schemars = { workspace = true, optional = true }
 thiserror.workspace = true
 reqwest = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
+serde = { workspace = true, features = ["std"] }
 tempfile.workspace = true
-tracel-experiment = { workspace = true, features = ["local"] }
 uuid = { workspace = true, features = ["v4"] }

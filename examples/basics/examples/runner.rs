@@ -10,27 +10,33 @@
 
 use basics::training::{self, TrainingConfig};
 use tracel::Target;
-use tracel::app::mapper::JsonMapper;
 use tracel::app::station::StationRunner;
+use tracel::app::{BoxError, Job, Jobs};
+
+/// Runs the toy training loop in an experiment, which records the config as its arguments.
+fn toy_training(config: TrainingConfig) -> Result<(), BoxError> {
+    let experiments = Target::from_env()?.experiments()?;
+    experiments.run("toy-training", |run| {
+        run.log_args(&config)?;
+        training::train(run, config)
+    })
+}
 
 fn main() -> anyhow::Result<()> {
-    let target = Target::from_env()?;
-    let Target::Station { url } = &target else {
+    let Target::Station { url } = Target::from_env()? else {
         anyhow::bail!("set TRACEL_TARGET=station to serve jobs to a Tracel Station");
     };
 
-    let train = target
-        .experiments()?
-        .create("toy-training", training::train)
-        .with_description("Run a toy training loop");
-
+    let jobs = Jobs::new().job(
+        "toy-training",
+        Job::new(toy_training)
+            .with_description("Run a toy training loop")
+            .with_default(TrainingConfig::default())
+            .with_schema(),
+    );
     StationRunner::new(url.as_str())
         .name("basics-runner")
-        .register(
-            train,
-            JsonMapper::with_default(TrainingConfig::default()).with_schema(),
-        )
-        .run()?;
+        .run(jobs)?;
 
     Ok(())
 }

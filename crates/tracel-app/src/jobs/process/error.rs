@@ -1,5 +1,6 @@
-use super::report::ReportError;
-use crate::{BoxError, DescribeError};
+use crate::BoxError;
+use crate::jobs::process::describe::DescribeError;
+use crate::jobs::process::report::ReportError;
 
 /// The exit code of a job that failed, or of a definitions file or a run report that could not be
 /// written.
@@ -10,9 +11,9 @@ const USAGE: u8 = 2;
 /// The exit code of a job that was asked to stop.
 pub const STOPPED: u8 = 130;
 
-/// Why a [`Cli`](crate::cli::Cli) ran no job, or the job it ran did not complete.
+/// Why [`Jobs::run`](crate::Jobs::run) ran no job, or the job it ran did not complete.
 #[derive(Debug, thiserror::Error)]
-pub enum CliError {
+pub enum RunError {
     /// No job name was given, and no default job is set.
     #[error("no job name given. Available: {}", available.join(", "))]
     MissingJob {
@@ -36,7 +37,7 @@ pub enum CliError {
 
     /// The input does not decode as the job's input.
     #[error("invalid input: {0}")]
-    InvalidInput(#[source] BoxError),
+    InvalidInput(#[source] serde_json::Error),
 
     /// The job ran and failed.
     #[error("job failed: {0}")]
@@ -56,7 +57,7 @@ pub enum CliError {
     Report(#[from] ReportError),
 }
 
-impl CliError {
+impl RunError {
     /// The exit code the process ends with.
     pub fn exit_code(&self) -> u8 {
         match self {

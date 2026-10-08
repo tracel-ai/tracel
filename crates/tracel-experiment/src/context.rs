@@ -53,7 +53,8 @@ pub struct WithCurrentExperiment<F> {
 ///
 /// # Example
 ///
-/// In a function an [`Experiments`](crate::Experiments) job runs, which receives the run:
+/// In code that runs in an experiment, given its run, such as code
+/// [`Experiments::run`](crate::Experiments::run) runs:
 ///
 /// ```no_run
 /// use tracel_experiment::{ExperimentInstrument, ExperimentRun};
@@ -104,7 +105,8 @@ impl<F> WithCurrentExperiment<F> {
 ///
 /// # Example
 ///
-/// In a function an [`Experiments`](crate::Experiments) job runs, which receives the run:
+/// In code that runs in an experiment, given its run, such as code
+/// [`Experiments::run`](crate::Experiments::run) runs:
 ///
 /// ```no_run
 /// use tracel_experiment::{ExperimentGlobalExt, ExperimentRun};

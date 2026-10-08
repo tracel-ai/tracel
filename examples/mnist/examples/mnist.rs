@@ -14,28 +14,30 @@ use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
 use tracel::Target;
-use tracel::app::cli::Cli;
-use tracel::app::mapper::JsonMapper;
-use tracel::experiment::ExperimentRun;
+use tracel::app::{BoxError, Job, Jobs};
 
-fn main() -> anyhow::Result<ExitCode> {
-    let train = Target::from_env()?
-        .experiments()?
-        .create("mnist", |experiment: &ExperimentRun, config| {
-            training::run(
-                experiment,
-                config,
-                vec![Device::autodiff(WgpuDevice::default().into())],
-            )
-        })
-        .with_description("Train an MNIST classifier");
+/// Trains the model in an experiment, which records the config as its arguments.
+fn mnist(config: MnistTrainingConfig) -> Result<(), BoxError> {
+    let experiments = Target::from_env()?.experiments()?;
+    experiments.run("mnist", |experiment| {
+        experiment.log_args(&config)?;
+        training::run(
+            experiment,
+            config,
+            vec![Device::autodiff(WgpuDevice::default().into())],
+        )
+    })
+}
 
-    Ok(Cli::new()
+fn main() -> ExitCode {
+    Jobs::new()
         .version(env!("CARGO_PKG_VERSION"))
-        .register(
-            train,
-            JsonMapper::with_default(MnistTrainingConfig::small()),
+        .job(
+            "mnist",
+            Job::new(mnist)
+                .with_description("Train an MNIST classifier")
+                .with_default(MnistTrainingConfig::small()),
         )
         .default_job("mnist")
-        .run())
+        .run()
 }

@@ -10,6 +10,14 @@ use crate::{PROTOCOL, json_file};
 /// Names the file the runner of a job writes the job's [`RunReport`] to.
 pub const TRACEL_REPORT_FILE: &str = "TRACEL_REPORT_FILE";
 
+/// Gives the number a launcher gave the job it runs, which each experiment the job starts records
+/// as its [`JOB_NUM_ATTRIBUTE`].
+pub const TRACEL_JOB_NUM: &str = "TRACEL_JOB_NUM";
+
+/// The experiment attribute that links an experiment to the job that started it: the job's
+/// [`TRACEL_JOB_NUM`], as a number when it is one.
+pub const JOB_NUM_ATTRIBUTE: &str = "tracel.job_num";
+
 /// How a job is going and how it ended, and the experiments it started, as JSON.
 ///
 /// It is the contents of the file [`TRACEL_REPORT_FILE`] names. The runner of a job writes it when

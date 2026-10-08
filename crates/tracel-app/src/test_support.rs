@@ -1,18 +1,8 @@
-use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use serde_json::Value;
-use tracel_experiment::error::ExperimentError;
-use tracel_experiment::{ExperimentProvider, ExperimentRun};
-
-/// A provider for experiment jobs that are built or prepared, never run.
-pub struct NeverRuns;
-
-impl ExperimentProvider for NeverRuns {
-    fn create_experiment(
-        &self,
-        name: String,
-        _attributes: HashMap<String, Value>,
-    ) -> Result<ExperimentRun, ExperimentError> {
-        panic!("experiment '{name}' was not expected to run")
-    }
+/// Keeps other tests from running a job until the returned guard drops: the job a process runs is
+/// the process's.
+pub fn one_job_at_a_time() -> MutexGuard<'static, ()> {
+    static ONE_JOB: Mutex<()> = Mutex::new(());
+    ONE_JOB.lock().unwrap_or_else(PoisonError::into_inner)
 }

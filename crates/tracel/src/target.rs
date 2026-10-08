@@ -13,6 +13,8 @@ use tracel_station::Station;
 #[cfg(feature = "station")]
 use url::Url;
 
+use crate::running_job;
+
 const TRACEL_TARGET: &str = "TRACEL_TARGET";
 const TRACEL_RUNS_DIR: &str = "TRACEL_RUNS_DIR";
 const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
@@ -141,17 +143,27 @@ impl Target {
     /// Returns the experiments this target records, without performing network I/O.
     ///
     /// Offline, the first run creates its directory.
+    ///
+    /// Built while a job runs in the process, under [`Jobs::run`](crate::app::Jobs::run), the
+    /// experiments are linked to the job: each experiment started from them records the job's
+    /// number, when its launcher gave one, as its `tracel.job_num` attribute, is asked to stop
+    /// once the job is, and is listed in the job's run report; once the job was asked to stop, no
+    /// more start. Experiments built another way, such as
+    /// [`ProjectHandle::experiments`] or [`Experiments::new`], are not linked unless the code
+    /// links them through [`Experiments::attribute`], [`Experiments::cancel_token`] and
+    /// [`Experiments::on_start`].
     pub fn experiments(&self) -> Result<Experiments, TargetError> {
-        match self {
-            Target::Offline { dir } => Ok(Experiments::new(Arc::new(LocalExperiments::new(dir)))),
+        let experiments = match self {
+            Target::Offline { dir } => Experiments::new(Arc::new(LocalExperiments::new(dir))),
             Target::Console {
                 env,
                 credentials,
                 project,
-            } => Ok(console_project(env, credentials, project)?.experiments()),
+            } => console_project(env, credentials, project)?.experiments(),
             #[cfg(feature = "station")]
-            Target::Station { url } => Ok(Station::connect(url.clone()).experiments()),
-        }
+            Target::Station { url } => Station::connect(url.clone()).experiments(),
+        };
+        Ok(running_job::linked(experiments))
     }
 
     /// Returns the model registry this target reaches, without performing network I/O.

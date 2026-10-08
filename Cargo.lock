@@ -4665,7 +4665,6 @@ dependencies = [
 name = "mnist"
 version = "0.11.0"
 dependencies = [
- "anyhow",
  "burn",
  "rand 0.9.5",
  "serde",
@@ -7210,6 +7209,7 @@ name = "tracel"
 version = "0.11.0"
 dependencies = [
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tracel-app",
@@ -7239,10 +7239,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tracel-experiment",
  "tracel-job",
- "tracing",
- "tracing-subscriber",
  "url",
  "uuid",
 ]
@@ -7324,7 +7321,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracel-artifact",
- "tracel-job",
  "tracing",
  "tracing-subscriber",
 ]

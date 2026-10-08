@@ -64,7 +64,7 @@ pub fn command<'a>(
 /// unless the example input gives it or `--config` or `[INPUT]` is given. Without one, each
 /// field of the example input is a flag typed by its value. A field that is an array, a map, a
 /// nullable object or of no single type, or whose example value is `null`, takes a JSON literal.
-/// The example input gives each flag's default, which the job's mapper fills in.
+/// The example input gives each flag's default, which the job fills in from its default input.
 ///
 /// A nested field's flag joins the keys with dots, and writes `_` as `-`: the field
 /// `weight_decay` of `optimizer` is `--optimizer.weight-decay`. A boolean flag given no value is
@@ -99,13 +99,13 @@ pub fn job_command(definition: &JobDefinition) -> Command {
 }
 
 /// The input the arguments of a job's command line give, as [`job_command`] built it, for the
-/// job's mapper to resolve. `Value::Null`, no input, when none is given.
+/// job to merge onto its default input. `Value::Null`, no input, when none is given.
 ///
 /// The `--config` file, the JSON input and the flags are overlaid in that order. Overlaying
 /// follows JSON merge patch (RFC 7386), except that a `null` field is kept rather than applied:
 /// the fields of an object replace those of the object below or are overlaid onto them, and any
 /// other value replaces what is below. A `null` field still removes that field from the job's
-/// default, which the mapper merges the input onto. One of them alone is the input as given.
+/// default input, which the input is merged onto. One of them alone is the input as given.
 pub fn job_input(matches: &ArgMatches) -> Value {
     let mut fields = Value::Null;
     for id in matches.ids().map(|id| id.as_str()) {

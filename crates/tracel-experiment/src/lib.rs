@@ -24,9 +24,8 @@
 //!
 //! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] is the
 //! user-facing entry point: [`Experiments::run`] runs code in a new experiment and ends it by what
-//! the code returns, and [`Experiments::start`] starts one and returns its run. An
-//! [`ExperimentJob`] wraps a function into a job a runner runs. With the `local` feature,
-//! `local::LocalExperiments` records experiments on this machine.
+//! the code returns, and [`Experiments::start`] starts one and returns its run. With the `local`
+//! feature, `local::LocalExperiments` records experiments on this machine.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -65,7 +64,7 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;
-pub use provider::{ExperimentFn, ExperimentJob, ExperimentProvider, Experiments};
+pub use provider::{ExperimentProvider, Experiments};
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -260,8 +259,8 @@ enum RunState {
 impl ExperimentRun {
     /// Create a run from backend-specific session and artifact reader implementations.
     ///
-    /// This is the low-level constructor an [`ExperimentProvider`] uses. Most callers receive a
-    /// run from an [`ExperimentJob`] instead.
+    /// This is the low-level constructor an [`ExperimentProvider`] uses. Most callers start a run
+    /// with [`Experiments::start`] or [`Experiments::run`] instead.
     pub fn new<S, R>(
         id: impl Into<ExperimentId>,
         session: S,
@@ -380,11 +379,10 @@ impl ExperimentRun {
         self.handle.id()
     }
 
-    /// Log the serialized input arguments for the run.
+    /// Log the serialized input arguments for the run, such as the configuration it trains with,
+    /// which the console lists as the experiment's config.
     ///
-    /// An [`ExperimentJob`] records the input it runs with as the run's arguments when the run
-    /// starts, so this is only needed to record different ones. Fails only if `args` cannot be
-    /// serialized.
+    /// Fails only if `args` cannot be serialized.
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|error| {
             ExperimentError::with_source(

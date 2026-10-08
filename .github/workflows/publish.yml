@@ -30,7 +30,6 @@ jobs:
       tag-validation: false
     needs:
       - tracel-artifact
-      - tracel-job
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
@@ -48,7 +47,6 @@ jobs:
       crate: tracel-app
       tag-validation: false
     needs:
-      - tracel-experiment
       - tracel-job
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
