@@ -40,6 +40,4 @@ cargo run -p basics --example cli -- toy-training --epochs 2 --batches-per-epoch
 cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'  # the same input as JSON
 cargo run -p basics --example cli -- wordtok --text "hello streaming world"
 cargo run -p basics --example cli -- --completions bash > cli.bash  # a bash completion script
-TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli  # writes the job definitions to jobs.json
-TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training  # writes the job's run report to report.json
 ```

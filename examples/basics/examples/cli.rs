@@ -5,14 +5,6 @@
 //! cargo run -p basics --example cli -- toy-training --epochs 2 --batches-per-epoch 4
 //! cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
 //! cargo run -p basics --example cli -- wordtok --text "hello streaming world"
-//!
-//! List the jobs and their inputs instead of running one:
-//!
-//! TRACEL_DESCRIBE=jobs.json cargo run -p basics --example cli
-//!
-//! Write the job's run report, which lists the experiments it starts:
-//!
-//! TRACEL_REPORT_FILE=report.json cargo run -p basics --example cli -- toy-training
 
 use std::process::ExitCode;
 

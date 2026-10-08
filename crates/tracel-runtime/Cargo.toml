@@ -1,6 +1,6 @@
 [package]
 name = "tracel-runtime"
-description = "The job protocol of the Tracel SDK: a program's jobs, plain functions of their input, and the entry point that runs one."
+description = "The runtime of Tracel jobs: a program's jobs, plain functions of their input, and the adapters that run them."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

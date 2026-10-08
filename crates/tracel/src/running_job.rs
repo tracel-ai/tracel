@@ -28,7 +28,7 @@ struct RunningJob {
     input: Value,
     /// Registers an action to run once the job is asked to stop.
     on_stop: Box<dyn FnOnce(StopAction)>,
-    /// Adds an experiment to the job's run report.
+    /// Reports an experiment the job started, as the job's adapter reports experiments.
     report: Arc<dyn Fn(ReportedExperiment) + Send + Sync>,
 }
 
@@ -68,7 +68,7 @@ fn link(experiments: Experiments, job: RunningJob) -> Experiments {
         .on_start(move |run| report(reported(run)))
 }
 
-/// `run` as a job's run report lists it: its number, and its page or its directory.
+/// `run` as a job reports it: its number, and its page or its directory.
 fn reported(run: &ExperimentRun) -> ReportedExperiment {
     let (url, dir) = match run.location() {
         Some(ExperimentLocation::Url(url)) => (Some(url.clone()), None),

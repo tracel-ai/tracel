@@ -6,8 +6,7 @@
 //! High-level Tracel SDK.
 //!
 //! The SDK gives a program clients for the platform's services, which it picks from the
-//! environment, and the job protocol through which the program's jobs are run, launched remotely
-//! or run locally.
+//! environment, and the runtime that runs the program's jobs, launched remotely or run locally.
 //!
 //! Features:
 //! - Artifact creation and management
@@ -24,8 +23,6 @@
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
 //! - [`runtime`]: jobs, plain functions of their input, and the entry point that runs one.
-//! - [`job`]: the job definitions file, the run report, and the command line built from job
-//!   definitions, which programs that launch jobs share with the SDK.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
 //! - [`datasets`]: the dataset domain and its registry.
 //! - [`models`]: the model domain and its registry.
@@ -86,8 +83,8 @@
 //!
 //! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
 //! to that job, even for runs started on other threads: each one started from them records the
-//! job's number and input, is asked to stop when the job is, and is listed in the job's run
-//! report, as [Launching Jobs](#launching-jobs) describes. Experiments built another way, such as
+//! job's number and input, is asked to stop when the job is, and is shown with the job by
+//! `tracel run`. Experiments built another way, such as
 //! [`console::ProjectHandle::experiments`], are not linked unless the code links them, through
 //! [`Experiments::attribute`](experiment::Experiments::attribute),
 //! [`arguments`](experiment::Experiments::arguments),
@@ -137,65 +134,26 @@
 //! - `<binary> --completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`,
 //!   `powershell` or `zsh`.
 //!
-//! [`job::command`] builds the same command line from job definitions alone, such as those of a
-//! definitions file, and [`job::job_input`] reads a job's input from its arguments.
-//!
-//! ## Describing Jobs
-//!
-//! With `TRACEL_DESCRIBE=<path>` set, the program writes the definitions of its jobs to `<path>`
-//! as JSON, then exits without running a job: see [`job::DefinitionsFile`]. Each definition gives
-//! the job's name, description, input schema and example input. The example input is the job's
-//! default, and the input schema needs `Job::with_schema` and the `schema` feature.
-//!
 //! ## Launching Jobs
 //!
-//! A program whose `main` returns [`Jobs::run`](runtime::Jobs::run) can be launched by another
-//! program, such as the `tracel` CLI, which reads its exit code:
+//! `tracel run <job>` builds the program and runs one of its jobs, taking the job's flags on its
+//! own command line, and `tracel run --list` lists the jobs with their descriptions. The program's
+//! exit code says how the job ended:
 //!
 //! | Exit code | Meaning |
 //! | --- | --- |
-//! | 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
+//! | 0 | The job completed, or the help, version or completion script was printed |
 //! | 1 | The job failed |
 //! | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 //! | 130 | The job was asked to stop |
 //!
-//! With `TRACEL_REPORT_FILE=<path>` set, the program writes the job's [`RunReport`](job::RunReport)
-//! to `<path>`: how the job is going and how it ended, and the experiments it started. It is
-//! written when the job starts, again each time the job starts an experiment, and again when the
-//! job ends, each time to `<path>.tmp` first, renamed to `<path>`. Without the variable, or when
-//! the program rejects the job or its input, nothing is written:
-//!
-//! ```json
-//! {
-//!   "protocol": 1,
-//!   "job": "train",
-//!   "status": "completed",
-//!   "started_at": "2026-10-06T14:02:11Z",
-//!   "finished_at": "2026-10-06T14:31:40Z",
-//!   "error": null,
-//!   "experiments": [
-//!     { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
-//!   ]
-//! }
-//! ```
-//!
-//! `status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why
-//! a job failed. `experiments` lists the experiments the job started from the experiments a
-//! [`Target`] built, in order: `[]` until it starts one, and for a job that starts none. `url` is
-//! an experiment's page on the console; offline it is `null`, and `dir` gives the experiment's
-//! directory instead, where `status.json` says how the experiment went and `events.jsonl` holds
-//! its events, one JSON object per line, as
-//! [`LocalExperiments`](experiment::local::LocalExperiments) describes.
-//!
-//! With `TRACEL_JOB_NUM` set, each of these experiments records it as its `tracel.job_num`
-//! attribute, which links it to the job.
-//!
 //! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
 //! [`runtime::stop_requested`] turns `true`, and what [`runtime::on_stop`] registered runs.
-//! Through it, each of these experiments has its cancel token cancelled, which stops a Burn learner
-//! given its `interrupter()`, and logs a warning that a stop was requested; none starts after. The
-//! job ends as `completed` or `failed` by what it returns, and the program exits with code 130. A
-//! second signal ends the program at once. Launchers send SIGKILL after a 30-second grace period.
+//! Through it, each experiment linked to the job has its cancel token cancelled, which stops a Burn
+//! learner given its `interrupter()`, and logs a warning that a stop was requested; none starts
+//! after. The job ends as completed or failed by what it returns, and the program exits with code
+//! 130. A second signal ends the program at once, and `tracel run` sends SIGKILL after a 30-second
+//! grace period.
 
 mod running_job;
 mod target;
@@ -236,7 +194,3 @@ pub use tracel_artifact as artifact;
 /// Jobs, plain functions of their input, and the entry point that runs one.
 #[doc(inline)]
 pub use tracel_runtime as runtime;
-
-/// The job definitions file, the run report, and the command line built from job definitions.
-#[doc(inline)]
-pub use tracel_job_proto as job;

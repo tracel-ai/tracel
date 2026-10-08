@@ -41,8 +41,8 @@ impl JobScope {
         CURRENT.with(|current| current.borrow().clone())
     }
 
-    /// The number or id the job's launcher gave it: `TRACEL_JOB_NUM` for a process, the station's
-    /// id for the job for a Station runner.
+    /// The number or id the job's launcher gave it: the job's number for a process `tracel run`
+    /// launched, the station's id for the job for a Station runner.
     pub fn num(&self) -> Option<&str> {
         self.inner.num.as_deref()
     }
@@ -66,7 +66,7 @@ impl JobScope {
     }
 
     /// Reports `experiment`, which the job started, as its adapter reports experiments: the
-    /// process adds it to the job's run report, and a Station runner logs it.
+    /// process tells its launcher, and a Station runner logs it.
     pub fn report_experiment(&self, experiment: ReportedExperiment) {
         (self.inner.experiments)(experiment);
     }
@@ -136,8 +136,7 @@ pub fn job_input() -> Option<Value> {
 }
 
 /// Reports `experiment`, which code in the job the current thread runs started, as the job's
-/// adapter reports experiments: the process adds it to the job's run report, and a Station runner
-/// logs it.
+/// adapter reports experiments: the process tells its launcher, and a Station runner logs it.
 ///
 /// Does nothing while the thread runs no job.
 pub fn report_experiment(experiment: ReportedExperiment) {

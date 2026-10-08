@@ -61,33 +61,26 @@ impl Jobs {
     ///
     /// | Exit code | Meaning |
     /// | --- | --- |
-    /// | 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
-    /// | 1 | The job failed, or the definitions file or the run report could not be written |
+    /// | 0 | The job completed, or the help, version or completion script was printed |
+    /// | 1 | The job failed, or a file its launcher asked for could not be written |
     /// | 2 | No job or an unknown job is named, a flag or the input is unusable, or the input does not decode |
     /// | 130 | The job was asked to stop |
     ///
     /// Why it did not complete is printed to stderr, with the registered job names when no job or
-    /// an unknown one is named, and a stop request as a warning. When `TRACEL_DESCRIBE` names a
-    /// path, writes the definitions file there instead of running a job.
-    ///
-    /// When `TRACEL_REPORT_FILE` names a path, the job's
-    /// [`RunReport`](tracel_job_proto::RunReport) is written there when the job starts, once its
-    /// input decodes, again each time code in the job reports an experiment it started, through
-    /// [`report_experiment`](crate::report_experiment), and again when it ends, as completed or
-    /// failed by what the job returns. None is written for a command line or an input that is
-    /// rejected.
+    /// an unknown one is named, and a stop request as a warning. Launched by `tracel run`, the
+    /// program also gives its launcher its jobs' definitions, how the job is going and the
+    /// experiments code in the job reports through [`report_experiment`](crate::report_experiment).
     ///
     /// The job runs on this thread, in its [`JobScope`](crate::JobScope):
     /// [`stop_requested`](crate::stop_requested) says whether it was asked to stop,
     /// [`on_stop`](crate::on_stop) runs code once it is, [`job_num`](crate::job_num) gives the
-    /// number `TRACEL_JOB_NUM` gives it, and [`job_input`](crate::job_input) the input it runs
-    /// with.
+    /// number its launcher gave it, and [`job_input`](crate::job_input) the input it runs with.
     ///
     /// SIGTERM, SIGINT or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows, asks
     /// the job to stop: it runs what [`on_stop`](crate::on_stop) registered, the job ends as
     /// completed or failed by what it returns, and the process exits with code 130. A second
-    /// signal ends the process at once, also with exit code 130. Launchers send SIGKILL after a
-    /// 30-second grace period.
+    /// signal ends the process at once, also with exit code 130. `tracel run` sends SIGKILL after
+    /// a 30-second grace period.
     pub fn run(self) -> ExitCode {
         match self.execute() {
             Ok(()) => ExitCode::SUCCESS,

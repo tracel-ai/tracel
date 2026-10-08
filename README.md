@@ -91,10 +91,9 @@ input, merged onto its default, as its arguments, which the console lists as its
 
 The experiments `Target::experiments` builds in a job, on the thread that runs it, are linked to
 that job, even for runs started on other threads: each one started from them records the job's
-number and input, is asked to stop when the job is, and is listed in the job's run report, as
-[Launching jobs](#launching-jobs) describes. Experiments built another way, such as
-`ProjectHandle::experiments`, are not linked unless the code links them, through
-`Experiments::attribute`, `arguments`, `cancel_token` and `on_start`.
+number and input, is asked to stop when the job is, and is shown with the job by `tracel run`.
+Experiments built another way, such as `ProjectHandle::experiments`, are not linked unless the
+code links them, through `Experiments::attribute`, `arguments`, `cancel_token` and `on_start`.
 
 The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a
 complete, runnable version.
@@ -152,82 +151,28 @@ Options:
 - `--completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`, `powershell`
   or `zsh`: `cargo run -- --completions bash > mnist.bash`.
 
-`tracel::job::command` builds the same command line from job definitions alone, such as those of
-a definitions file.
-
-#### Describing jobs
-
-With `TRACEL_DESCRIBE=<path>` set, `run()` writes the definitions of the binary's jobs to `<path>`
-and returns successfully without running a job, writing the file to `<path>.tmp` first and
-renaming it, so it is never read half written:
-
-```json
-{
-  "protocol": 1,
-  "sdk_version": "0.10.0",
-  "jobs": [
-    {
-      "name": "mnist",
-      "description": "Train the MNIST classifier",
-      "input_schema": null,
-      "input_example": { "num_epochs": 10, "optimizer": { "lr": 0.001 } }
-    }
-  ]
-}
-```
-
-`input_example` is the default given to `Job::with_default`. `input_schema` is the input type's
-JSON Schema when the job is built with `Job::with_schema`, which needs the `schema` feature and an
-input type that derives `schemars::JsonSchema`.
-
 #### Launching jobs
 
-A binary whose `main` returns `Jobs::run()` can be launched by another program, such as the
-`tracel` CLI, which reads its exit code:
+`tracel run <job>` builds the binary and runs one of its jobs, taking the job's flags on its own
+command line, and `tracel run --list` lists the jobs with their descriptions. The binary's exit
+code says how the job ended:
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | The job completed, the help, version or completion script was printed, or the definitions file was written |
+| 0 | The job completed, or the help, version or completion script was printed |
 | 1 | The job failed |
 | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 | 130 | The job was asked to stop |
 
-With `TRACEL_REPORT_FILE=<path>` set, the binary writes the job's run report to `<path>`: how the
-job is going and how it ended, and the experiments it started. It is written when the job starts,
-again each time the job starts an experiment, and again when the job ends, each time to
-`<path>.tmp` first, renamed to `<path>`. Without the variable, or when the binary rejects the job or
-its input, nothing is written:
-
-```json
-{
-  "protocol": 1,
-  "job": "mnist",
-  "status": "completed",
-  "started_at": "2026-10-06T14:02:11Z",
-  "finished_at": "2026-10-06T14:31:40Z",
-  "error": null,
-  "experiments": [
-    { "num": 42, "url": "https://console.tracel.ai/users/me/projects/demo/experiments/42" }
-  ]
-}
-```
-
-`status` is `running`, `completed` or `failed`, by what the job returned, and `error` says why a
-job failed. `experiments` lists the experiments the job started from the experiments a `Target`
-built, in order: `[]` until it starts one, and for a job that starts none. `url` is an
-experiment's page on the console; offline it is
-`null`, and `dir` gives the experiment's directory instead, where `status.json` says how the
-experiment went and `events.jsonl` holds its events, one JSON object per line.
-
-With `TRACEL_JOB_NUM` set, each of these experiments records it as its `tracel.job_num`
-attribute, which links it to the job.
-
 SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
 `tracel::runtime::stop_requested()` turns `true`, and what `tracel::runtime::on_stop` registered
-runs. Through it, each of these experiments has its cancel token cancelled, which stops a learner
-given `experiment.interrupter()`, and logs a warning that a stop was requested; none starts after.
-The job ends as `completed` or `failed` by what it returns, and the binary exits with code 130. A
-second signal ends the binary at once. Launchers send SIGKILL after a 30-second grace period.
+runs. Each experiment linked to the job has its cancel token cancelled, which stops a learner given
+`experiment.interrupter()`, and logs a warning that a stop was requested; none starts after. The
+job ends as completed or failed by what it returns, and the binary exits with code 130. A second
+signal ends the binary at once, and `tracel run` sends SIGKILL after a 30-second grace period.
+
+Programs that launch job binaries, as `tracel run` does, follow the contract of the
+`tracel-job-proto` crate.
 
 ### 2. Integrate with your Learner
 
