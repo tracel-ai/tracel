@@ -26,8 +26,8 @@ The example registers its `mnist` job, a function of `MnistTrainingConfig`, with
 `tracel::runtime::Jobs`, so each field of the config, a Burn `Config`, is a flag typed by its
 default value, nested fields joined with dots. The flags, or one JSON document, are merged onto the
 small default configuration. The job trains in an experiment it runs with `Experiments::run`,
-which records the config as the experiment's arguments and ends the experiment as completed or
-failed by what training returns.
+which records the merged configuration, the job's input, as the experiment's arguments and ends
+the experiment as completed or failed by what training returns.
 SIGTERM asks the job to stop: the interrupter stops training, the experiment ends as completed, and
 the program exits with code 130. Launchers send SIGKILL after a 30-second grace period.
 

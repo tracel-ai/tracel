@@ -108,10 +108,18 @@ pub struct Registered {
 }
 
 /// Decodes a job's input, and gives the job ready to run with it.
-type Decode = Box<dyn Fn(Value) -> Result<Ready, serde_json::Error> + Send + Sync>;
+type Decode = Box<dyn Fn(&Value) -> Result<Ready, serde_json::Error> + Send + Sync>;
 
 /// A job given its input, ready to run.
 pub type Ready = Box<dyn FnOnce() -> Result<(), BoxError>>;
+
+/// A job given its input, ready to run, and that input.
+pub struct Prepared {
+    /// The input the job runs with, as JSON: the input given, merged onto the job's default.
+    pub input: Value,
+    /// The job, given the input decoded.
+    pub run: Ready,
+}
 
 impl Registered {
     /// `job`, registered as `name`.
@@ -134,7 +142,7 @@ impl Registered {
             },
             default,
             decode: Box::new(move |input| {
-                let input = serde_json::from_value::<I>(input)?;
+                let input = I::deserialize(input)?;
                 let run = run.clone();
                 Ok(Box::new(move || run(input)) as Ready)
             }),
@@ -150,8 +158,10 @@ impl Registered {
     /// `Value::Null` stands for no input.
     ///
     /// Fails without running anything when the input does not decode as the job's input.
-    pub fn prepare(&self, input: Value) -> Result<Ready, serde_json::Error> {
-        (self.decode)(resolve(self.default.clone(), input))
+    pub fn prepare(&self, input: Value) -> Result<Prepared, serde_json::Error> {
+        let input = resolve(self.default.clone(), input);
+        let run = (self.decode)(&input)?;
+        Ok(Prepared { input, run })
     }
 }
 
@@ -224,7 +234,9 @@ mod tests {
     where
         I: DeserializeOwned + 'static,
     {
-        Registered::new("train".to_string(), job).prepare(input)?()
+        (Registered::new("train".to_string(), job)
+            .prepare(input)?
+            .run)()
     }
 
     #[test]
@@ -290,6 +302,38 @@ mod tests {
     }
 
     #[test]
+    fn the_prepared_input_is_the_json_the_job_runs_with() {
+        let prepare = |input| {
+            let (job, _) = recording::<Config>();
+            Registered::new("train".to_string(), job.with_default(default_config()))
+                .prepare(input)
+                .unwrap()
+                .input
+        };
+        let (bare, _) = recording::<Value>();
+
+        assert_eq!(
+            prepare(json!({"epochs": 2, "optimizer": {"lr": 0.1}})),
+            json!({
+                "epochs": 2,
+                "optimizer": {"lr": 0.1, "weight_decay": 0.0},
+                "tag": "baseline"
+            })
+        );
+        assert_eq!(
+            prepare(Value::Null),
+            serde_json::to_value(default_config()).unwrap()
+        );
+        assert_eq!(
+            Registered::new("evaluate".to_string(), bare)
+                .prepare(json!({"split": "test"}))
+                .unwrap()
+                .input,
+            json!({"split": "test"})
+        );
+    }
+
+    #[test]
     fn an_input_is_merge_patched_onto_the_default() {
         let (job, ran_with) = recording();
 
@@ -331,7 +375,7 @@ mod tests {
         let registered = Registered::new("train".to_string(), job);
 
         for epochs in [1, 2] {
-            registered.prepare(json!(epochs)).unwrap()().unwrap();
+            (registered.prepare(json!(epochs)).unwrap().run)().unwrap();
             assert_eq!(ran_with.lock().unwrap().take(), Some(epochs));
         }
     }

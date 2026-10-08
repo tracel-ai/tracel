@@ -59,7 +59,7 @@ const RUNS_GITIGNORE: &str = "# Created by tracel: experiment runs recorded on t
 /// | `type` | Fields |
 /// | --- | --- |
 /// | `attribute` | `key`, `value` |
-/// | `arguments` | `value`, the run's input, which the console lists as the experiment's `config` |
+/// | `arguments` | `value`, the run's input, which the console lists as the experiment's `config`; the last one is the run's |
 /// | `config` | `name`, `value` |
 /// | `log` | `timestamp`, `level`, `message`, `metadata`, `activity` |
 /// | `metric` | `name`, `epoch`, `iteration`, `value`, `group`, `activity` |

@@ -103,8 +103,8 @@ fn finish_in_flight(in_flight: &InFlight) {
 }
 
 fn execute(jobs: &Jobs, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
-    let ready = match jobs.prepare(&job.job_name, job.input.clone()) {
-        Ok(ready) => ready,
+    let prepared = match jobs.prepare(&job.job_name, job.input.clone()) {
+        Ok(prepared) => prepared,
         // Unreachable under the station's strict policy; defend anyway.
         Err(PrepareError::UnknownJob) => {
             return (
@@ -125,7 +125,7 @@ fn execute(jobs: &Jobs, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
         num: Some(job.id.to_string()),
         experiments: Arc::new(log_experiment(job.id)),
     };
-    match crate::jobs::run(ready, launch) {
+    match crate::jobs::run(prepared, launch) {
         Ok(()) => (FinishStatus::Completed, None),
         Err(error) => (FinishStatus::Failed, Some(error.to_string())),
     }
@@ -247,7 +247,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::{BoxError, job_num};
+    use crate::{BoxError, job_input, job_num};
 
     #[allow(clippy::type_complexity)]
     type RecordedFinish = (Uuid, Uuid, FinishStatus, Option<String>);
@@ -401,13 +401,19 @@ mod tests {
                         *count < 2
                     })
                     .unwrap();
-                seen.lock().unwrap().push((job_num(), *count == 2));
+                seen.lock()
+                    .unwrap()
+                    .push((job_num(), job_input(), *count == 2));
                 Ok::<_, BoxError>(())
             }
         });
         let sink = Arc::new(RecordingSink::default());
         let executor = Executor::new(Arc::new(jobs), sink.clone());
-        let (first, second) = (dispatched("wait"), dispatched("wait"));
+        let with_input = |n: u32| DispatchedJob {
+            input: json!({ "n": n }),
+            ..dispatched("wait")
+        };
+        let (first, second) = (with_input(1), with_input(2));
 
         serve_stream(
             events(
@@ -421,14 +427,14 @@ mod tests {
         );
         executor.wait_idle();
 
-        let mut seen = seen.lock().unwrap().clone();
-        seen.sort();
-        let mut expected = vec![
-            (Some(first.id.to_string()), true),
-            (Some(second.id.to_string()), true),
-        ];
-        expected.sort();
-        assert_eq!(seen, expected);
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        for (job, n) in [(&first, 1), (&second, 2)] {
+            assert!(
+                seen.contains(&(Some(job.id.to_string()), Some(json!({ "n": n })), true)),
+                "{seen:?}"
+            );
+        }
         assert_eq!(sink.finishes.lock().unwrap().len(), 2);
     }
 

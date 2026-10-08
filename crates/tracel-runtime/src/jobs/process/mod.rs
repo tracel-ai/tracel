@@ -77,8 +77,9 @@ impl Jobs {
     ///
     /// The job runs on this thread, in its [`JobScope`](crate::JobScope):
     /// [`stop_requested`](crate::stop_requested) says whether it was asked to stop,
-    /// [`on_stop`](crate::on_stop) runs code once it is, and [`job_num`](crate::job_num) gives the
-    /// number `TRACEL_JOB_NUM` gives it.
+    /// [`on_stop`](crate::on_stop) runs code once it is, [`job_num`](crate::job_num) gives the
+    /// number `TRACEL_JOB_NUM` gives it, and [`job_input`](crate::job_input) the input it runs
+    /// with.
     ///
     /// SIGTERM, SIGINT or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows, asks
     /// the job to stop: it runs what [`on_stop`](crate::on_stop) registered, the job ends as
@@ -170,7 +171,7 @@ impl Jobs {
 
     /// Runs the job `name` with `input`, as `launch` launches it.
     fn dispatch(&self, name: &str, input: Value, launch: ProcessLaunch) -> Result<(), RunError> {
-        let ready = self.prepare(name, input).map_err(|error| match error {
+        let prepared = self.prepare(name, input).map_err(|error| match error {
             PrepareError::UnknownJob => RunError::UnknownJob {
                 name: name.to_string(),
                 available: self.names(),
@@ -185,7 +186,7 @@ impl Jobs {
 
         let experiments = report.clone();
         let outcome = crate::jobs::run(
-            ready,
+            prepared,
             Launch {
                 stop: launch.stop.clone(),
                 num: launch.num,
@@ -234,7 +235,8 @@ mod tests {
     use super::*;
     use crate::scope::request_stop;
     use crate::{
-        BoxError, IntoJob, Job, job_num, job_running, on_stop, report_experiment, stop_requested,
+        BoxError, IntoJob, Job, job_input, job_num, job_running, on_stop, report_experiment,
+        stop_requested,
     };
 
     #[derive(Clone, Copy)]
@@ -647,6 +649,38 @@ mod tests {
 
         assert!(matches!(stopped, Err(RunError::Stopped)));
         assert_eq!(*ran.lock().unwrap(), ["before", "on stop", "after"]);
+    }
+
+    #[test]
+    fn the_running_job_is_given_the_input_it_runs_with() {
+        let given = Arc::new(Mutex::new(Vec::new()));
+        let train = Job::new({
+            let given = given.clone();
+            move |input: Value| {
+                given.lock().unwrap().push((job_input(), Some(input)));
+                Ok::<_, BoxError>(())
+            }
+        })
+        .with_default(json!({"epochs": 10, "optimizer": {"lr": 0.001}}));
+        let evaluate = {
+            let given = given.clone();
+            move |()| {
+                given.lock().unwrap().push((job_input(), None));
+                Ok::<_, BoxError>(())
+            }
+        };
+
+        run(Jobs::new().job("train", train), &["train", "--epochs", "2"]).unwrap();
+        run(Jobs::new().job("evaluate", evaluate), &["evaluate"]).unwrap();
+
+        let merged = json!({"epochs": 2, "optimizer": {"lr": 0.001}});
+        assert_eq!(
+            *given.lock().unwrap(),
+            [
+                (Some(merged.clone()), Some(merged)),
+                (Some(Value::Null), None)
+            ]
+        );
     }
 
     fn read_json(path: &Path) -> Value {

@@ -16,11 +16,10 @@ use mnist::training::{self, MnistTrainingConfig};
 use tracel::Target;
 use tracel::runtime::{BoxError, Job, Jobs};
 
-/// Trains the model in an experiment, which records the config as its arguments.
+/// Trains the model in an experiment, which records the job's input as its arguments.
 fn mnist(config: MnistTrainingConfig) -> Result<(), BoxError> {
     let experiments = Target::from_env()?.experiments()?;
     experiments.run("mnist", |experiment| {
-        experiment.log_args(&config)?;
         training::run(
             experiment,
             config,

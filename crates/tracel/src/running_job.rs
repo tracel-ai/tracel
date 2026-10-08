@@ -24,6 +24,8 @@ type StopAction = Box<dyn FnOnce() + Send>;
 struct RunningJob {
     /// The number the job's launcher gave it.
     num: Option<String>,
+    /// The input the job runs with, as JSON.
+    input: Value,
     /// Registers an action to run once the job is asked to stop.
     on_stop: Box<dyn FnOnce(StopAction)>,
     /// Adds an experiment to the job's run report.
@@ -36,6 +38,7 @@ impl RunningJob {
         let scope = JobScope::current()?;
         Some(Self {
             num: scope.num().map(str::to_string),
+            input: scope.input().clone(),
             on_stop: Box::new({
                 let scope = scope.clone();
                 move |action: StopAction| scope.on_stop(action)
@@ -46,14 +49,19 @@ impl RunningJob {
 }
 
 /// `experiments`, each started from which belongs to `job`: it records the job's number as its
-/// `tracel.job_num` attribute, it is asked to stop once the job is, and no more start then, and it
-/// is listed in the job's run report.
+/// `tracel.job_num` attribute and the job's input, unless it is `null`, as its arguments, it is
+/// asked to stop once the job is, and no more start then, and it is reported as the job reports
+/// experiments.
 fn link(experiments: Experiments, job: RunningJob) -> Experiments {
     let cancel_token = experiments.cancel_token();
     (job.on_stop)(Box::new(move || cancel_token.cancel()));
     let attributes = job
         .num
         .map(|num| (JOB_NUM_ATTRIBUTE.to_string(), job_num(&num)));
+    let experiments = match job.input {
+        Value::Null => experiments,
+        input => experiments.arguments(input),
+    };
     let report = job.report;
     experiments
         .attributes(HashMap::from_iter(attributes))
@@ -97,13 +105,17 @@ mod tests {
     /// What a test keeps of what it is given.
     type Kept<T> = Arc<Mutex<Vec<T>>>;
 
-    /// A job numbered `num`, the actions it runs once asked to stop, and the experiments added to
-    /// its run report.
-    fn job(num: Option<&str>) -> (RunningJob, Kept<StopAction>, Kept<ReportedExperiment>) {
+    /// A job numbered `num`, running with `input`, the actions it runs once asked to stop, and the
+    /// experiments it reports.
+    fn job(
+        num: Option<&str>,
+        input: Value,
+    ) -> (RunningJob, Kept<StopAction>, Kept<ReportedExperiment>) {
         let on_stop = Arc::new(Mutex::new(Vec::new()));
         let reported = Arc::new(Mutex::new(Vec::new()));
         let job = RunningJob {
             num: num.map(str::to_string),
+            input,
             on_stop: Box::new({
                 let on_stop = on_stop.clone();
                 move |action| on_stop.lock().unwrap().push(action)
@@ -132,7 +144,7 @@ mod tests {
     #[test]
     fn an_experiment_started_in_a_job_belongs_to_it() {
         let dir = tempfile::tempdir().unwrap();
-        let (job, on_stop, reported) = job(Some("12"));
+        let (job, on_stop, reported) = job(Some("12"), json!({"epochs": 2}));
 
         let experiments = link(offline(dir.path()), job);
         let run = experiments.start("train").unwrap();
@@ -148,6 +160,10 @@ mod tests {
             "type": "attribute",
             "key": "tracel.job_num",
             "value": 12
+        })));
+        assert!(events(dir.path(), 1).contains(&json!({
+            "type": "arguments",
+            "value": {"epochs": 2}
         })));
         assert!(
             events(dir.path(), 1)
@@ -170,9 +186,9 @@ mod tests {
     }
 
     #[test]
-    fn an_experiment_started_in_a_job_without_a_number_records_none() {
+    fn an_experiment_started_in_a_job_without_a_number_or_input_records_neither() {
         let dir = tempfile::tempdir().unwrap();
-        let (job, _, reported) = job(None);
+        let (job, _, reported) = job(None, Value::Null);
 
         link(offline(dir.path()), job)
             .start("train")
@@ -183,7 +199,7 @@ mod tests {
         assert!(
             events(dir.path(), 1)
                 .iter()
-                .all(|event| event["type"] != "attribute")
+                .all(|event| event["type"] != "attribute" && event["type"] != "arguments")
         );
         assert_eq!(reported.lock().unwrap().len(), 1);
     }
@@ -201,7 +217,7 @@ mod tests {
         assert!(
             events(dir.path(), 1)
                 .iter()
-                .all(|event| event["type"] != "attribute")
+                .all(|event| event["type"] != "attribute" && event["type"] != "arguments")
         );
     }
 

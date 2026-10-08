@@ -21,13 +21,10 @@ use basics::{Prompt, WordTokenizer};
 use tracel::Target;
 use tracel::runtime::{BoxError, Job, Jobs};
 
-/// Runs the toy training loop in an experiment, which records the config as its arguments.
+/// Runs the toy training loop in an experiment, which records the job's input as its arguments.
 fn toy_training(config: TrainingConfig) -> Result<(), BoxError> {
     let experiments = Target::from_env()?.experiments()?;
-    experiments.run("toy-training", |run| {
-        run.log_args(&config)?;
-        training::train(run, config)
-    })
+    experiments.run("toy-training", |run| training::train(run, config))
 }
 
 /// Splits the prompt into tokens and prints them, one per line. It starts no experiment.

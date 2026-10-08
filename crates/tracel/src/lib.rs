@@ -53,8 +53,8 @@
 //! fn train(config: TrainingConfig) -> Result<(), BoxError> {
 //!     let experiments = Target::from_env()?.experiments()?;
 //!     experiments.run("train", |run| {
-//!         run.log_args(&config)?;
 //!         // Your training code here
+//!         run.log_info(format!("training for {} epochs", config.epochs));
 //!         Ok(())
 //!     })
 //! }
@@ -80,15 +80,17 @@
 //! returns: completed on `Ok`, and failed on `Err` or a panic.
 //! [`Experiments::start`](experiment::Experiments::start) returns the run instead, for code that
 //! ends it with `finish()` or `fail()`; a run dropped before either ends as failed.
-//! [`log_args`](experiment::ExperimentRun::log_args) records the job's input as the experiment's
-//! arguments, which the console lists as the experiment's config.
+//! An experiment started in a job, from the experiments a [`Target`] built, records the job's
+//! input, merged onto its default, as its arguments, which the console lists as the experiment's
+//! config; [`log_args`](experiment::ExperimentRun::log_args) replaces them.
 //!
 //! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
 //! to that job, even for runs started on other threads: each one started from them records the
-//! job's number, is asked to stop when the job is, and is listed in the job's run report, as
-//! [Launching Jobs](#launching-jobs) describes. Experiments built another way, such as
+//! job's number and input, is asked to stop when the job is, and is listed in the job's run
+//! report, as [Launching Jobs](#launching-jobs) describes. Experiments built another way, such as
 //! [`console::ProjectHandle::experiments`], are not linked unless the code links them, through
 //! [`Experiments::attribute`](experiment::Experiments::attribute),
+//! [`arguments`](experiment::Experiments::arguments),
 //! [`cancel_token`](experiment::Experiments::cancel_token) and
 //! [`on_start`](experiment::Experiments::on_start).
 //!

@@ -57,7 +57,6 @@ use tracel::runtime::{BoxError, Job, Jobs};
 fn training(config: YourExperimentConfig) -> Result<(), BoxError> {
     let experiments = Target::from_env()?.experiments()?;
     experiments.run("mnist", |experiment| {
-        experiment.log_args(&config)?;
         // Your training logic here...
         train(experiment, &config)
     })
@@ -86,15 +85,16 @@ such as `mnist 0.1.0`; without it, the binary has no `--version`.
 `Experiments::run` ends the experiment by what its code returns: completed on `Ok`, and failed
 with the error on `Err` or with the message of a panic. `Experiments::start` returns the run
 instead, for code that ends it with `finish()` or `fail()`; a run dropped before either ends as
-failed. `log_args` records the input as the experiment's arguments, which the console lists as its
-config. A job starts as many experiments as its code does, or none.
+failed. An experiment started in a job, from the experiments a `Target` built, records the job's
+input, merged onto its default, as its arguments, which the console lists as its config;
+`log_args` replaces them. A job starts as many experiments as its code does, or none.
 
 The experiments `Target::experiments` builds in a job, on the thread that runs it, are linked to
 that job, even for runs started on other threads: each one started from them records the job's
-number, is asked to stop when the job is, and is listed in the job's run report, as
+number and input, is asked to stop when the job is, and is listed in the job's run report, as
 [Launching jobs](#launching-jobs) describes. Experiments built another way, such as
 `ProjectHandle::experiments`, are not linked unless the code links them, through
-`Experiments::attribute`, `cancel_token` and `on_start`.
+`Experiments::attribute`, `arguments`, `cancel_token` and `on_start`.
 
 The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a
 complete, runnable version.

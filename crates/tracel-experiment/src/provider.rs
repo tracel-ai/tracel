@@ -23,12 +23,13 @@ pub trait ExperimentProvider: Send + Sync + 'static {
 type OnStart = Arc<dyn Fn(&ExperimentRun) + Send + Sync>;
 
 /// The experiments of a backend, and how each experiment started from them starts: the attributes
-/// it records, the token that asks it to stop, and the hooks called with its run.
+/// and arguments it records, the token that asks it to stop, and the hooks called with its run.
 ///
 /// [`run`](Self::run) runs code in a new experiment and ends the experiment by what the code
 /// returns. [`start`](Self::start) starts one and returns its run, for code that ends it itself.
-/// A clone, and the experiments [`attribute`](Self::attribute), [`attributes`](Self::attributes)
-/// and [`on_start`](Self::on_start) return, share the [`cancel_token`](Self::cancel_token).
+/// A clone, and the experiments [`attribute`](Self::attribute), [`attributes`](Self::attributes),
+/// [`arguments`](Self::arguments) and [`on_start`](Self::on_start) return, share the
+/// [`cancel_token`](Self::cancel_token).
 ///
 /// ```no_run
 /// use tracel_experiment::{ExperimentRun, Experiments};
@@ -48,6 +49,7 @@ type OnStart = Arc<dyn Fn(&ExperimentRun) + Send + Sync>;
 pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
     attributes: HashMap<String, Value>,
+    arguments: Option<Value>,
     cancel_token: CancelToken,
     on_start: Vec<OnStart>,
 }
@@ -58,6 +60,7 @@ impl Experiments {
         Self {
             provider,
             attributes: HashMap::new(),
+            arguments: None,
             cancel_token: CancelToken::new(),
             on_start: Vec::new(),
         }
@@ -90,6 +93,15 @@ impl Experiments {
         self
     }
 
+    /// Records `arguments`, JSON such as the configuration a run trains with, as the arguments of
+    /// each experiment started from the returned experiments, when it starts.
+    ///
+    /// [`ExperimentRun::log_args`] replaces them: the arguments logged last are the run's.
+    pub fn arguments(mut self, arguments: Value) -> Self {
+        self.arguments = Some(arguments);
+        self
+    }
+
     /// Calls `hook` with the run of each experiment started from the returned experiments, once
     /// it exists and before [`start`](Self::start) returns it, after the hooks given before.
     pub fn on_start(mut self, hook: impl Fn(&ExperimentRun) + Send + Sync + 'static) -> Self {
@@ -108,8 +120,8 @@ impl Experiments {
 
     /// Starts the experiment `name` and returns its run.
     ///
-    /// The experiment records the attributes these experiments give it, its run's cancel token is
-    /// cancelled with their [`cancel_token`](Self::cancel_token), and each
+    /// The experiment records the attributes and arguments these experiments give it, its run's
+    /// cancel token is cancelled with their [`cancel_token`](Self::cancel_token), and each
     /// [`on_start`](Self::on_start) hook is called with the run. The run ends as completed
     /// through [`ExperimentRun::finish`], and as failed through [`ExperimentRun::fail`] or when it
     /// is dropped before either. Unless the program has installed a `tracing` subscriber, this
@@ -131,6 +143,9 @@ impl Experiments {
             .provider
             .create_experiment(name.to_string(), self.attributes.clone())?;
         self.cancel_token.link(run.cancel_token());
+        if let Some(arguments) = &self.arguments {
+            run.record_args(arguments.clone());
+        }
         for hook in &self.on_start {
             hook(&run);
         }
@@ -225,6 +240,20 @@ mod tests {
 
         fn completions(&self) -> Vec<ExperimentCompletion> {
             self.session.completions.lock().unwrap().clone()
+        }
+
+        /// The arguments the runs recorded, in order.
+        fn arguments(&self) -> Vec<Value> {
+            self.session
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Args(value) => Some(value.clone()),
+                    _ => None,
+                })
+                .collect()
         }
 
         /// The warnings the runs logged.
@@ -347,6 +376,28 @@ mod tests {
                 ("kind".to_string(), json!("example")),
                 ("seed".to_string(), json!(42)),
             ])]
+        );
+    }
+
+    #[test]
+    fn a_started_experiment_records_the_arguments_logging_replaces() {
+        let fixture = Fixture::new();
+        let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
+
+        let run = experiments.start("train").unwrap();
+        let recorded = fixture.arguments();
+        run.log_args(&json!({"epochs": 2, "fold": 1})).unwrap();
+        fixture
+            .experiments
+            .start("train")
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        assert_eq!(recorded, [json!({"epochs": 2})]);
+        assert_eq!(
+            fixture.arguments(),
+            [json!({"epochs": 2}), json!({"epochs": 2, "fold": 1})]
         );
     }
 

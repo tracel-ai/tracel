@@ -382,7 +382,10 @@ impl ExperimentRun {
     /// Log the serialized input arguments for the run, such as the configuration it trains with,
     /// which the console lists as the experiment's config.
     ///
-    /// Fails only if `args` cannot be serialized.
+    /// A run started from [`Experiments`] given [`arguments`](Experiments::arguments) records them
+    /// when it starts, so this is only needed to record different ones. The arguments logged last
+    /// are the run's: logging them replaces those recorded before. Fails only if `args` cannot be
+    /// serialized.
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|error| {
             ExperimentError::with_source(

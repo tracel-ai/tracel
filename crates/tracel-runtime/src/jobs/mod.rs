@@ -12,7 +12,7 @@ use serde_json::Value;
 use tracel_job::JobDefinition;
 
 use crate::BoxError;
-use crate::job::{IntoJob, Ready, Registered};
+use crate::job::{IntoJob, Prepared, Registered};
 use crate::panics::catch_panic;
 use crate::scope::{self, ExperimentSink};
 use crate::stop::Stop;
@@ -138,7 +138,7 @@ impl Jobs {
     /// The job `name`, ready to run with `input` merged onto its default.
     ///
     /// Fails without running anything when no job has that name, or the input does not decode.
-    fn prepare(&self, name: &str, input: Value) -> Result<Ready, PrepareError> {
+    fn prepare(&self, name: &str, input: Value) -> Result<Prepared, PrepareError> {
         let job = self.jobs.get(name).ok_or(PrepareError::UnknownJob)?;
         job.prepare(input).map_err(PrepareError::InvalidInput)
     }
@@ -161,9 +161,10 @@ struct Launch {
     experiments: ExperimentSink,
 }
 
-/// Runs `ready`, the job `launch` launches, on this thread, in a scope of its own, and returns
+/// Runs `prepared`, the job `launch` launches, on this thread, in a scope of its own, and returns
 /// how it ended: a panic is a failure with the panic's message.
-fn run(ready: Ready, launch: Launch) -> Result<(), BoxError> {
-    let _entered = scope::enter(scope::new(launch.num, launch.stop, launch.experiments));
-    catch_panic(ready)
+fn run(prepared: Prepared, launch: Launch) -> Result<(), BoxError> {
+    let scope = scope::new(launch.num, prepared.input, launch.stop, launch.experiments);
+    let _entered = scope::enter(scope);
+    catch_panic(prepared.run)
 }

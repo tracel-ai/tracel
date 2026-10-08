@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use serde_json::Value;
 use tracel_job::ReportedExperiment;
 
 use crate::stop::Stop;
@@ -20,8 +21,8 @@ thread_local! {
 /// Where the experiments a job starts are reported.
 pub type ExperimentSink = Arc<dyn Fn(ReportedExperiment) + Send + Sync>;
 
-/// The job one execution runs: the number or id its launcher gave it, the request that it stop,
-/// and where the experiments it starts are reported. Clones share the execution.
+/// The job one execution runs: the number or id its launcher gave it, its input, the request that
+/// it stop, and where the experiments it starts are reported. Clones share the execution.
 #[derive(Clone)]
 pub struct JobScope {
     inner: Arc<Scope>,
@@ -29,6 +30,7 @@ pub struct JobScope {
 
 struct Scope {
     num: Option<String>,
+    input: Value,
     stop: Stop,
     experiments: ExperimentSink,
 }
@@ -43,6 +45,13 @@ impl JobScope {
     /// id for the job for a Station runner.
     pub fn num(&self) -> Option<&str> {
         self.inner.num.as_deref()
+    }
+
+    /// The input the job runs with, as JSON: the input its launcher gave merged onto its default,
+    /// which its function received decoded; `Value::Null` when it was given none and has no
+    /// default.
+    pub fn input(&self) -> &Value {
+        &self.inner.input
     }
 
     /// Whether the job was asked to stop.
@@ -63,12 +72,13 @@ impl JobScope {
     }
 }
 
-/// The scope of a job numbered `num` by its launcher, asked to stop once `stop` is requested, the
-/// experiments it starts reported to `experiments`.
-pub fn new(num: Option<String>, stop: Stop, experiments: ExperimentSink) -> JobScope {
+/// The scope of a job numbered `num` by its launcher, running with `input`, asked to stop once
+/// `stop` is requested, the experiments it starts reported to `experiments`.
+pub fn new(num: Option<String>, input: Value, stop: Stop, experiments: ExperimentSink) -> JobScope {
     JobScope {
         inner: Arc::new(Scope {
             num,
+            input,
             stop,
             experiments,
         }),
@@ -119,6 +129,12 @@ pub fn job_num() -> Option<String> {
     JobScope::current().and_then(|scope| scope.num().map(str::to_string))
 }
 
+/// The input the job the current thread runs was given, as JSON, as [`JobScope::input`] gives it;
+/// `None` while the thread runs no job.
+pub fn job_input() -> Option<Value> {
+    JobScope::current().map(|scope| scope.input().clone())
+}
+
 /// Reports `experiment`, which code in the job the current thread runs started, as the job's
 /// adapter reports experiments: the process adds it to the job's run report, and a Station runner
 /// logs it.
@@ -149,6 +165,7 @@ mod tests {
         let reported = reported.clone();
         new(
             Some(num.to_string()),
+            serde_json::json!({"num": num}),
             stop.clone(),
             Arc::new(move |experiment| reported.lock().unwrap().push(experiment)),
         )
@@ -176,6 +193,7 @@ mod tests {
 
         let entered = enter(scope("12", &stop, &reported));
         let given = (job_running(), stop_requested(), job_num());
+        let input = job_input();
         report_experiment(experiment(1));
         count_on_stop();
         stop.request();
@@ -187,11 +205,12 @@ mod tests {
         report_experiment(experiment(2));
 
         assert_eq!(given, (true, false, Some("12".to_string())));
+        assert_eq!(input, Some(serde_json::json!({"num": "12"})));
         assert_eq!(requested, (true, 1));
         assert_eq!(late, 2);
         assert_eq!(
-            (job_running(), stop_requested(), job_num()),
-            (false, false, None)
+            (job_running(), stop_requested(), job_num(), job_input()),
+            (false, false, None, None)
         );
         assert_eq!(stopped.load(Ordering::SeqCst), 2);
         assert_eq!(*reported.lock().unwrap(), [experiment(1)]);
@@ -205,7 +224,7 @@ mod tests {
             let scope = scope(num, stop, &reported);
             std::thread::spawn(move || {
                 let _entered = enter(scope);
-                (job_num(), stop_requested())
+                (job_num(), job_input(), stop_requested())
             })
         };
 
@@ -213,8 +232,15 @@ mod tests {
         let one = run("1", &first);
         let two = run("2", &second);
 
-        assert_eq!(one.join().unwrap(), (Some("1".to_string()), true));
-        assert_eq!(two.join().unwrap(), (Some("2".to_string()), false));
+        let input = |num: &str| Some(serde_json::json!({ "num": num }));
+        assert_eq!(
+            one.join().unwrap(),
+            (Some("1".to_string()), input("1"), true)
+        );
+        assert_eq!(
+            two.join().unwrap(),
+            (Some("2".to_string()), input("2"), false)
+        );
         assert!(!job_running());
     }
 
