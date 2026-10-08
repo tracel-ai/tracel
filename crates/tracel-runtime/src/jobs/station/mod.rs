@@ -6,8 +6,8 @@
 //! failed:
 //!
 //! ```no_run
-//! use tracel_app::station::StationRunner;
-//! use tracel_app::{BoxError, Jobs};
+//! use tracel_runtime::station::StationRunner;
+//! use tracel_runtime::{BoxError, Jobs};
 //!
 //! fn train(epochs: u32) -> Result<(), BoxError> {
 //!     println!("training for {epochs} epochs");
@@ -17,7 +17,7 @@
 //! StationRunner::new("http://localhost:8000")
 //!     .name("vision-runner")
 //!     .run(Jobs::new().job("train", train))?;
-//! # Ok::<(), tracel_app::station::RunnerError>(())
+//! # Ok::<(), tracel_runtime::station::RunnerError>(())
 //! ```
 //!
 //! The runner holds a single connection to the station: a POST to `/v1/runners/events` whose

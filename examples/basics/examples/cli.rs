@@ -19,7 +19,7 @@ use std::process::ExitCode;
 use basics::training::{self, TrainingConfig};
 use basics::{Prompt, WordTokenizer};
 use tracel::Target;
-use tracel::app::{BoxError, Job, Jobs};
+use tracel::runtime::{BoxError, Job, Jobs};
 
 /// Runs the toy training loop in an experiment, which records the config as its arguments.
 fn toy_training(config: TrainingConfig) -> Result<(), BoxError> {

@@ -45,7 +45,7 @@ use crate::stop::Stop;
 /// use std::process::ExitCode;
 ///
 /// use serde::{Deserialize, Serialize};
-/// use tracel_app::{BoxError, Job, Jobs};
+/// use tracel_runtime::{BoxError, Job, Jobs};
 ///
 /// #[derive(Serialize, Deserialize)]
 /// struct TrainingConfig {
@@ -54,7 +54,7 @@ use crate::stop::Stop;
 ///
 /// fn train(config: TrainingConfig) -> Result<(), BoxError> {
 ///     for epoch in 1..=config.epochs {
-///         if tracel_app::stop_requested() {
+///         if tracel_runtime::stop_requested() {
 ///             break;
 ///         }
 ///         println!("epoch {epoch}");

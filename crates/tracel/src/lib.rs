@@ -23,7 +23,7 @@
 //!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
-//! - [`app`]: jobs, plain functions of their input, and the entry point that runs one.
+//! - [`runtime`]: jobs, plain functions of their input, and the entry point that runs one.
 //! - [`job`]: the job definitions file, the run report, and the command line built from job
 //!   definitions, which programs that launch jobs share with the SDK.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
@@ -34,15 +34,16 @@
 //! ## Jobs
 //!
 //! A job is a function of its typed input. Register a program's jobs by name with
-//! [`app::Jobs`], and return its [`run`](app::Jobs::run) from `main`: the program runs the job its
-//! command line names. A job starts experiments, or none, with the clients a [`Target`] builds:
+//! [`runtime::Jobs`], and return its [`run`](runtime::Jobs::run) from `main`: the program runs the
+//! job its command line names. A job starts experiments, or none, with the clients a [`Target`]
+//! builds:
 //!
 //! ```no_run
 //! use std::process::ExitCode;
 //!
 //! use serde::{Deserialize, Serialize};
 //! use tracel::Target;
-//! use tracel::app::{BoxError, Job, Jobs};
+//! use tracel::runtime::{BoxError, Job, Jobs};
 //!
 //! #[derive(Default, Serialize, Deserialize)]
 //! struct TrainingConfig {
@@ -73,7 +74,7 @@
 //!
 //! Run it as `<binary> train '{"epochs": 5}'`: the job's name selects it, and its input, one JSON
 //! document, is merged onto its default. Left out, the job runs with the default. A function
-//! registered without [`Job`](app::Job) is a job with no description or default.
+//! registered without [`Job`](runtime::Job) is a job with no description or default.
 //!
 //! [`Experiments::run`](experiment::Experiments::run) ends the experiment by what its code
 //! returns: completed on `Ok`, and failed on `Err` or a panic.
@@ -91,7 +92,7 @@
 //! [`cancel_token`](experiment::Experiments::cancel_token) and
 //! [`on_start`](experiment::Experiments::on_start).
 //!
-//! [`version`](app::Jobs::version) gives the binary its `--version`, which prints the binary's
+//! [`version`](runtime::Jobs::version) gives the binary its `--version`, which prints the binary's
 //! name and that version; without it, the binary has no `--version`.
 //!
 //! Without a [`Target`], build the services from an adapter directly:
@@ -100,7 +101,7 @@
 //!
 //! ## Command-Line Flags
 //!
-//! [`app::Jobs`] builds its command line from the definitions of its jobs, so each field of a
+//! [`runtime::Jobs`] builds its command line from the definitions of its jobs, so each field of a
 //! job's input is also a flag: `<binary> train --epochs 5` runs the job above with the same input
 //! as `<binary> train '{"epochs": 5}'`. `<binary> --help` lists the jobs, and
 //! `<binary> train --help` the job's flags with their defaults:
@@ -146,7 +147,7 @@
 //!
 //! ## Launching Jobs
 //!
-//! A program whose `main` returns [`Jobs::run`](app::Jobs::run) can be launched by another
+//! A program whose `main` returns [`Jobs::run`](runtime::Jobs::run) can be launched by another
 //! program, such as the `tracel` CLI, which reads its exit code:
 //!
 //! | Exit code | Meaning |
@@ -188,11 +189,11 @@
 //! attribute, which links it to the job.
 //!
 //! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
-//! [`app::stop_requested`] turns `true`, and what [`app::on_stop`] registered runs. Through it,
-//! each of these experiments has its cancel token cancelled, which stops a Burn learner given its
-//! `interrupter()`, and logs a warning that a stop was requested; none starts after. The job ends
-//! as `completed` or `failed` by what it returns, and the program exits with code 130. A second
-//! signal ends the program at once. Launchers send SIGKILL after a 30-second grace period.
+//! [`runtime::stop_requested`] turns `true`, and what [`runtime::on_stop`] registered runs.
+//! Through it, each of these experiments has its cancel token cancelled, which stops a Burn learner
+//! given its `interrupter()`, and logs a warning that a stop was requested; none starts after. The
+//! job ends as `completed` or `failed` by what it returns, and the program exits with code 130. A
+//! second signal ends the program at once. Launchers send SIGKILL after a 30-second grace period.
 
 mod running_job;
 mod target;
@@ -232,7 +233,7 @@ pub use tracel_artifact as artifact;
 
 /// Jobs, plain functions of their input, and the entry point that runs one.
 #[doc(inline)]
-pub use tracel_app as app;
+pub use tracel_runtime as runtime;
 
 /// The job definitions file, the run report, and the command line built from job definitions.
 #[doc(inline)]

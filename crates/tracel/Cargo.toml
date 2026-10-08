@@ -13,12 +13,12 @@ rust-version.workspace = true
 
 [features]
 default = []
-station = ["dep:tracel-station", "dep:url", "tracel-app/station"]
+station = ["dep:tracel-station", "dep:url", "tracel-runtime/station"]
 burn = ["tracel-experiment/burn", "tracel-datasets/burn"]
-schema = ["tracel-app/schema"]
+schema = ["tracel-runtime/schema"]
 
 [dependencies]
-tracel-app.workspace = true
+tracel-runtime.workspace = true
 tracel-experiment = { workspace = true, features = ["local"] }
 tracel-inference.workspace = true
 tracel-job.workspace = true

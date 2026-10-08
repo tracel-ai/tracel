@@ -14,7 +14,7 @@ use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
 use tracel::Target;
-use tracel::app::{BoxError, Job, Jobs};
+use tracel::runtime::{BoxError, Job, Jobs};
 
 /// Trains the model in an experiment, which records the config as its arguments.
 fn mnist(config: MnistTrainingConfig) -> Result<(), BoxError> {

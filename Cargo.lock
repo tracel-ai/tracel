@@ -7212,7 +7212,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tracel-app",
  "tracel-artifact",
  "tracel-console",
  "tracel-datasets",
@@ -7220,28 +7219,9 @@ dependencies = [
  "tracel-inference",
  "tracel-job",
  "tracel-models",
+ "tracel-runtime",
  "tracel-station",
  "url",
-]
-
-[[package]]
-name = "tracel-app"
-version = "0.11.0"
-dependencies = [
- "chrono",
- "clap",
- "clap_complete",
- "ctrlc",
- "json-patch",
- "reqwest",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tracel-job",
- "url",
- "uuid",
 ]
 
 [[package]]
@@ -7391,6 +7371,26 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracel-artifact",
+]
+
+[[package]]
+name = "tracel-runtime"
+version = "0.11.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "clap_complete",
+ "ctrlc",
+ "json-patch",
+ "reqwest",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracel-job",
+ "url",
+ "uuid",
 ]
 
 [[package]]

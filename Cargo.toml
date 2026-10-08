@@ -80,7 +80,7 @@ tracel-models = { path = "crates/tracel-models", version = "0.11.0" }
 tracel-station = { path = "crates/tracel-station", version = "0.11.0" }
 tracel-datasets = { path = "crates/tracel-datasets", version = "0.11.0" }
 tracel-job = { path = "crates/tracel-job", version = "0.11.0" }
-tracel-app = { path = "crates/tracel-app", version = "0.11.0" }
+tracel-runtime = { path = "crates/tracel-runtime", version = "0.11.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.11.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.11.0" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.11.0" }

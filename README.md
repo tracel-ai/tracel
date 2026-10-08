@@ -52,7 +52,7 @@ experiments `Target` picks from the environment:
 use std::process::ExitCode;
 
 use tracel::Target;
-use tracel::app::{BoxError, Job, Jobs};
+use tracel::runtime::{BoxError, Job, Jobs};
 
 fn training(config: YourExperimentConfig) -> Result<(), BoxError> {
     let experiments = Target::from_env()?.experiments()?;
@@ -224,10 +224,10 @@ With `TRACEL_JOB_NUM` set, each of these experiments records it as its `tracel.j
 attribute, which links it to the job.
 
 SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
-`tracel::app::stop_requested()` turns `true`, and what `tracel::app::on_stop` registered runs.
-Through it, each of these experiments has its cancel token cancelled, which stops a learner given
-`experiment.interrupter()`, and logs a warning that a stop was requested; none starts after. The
-job ends as `completed` or `failed` by what it returns, and the binary exits with code 130. A
+`tracel::runtime::stop_requested()` turns `true`, and what `tracel::runtime::on_stop` registered
+runs. Through it, each of these experiments has its cancel token cancelled, which stops a learner
+given `experiment.interrupter()`, and logs a warning that a stop was requested; none starts after.
+The job ends as `completed` or `failed` by what it returns, and the binary exits with code 130. A
 second signal ends the binary at once. Launchers send SIGKILL after a 30-second grace period.
 
 ### 2. Integrate with your Learner
