@@ -24,7 +24,8 @@
 //! response is a Server-Sent Events stream. The station pushes full job payloads and cancel
 //! signals down that stream; presence is the stream itself — when the process dies, the socket
 //! closes and the station immediately fails whatever this runner was doing. [`StationRunner::run`]
-//! serves forever, reconnecting with backoff when the station is unreachable or restarts.
+//! serves forever, reconnecting with backoff when the station is unreachable or restarts. It logs
+//! what it does as `tracing` events and installs no subscriber: the program decides where they go.
 //!
 //! Each job runs on a thread of its own, in its [`JobScope`](crate::JobScope):
 //! [`job_num`](crate::job_num) gives the station's id for it. A `cancel` event asks the job it

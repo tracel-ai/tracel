@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::station::error::RunnerError;
@@ -24,7 +25,7 @@ impl FinishSink for StationRunnerClient {
         // A rejected finish is expected after a disconnect: the station has already failed the
         // job and this session no longer owns it.
         if let Err(e) = StationRunnerClient::finish_job(self, job_id, finish) {
-            eprintln!("warning: failed to report the outcome of job {job_id}: {e}");
+            warn!(%job_id, error = %e, "failed to report the outcome of the job to the station");
         }
     }
 }
@@ -96,11 +97,11 @@ impl Executor {
         let stop = self.in_flight.0.lock().unwrap().get(&job_id).cloned();
         match stop {
             Some(stop) => {
-                eprintln!("Asking job {job_id} to stop");
+                info!(%job_id, "asking the job to stop");
                 stop.request();
             }
             None => {
-                eprintln!("warning: the station cancelled job {job_id}, which does not run here")
+                warn!(%job_id, "the station cancelled a job that does not run here")
             }
         }
     }
@@ -130,7 +131,7 @@ fn execute(jobs: &Jobs, job: &DispatchedJob, stop: Stop) -> (FinishStatus, Optio
         // An unknown job is unreachable under the station's strict policy; defend anyway.
         Err(error) => return (FinishStatus::Failed, Some(error.to_string())),
     };
-    eprintln!("Running job {} ({})", job.job_name, job.id);
+    info!(job = %job.job_name, job_id = %job.id, "running the job");
     let execution = Execution::new()
         .with_num(job.id.to_string())
         .with_stop(stop);
@@ -162,29 +163,29 @@ pub fn serve_stream(
     let runner_id = match events.next() {
         Some(Ok(RunnerEvent::Registered { runner_id })) => runner_id,
         Some(Ok(event)) => {
-            eprintln!("warning: expected a registered event first, got {event:?}");
+            warn!(?event, "expected a registered event first");
             return StreamOutcome::NeverRegistered;
         }
         Some(Err(e)) => {
-            eprintln!("warning: the event stream failed before registration: {e}");
+            warn!(error = %e, "the event stream failed before registration");
             return StreamOutcome::NeverRegistered;
         }
         None => {
-            eprintln!("warning: the event stream closed before registration");
+            warn!("the event stream closed before registration");
             return StreamOutcome::NeverRegistered;
         }
     };
-    eprintln!("Registered with the station as runner {runner_id}");
+    info!(%runner_id, "registered with the station");
 
     for event in events {
         match event {
             Ok(RunnerEvent::Job(job)) => executor.dispatch(runner_id, job),
             Ok(RunnerEvent::Cancel { job_id }) => executor.cancel(job_id),
             Ok(RunnerEvent::Registered { .. }) => {
-                eprintln!("warning: unexpected registered event mid-stream");
+                warn!("unexpected registered event mid-stream");
             }
             Err(e) => {
-                eprintln!("warning: the event stream failed: {e}");
+                warn!(error = %e, "the event stream failed");
                 break;
             }
         }
@@ -234,10 +235,10 @@ pub fn serve_forever(
                 executor.wait_idle();
             }
             Err(e) if e.is_permanent() => return RunnerError::Registration(e.to_string()),
-            Err(e) => eprintln!("warning: failed to connect to the station: {e}"),
+            Err(e) => warn!(error = %e, "failed to connect to the station"),
         }
         let delay = backoff.next();
-        eprintln!("Reconnecting to the station in {}s", delay.as_secs());
+        info!(delay_secs = delay.as_secs(), "reconnecting to the station");
         std::thread::sleep(delay);
     }
 }
