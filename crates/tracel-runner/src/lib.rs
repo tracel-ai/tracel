@@ -33,6 +33,7 @@ pub use job::{IntoRunnerJob, JobDefinition, RunnerJob};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde_json::{Map, Value};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use infrastructure::StationRunnerClient;
@@ -43,6 +44,7 @@ use runtime::Executor;
 pub struct StationRunner {
     url: String,
     name: Option<String>,
+    metadata: Map<String, Value>,
     jobs: HashMap<String, Box<dyn RunnerJob>>,
 }
 
@@ -52,6 +54,7 @@ impl StationRunner {
         Self {
             url: url.into(),
             name: None,
+            metadata: Map::new(),
             jobs: HashMap::new(),
         }
     }
@@ -60,6 +63,14 @@ impl StationRunner {
     /// is its connection, minted by the station per session.
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Describe this runner to the station with a free-form metadata entry, such as the hardware
+    /// it computes on. The station stores the entries as sent and lists them with the runner;
+    /// setting a key again replaces its value.
+    pub fn metadata(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.metadata.insert(key.into(), value.into());
         self
     }
 
@@ -115,6 +126,7 @@ impl StationRunner {
 
         let register = RegisterRunner {
             name: self.name,
+            metadata: self.metadata,
             jobs: self.jobs.values().map(|job| job.definition()).collect(),
         };
         let client = StationRunnerClient::new(url);
