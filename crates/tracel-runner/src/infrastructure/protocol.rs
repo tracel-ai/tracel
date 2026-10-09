@@ -4,7 +4,7 @@
 //! `/v1/jobs/{id}/finish` contracts.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::job::JobDefinition;
@@ -14,6 +14,8 @@ use crate::job::JobDefinition;
 pub struct RegisterRunner {
     /// Optional display label. Duplicates are allowed — identity is the session.
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub metadata: Map<String, Value>,
     /// The jobs this runner can execute.
     pub jobs: Vec<JobDefinition>,
 }
