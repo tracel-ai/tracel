@@ -5,8 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tracel_job_proto::JobDefinition;
 use uuid::Uuid;
+
+use crate::JobDefinition;
 
 /// Registration body; the response to it is the SSE event stream.
 #[derive(Debug, Clone, Serialize)]
@@ -16,7 +17,27 @@ pub struct RegisterRunner {
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub metadata: Map<String, Value>,
     /// The jobs this runner can execute.
-    pub jobs: Vec<JobDefinition>,
+    pub jobs: Vec<RegisteredJob>,
+}
+
+/// A job the runner can execute, as it registers it.
+#[derive(Debug, Clone, Serialize)]
+pub struct RegisteredJob {
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema: Option<Value>,
+    pub input_example: Option<Value>,
+}
+
+impl From<&JobDefinition> for RegisteredJob {
+    fn from(definition: &JobDefinition) -> Self {
+        Self {
+            name: definition.name.clone(),
+            description: definition.description.clone(),
+            input_schema: definition.input_schema.clone(),
+            input_example: definition.input_example.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -131,6 +152,34 @@ mod tests {
     fn given_malformed_data_when_decoding_then_errors() {
         assert!(RunnerEvent::decode("job", "not json").is_err());
         assert!(RunnerEvent::decode("cancel", "{}").is_err());
+    }
+
+    #[test]
+    fn a_registration_gives_each_job_its_name_description_and_input() {
+        let definition = JobDefinition {
+            name: "train".to_string(),
+            description: Some("Train the model".to_string()),
+            input_schema: Some(serde_json::json!({"type": "integer"})),
+            input_example: Some(serde_json::json!(3)),
+        };
+
+        let register = RegisterRunner {
+            name: Some("runner".to_string()),
+            jobs: vec![RegisteredJob::from(&definition)],
+        };
+
+        assert_eq!(
+            serde_json::to_value(register).unwrap(),
+            serde_json::json!({
+                "name": "runner",
+                "jobs": [{
+                    "name": "train",
+                    "description": "Train the model",
+                    "input_schema": {"type": "integer"},
+                    "input_example": 3
+                }]
+            })
+        );
     }
 
     #[test]

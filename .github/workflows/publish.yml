@@ -129,7 +129,6 @@ jobs:
       - tracel-datasets
       - tracel-experiment
       - tracel-inference
-      - tracel-job-proto
       - tracel-models
       - tracel-runtime
       - tracel-station

@@ -4,8 +4,11 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use tracel_experiment::{ExperimentLocation, ExperimentRun, Experiments};
-use tracel_job_proto::JOB_NUM_ATTRIBUTE;
 use tracel_runtime::JobScope;
+
+/// The experiment attribute that links an experiment to the job that started it: the job's
+/// number, as a number when it is one.
+const JOB_NUM_ATTRIBUTE: &str = "tracel.job_num";
 
 /// `experiments`, linked to the job the current thread runs, when it runs one, as [`link`] links
 /// them, each run started from them printing where it records to stderr; as they are otherwise.

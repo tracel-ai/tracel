@@ -187,7 +187,7 @@ runs. Each experiment linked to the job has its cancel token cancelled, which st
 job ends as completed or failed by what it returns, and the binary exits with code 130. A second
 signal ends the binary at once, and `tracel run` sends SIGKILL after a 30-second grace period.
 
-Programs that launch job binaries, as `tracel run` does, follow the contract of the
+Programs that launch job binaries, as `tracel run` does, follow the protocol of the
 `tracel-job-proto` crate, and read a job's flags as its binary does with the `tracel-job-args`
 crate.
 

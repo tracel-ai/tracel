@@ -21,7 +21,6 @@ schema = ["tracel-runtime/schema"]
 tracel-runtime.workspace = true
 tracel-experiment = { workspace = true, features = ["local"] }
 tracel-inference.workspace = true
-tracel-job-proto.workspace = true
 tracel-artifact.workspace = true
 tracel-console.workspace = true
 tracel-station = { workspace = true, optional = true }

@@ -4,10 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracel_job_proto::JobDefinition;
 
 use crate::execution::{self, PreparedJob};
-use crate::job::{IntoJob, Prepared, Registered};
+use crate::job::{IntoJob, JobDefinition, Prepared, Registered};
 
 /// A program's jobs, by name, and how the program runs the one its command line names: `main`
 /// returns [`run`](Self::run).

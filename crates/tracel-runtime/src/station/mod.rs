@@ -45,7 +45,7 @@ use serde_json::{Map, Value};
 
 use crate::Jobs;
 use infrastructure::StationRunnerClient;
-use infrastructure::protocol::RegisterRunner;
+use infrastructure::protocol::{RegisterRunner, RegisteredJob};
 use serve::Executor;
 
 /// A runner process serving a program's jobs to one station.
@@ -97,7 +97,7 @@ impl StationRunner {
         let register = RegisterRunner {
             name: self.name,
             metadata: self.metadata,
-            jobs: jobs.definitions().cloned().collect(),
+            jobs: jobs.definitions().map(RegisteredJob::from).collect(),
         };
         let client = StationRunnerClient::new(url);
         let executor = Executor::new(Arc::new(jobs), Arc::new(client.clone()));

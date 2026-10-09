@@ -15,9 +15,9 @@ use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap_complete::Shell;
 use serde_json::Value;
 use tracel_job_args::{command, completions, job_input};
-use tracel_job_proto::{JobDefinition, TRACEL_JOB_NUM};
+use tracel_job_proto::TRACEL_JOB_NUM;
 
-use crate::{Execution, Jobs, Stop};
+use crate::{Execution, JobDefinition, Jobs, Stop};
 use describe::describe;
 use error::RunError;
 
@@ -76,13 +76,14 @@ impl Jobs {
     /// signal ends the process at once, also with exit code 130. `tracel run` sends SIGKILL after
     /// a 30-second grace period.
     pub fn run(self) -> ExitCode {
-        match execute(&self) {
-            Ok(()) => ExitCode::SUCCESS,
+        let exit = match execute(&self) {
+            Ok(()) => tracel_job_proto::ExitCode::Completed,
             Err(error) => {
                 error.print();
-                ExitCode::from(error.exit_code())
+                error.exit_code()
             }
-        }
+        };
+        ExitCode::from(exit)
     }
 }
 
@@ -386,7 +387,7 @@ mod tests {
             matches!(&flag, RunError::Usage(error) if error.kind() == ErrorKind::UnknownArgument),
             "{flag:?}"
         );
-        assert_eq!(flag.exit_code(), 2);
+        assert_eq!(flag.exit_code().code(), 2);
         assert!(ran_with.lock().unwrap().is_none());
     }
 
@@ -443,7 +444,7 @@ mod tests {
         );
         let unreadable = unreadable.unwrap_err();
         assert!(matches!(unreadable, RunError::Config(_)), "{unreadable:?}");
-        assert_eq!(unreadable.exit_code(), 2);
+        assert_eq!(unreadable.exit_code().code(), 2);
         assert!(rejected.lock().unwrap().is_none());
     }
 
@@ -552,7 +553,10 @@ mod tests {
             "{:?}",
             unoffered.as_ref().err()
         );
-        assert_eq!(unoffered.err().map(|error| error.exit_code()), Some(2));
+        assert_eq!(
+            unoffered.err().map(|error| error.exit_code().code()),
+            Some(2)
+        );
     }
 
     #[test]
@@ -578,7 +582,7 @@ mod tests {
 
     #[test]
     fn each_outcome_has_its_exit_code() {
-        let exit_code = |args: &[&str]| run(typed().0, args).unwrap_err().exit_code();
+        let exit_code = |args: &[&str]| run(typed().0, args).unwrap_err().exit_code().code();
 
         assert_eq!(exit_code(&["infer"]), 2);
         assert_eq!(exit_code(&[]), 2);
@@ -594,7 +598,7 @@ mod tests {
             (Outcome::Stop, 130),
         ] {
             let failed = run(ending(outcome).0, &["train"]);
-            assert_eq!(failed.unwrap_err().exit_code(), code);
+            assert_eq!(failed.unwrap_err().exit_code().code(), code);
         }
     }
 

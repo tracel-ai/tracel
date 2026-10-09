@@ -100,8 +100,7 @@ pub mod station;
 mod stop;
 
 pub use execution::{Execution, JobStatus, Outcome, PreparedJob};
-pub use job::{BoxError, IntoJob, Job};
+pub use job::{BoxError, IntoJob, Job, JobDefinition};
 pub use jobs::{Jobs, PrepareError};
 pub use scope::{JobScope, job_input, job_num, job_running, on_stop, stop_requested};
 pub use stop::Stop;
-pub use tracel_job_proto::JobDefinition;

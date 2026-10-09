@@ -10,7 +10,8 @@ use crate::PROTOCOL;
 /// Names the file a program writes its [`DefinitionsFile`] to, instead of running a job.
 pub const TRACEL_DESCRIBE: &str = "TRACEL_DESCRIBE";
 
-/// A job a program can run: its name and description, and the input it takes.
+/// A job the program can run, as its definitions file gives it: its name and description, and the
+/// input it takes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobDefinition {
     /// The name that selects the job.

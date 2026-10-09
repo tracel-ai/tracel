@@ -1,15 +1,8 @@
 use tracel_job_args::ConfigError;
+use tracel_job_proto::ExitCode;
 
 use crate::process::describe::DescribeError;
 use crate::{BoxError, PrepareError};
-
-/// The exit code of a job that failed, or of a definitions file that could not be written.
-const FAILED: u8 = 1;
-/// The exit code of a command line that names no registered job, or gives an unusable flag or
-/// input.
-const USAGE: u8 = 2;
-/// The exit code of a job that was asked to stop.
-pub const STOPPED: u8 = 130;
 
 /// Why [`Jobs::run`](crate::Jobs::run) ran no job, or the job it ran did not complete.
 #[derive(Debug, thiserror::Error)]
@@ -67,15 +60,15 @@ impl From<PrepareError> for RunError {
 
 impl RunError {
     /// The exit code the process ends with.
-    pub fn exit_code(&self) -> u8 {
+    pub fn exit_code(&self) -> ExitCode {
         match self {
             Self::MissingJob { .. }
             | Self::UnknownJob { .. }
             | Self::Usage(_)
             | Self::Config(_)
-            | Self::InvalidInput(_) => USAGE,
-            Self::JobFailed(_) | Self::Describe(_) => FAILED,
-            Self::Stopped => STOPPED,
+            | Self::InvalidInput(_) => ExitCode::Rejected,
+            Self::JobFailed(_) | Self::Describe(_) => ExitCode::Failed,
+            Self::Stopped => ExitCode::Stopped,
         }
     }
 
