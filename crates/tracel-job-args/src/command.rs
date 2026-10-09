@@ -1,6 +1,6 @@
-//! The command line of a program's jobs, built from their definitions.
+//! The command line of a program's jobs, built from each job's name, description, input schema
+//! and default input.
 
-use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -12,8 +12,8 @@ use clap::{Arg, ArgMatches, Command, ValueHint, value_parser};
 use clap_complete::Shell;
 use serde_json::{Map, Value};
 
-use crate::JobDefinition;
-use crate::flags::{Flag, Kind, flags, scalar_text};
+use crate::Job;
+use crate::flags::{Flag, Kind, flags};
 
 /// The id of a job's input argument, which no field's flag has: field ids have no `:`.
 const INPUT: &str = "tracel:input";
@@ -22,20 +22,14 @@ const CONFIG: &str = "tracel:config";
 /// The id of the program's `--completions` argument.
 const COMPLETIONS: &str = "tracel:completions";
 
-/// The command line of the program `name` that runs the jobs `definitions` describes:
+/// The command line of the program `name` that runs `jobs`:
 /// `<name> <job> [<input-json>] [--<field> <value>...]`, with one subcommand per job, as
 /// [`job_command`] builds it.
 ///
 /// `<name> --completions <SHELL>` asks for the program's completion script, which
-/// [`completions`] reads and [`clap_complete::generate`] writes from this command.
-///
-/// The command depends only on `name` and the definitions, so a program that reads them from a
-/// [`DefinitionsFile`](crate::DefinitionsFile) builds the same command line as the program that
-/// wrote it, but for `--version`, which a program adds when it gives its version.
-pub fn command<'a>(
-    name: impl Into<String>,
-    definitions: impl IntoIterator<Item = &'a JobDefinition>,
-) -> Command {
+/// [`completions`] reads and [`clap_complete::generate`] writes from this command. A program that
+/// gives its version adds `--version`.
+pub fn command<'a>(name: impl Into<String>, jobs: impl IntoIterator<Item = Job<'a>>) -> Command {
     Command::new(name.into())
         .subcommand_value_name("JOB")
         .subcommand_help_heading("Jobs")
@@ -48,36 +42,21 @@ pub fn command<'a>(
                 .value_parser(value_parser!(Shell))
                 .help("Print the completion script for SHELL"),
         )
-        .subcommands(definitions.into_iter().map(job_command))
+        .subcommands(jobs.into_iter().map(job_command))
 }
 
-/// The command line of the job `definition` describes, named after it, which
-/// [`job_input`] reads the job's input from.
+/// The command line of `job`, named after it, which [`job_input`] reads the job's input from.
 ///
 /// It takes three arguments, each merged onto the one before, so a later one wins:
 ///
 /// 1. `-c, --config <FILE>`: a file holding a JSON document.
 /// 2. `[INPUT]`: a JSON document, which launchers pass.
-/// 3. One flag per field of the input, which sets that field.
-///
-/// With an input schema that describes an object, each field the schema gives a type is a flag
-/// of that type: a boolean, an integer, a number, a string, or one of the values the schema
-/// lists. Its description is the flag's help, and a field the schema requires is a required flag
-/// unless the example input gives it or `--config` or `[INPUT]` is given. Without one, each
-/// field of the example input is a flag typed by its value. A field that is an array, a map, a
-/// nullable object or of no single type, or whose example value is `null`, takes a JSON literal.
-/// The example input gives each flag's default, which the job fills in from its default input.
-///
-/// A nested field's flag joins the keys with dots, and writes `_` as `-`: the field
-/// `weight_decay` of `optimizer` is `--optimizer.weight-decay`. A boolean flag given no value is
-/// `true`. `--help`, `--version` and `--config` belong to the runner, so a field named `help`,
-/// `version` or `config` has no flag; neither does one whose key is not made of letters, digits,
-/// `_` and `-`, or whose flag name an earlier field took. Such a field is set through `--config`
-/// or `[INPUT]`.
-pub fn job_command(definition: &JobDefinition) -> Command {
-    let command = Command::new(definition.name.clone())
+/// 3. One flag per field of the input, which sets that field, when the job's input schema
+///    describes an object, as the [crate](crate#flags) describes.
+pub fn job_command(job: Job<'_>) -> Command {
+    let command = Command::new(job.name.to_string())
         .args_override_self(true)
-        .args(flags(definition).iter().map(flag_arg))
+        .args(flags(&job).iter().map(flag_arg))
         .arg(
             Arg::new(INPUT)
                 .value_name("INPUT")
@@ -94,8 +73,8 @@ pub fn job_command(definition: &JobDefinition) -> Command {
                 .value_parser(PathBufValueParser::new())
                 .help("JSON merged before the input and the flags"),
         );
-    match &definition.description {
-        Some(description) => command.about(description.clone()),
+    match job.description {
+        Some(description) => command.about(description.to_string()),
         None => command,
     }
 }
@@ -159,9 +138,10 @@ fn config(
 }
 
 /// Why the `--config` file of a job's command line gives no input.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     /// The file cannot be read.
+    #[error("cannot read the --config file {}: {source}", path.display())]
     Unreadable {
         /// The path the command line gives.
         path: PathBuf,
@@ -169,42 +149,13 @@ pub enum ConfigError {
         source: io::Error,
     },
     /// The file is not a JSON document.
+    #[error("the --config file {} is not JSON: {source}", path.display())]
     NotJson {
         /// The path the command line gives.
         path: PathBuf,
         /// Why it is not JSON.
         source: serde_json::Error,
     },
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unreadable { path, source } => {
-                write!(
-                    f,
-                    "cannot read the --config file {}: {source}",
-                    path.display()
-                )
-            }
-            Self::NotJson { path, source } => {
-                write!(
-                    f,
-                    "the --config file {} is not JSON: {source}",
-                    path.display()
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Unreadable { source, .. } => Some(source),
-            Self::NotJson { source, .. } => Some(source),
-        }
-    }
 }
 
 /// The shell whose completion script the arguments of a [`command`] ask for with
@@ -219,27 +170,25 @@ pub fn completions(matches: &ArgMatches) -> Option<Shell> {
 
 /// The argument of a field's flag.
 fn flag_arg(flag: &Flag) -> Arg {
+    let kind = flag.kind.clone();
     let value_parser = match &flag.kind {
-        Kind::Bool => one_of(["true", "false"].map(PossibleValue::new), &flag.kind),
+        Kind::Bool => one_of(["true", "false"].map(PossibleValue::new), kind),
         Kind::Choice(choices) => one_of(
-            choices.iter().filter_map(|(value, help)| {
-                let value = PossibleValue::new(scalar_text(value)?);
-                Some(match help {
+            choices.iter().map(|choice| {
+                let value = PossibleValue::new(choice.text.clone());
+                match &choice.help {
                     Some(help) => value.help(help.clone()),
                     None => value,
-                })
+                }
             }),
-            &flag.kind,
+            kind,
         ),
-        kind => {
-            let kind = kind.clone();
-            ValueParser::new(move |argument: &str| kind.parse(argument))
-        }
+        _ => ValueParser::new(move |argument: &str| kind.parse(argument)),
     };
     let value_name = match flag.kind {
         Kind::Bool => "BOOL",
         Kind::Integer => "INT",
-        Kind::Float => "FLOAT",
+        Kind::Number => "FLOAT",
         Kind::String => "STRING",
         Kind::Choice(_) => "VALUE",
         Kind::Json => "JSON",
@@ -251,11 +200,11 @@ fn flag_arg(flag: &Flag) -> Arg {
     if let Some(help) = &flag.help {
         arg = arg.help(help.clone());
     }
-    let default = flag
+    if let Some(default) = flag
         .default
         .as_ref()
-        .and_then(|value| flag.kind.render(value));
-    if let Some(default) = default {
+        .and_then(|value| flag.kind.render(value))
+    {
         arg = arg.default_value(default);
     }
     if flag.required {
@@ -263,14 +212,13 @@ fn flag_arg(flag: &Flag) -> Arg {
     }
     match flag.kind {
         Kind::Bool => arg.num_args(0..=1).default_missing_value("true"),
-        Kind::Integer | Kind::Float | Kind::Json => arg.allow_negative_numbers(true),
+        Kind::Integer | Kind::Number | Kind::Json => arg.allow_negative_numbers(true),
         Kind::String | Kind::Choice(_) => arg,
     }
 }
 
 /// A value parser that takes one of `values`, parsed as `kind`.
-fn one_of(values: impl IntoIterator<Item = PossibleValue>, kind: &Kind) -> ValueParser {
-    let kind = kind.clone();
+fn one_of(values: impl IntoIterator<Item = PossibleValue>, kind: Kind) -> ValueParser {
     ValueParser::new(PossibleValuesParser::new(values).try_map(move |text| kind.parse(&text)))
 }
 
@@ -308,65 +256,118 @@ fn overlay(input: &mut Value, layer: Value) {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use clap::error::ErrorKind;
+    use schemars::JsonSchema;
+    use serde::Serialize;
     use serde_json::json;
 
     use super::*;
-    use crate::DefinitionsFile;
 
-    fn definition(name: &str, schema: Option<Value>, example: Option<Value>) -> JobDefinition {
-        JobDefinition {
-            name: name.to_string(),
-            description: Some(format!("Run {name}")),
-            input_schema: schema,
-            input_example: example,
+    /// A job's input schema and default input, which the [`Job`] it gives borrows.
+    struct Definition {
+        name: &'static str,
+        schema: Option<Value>,
+        default: Option<Value>,
+    }
+
+    impl Definition {
+        fn job(&self) -> Job<'_> {
+            Job {
+                name: self.name,
+                description: Some("Run the job"),
+                input_schema: self.schema.as_ref(),
+                default_input: self.default.as_ref(),
+            }
         }
     }
 
-    /// A Burn-style configuration's example input, with no schema.
-    fn mnist() -> JobDefinition {
-        definition(
-            "mnist",
-            None,
-            Some(json!({
-                "num_epochs": 10,
-                "batch_size": 64,
-                "shuffle": true,
-                "tag": "baseline",
-                "layers": [64, 32],
-                "resume_from": null,
-                "optimizer": {"lr": 0.001, "weight_decay": 5e-5f32}
-            })),
-        )
+    #[derive(Serialize, JsonSchema)]
+    struct Training {
+        num_epochs: u32,
+        batch_size: u32,
+        shuffle: bool,
+        tag: String,
+        layers: Vec<u32>,
+        resume_from: Option<Resume>,
+        optimizer: Optimizer,
     }
 
-    /// A schema in the form schemars writes, for an input with no example.
-    fn prompt() -> JobDefinition {
-        definition(
-            "prompt",
-            Some(json!({
-                "type": "object",
-                "properties": {
-                    "text": {"description": "The prompt.", "type": "string"},
-                    "mode": {"type": "string", "enum": ["fast", "exact"]},
-                    "limit": {"type": ["integer", "null"]}
-                },
-                "required": ["text"]
-            })),
-            None,
-        )
+    #[derive(Serialize, JsonSchema)]
+    struct Optimizer {
+        lr: f64,
+        weight_decay: f32,
+    }
+
+    #[derive(Serialize, JsonSchema)]
+    struct Resume {
+        epoch: u32,
+    }
+
+    /// `train`, taking `Training`, with a default input.
+    fn train() -> Definition {
+        let default = Training {
+            num_epochs: 10,
+            batch_size: 64,
+            shuffle: true,
+            tag: "baseline".to_string(),
+            layers: vec![64, 32],
+            resume_from: None,
+            optimizer: Optimizer {
+                lr: 0.001,
+                weight_decay: 5e-5,
+            },
+        };
+        Definition {
+            name: "train",
+            schema: Some(schemars::schema_for!(Training).to_value()),
+            default: Some(serde_json::to_value(default).unwrap()),
+        }
+    }
+
+    #[derive(JsonSchema)]
+    struct Prompt {
+        /// The prompt.
+        text: String,
+        mode: Mode,
+        limit: Option<u32>,
+    }
+
+    #[derive(JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    enum Mode {
+        Fast,
+        Exact,
+    }
+
+    /// `prompt`, taking `Prompt`, with no default input.
+    fn prompt() -> Definition {
+        Definition {
+            name: "prompt",
+            schema: Some(schemars::schema_for!(Prompt).to_value()),
+            default: None,
+        }
+    }
+
+    /// `evaluate`, with a default input and no schema.
+    fn evaluate() -> Definition {
+        Definition {
+            name: "evaluate",
+            schema: None,
+            default: Some(json!({"split": "test", "limit": 10})),
+        }
     }
 
     /// The input the job's command line `<job> <args>` gives, its `--config` file read from
     /// `files`, by name.
     fn input_from(
-        definition: &JobDefinition,
+        definition: &Definition,
         args: &[&str],
         files: &[(&str, &str)],
     ) -> Result<Result<Value, ConfigError>, clap::Error> {
-        let matches = job_command(definition)
-            .try_get_matches_from([definition.name.as_str()].iter().chain(args))?;
+        let matches = job_command(definition.job())
+            .try_get_matches_from([definition.name].iter().chain(args))?;
         Ok(job_input(&matches, |path| {
             files
                 .iter()
@@ -377,33 +378,33 @@ mod tests {
     }
 
     /// The input the job's command line `<job> <args>` gives, with no `--config` file to read.
-    fn input(definition: &JobDefinition, args: &[&str]) -> Result<Value, clap::Error> {
+    fn input(definition: &Definition, args: &[&str]) -> Result<Value, clap::Error> {
         input_from(definition, args, &[]).map(|input| input.unwrap())
     }
 
     /// The job's `--help`.
-    fn help(definition: &JobDefinition) -> String {
-        job_command(definition).render_long_help().to_string()
+    fn help(definition: &Definition) -> String {
+        job_command(definition.job()).render_long_help().to_string()
     }
 
     #[test]
     fn the_command_has_a_subcommand_per_job() {
-        let jobs = [mnist(), prompt()];
-        let mut command = command("program", &jobs);
+        let definitions = [train(), prompt()];
+        let mut command = command("program", definitions.iter().map(Definition::job));
         command.build();
 
         let names: Vec<&str> = command.get_subcommands().map(Command::get_name).collect();
-        assert_eq!(names, ["mnist", "prompt"]);
+        assert_eq!(names, ["train", "prompt"]);
         let help = command.render_help().to_string();
         assert!(help.contains("Jobs:"), "{help}");
-        assert!(help.contains("Run mnist"), "{help}");
+        assert!(help.contains("Run the job"), "{help}");
         assert!(help.contains("--completions <SHELL>"), "{help}");
     }
 
     #[test]
     fn flags_set_fields_under_their_original_keys() {
         let input = input(
-            &mnist(),
+            &train(),
             &[
                 "--num-epochs",
                 "2",
@@ -423,9 +424,9 @@ mod tests {
 
     #[test]
     fn no_arguments_give_no_input_and_defaults_are_only_shown() {
-        assert_eq!(input(&mnist(), &[]).unwrap(), Value::Null);
+        assert_eq!(input(&train(), &[]).unwrap(), Value::Null);
 
-        let help = help(&mnist());
+        let help = help(&train());
         for line in [
             "--num-epochs <INT>",
             "[default: 10]",
@@ -444,14 +445,14 @@ mod tests {
 
     #[test]
     fn a_flag_parses_as_its_type() {
-        let mnist = mnist();
+        let train = train();
 
         assert_eq!(
-            input(&mnist, &["--shuffle", "--batch-size", "-1"]).unwrap(),
+            input(&train, &["--shuffle", "--batch-size", "-1"]).unwrap(),
             json!({"shuffle": true, "batch_size": -1})
         );
         assert_eq!(
-            input(&mnist, &["--shuffle", "false"]).unwrap(),
+            input(&train, &["--shuffle", "false"]).unwrap(),
             json!({"shuffle": false})
         );
         for args in [
@@ -461,7 +462,7 @@ mod tests {
             &["--shuffle", "yes"],
             &["--layers", "[1,"],
         ] {
-            let error = input(&mnist, args).unwrap_err();
+            let error = input(&train, args).unwrap_err();
             assert!(
                 matches!(
                     error.kind(),
@@ -472,11 +473,11 @@ mod tests {
             assert_eq!(error.exit_code(), 2);
         }
         assert_eq!(
-            input(&mnist, &["--num-epochs"]).unwrap_err().kind(),
+            input(&train, &["--num-epochs"]).unwrap_err().kind(),
             ErrorKind::InvalidValue
         );
         assert_eq!(
-            input(&mnist, &["--epochs", "2"]).unwrap_err().kind(),
+            input(&train, &["--epochs", "2"]).unwrap_err().kind(),
             ErrorKind::UnknownArgument
         );
     }
@@ -485,14 +486,14 @@ mod tests {
     fn json_literal_flags_take_any_json() {
         assert_eq!(
             input(
-                &mnist(),
+                &train(),
                 &["--layers", "[8]", "--resume-from", r#"{"epoch": 3}"#]
             )
             .unwrap(),
             json!({"layers": [8], "resume_from": {"epoch": 3}})
         );
         assert_eq!(
-            input(&mnist(), &["--resume-from", "null"]).unwrap(),
+            input(&train(), &["--resume-from", "null"]).unwrap(),
             json!({"resume_from": null})
         );
     }
@@ -542,12 +543,37 @@ mod tests {
     }
 
     #[test]
+    fn a_job_without_a_schema_takes_its_json_input_and_config_file_only() {
+        let evaluate = evaluate();
+        let files = [("config.json", r#"{"split": "valid"}"#)];
+
+        let flag = input(&evaluate, &["--split", "valid"]).unwrap_err();
+
+        assert_eq!(flag.kind(), ErrorKind::UnknownArgument);
+        assert_eq!(flag.exit_code(), 2);
+        assert_eq!(
+            input(&evaluate, &[r#"{"split": "valid"}"#]).unwrap(),
+            json!({"split": "valid"})
+        );
+        assert_eq!(
+            input_from(&evaluate, &["--config", "config.json"], &files)
+                .unwrap()
+                .unwrap(),
+            json!({"split": "valid"})
+        );
+        let help = help(&evaluate);
+        assert!(help.contains("[INPUT]"), "{help}");
+        assert!(help.contains("-c, --config <FILE>"), "{help}");
+        assert!(!help.contains("--split"), "{help}");
+    }
+
+    #[test]
     fn the_json_input_alone_is_the_input_as_given() {
         let given = json!({"tag": null, "layers": [], "optimizer": {"lr": 0.1}});
 
-        assert_eq!(input(&mnist(), &[&given.to_string()]).unwrap(), given);
-        assert_eq!(input(&mnist(), &["7"]).unwrap(), json!(7));
-        assert_eq!(input(&mnist(), &["-7"]).unwrap(), json!(-7));
+        assert_eq!(input(&train(), &[&given.to_string()]).unwrap(), given);
+        assert_eq!(input(&train(), &["7"]).unwrap(), json!(7));
+        assert_eq!(input(&train(), &["-7"]).unwrap(), json!(-7));
     }
 
     #[test]
@@ -558,7 +584,7 @@ mod tests {
         )];
 
         let input = input_from(
-            &mnist(),
+            &train(),
             &[
                 "--num-epochs",
                 "3",
@@ -587,7 +613,7 @@ mod tests {
     #[test]
     fn a_repeated_flag_takes_its_last_value() {
         assert_eq!(
-            input(&mnist(), &["--num-epochs", "1", "--num-epochs", "2"]).unwrap(),
+            input(&train(), &["--num-epochs", "1", "--num-epochs", "2"]).unwrap(),
             json!({"num_epochs": 2})
         );
     }
@@ -596,7 +622,7 @@ mod tests {
     fn an_unreadable_or_invalid_config_file_gives_no_input() {
         let files = [("config.toml", "epochs = 3")];
         let error = |path| {
-            input_from(&mnist(), &["-c", path], &files)
+            input_from(&train(), &["-c", path], &files)
                 .unwrap()
                 .unwrap_err()
         };
@@ -625,15 +651,23 @@ mod tests {
     }
 
     #[test]
-    fn reserved_names_belong_to_the_runner() {
-        let job = definition(
-            "train",
-            None,
-            Some(json!({"config": "small", "help": false, "version": 1, "epochs": 3})),
-        );
+    fn reserved_names_belong_to_the_command_line() {
+        let job = Definition {
+            name: "train",
+            schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "config": {"type": "string"},
+                    "help": {"type": "boolean"},
+                    "version": {"type": "integer"},
+                    "epochs": {"type": "integer"}
+                }
+            })),
+            default: None,
+        };
         let files = [("large.json", r#"{"config": "large"}"#)];
 
-        let command = job_command(&job);
+        let command = job_command(job.job());
         let longs: Vec<&str> = command.get_arguments().filter_map(Arg::get_long).collect();
         assert_eq!(longs, ["epochs", "config"]);
         assert_eq!(
@@ -654,9 +688,9 @@ mod tests {
 
     #[test]
     fn completions_names_the_shell_the_command_line_asks_for() {
-        let jobs = [mnist()];
+        let definitions = [train()];
         let matches = |args: &[&str]| {
-            command("program", &jobs)
+            command("program", definitions.iter().map(Definition::job))
                 .try_get_matches_from(["program"].iter().chain(args))
                 .unwrap()
         };
@@ -665,9 +699,9 @@ mod tests {
             completions(&matches(&["--completions", "zsh"])),
             Some(Shell::Zsh)
         );
-        assert_eq!(completions(&matches(&["mnist"])), None);
+        assert_eq!(completions(&matches(&["train"])), None);
         assert_eq!(
-            command("program", &jobs)
+            command("program", definitions.iter().map(Definition::job))
                 .try_get_matches_from(["program", "--completions", "tcsh"])
                 .unwrap_err()
                 .kind(),
@@ -677,45 +711,25 @@ mod tests {
 
     #[test]
     fn completions_cover_the_jobs_and_their_flags() {
-        let jobs = [mnist(), prompt()];
+        let definitions = [train(), prompt()];
         let mut script = Vec::new();
 
         clap_complete::generate(
             Shell::Bash,
-            &mut command("program", &jobs),
+            &mut command("program", definitions.iter().map(Definition::job)),
             "program",
             &mut script,
         );
 
         let script = String::from_utf8(script).unwrap();
         for word in [
-            "mnist",
+            "train",
             "prompt",
             "--optimizer.weight-decay",
             "--config",
             "--completions",
         ] {
             assert!(script.contains(word), "no {word} in the script");
-        }
-    }
-
-    #[test]
-    fn a_definitions_file_builds_the_same_command() {
-        let jobs = vec![mnist(), prompt()];
-        let file: DefinitionsFile = serde_json::from_value(json!({
-            "protocol": 1,
-            "sdk_version": "0.10.0",
-            "jobs": serde_json::to_value(&jobs).unwrap()
-        }))
-        .unwrap();
-
-        let mut built = command("program", &jobs);
-        let mut read = command("program", &file.jobs);
-
-        for job in ["mnist", "prompt"] {
-            let built = built.find_subcommand_mut(job).unwrap().render_help();
-            let read = read.find_subcommand_mut(job).unwrap().render_help();
-            assert_eq!(built.to_string(), read.to_string());
         }
     }
 }

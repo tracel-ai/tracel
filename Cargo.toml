@@ -52,6 +52,7 @@ crossbeam = { version = "0.8.4", default-features = false, features = [
 ] }
 json-patch = { version = "4.1.0", default-features = false }
 schemars = "1.2.2"
+referencing = "0.58.6"
 reqwest = { version = "0.13.4", features = ["blocking", "json"] }
 uuid = { version = "1.23.4", features = ["serde"] }
 variadics_please = "1.1.0"
@@ -80,6 +81,7 @@ tracel-models = { path = "crates/tracel-models", version = "0.11.0" }
 tracel-station = { path = "crates/tracel-station", version = "0.11.0" }
 tracel-datasets = { path = "crates/tracel-datasets", version = "0.11.0" }
 tracel-job-proto = { path = "crates/tracel-job-proto", version = "0.11.0" }
+tracel-job-args = { path = "crates/tracel-job-args", version = "0.11.0" }
 tracel-runtime = { path = "crates/tracel-runtime", version = "0.11.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.11.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.11.0" }

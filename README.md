@@ -75,9 +75,9 @@ fn main() -> ExitCode {
 }
 ```
 
-The binary runs a job by name, with its input as flags or one JSON document merged onto the
-default: `cargo run -- mnist --num-epochs 5` or `cargo run -- mnist '{"num_epochs": 5}'`. Left
-out, the input is the default. A function registered without `Job`, as in
+The binary runs a job by name, with its input as one JSON document merged onto the default:
+`cargo run -- mnist '{"num_epochs": 5}'`, or as flags when the job has an input schema, as
+[Command-line flags](#command-line-flags) describes. Left out, the input is the default. A function registered without `Job`, as in
 `.job("evaluate", evaluate)`, is a job with no description or default; a job with no input takes
 `()`. `version` gives the binary its `--version`, which prints the binary's name and that version,
 such as `mnist 0.1.0`; without it, the binary has no `--version`.
@@ -114,43 +114,58 @@ for a console project, or `tracel::experiment::local::LocalExperiments` to recor
 
 #### Command-line flags
 
-`Jobs` builds its command line from the definitions of its jobs, so each field of a job's input is
-also a flag: `cargo run -- mnist --num-epochs 5` runs with the same input as
-`cargo run -- mnist '{"num_epochs": 5}'`. `--help` lists the jobs, and `mnist --help` the job's
-flags with their defaults:
+A job given its input's JSON Schema has a flag per field of its input. Enable the `schema` feature
+of `tracel`, derive `schemars::JsonSchema` for the job's input type, and add `with_schema()` to the
+job:
+
+```rust
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+struct TrainingConfig {
+    /// Passes over the toy dataset.
+    epochs: usize,
+    /// Batches in each epoch.
+    batches_per_epoch: usize,
+}
+
+Job::new(toy_training)
+    .with_description("Run a toy training loop")
+    .with_default(TrainingConfig::default())
+    .with_schema()
+```
+
+`cargo run -- toy-training --epochs 2` then runs with the same input as
+`cargo run -- toy-training '{"epochs": 2}'`. `--help` lists the jobs, and `toy-training --help`
+the job's flags with their defaults:
 
 ```text
-$ cargo run -- mnist --help
-Train the MNIST classifier
+$ cargo run -p basics --example cli -- toy-training --help
+Run a toy training loop
 
-Usage: mnist mnist [OPTIONS] [INPUT]
+Usage: cli toy-training [OPTIONS] [INPUT]
 
 Arguments:
   [INPUT]  JSON merged after --config and before the flags
 
 Options:
-      --batch-size <INT>                [default: 64]
-      --num-epochs <INT>                [default: 10]
-      --optimizer.lr <FLOAT>            [default: 0.001]
-      --optimizer.weight-decay <FLOAT>  [default: 0.00005]
-  -c, --config <FILE>                   JSON merged before the input and the flags
-  -h, --help                            Print help
+      --batches-per-epoch <INT>  Batches in each epoch. [default: 8]
+      --epochs <INT>             Passes over the toy dataset. [default: 3]
+  -c, --config <FILE>            JSON merged before the input and the flags
+  -h, --help                     Print help
 ```
 
-- With an input schema (`Job::with_schema` and the `schema` feature), a flag takes its field's
-  type, allowed values and requiredness from the schema, and the field's doc comment as its help.
-  Without one, each field of the default input is a flag typed by its value: a boolean, an
-  integer, a number or a string. Burn `Config` types work this way.
+- A flag takes its field's type, allowed values and requiredness from the schema, and the field's
+  doc comment as its help. A job without a schema has no flags: its input is the JSON document or
+  the `--config` file.
 - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
-  `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, an object with
-  no fields of its own, or `null` in the default input takes a JSON literal, such as
-  `--layers '[64, 32]'`. A boolean flag given no value is `true`.
+  `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, a map, an
+  optional object or an enum with data takes a JSON literal, such as `--layers '[64, 32]'`. A
+  boolean flag given no value is `true`.
 - The input is the default input, then the `--config` file, then the JSON document, then the
   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
 - `help`, `version` and `config` are the command line's names: a field with one of them has no
   flag, and is set through `--config` or the JSON document.
 - `--completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`, `powershell`
-  or `zsh`: `cargo run -- --completions bash > mnist.bash`.
+  or `zsh`: `cargo run -- --completions bash > cli.bash`.
 
 #### Launching jobs
 
@@ -173,7 +188,8 @@ job ends as completed or failed by what it returns, and the binary exits with co
 signal ends the binary at once, and `tracel run` sends SIGKILL after a 30-second grace period.
 
 Programs that launch job binaries, as `tracel run` does, follow the contract of the
-`tracel-job-proto` crate.
+`tracel-job-proto` crate, and read a job's flags as its binary does with the `tracel-job-args`
+crate.
 
 ### 2. Integrate with your Learner
 

@@ -1,4 +1,4 @@
-use tracel_job_proto::ConfigError;
+use tracel_job_args::ConfigError;
 
 use crate::process::describe::DescribeError;
 use crate::{BoxError, PrepareError};

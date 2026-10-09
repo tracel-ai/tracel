@@ -5,9 +5,8 @@
 //! jobs, how it runs one, and what the binary's exit code says. It is not an API for writing jobs.
 //!
 //! It holds the contract's shapes and names, and does no I/O: [`DefinitionsFile::to_json`] gives
-//! the exact text of the definitions file, [`DefinitionsFile::from_json`] reads it back, checking
-//! its [`PROTOCOL`], and [`job_input`] reads the `--config` file through the function its caller
-//! gives. Writing and reading the file is the caller's.
+//! the exact text of the definitions file, and [`DefinitionsFile::from_json`] reads it back,
+//! checking its [`PROTOCOL`]. Writing and reading the file is the caller's.
 //!
 //! ## Describing the jobs
 //!
@@ -35,12 +34,8 @@
 //!
 //! ## Running a job
 //!
-//! `<binary> <job> [<input-json>] [<flags>]` runs the job `<job>`. Its input is the job's default
-//! input, then the `--config` file, then the JSON document, then the flags, each merged onto the
-//! one before. A launcher passes the input as the JSON document. [`command`] builds the binary's
-//! command line from its jobs' definitions alone, so a launcher that reads a definitions file
-//! parses the same flags as the binary that wrote it, and [`job_input`] reads a job's input from
-//! the arguments it parsed.
+//! `<binary> <job> [<input-json>]` runs the job `<job>`, with the JSON document merged onto the
+//! job's default input; without one, the job runs with its default input.
 //!
 //! When [`TRACEL_JOB_NUM`] gives the job a number, each experiment the job starts records it as
 //! its [`JOB_NUM_ATTRIBUTE`], `tracel.job_num`, a number when it is one, which links the
@@ -59,12 +54,9 @@
 //! what it returns, and the binary exits with code 130. A second signal ends the binary at once. A
 //! launcher sends SIGKILL after a grace period; `tracel run` waits 30 seconds.
 
-mod command;
 mod definitions;
-mod flags;
 mod job_num;
 
-pub use command::{ConfigError, command, completions, job_command, job_input};
 pub use definitions::{DefinitionsFile, JobDefinition, ParseError, TRACEL_DESCRIBE};
 pub use job_num::{JOB_NUM_ATTRIBUTE, TRACEL_JOB_NUM};
 

@@ -48,7 +48,7 @@ where
     }
 
     /// Runs the job with its input merged onto `default`, which its definition gives as its
-    /// example input, and from which its command line takes its flags and their defaults.
+    /// example input, and from which its flags take the defaults they show.
     ///
     /// With no input, the job runs with `default`. An input is merged onto it with JSON merge
     /// patch (RFC 7386): its fields replace the default's, and a `null` field removes one.
@@ -65,9 +65,9 @@ where
         self
     }
 
-    /// Gives the JSON Schema of `I` as the job's input schema, from which its command line takes
-    /// the type, allowed values, requiredness and help of each flag (requires the `schema`
-    /// feature).
+    /// Gives the JSON Schema of `I` as the job's input schema, from which its command line has a
+    /// flag per field of the input, with its type, allowed values, requiredness and help
+    /// (requires the `schema` feature).
     #[cfg(feature = "schema")]
     pub fn with_schema(mut self) -> Self
     where

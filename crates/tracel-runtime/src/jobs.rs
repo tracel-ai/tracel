@@ -13,10 +13,11 @@ use crate::job::{IntoJob, Prepared, Registered};
 /// returns [`run`](Self::run).
 ///
 /// The command line is `<program> <job> [<input-json>] [<flags>]`, built from the jobs'
-/// definitions: one subcommand per job, each with a flag per field of its input, typed by the
-/// input schema or the default input, so a job runs without writing JSON.
-/// `<program> <job> --help` lists the flags. For a job whose default input is
-/// `{"epochs": 10, "optimizer": {"weight_decay": 0.0}}`:
+/// definitions: one subcommand per job, taking its input as a JSON document or a `--config` file.
+/// A job given its input's schema, with `Job::with_schema` (requires the `schema` feature), also
+/// has a flag per field of its input, typed by the schema, so it runs without writing JSON.
+/// `<program> <job> --help` lists the flags. For a job whose input has the fields `epochs` and
+/// `optimizer.weight_decay`:
 ///
 /// ```text
 /// <program> train --epochs 5 --optimizer.weight-decay 0.01

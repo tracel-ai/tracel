@@ -17,15 +17,16 @@ see [`basics`](../basics) for the framework without it.
 
 ```bash
 cargo run -p mnist --example mnist
-cargo run -p mnist --example mnist -- mnist --help  # lists the flags and their defaults
-cargo run -p mnist --example mnist -- mnist --num-epochs 5 --optimizer.weight-decay 0.0001
-cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5}'
+cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5, "optimizer": {"weight_decay": 0.0001}}'
+cargo run -p mnist --example mnist -- mnist -c config.json  # a JSON file merged onto the default
 ```
 
-The example registers its `mnist` job, a function of `MnistTrainingConfig`, with
-`tracel::runtime::Jobs`, so each field of the config, a Burn `Config`, is a flag typed by its
-default value, nested fields joined with dots. The flags, or one JSON document, are merged onto the
-small default configuration. The job trains in an experiment it runs with `Experiments::run`,
+The example registers its `mnist` job, a function of `MnistTrainingConfig`, a Burn `Config`, with
+`tracel::runtime::Jobs`. Its input, one JSON document or a `--config` file, is merged onto the
+small default configuration. The configuration has no JSON Schema, so the job takes no flags; a job
+whose input type derives `schemars::JsonSchema`, registered `with_schema()` with the `schema`
+feature of `tracel`, takes a flag per field, as the `cli` example of [`basics`](../basics) shows.
+The job trains in an experiment it runs with `Experiments::run`,
 which records the merged configuration, the job's input, as the experiment's arguments and ends
 the experiment as completed or failed by what training returns.
 SIGTERM asks the job to stop: the interrupter stops training, the experiment ends as completed, and

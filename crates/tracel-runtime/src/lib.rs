@@ -15,8 +15,8 @@
 //!
 //! [`Job`] adds a job's description, its default input, which its input is merged onto, and its
 //! input's JSON Schema (requires the `schema` feature). The command line
-//! `<program> <job> [<input-json>] [<flags>]` is built from them, with a flag per field of the
-//! input, as [`Jobs`] describes.
+//! `<program> <job> [<input-json>] [<flags>]` is built from them, with a flag per field of an
+//! input that has a schema, as [`Jobs`] describes.
 //!
 //! ## Running a job
 //!

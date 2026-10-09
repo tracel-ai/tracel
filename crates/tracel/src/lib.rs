@@ -101,9 +101,10 @@
 //!
 //! ## Command-Line Flags
 //!
-//! [`runtime::Jobs`] builds its command line from the definitions of its jobs, so each field of a
-//! job's input is also a flag: `<binary> train --epochs 5` runs the job above with the same input
-//! as `<binary> train '{"epochs": 5}'`. `<binary> --help` lists the jobs, and
+//! A job given its input's JSON Schema has a flag per field of its input. With
+//! `schemars::JsonSchema` derived for its input type, the `schema` feature enabled and
+//! `.with_schema()` added to the job above, `<binary> train --epochs 5` runs it with the same
+//! input as `<binary> train '{"epochs": 5}'`. `<binary> --help` lists the jobs, and
 //! `<binary> train --help` the job's flags with their defaults:
 //!
 //! ```text
@@ -120,14 +121,13 @@
 //!   -h, --help           Print help
 //! ```
 //!
-//! - With an input schema (`Job::with_schema` and the `schema` feature), a flag takes its field's
-//!   type, allowed values and requiredness from the schema, and the field's doc comment as its
-//!   help. Without one, each field of the default input is a flag typed by its value: a boolean,
-//!   an integer, a number or a string. Burn `Config` types work this way.
+//! - A flag takes its field's type, allowed values and requiredness from the schema, and the
+//!   field's doc comment as its help. A job without a schema has no flags: its input is the JSON
+//!   document or the `--config` file.
 //! - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
-//!   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, an object
-//!   with no fields of its own, or `null` in the default input takes a JSON literal, such as
-//!   `--layers '[64, 32]'`. A boolean flag given no value is `true`.
+//!   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, a map, an
+//!   optional object or an enum with data takes a JSON literal, such as `--layers '[64, 32]'`. A
+//!   boolean flag given no value is `true`.
 //! - The input is the default input, then the `--config` file, then the JSON document, then the
 //!   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
 //! - `help`, `version` and `config` are the command line's names: a field with one of them has no

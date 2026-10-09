@@ -2,9 +2,8 @@
 //! See src/training.rs for the wiring.
 //!
 //! cargo run -p mnist --example mnist
-//! cargo run -p mnist --example mnist -- mnist --help
-//! cargo run -p mnist --example mnist -- mnist --num-epochs 5 --optimizer.weight-decay 0.0001
-//! cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5}'
+//! cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5, "optimizer": {"weight_decay": 0.0001}}'
+//! cargo run -p mnist --example mnist -- mnist -c config.json
 #![recursion_limit = "256"]
 
 use std::process::ExitCode;

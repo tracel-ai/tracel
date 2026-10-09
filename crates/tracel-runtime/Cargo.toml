@@ -20,6 +20,7 @@ station = ["dep:reqwest", "dep:tracing", "dep:url", "dep:uuid"]
 clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 ctrlc = { workspace = true, features = ["termination"] }
+tracel-job-args.workspace = true
 tracel-job-proto.workspace = true
 serde.workspace = true
 serde_json.workspace = true

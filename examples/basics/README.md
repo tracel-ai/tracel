@@ -27,6 +27,9 @@ The `mnist` example shows the same experiment tracking driven from the Burn `tra
 | `cli` | A program with two jobs, plain functions with flags built from their input schema: the training loop in an experiment, and the tokenizer, which starts none. |
 | `console` | The signed-in user and the project's models, read from the console. |
 
+The `cli` jobs take flags because their input types derive `schemars::JsonSchema` and are
+registered `with_schema()`, which the `schema` feature of `tracel` provides.
+
 ## Run
 
 ```sh

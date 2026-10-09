@@ -1,6 +1,6 @@
 [package]
 name = "tracel-job-proto"
-description = "The contract between Tracel job binaries and the programs that launch them: job definitions, launch environment variables, exit codes and the generated command line."
+description = "The contract between Tracel job binaries and the programs that launch them: job definitions, launch environment variables and exit codes."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -12,7 +12,5 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-clap = { workspace = true, features = ["string"] }
-clap_complete.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json.workspace = true

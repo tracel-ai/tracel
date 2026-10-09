@@ -1,0 +1,23 @@
+[package]
+name = "tracel-job-args"
+description = "The command line of Tracel jobs, generated from their input schemas: typed flags, read back into the JSON input they give."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+clap = { workspace = true, features = ["string"] }
+clap_complete.workspace = true
+referencing.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+schemars.workspace = true
+serde = { workspace = true, features = ["std"] }

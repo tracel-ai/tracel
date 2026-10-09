@@ -14,7 +14,8 @@ use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap_complete::Shell;
 use serde_json::Value;
-use tracel_job_proto::{TRACEL_JOB_NUM, command, completions, job_input};
+use tracel_job_args::{command, completions, job_input};
+use tracel_job_proto::{JobDefinition, TRACEL_JOB_NUM};
 
 use crate::{Execution, Jobs, Stop};
 use describe::describe;
@@ -114,10 +115,21 @@ fn execute(jobs: &Jobs) -> Result<(), RunError> {
 /// The command line of the program `name`: the [`command`] of `jobs`, with `--version` when the
 /// program gives its version.
 fn command_line(jobs: &Jobs, name: impl Into<String>) -> Command {
-    let command = command(name, jobs.definitions());
+    let command = command(name, jobs.definitions().map(job_args));
     match jobs.get_version() {
         Some(version) => command.version(version.to_string()),
         None => command,
+    }
+}
+
+/// The name, description, input schema and default input of the job `definition` defines, which
+/// its command line is generated from.
+fn job_args(definition: &JobDefinition) -> tracel_job_args::Job<'_> {
+    tracel_job_args::Job {
+        name: &definition.name,
+        description: definition.description.as_deref(),
+        input_schema: definition.input_schema.as_ref(),
+        default_input: definition.input_example.as_ref(),
     }
 }
 
@@ -365,29 +377,21 @@ mod tests {
     }
 
     #[test]
-    fn flags_set_the_fields_of_the_input() {
-        let (jobs, ran_with) =
-            with_default(json!({"epochs": 10, "optimizer": {"weight_decay": 0.0}}));
+    fn a_job_without_an_input_schema_takes_no_flags() {
+        let (jobs, ran_with) = with_default(json!({"epochs": 10}));
 
-        run(
-            jobs,
-            &[
-                "train",
-                "--optimizer.weight-decay",
-                "0.01",
-                r#"{"epochs": 2}"#,
-            ],
-        )
-        .unwrap();
+        let flag = run(jobs, &["train", "--epochs", "2"]).unwrap_err();
 
-        assert_eq!(
-            *ran_with.lock().unwrap(),
-            Some(json!({"epochs": 2, "optimizer": {"weight_decay": 0.01}}))
+        assert!(
+            matches!(&flag, RunError::Usage(error) if error.kind() == ErrorKind::UnknownArgument),
+            "{flag:?}"
         );
+        assert_eq!(flag.exit_code(), 2);
+        assert!(ran_with.lock().unwrap().is_none());
     }
 
     #[test]
-    fn the_command_line_input_is_merged_onto_the_default() {
+    fn the_json_input_is_merged_onto_the_default() {
         let (jobs, ran_with) = with_default(json!({
             "num_epochs": 10,
             "batch_size": 64,
@@ -402,11 +406,7 @@ mod tests {
             jobs,
             &[
                 "train",
-                "--num-epochs",
-                "3",
-                r#"{"batch_size": 16, "tag": null, "optimizer": {"lr": 0.2, "weight_decay": 0.5}}"#,
-                "--optimizer.lr",
-                "0.3",
+                r#"{"num_epochs": 3, "batch_size": 16, "tag": null, "optimizer": {"lr": 0.3, "weight_decay": 0.5}}"#,
             ],
         )
         .unwrap();
@@ -489,12 +489,11 @@ mod tests {
         };
 
         let not_json = rejected(&["train", "{"]);
-        let not_an_integer = rejected(&["train", "--epochs", "ten"]);
-        let unknown_flag = rejected(&["train", "--epoch", "2"]);
+        let unknown_flag = rejected(&["train", "--epochs", "2"]);
         let not_decoded = rejected(&["train", "[1, 2]"]);
         let wrong_type = rejected(&["train", r#"{"epochs": "ten"}"#]);
 
-        for usage in [not_json, not_an_integer, unknown_flag] {
+        for usage in [not_json, unknown_flag] {
             assert!(matches!(usage, Err(RunError::Usage(_))), "{usage:?}");
         }
         for invalid in [not_decoded, wrong_type] {
@@ -667,7 +666,11 @@ mod tests {
             }
         };
 
-        run(Jobs::new().job("train", train), &["train", "--epochs", "2"]).unwrap();
+        run(
+            Jobs::new().job("train", train),
+            &["train", r#"{"epochs": 2}"#],
+        )
+        .unwrap();
         run(Jobs::new().job("evaluate", evaluate), &["evaluate"]).unwrap();
 
         let merged = json!({"epochs": 2, "optimizer": {"lr": 0.001}});
@@ -731,8 +734,9 @@ mod tests {
         .with_schema();
         let jobs = Jobs::new().job("train", train);
 
-        let definition = jobs.definitions().find(|job| job.name == "train").unwrap();
-        let help = tracel_job_proto::job_command(definition)
+        let help = command_line(&jobs, "program")
+            .find_subcommand_mut("train")
+            .unwrap()
             .render_long_help()
             .to_string();
         for line in [
@@ -762,6 +766,64 @@ mod tests {
         assert!(matches!(config.device, Device::Gpu));
         assert_eq!(config.resume_from.map(|resume| resume.experiment), Some(4));
         assert_eq!(config.num_epochs, 10);
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn flags_from_the_input_schema_set_fields_after_the_json_input() {
+        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+        struct Training {
+            epochs: u32,
+            optimizer: Optimizer,
+        }
+
+        #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+        struct Optimizer {
+            lr: f64,
+            weight_decay: f64,
+        }
+
+        let ran_with = RanWith::default();
+        let jobs = || {
+            let train = Job::new({
+                let ran_with = ran_with.clone();
+                move |config: Training| {
+                    *ran_with.lock().unwrap() = Some(serde_json::to_value(config)?);
+                    Ok::<_, BoxError>(())
+                }
+            })
+            .with_default(Training {
+                epochs: 10,
+                optimizer: Optimizer {
+                    lr: 0.001,
+                    weight_decay: 0.0,
+                },
+            })
+            .with_schema();
+            Jobs::new().job("train", train)
+        };
+
+        run(
+            jobs(),
+            &[
+                "train",
+                "--optimizer.weight-decay",
+                "0.01",
+                r#"{"epochs": 2, "optimizer": {"weight_decay": 0.5}}"#,
+            ],
+        )
+        .unwrap();
+        let not_an_integer = run(jobs(), &["train", "--epochs", "ten"]).unwrap_err();
+
+        assert_eq!(
+            ran_with.lock().unwrap().take(),
+            Some(json!({"epochs": 2, "optimizer": {"lr": 0.001, "weight_decay": 0.01}}))
+        );
+        assert!(
+            matches!(not_an_integer, RunError::Usage(_)),
+            "{not_an_integer:?}"
+        );
+        assert!(ran_with.lock().unwrap().is_none());
     }
 
     #[test]
