@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
-use crate::{CancelToken, ExperimentGlobalExt, ExperimentRun};
+use crate::{ExperimentGlobalExt, ExperimentRun};
 
 /// A backend that records experiments: it creates the run of each experiment started.
 pub trait ExperimentProvider: Send + Sync + 'static {
@@ -23,13 +23,10 @@ pub trait ExperimentProvider: Send + Sync + 'static {
 type OnStart = Arc<dyn Fn(&ExperimentRun) + Send + Sync>;
 
 /// The experiments of a backend, and how each experiment started from them starts: the attributes
-/// and arguments it records, the token that asks it to stop, and the hooks called with its run.
+/// and arguments it records, and the hooks called with its run.
 ///
 /// [`run`](Self::run) runs code in a new experiment and ends the experiment by what the code
 /// returns. [`start`](Self::start) starts one and returns its run, for code that ends it itself.
-/// A clone, and the experiments [`attribute`](Self::attribute), [`attributes`](Self::attributes),
-/// [`arguments`](Self::arguments) and [`on_start`](Self::on_start) return, share the
-/// [`cancel_token`](Self::cancel_token).
 ///
 /// ```no_run
 /// use tracel_experiment::{ExperimentRun, Experiments};
@@ -50,7 +47,6 @@ pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
     attributes: HashMap<String, Value>,
     arguments: Option<Value>,
-    cancel_token: CancelToken,
     on_start: Vec<OnStart>,
 }
 
@@ -61,7 +57,6 @@ impl Experiments {
             provider,
             attributes: HashMap::new(),
             arguments: None,
-            cancel_token: CancelToken::new(),
             on_start: Vec::new(),
         }
     }
@@ -109,40 +104,19 @@ impl Experiments {
         self
     }
 
-    /// The token that asks the experiments started from these experiments to stop.
-    ///
-    /// Cancelling it cancels the [cancel token](ExperimentRun::cancel_token) of each run started
-    /// from them, before or after, so each logs once that a stop was requested, and they start
-    /// no more: [`start`](Self::start) then fails with [`ExperimentErrorKind::Cancelled`].
-    pub fn cancel_token(&self) -> CancelToken {
-        self.cancel_token.clone()
-    }
-
     /// Starts the experiment `name` and returns its run.
     ///
-    /// The experiment records the attributes and arguments these experiments give it, its run's
-    /// cancel token is cancelled with their [`cancel_token`](Self::cancel_token), and each
+    /// The experiment records the attributes and arguments these experiments give it, and each
     /// [`on_start`](Self::on_start) hook is called with the run. The run ends as completed
     /// through [`ExperimentRun::finish`], and as failed through [`ExperimentRun::fail`] or when it
     /// is dropped before either. Unless the program has installed a `tracing` subscriber, this
     /// installs one that forwards events to experiments.
-    ///
-    /// Once the experiments' cancel token is cancelled, this fails with
-    /// [`ExperimentErrorKind::Cancelled`] without creating the experiment.
     pub fn start(&self, name: &str) -> Result<ExperimentRun, ExperimentError> {
-        if self.cancel_token.is_cancelled() {
-            return Err(ExperimentError::new(
-                ExperimentErrorKind::Cancelled,
-                format!("experiment '{name}' was not started: a stop was requested"),
-            ));
-        }
-
         let _ = try_init_tracing_subscriber();
 
         let run = self
             .provider
             .create_experiment(name.to_string(), self.attributes.clone())?;
-        self.cancel_token.link(run.cancel_token());
         if let Some(arguments) = &self.arguments {
             run.record_args(arguments.clone());
         }
@@ -194,9 +168,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::ExperimentId;
     use crate::session::{Event, ExperimentCompletion};
     use crate::test_support::{MockSession, create_run_with_id};
-    use crate::{ExperimentId, LogLevel, STOP_REQUESTED};
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -251,22 +225,6 @@ mod tests {
                 .iter()
                 .filter_map(|event| match event {
                     Event::Args(value) => Some(value.clone()),
-                    _ => None,
-                })
-                .collect()
-        }
-
-        /// The warnings the runs logged.
-        fn warnings(&self) -> Vec<String> {
-            self.session
-                .events
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|event| match event {
-                    Event::Log { record, .. } if record.level == LogLevel::Warn => {
-                        Some(record.message.clone())
-                    }
                     _ => None,
                 })
                 .collect()
@@ -430,40 +388,5 @@ mod tests {
                 ("second", ExperimentId::from("7"))
             ]
         );
-    }
-
-    #[test]
-    fn cancelling_the_experiments_asks_each_run_started_from_them_to_stop() {
-        let fixture = Fixture::new();
-        let experiments = fixture.experiments.clone().attribute("kind", "example");
-
-        let run = experiments.unwrap().start("train").unwrap();
-        fixture.experiments.cancel_token().cancel();
-
-        assert!(run.cancel_token().is_cancelled());
-        assert_eq!(fixture.warnings(), [STOP_REQUESTED]);
-    }
-
-    #[test]
-    fn no_experiment_starts_once_the_experiments_are_cancelled() {
-        let fixture = Fixture::new();
-        let called = Arc::new(AtomicBool::new(false));
-        let experiments = fixture.experiments.clone().on_start({
-            let called = called.clone();
-            move |_run| called.store(true, Ordering::SeqCst)
-        });
-        experiments.cancel_token().cancel();
-
-        let started = experiments.start("train");
-
-        assert!(matches!(
-            started,
-            Err(ExperimentError {
-                kind: ExperimentErrorKind::Cancelled,
-                ..
-            })
-        ));
-        assert!(fixture.attributes.lock().unwrap().is_empty());
-        assert!(!called.load(Ordering::SeqCst));
     }
 }

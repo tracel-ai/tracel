@@ -4,7 +4,6 @@
 mod describe;
 mod error;
 mod file;
-mod signal;
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -17,7 +16,7 @@ use serde_json::Value;
 use tracel_job_args::{command, completions, job_input};
 use tracel_job_proto::TRACEL_JOB_NUM;
 
-use crate::{Execution, JobDefinition, Jobs, Stop};
+use crate::{Execution, JobDefinition, Jobs};
 use describe::describe;
 use error::RunError;
 
@@ -31,26 +30,6 @@ enum Request {
     Print(clap::Error),
 }
 
-/// What the job the process runs is launched with: the request that it stop, and, through the
-/// environment, the number its launcher gave it.
-struct ProcessLaunch {
-    stop: Stop,
-    num: Option<String>,
-}
-
-impl ProcessLaunch {
-    /// The launch of a job asked to stop once `stop` is requested, as the environment variables
-    /// `lookup` gives describe it.
-    fn from_vars(stop: Stop, lookup: impl Fn(&str) -> Option<OsString>) -> Self {
-        Self {
-            num: lookup(TRACEL_JOB_NUM)
-                .filter(|num| !num.is_empty())
-                .map(|num| num.to_string_lossy().into_owned()),
-            stop,
-        }
-    }
-}
-
 impl Jobs {
     /// Runs the job the command-line arguments name, and returns the exit code for the process.
     ///
@@ -59,22 +38,14 @@ impl Jobs {
     /// | 0 | The job completed, or the help, version or completion script was printed |
     /// | 1 | The job failed, or the job definitions its launcher asked for could not be written |
     /// | 2 | No job or an unknown job is named, a flag or the input is unusable, or the input does not decode |
-    /// | 130 | The job was asked to stop |
     ///
     /// Why it did not complete is printed to stderr, with the registered job names when no job or
-    /// an unknown one is named, and a stop request as a warning. Launched by `tracel run`, the
-    /// program also gives its launcher its jobs' definitions.
+    /// an unknown one is named. Launched by `tracel run`, the program also gives its launcher its
+    /// jobs' definitions.
     ///
     /// The job runs on this thread, in its [`JobScope`](crate::JobScope):
-    /// [`stop_requested`](crate::stop_requested) says whether it was asked to stop,
-    /// [`on_stop`](crate::on_stop) runs code once it is, [`job_num`](crate::job_num) gives the
-    /// number its launcher gave it, and [`job_input`](crate::job_input) the input it runs with.
-    ///
-    /// SIGTERM, SIGINT or SIGHUP, or Ctrl-C, Ctrl-Break or closing the console on Windows, asks
-    /// the job to stop: it runs what [`on_stop`](crate::on_stop) registered, the job ends as
-    /// completed or failed by what it returns, and the process exits with code 130. A second
-    /// signal ends the process at once, also with exit code 130. `tracel run` sends SIGKILL after
-    /// a 30-second grace period.
+    /// [`job_num`](crate::job_num) gives the number its launcher gave it, and
+    /// [`job_input`](crate::job_input) the input it runs with.
     pub fn run(self) -> ExitCode {
         let exit = match execute(&self) {
             Ok(()) => tracel_job_proto::ExitCode::Completed,
@@ -96,11 +67,7 @@ fn execute(jobs: &Jobs) -> Result<(), RunError> {
     }
     let mut command = command_line(jobs, program_name());
     match read_request(jobs, &mut command, std::env::args_os())? {
-        Request::Run { job, input } => {
-            let stop = Stop::new();
-            signal::stop_on_termination(stop.clone());
-            dispatch(jobs, &job, input, ProcessLaunch::from_vars(stop, vars))
-        }
+        Request::Run { job, input } => dispatch(jobs, &job, input, execution(vars)),
         Request::Completions(shell) => {
             let name = command.get_name().to_string();
             clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
@@ -181,19 +148,21 @@ where
     }
 }
 
-/// Runs the job `name` of `jobs` with `input`, as `launch` launches it.
-fn dispatch(jobs: &Jobs, name: &str, input: Value, launch: ProcessLaunch) -> Result<(), RunError> {
-    let prepared = jobs.prepare(name, input)?;
-    let execution = Execution::new().with_stop(launch.stop);
-    let execution = match launch.num {
-        Some(num) => execution.with_num(num),
-        None => execution,
-    };
-    let outcome = prepared.run(execution);
-    if outcome.stop_requested() {
-        return Err(RunError::Stopped);
+/// The execution of the job the process runs, as the environment variables `lookup` gives
+/// describe it: numbered by [`TRACEL_JOB_NUM`] when its launcher sets it.
+fn execution(lookup: impl Fn(&str) -> Option<OsString>) -> Execution {
+    match lookup(TRACEL_JOB_NUM).filter(|num| !num.is_empty()) {
+        Some(num) => Execution::new().with_num(num.to_string_lossy()),
+        None => Execution::new(),
     }
-    outcome.into_result().map_err(RunError::JobFailed)
+}
+
+/// Runs the job `name` of `jobs` with `input`, launched as `execution` says.
+fn dispatch(jobs: &Jobs, name: &str, input: Value, execution: Execution) -> Result<(), RunError> {
+    jobs.prepare(name, input)?
+        .run(execution)
+        .into_result()
+        .map_err(RunError::JobFailed)
 }
 
 /// The name the program was run as, without its extension, or `job` when it has none.
@@ -209,7 +178,6 @@ fn program_name() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::ffi::OsStr;
     use std::sync::{Arc, Mutex};
 
@@ -217,28 +185,13 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{BoxError, IntoJob, Job, job_input, job_num, job_running, on_stop, stop_requested};
-
-    thread_local! {
-        /// The stop of the job this test thread runs as the process does, as the process's
-        /// termination signal handler holds it.
-        static LAUNCHED: RefCell<Stop> = RefCell::new(Stop::new());
-    }
-
-    /// Asks the job this test thread runs to stop, as a termination signal does.
-    fn request_stop() {
-        LAUNCHED.with(|stop| stop.borrow().request());
-    }
+    use crate::{BoxError, IntoJob, Job, job_input, job_num, job_running};
 
     #[derive(Clone, Copy)]
     enum Outcome {
         Succeed,
         Fail,
         Panic,
-        /// Asks itself to stop, then fails.
-        Cancel,
-        /// Asks itself to stop, then succeeds.
-        Stop,
     }
 
     /// The input a job ran with, once it ran.
@@ -256,14 +209,6 @@ mod tests {
                 Outcome::Succeed => Ok(()),
                 Outcome::Fail => Err("boom".into()),
                 Outcome::Panic => panic!("kernel exploded"),
-                Outcome::Cancel => {
-                    request_stop();
-                    Err("interrupted".into())
-                }
-                Outcome::Stop => {
-                    request_stop();
-                    Ok(())
-                }
             }
         }
     }
@@ -327,14 +272,12 @@ mod tests {
     fn run_launched(jobs: Jobs, args: &[&str], vars: &[(&str, &OsStr)]) -> Result<(), RunError> {
         match parse(&jobs, args)? {
             Request::Run { job, input } => {
-                let stop = Stop::new();
-                LAUNCHED.with(|launched| *launched.borrow_mut() = stop.clone());
-                let launch = ProcessLaunch::from_vars(stop, |name| {
+                let execution = execution(|name| {
                     vars.iter()
                         .find(|(variable, _)| *variable == name)
                         .map(|(_, value)| value.to_os_string())
                 });
-                dispatch(&jobs, &job, input, launch)
+                dispatch(&jobs, &job, input, execution)
             }
             Request::Completions(_) | Request::Print(_) => Ok(()),
         }
@@ -572,15 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn a_job_asked_to_stop_is_stopped_whether_it_fails_or_succeeds() {
-        for outcome in [Outcome::Cancel, Outcome::Stop] {
-            let stopped = run(ending(outcome).0, &["train"]);
-
-            assert!(matches!(stopped, Err(RunError::Stopped)));
-        }
-    }
-
-    #[test]
     fn each_outcome_has_its_exit_code() {
         let exit_code = |args: &[&str]| run(typed().0, args).unwrap_err().exit_code().code();
 
@@ -591,12 +525,7 @@ mod tests {
         assert_eq!(exit_code(&["train", "--epochs"]), 2);
         assert_eq!(exit_code(&["--completions", "tcsh"]), 2);
         assert_eq!(exit_code(&["train", "[1, 2]"]), 2);
-        for (outcome, code) in [
-            (Outcome::Fail, 1),
-            (Outcome::Panic, 1),
-            (Outcome::Cancel, 130),
-            (Outcome::Stop, 130),
-        ] {
+        for (outcome, code) in [(Outcome::Fail, 1), (Outcome::Panic, 1)] {
             let failed = run(ending(outcome).0, &["train"]);
             assert_eq!(failed.unwrap_err().exit_code().code(), code);
         }
@@ -609,10 +538,7 @@ mod tests {
             let jobs = Jobs::new().job("train", {
                 let given = given.clone();
                 move |()| {
-                    given
-                        .lock()
-                        .unwrap()
-                        .push((job_running(), stop_requested(), job_num()));
+                    given.lock().unwrap().push((job_running(), job_num()));
                     Ok::<_, BoxError>(())
                 }
             });
@@ -625,30 +551,9 @@ mod tests {
 
         assert_eq!(
             *given.lock().unwrap(),
-            [(true, false, Some("12".to_string())), (true, false, None)]
+            [(true, Some("12".to_string())), (true, None)]
         );
         assert_eq!(after, (false, None));
-    }
-
-    #[test]
-    fn what_runs_on_stop_runs_when_the_job_is_asked_to_stop() {
-        let ran = Arc::new(Mutex::new(Vec::new()));
-        let jobs = Jobs::new().job("train", {
-            let ran = ran.clone();
-            move |()| {
-                let on_stop_ran = ran.clone();
-                on_stop(move || on_stop_ran.lock().unwrap().push("on stop"));
-                ran.lock().unwrap().push("before");
-                request_stop();
-                ran.lock().unwrap().push("after");
-                Ok::<_, BoxError>(())
-            }
-        });
-
-        let stopped = run(jobs, &["train"]);
-
-        assert!(matches!(stopped, Err(RunError::Stopped)));
-        assert_eq!(*ran.lock().unwrap(), ["before", "on stop", "after"]);
     }
 
     #[test]

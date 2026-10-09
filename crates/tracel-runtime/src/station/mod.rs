@@ -2,8 +2,8 @@
 //! feature).
 //!
 //! [`StationRunner`] registers the jobs' definitions with a station and runs the jobs the station
-//! dispatches, each on a thread of its own, reporting each one's outcome back: completed or failed
-//! by what it returned, or cancelled once the station asked it to stop:
+//! dispatches, each on a thread of its own, reporting each one's outcome back as completed or
+//! failed:
 //!
 //! ```no_run
 //! use tracel_runtime::station::StationRunner;
@@ -28,10 +28,8 @@
 //! what it does as `tracing` events and installs no subscriber: the program decides where they go.
 //!
 //! Each job runs on a thread of its own, in its [`JobScope`](crate::JobScope):
-//! [`job_num`](crate::job_num) gives the station's id for it. A `cancel` event asks the job it
-//! names to stop: its [`stop_requested`](crate::stop_requested) turns `true` and what it
-//! registered with [`on_stop`](crate::on_stop) runs. The job is then reported cancelled, whatever
-//! it returns, with its error when it fails.
+//! [`job_num`](crate::job_num) gives the station's id for it. A `cancel` event is logged, and the
+//! job it names runs to completion.
 
 mod error;
 mod infrastructure;

@@ -45,8 +45,6 @@ impl From<&JobDefinition> for RegisteredJob {
 pub enum FinishStatus {
     Completed,
     Failed,
-    /// The job ended after the station asked it to stop, whatever it returned.
-    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,7 +52,7 @@ pub struct FinishJob {
     /// The session id received in the `registered` event.
     pub runner_id: Uuid,
     pub status: FinishStatus,
-    /// Why the job failed, when it did, cancelled or not.
+    /// Failure detail when status is `failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -75,7 +73,7 @@ pub enum RunnerEvent {
         runner_id: Uuid,
     },
     Job(DispatchedJob),
-    /// The station asks the job `job_id` to stop.
+    /// The station cancelled the job `job_id`.
     Cancel {
         job_id: Uuid,
     },
@@ -196,6 +194,5 @@ mod tests {
 
         assert_eq!(finish(FinishStatus::Completed), "completed");
         assert_eq!(finish(FinishStatus::Failed), "failed");
-        assert_eq!(finish(FinishStatus::Cancelled), "cancelled");
     }
 }

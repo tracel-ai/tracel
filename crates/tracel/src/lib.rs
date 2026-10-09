@@ -83,13 +83,11 @@
 //!
 //! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
 //! to that job, even for runs started on other threads: each one started from them records the
-//! job's number and input, is asked to stop when the job is, and prints where it records to
-//! stderr as it starts, such as `Recording experiment 42: <url>`, which `tracel run` and a remote
-//! job's logs show. Experiments built another way, such as
-//! [`console::ProjectHandle::experiments`], are not linked unless the code links them, through
-//! [`Experiments::attribute`](experiment::Experiments::attribute),
-//! [`arguments`](experiment::Experiments::arguments),
-//! [`cancel_token`](experiment::Experiments::cancel_token) and
+//! job's number and input, and prints where it records to stderr as it starts, such as
+//! `Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show. Experiments
+//! built another way, such as [`console::ProjectHandle::experiments`], are not linked unless the
+//! code links them, through [`Experiments::attribute`](experiment::Experiments::attribute),
+//! [`arguments`](experiment::Experiments::arguments) and
 //! [`on_start`](experiment::Experiments::on_start).
 //!
 //! [`version`](runtime::Jobs::version) gives the binary its `--version`, which prints the binary's
@@ -146,15 +144,6 @@
 //! | 0 | The job completed, or the help, version or completion script was printed |
 //! | 1 | The job failed |
 //! | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
-//! | 130 | The job was asked to stop |
-//!
-//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
-//! [`runtime::stop_requested`] turns `true`, and what [`runtime::on_stop`] registered runs.
-//! Through it, each experiment linked to the job has its cancel token cancelled, which stops a Burn
-//! learner given its `interrupter()`, and logs a warning that a stop was requested; none starts
-//! after. The job ends as completed or failed by what it returns, and the program exits with code
-//! 130. A second signal ends the program at once, and `tracel run` sends SIGKILL after a 30-second
-//! grace period.
 
 mod running_job;
 mod target;

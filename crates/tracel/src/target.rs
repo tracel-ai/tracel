@@ -147,13 +147,12 @@ impl Target {
     /// Built in a job, on the thread its adapter runs it on, the experiments are linked to that
     /// job, as its [`JobScope`](crate::runtime::JobScope) gives it, wherever runs are started from
     /// them: each experiment records the job's number, when its launcher gave one, as its
-    /// `tracel.job_num` attribute and the job's input as its arguments, is asked to stop once the
-    /// job is, and prints where it records to stderr as it starts, such as
-    /// `Recording experiment 42: <url>` or `Recording offline in <dir>`; once the job was asked to
-    /// stop, no more start. Experiments built another way, such
-    /// as [`ProjectHandle::experiments`] or [`Experiments::new`], are not linked unless the code
-    /// links them through [`Experiments::attribute`], [`Experiments::arguments`],
-    /// [`Experiments::cancel_token`] and [`Experiments::on_start`].
+    /// `tracel.job_num` attribute and the job's input as its arguments, and prints where it
+    /// records to stderr as it starts, such as `Recording experiment 42: <url>` or
+    /// `Recording offline in <dir>`. Experiments built another way, such as
+    /// [`ProjectHandle::experiments`] or [`Experiments::new`], are not linked unless the code links
+    /// them through [`Experiments::attribute`], [`Experiments::arguments`] and
+    /// [`Experiments::on_start`].
     pub fn experiments(&self) -> Result<Experiments, TargetError> {
         let experiments = match self {
             Target::Offline { dir } => Experiments::new(Arc::new(LocalExperiments::new(dir))),

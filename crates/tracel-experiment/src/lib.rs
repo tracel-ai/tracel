@@ -830,7 +830,7 @@ impl RunInner {
 }
 
 /// The warning a run logs when its cancel token is cancelled while it is active.
-const STOP_REQUESTED: &str = "Stop requested; the run ends when the job returns";
+const STOP_REQUESTED: &str = "Stop requested; the run ends when the code recording it returns";
 
 /// Logs [`STOP_REQUESTED`] to a run, once, when the run's cancel token is cancelled.
 ///

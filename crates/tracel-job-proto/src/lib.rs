@@ -47,17 +47,12 @@
 //! | 0, [`Completed`](ExitCode::Completed) | The job completed, the help, version or completion script was printed, or the definitions file was written |
 //! | 1, [`Failed`](ExitCode::Failed) | The job failed, or the definitions file could not be written |
 //! | 2, [`Rejected`](ExitCode::Rejected) | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
-//! | 130, [`Stopped`](ExitCode::Stopped) | The job was asked to stop |
-//!
-//! SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop. The job ends by
-//! what it returns, and the binary exits with code 130. A second signal ends the binary at once. A
-//! launcher kills the binary once [`STOP_GRACE_PERIOD`] has passed since it asked the job to stop.
 
 mod definitions;
 mod run;
 
 pub use definitions::{DefinitionsFile, JobDefinition, ParseError, TRACEL_DESCRIBE};
-pub use run::{ExitCode, STOP_GRACE_PERIOD, TRACEL_JOB_NUM};
+pub use run::{ExitCode, TRACEL_JOB_NUM};
 
 /// The protocol version a [`DefinitionsFile`] follows, which it gives as `protocol`.
 pub const PROTOCOL: u32 = 1;

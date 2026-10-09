@@ -29,8 +29,6 @@ feature of `tracel`, takes a flag per field, as the `cli` example of [`basics`](
 The job trains in an experiment it runs with `Experiments::run`,
 which records the merged configuration, the job's input, as the experiment's arguments and ends
 the experiment as completed or failed by what training returns.
-SIGTERM asks the job to stop: the interrupter stops training, the experiment ends as completed, and
-the program exits with code 130. Launchers send SIGKILL after a 30-second grace period.
 
 Runs offline by default, recording under `./runs`, so it needs no credentials. It reads its target
 with `tracel::Target::from_env`: set `TRACEL_TARGET=console` to ship metrics, checkpoints, and

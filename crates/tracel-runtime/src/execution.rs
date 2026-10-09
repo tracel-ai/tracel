@@ -9,7 +9,6 @@ use crate::BoxError;
 use crate::job::Ready;
 use crate::panics::catch_panic;
 use crate::scope;
-use crate::stop::Stop;
 
 /// A job given its input, ready to run once, as [`Jobs::prepare`](crate::Jobs::prepare) gives it.
 ///
@@ -39,34 +38,25 @@ impl PreparedJob {
     /// Runs the job on this thread, launched as `execution` says, and returns how it ended.
     ///
     /// The job runs in a [`JobScope`](crate::JobScope) of its own, current on this thread while
-    /// it runs: [`job_num`](crate::job_num) gives the number `execution` gives,
-    /// [`job_input`](crate::job_input) the job's input, and
-    /// [`stop_requested`](crate::stop_requested) and [`on_stop`](crate::on_stop) follow the
-    /// execution's [`Stop`]. A panic in the job is a failure with the panic's message.
+    /// it runs: [`job_num`](crate::job_num) gives the number `execution` gives, and
+    /// [`job_input`](crate::job_input) the job's input. A panic in the job is a failure with the
+    /// panic's message.
     pub fn run(self, execution: Execution) -> Outcome {
-        let Execution { num, stop } = execution;
-        let scope = scope::new(num, self.input, stop.clone());
-        let result = {
-            let _entered = scope::enter(scope);
-            catch_panic(self.run)
-        };
+        let _entered = scope::enter(scope::new(execution.num, self.input));
         Outcome {
-            result,
-            stop_requested: stop.is_requested(),
+            result: catch_panic(self.run),
         }
     }
 }
 
-/// How one run of a job is launched: the number or id its transport gives it, and the [`Stop`]
-/// that asks it to stop.
+/// How one run of a job is launched: the number or id its transport gives it.
 #[derive(Default)]
 pub struct Execution {
     num: Option<String>,
-    stop: Stop,
 }
 
 impl Execution {
-    /// A run with no number, that nothing asks to stop.
+    /// A run with no number.
     pub fn new() -> Self {
         Self::default()
     }
@@ -74,13 +64,6 @@ impl Execution {
     /// Gives the job the number or id `num`, which [`job_num`](crate::job_num) gives in the job.
     pub fn with_num(mut self, num: impl Into<String>) -> Self {
         self.num = Some(num.into());
-        self
-    }
-
-    /// Asks the job to stop once `stop` is requested, which the transport keeps a clone of to
-    /// request.
-    pub fn with_stop(mut self, stop: Stop) -> Self {
-        self.stop = stop;
         self
     }
 }
@@ -98,12 +81,10 @@ pub enum JobStatus {
 #[derive(Debug)]
 pub struct Outcome {
     result: Result<(), BoxError>,
-    stop_requested: bool,
 }
 
 impl Outcome {
-    /// Whether the job completed or failed, by what it returned, whether or not it was asked to
-    /// stop.
+    /// Whether the job completed or failed, by what it returned.
     pub fn status(&self) -> JobStatus {
         match self.result {
             Ok(()) => JobStatus::Completed,
@@ -115,11 +96,6 @@ impl Outcome {
     /// completed.
     pub fn error(&self) -> Option<&(dyn Error + Send + Sync + 'static)> {
         self.result.as_ref().err().map(AsRef::as_ref)
-    }
-
-    /// Whether the job was asked to stop before it ended.
-    pub fn stop_requested(&self) -> bool {
-        self.stop_requested
     }
 
     /// What the job returned: `Ok` when it completed, the error it failed with otherwise.
@@ -135,9 +111,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        Job, Jobs, PrepareError, job_input, job_num, job_running, on_stop, stop_requested,
-    };
+    use crate::{Job, Jobs, PrepareError, job_input, job_num, job_running};
 
     /// `train`, which takes a number of epochs, three by default, and fails on zero; and `panic`,
     /// which panics.
@@ -205,7 +179,6 @@ mod tests {
 
         assert_eq!(completed.status(), JobStatus::Completed);
         assert!(completed.error().is_none());
-        assert!(!completed.stop_requested());
         assert!(completed.into_result().is_ok());
         assert_eq!(failed.status(), JobStatus::Failed);
         assert_eq!(failed.error().unwrap().to_string(), "no epochs");
@@ -254,51 +227,15 @@ mod tests {
     }
 
     #[test]
-    fn the_stop_the_transport_requests_runs_what_the_job_registered_and_is_seen_in_it() {
-        let ran = Arc::new(Mutex::new(Vec::new()));
-        let stop = Stop::new();
-        let jobs = Jobs::new().job("train", {
-            let (ran, stop) = (ran.clone(), stop.clone());
-            move |()| {
-                let on_stop_ran = ran.clone();
-                on_stop(move || on_stop_ran.lock().unwrap().push("on stop"));
-                ran.lock().unwrap().push("before");
-                stop.request();
-                let seen = if stop_requested() {
-                    "stop requested"
-                } else {
-                    "not requested"
-                };
-                ran.lock().unwrap().push(seen);
-                Err::<(), BoxError>("interrupted".into())
-            }
-        });
-
-        let outcome = jobs
-            .prepare("train", Value::Null)
-            .unwrap()
-            .run(Execution::new().with_stop(stop.clone()));
-
-        assert_eq!(outcome.status(), JobStatus::Failed);
-        assert!(outcome.stop_requested());
-        assert_eq!(
-            *ran.lock().unwrap(),
-            ["before", "on stop", "stop requested"]
-        );
-    }
-
-    #[test]
     fn runs_at_once_on_two_threads_each_see_their_own_execution() {
         let both = Arc::new(Barrier::new(2));
         let jobs = Arc::new(Jobs::new().job("train", {
             let both = both.clone();
             move |epochs: u32| {
                 both.wait();
-                match (job_num(), job_input(), stop_requested()) {
-                    (Some(num), Some(input), stopped)
-                        if num == epochs.to_string()
-                            && input == json!(epochs)
-                            && stopped == (epochs == 1) =>
+                match (job_num(), job_input()) {
+                    (Some(num), Some(input))
+                        if num == epochs.to_string() && input == json!(epochs) =>
                     {
                         Ok(())
                     }
@@ -306,24 +243,18 @@ mod tests {
                 }
             }
         }));
-        let run = |epochs: u32, stop: Stop| {
+        let run = |epochs: u32| {
             let prepared = jobs.prepare("train", json!(epochs)).unwrap();
-            let execution = Execution::new()
-                .with_num(epochs.to_string())
-                .with_stop(stop);
+            let execution = Execution::new().with_num(epochs.to_string());
             std::thread::spawn(move || prepared.run(execution))
         };
-        let stopped = Stop::new();
-        stopped.request();
 
-        let one = run(1, stopped);
-        let two = run(2, Stop::new());
+        let one = run(1);
+        let two = run(2);
 
         let (one, two) = (one.join().unwrap(), two.join().unwrap());
         assert!(one.error().is_none(), "{one:?}");
         assert!(two.error().is_none(), "{two:?}");
-        assert!(one.stop_requested());
-        assert!(!two.stop_requested());
     }
 
     #[test]
@@ -332,7 +263,6 @@ mod tests {
         fn send<T: Send>() {}
 
         send_and_sync::<Jobs>();
-        send_and_sync::<Stop>();
         send::<PreparedJob>();
         send::<Execution>();
         send::<Outcome>();

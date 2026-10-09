@@ -40,10 +40,6 @@ pub enum RunError {
     #[error("job failed: {0}")]
     JobFailed(#[source] BoxError),
 
-    /// The job was asked to stop.
-    #[error("the job was asked to stop")]
-    Stopped,
-
     /// `TRACEL_DESCRIBE` names a path the definitions file could not be written to.
     #[error(transparent)]
     Describe(#[from] DescribeError),
@@ -68,18 +64,15 @@ impl RunError {
             | Self::Config(_)
             | Self::InvalidInput(_) => ExitCode::Rejected,
             Self::JobFailed(_) | Self::Describe(_) => ExitCode::Failed,
-            Self::Stopped => ExitCode::Stopped,
         }
     }
 
-    /// Prints why to stderr: a usage error as clap renders it, with the usage that follows, and a
-    /// stop request as a warning, since a job asked to stop may still have completed.
+    /// Prints why to stderr: a usage error as clap renders it, with the usage that follows.
     pub fn print(&self) {
         match self {
             Self::Usage(error) => {
                 let _ = error.print();
             }
-            Self::Stopped => eprintln!("warning: {self}"),
             error => eprintln!("error: {error}"),
         }
     }

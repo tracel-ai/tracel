@@ -10,15 +10,13 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::stop::Stop;
-
 thread_local! {
     /// The scope of the job this thread runs, while it runs.
     static CURRENT: RefCell<Option<JobScope>> = const { RefCell::new(None) };
 }
 
-/// The job one execution runs: the number or id its launcher gave it, its input, and the request
-/// that it stop. Clones share the execution.
+/// The job one execution runs: the number or id its launcher gave it, and its input. Clones share
+/// the execution.
 #[derive(Clone)]
 pub struct JobScope {
     inner: Arc<Scope>,
@@ -27,7 +25,6 @@ pub struct JobScope {
 struct Scope {
     num: Option<String>,
     input: Value,
-    stop: Stop,
 }
 
 impl JobScope {
@@ -48,24 +45,12 @@ impl JobScope {
     pub fn input(&self) -> &Value {
         &self.inner.input
     }
-
-    /// Whether the job was asked to stop.
-    pub fn stop_requested(&self) -> bool {
-        self.inner.stop.is_requested()
-    }
-
-    /// Runs `action` once the job is asked to stop, on the thread that asks it, or at once when it
-    /// already was.
-    pub fn on_stop(&self, action: impl FnOnce() + Send + 'static) {
-        self.inner.stop.on_request(action);
-    }
 }
 
-/// The scope of a job numbered `num` by its launcher, running with `input`, asked to stop once
-/// `stop` is requested.
-pub fn new(num: Option<String>, input: Value, stop: Stop) -> JobScope {
+/// The scope of a job numbered `num` by its launcher, running with `input`.
+pub fn new(num: Option<String>, input: Value) -> JobScope {
     JobScope {
-        inner: Arc::new(Scope { num, input, stop }),
+        inner: Arc::new(Scope { num, input }),
     }
 }
 
@@ -92,21 +77,6 @@ pub fn job_running() -> bool {
     JobScope::current().is_some()
 }
 
-/// Whether the job the current thread runs was asked to stop; `false` while it runs none.
-pub fn stop_requested() -> bool {
-    JobScope::current().is_some_and(|scope| scope.stop_requested())
-}
-
-/// Runs `action` once the job the current thread runs is asked to stop, on the thread that asks
-/// it, or at once when it already was.
-///
-/// While the thread runs no job, `action` never runs.
-pub fn on_stop(action: impl FnOnce() + Send + 'static) {
-    if let Some(scope) = JobScope::current() {
-        scope.on_stop(action);
-    }
-}
-
 /// The number or id the launcher gave the job the current thread runs; `None` while it runs none,
 /// or one no launcher numbered.
 pub fn job_num() -> Option<String> {
@@ -121,101 +91,62 @@ pub fn job_input() -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
 
-    fn scope(num: &str, stop: &Stop) -> JobScope {
-        new(
-            Some(num.to_string()),
-            serde_json::json!({"num": num}),
-            stop.clone(),
-        )
+    fn scope(num: &str) -> JobScope {
+        new(Some(num.to_string()), serde_json::json!({"num": num}))
     }
 
     #[test]
     fn a_scope_is_current_on_its_thread_until_its_guard_drops() {
-        let stop = Stop::default();
-        let stopped = Arc::new(AtomicUsize::new(0));
-        let count_on_stop = || {
-            let stopped = stopped.clone();
-            on_stop(move || {
-                stopped.fetch_add(1, Ordering::SeqCst);
-            });
-        };
-
-        let entered = enter(scope("12", &stop));
-        let given = (job_running(), stop_requested(), job_num());
-        let input = job_input();
-        count_on_stop();
-        stop.request();
-        let requested = (stop_requested(), stopped.load(Ordering::SeqCst));
-        count_on_stop();
-        let late = stopped.load(Ordering::SeqCst);
+        let entered = enter(scope("12"));
+        let given = (job_running(), job_num(), job_input());
         drop(entered);
-        count_on_stop();
 
-        assert_eq!(given, (true, false, Some("12".to_string())));
-        assert_eq!(input, Some(serde_json::json!({"num": "12"})));
-        assert_eq!(requested, (true, 1));
-        assert_eq!(late, 2);
         assert_eq!(
-            (job_running(), stop_requested(), job_num(), job_input()),
-            (false, false, None, None)
+            given,
+            (
+                true,
+                Some("12".to_string()),
+                Some(serde_json::json!({"num": "12"}))
+            )
         );
-        assert_eq!(stopped.load(Ordering::SeqCst), 2);
+        assert_eq!((job_running(), job_num(), job_input()), (false, None, None));
     }
 
     #[test]
     fn each_thread_sees_the_scope_of_the_job_it_runs() {
-        let (first, second) = (Stop::default(), Stop::default());
-        let run = |num: &'static str, stop: &Stop| {
-            let scope = scope(num, stop);
+        let run = |num: &'static str| {
+            let scope = scope(num);
             std::thread::spawn(move || {
                 let _entered = enter(scope);
-                (job_num(), job_input(), stop_requested())
+                (job_num(), job_input())
             })
         };
 
-        first.request();
-        let one = run("1", &first);
-        let two = run("2", &second);
+        let one = run("1");
+        let two = run("2");
 
         let input = |num: &str| Some(serde_json::json!({ "num": num }));
-        assert_eq!(
-            one.join().unwrap(),
-            (Some("1".to_string()), input("1"), true)
-        );
-        assert_eq!(
-            two.join().unwrap(),
-            (Some("2".to_string()), input("2"), false)
-        );
+        assert_eq!(one.join().unwrap(), (Some("1".to_string()), input("1")));
+        assert_eq!(two.join().unwrap(), (Some("2".to_string()), input("2")));
         assert!(!job_running());
     }
 
     #[test]
     fn a_held_scope_reads_the_same_job_on_another_thread() {
-        let stop = Stop::default();
-        let stopped = Arc::new(AtomicUsize::new(0));
-        let _entered = enter(scope("12", &stop));
+        let _entered = enter(scope("12"));
         let held = JobScope::current().unwrap();
 
-        let seen = std::thread::spawn({
-            let stopped = stopped.clone();
-            move || {
-                held.on_stop(move || {
-                    stopped.fetch_add(1, Ordering::SeqCst);
-                });
-                (
-                    job_running(),
-                    held.num().map(str::to_string),
-                    held.input().clone(),
-                )
-            }
+        let seen = std::thread::spawn(move || {
+            (
+                job_running(),
+                held.num().map(str::to_string),
+                held.input().clone(),
+            )
         })
         .join()
         .unwrap();
-        stop.request();
 
         assert_eq!(
             seen,
@@ -225,6 +156,5 @@ mod tests {
                 serde_json::json!({"num": "12"})
             )
         );
-        assert_eq!(stopped.load(Ordering::SeqCst), 1);
     }
 }

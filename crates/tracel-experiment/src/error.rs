@@ -3,9 +3,6 @@
 /// Broad category for an [`ExperimentError`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExperimentErrorKind {
-    /// The operation stopped because cancellation was observed.
-    Cancelled,
-
     /// The operation attempted to use a run that has already completed.
     AlreadyFinished,
 

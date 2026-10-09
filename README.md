@@ -91,10 +91,10 @@ input, merged onto its default, as its arguments, which the console lists as its
 
 The experiments `Target::experiments` builds in a job, on the thread that runs it, are linked to
 that job, even for runs started on other threads: each one started from them records the job's
-number and input, is asked to stop when the job is, and prints where it records to stderr as it
-starts, such as `Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show.
-Experiments built another way, such as `ProjectHandle::experiments`, are not linked unless the
-code links them, through `Experiments::attribute`, `arguments`, `cancel_token` and `on_start`.
+number and input, and prints where it records to stderr as it starts, such as
+`Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show. Experiments
+built another way, such as `ProjectHandle::experiments`, are not linked unless the code links
+them, through `Experiments::attribute`, `arguments` and `on_start`.
 
 The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a
 complete, runnable version.
@@ -178,14 +178,6 @@ code says how the job ended:
 | 0 | The job completed, or the help, version or completion script was printed |
 | 1 | The job failed |
 | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
-| 130 | The job was asked to stop |
-
-SIGTERM, SIGINT or SIGHUP, or Ctrl-C on Windows, asks the running job to stop:
-`tracel::runtime::stop_requested()` turns `true`, and what `tracel::runtime::on_stop` registered
-runs. Each experiment linked to the job has its cancel token cancelled, which stops a learner given
-`experiment.interrupter()`, and logs a warning that a stop was requested; none starts after. The
-job ends as completed or failed by what it returns, and the binary exits with code 130. A second
-signal ends the binary at once, and `tracel run` sends SIGKILL after a 30-second grace period.
 
 Programs that launch job binaries, as `tracel run` does, follow the protocol of the
 `tracel-job-proto` crate, and read a job's flags as its binary does with the `tracel-job-args`

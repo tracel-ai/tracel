@@ -1,6 +1,6 @@
 [package]
 name = "tracel-job-proto"
-description = "The protocol between Tracel job binaries and the programs that launch them: the definitions file, the launch environment, exit codes and the stop grace period."
+description = "The protocol between Tracel job binaries and the programs that launch them: the definitions file, the launch environment and exit codes."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

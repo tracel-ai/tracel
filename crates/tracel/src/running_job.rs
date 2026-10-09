@@ -20,17 +20,12 @@ pub fn linked(experiments: Experiments) -> Experiments {
     }
 }
 
-/// What runs once the job is asked to stop.
-type StopAction = Box<dyn FnOnce() + Send>;
-
 /// What a job gives the experiments started in it.
 struct RunningJob {
     /// The number the job's launcher gave it.
     num: Option<String>,
     /// The input the job runs with, as JSON.
     input: Value,
-    /// Registers an action to run once the job is asked to stop.
-    on_stop: Box<dyn FnOnce(StopAction)>,
 }
 
 impl RunningJob {
@@ -40,22 +35,18 @@ impl RunningJob {
         Some(Self {
             num: scope.num().map(str::to_string),
             input: scope.input().clone(),
-            on_stop: Box::new(move |action: StopAction| scope.on_stop(action)),
         })
     }
 }
 
 /// `experiments`, each started from which belongs to `job`: it records the job's number as its
-/// `tracel.job_num` attribute and the job's input, unless it is `null`, as its arguments, it is
-/// asked to stop once the job is, and no more start then, and it gives `announce` the line saying
-/// where it records as it starts.
+/// `tracel.job_num` attribute and the job's input, unless it is `null`, as its arguments, and it
+/// gives `announce` the line saying where it records as it starts.
 fn link(
     experiments: Experiments,
     job: RunningJob,
     announce: impl Fn(&str) + Send + Sync + 'static,
 ) -> Experiments {
-    let cancel_token = experiments.cancel_token();
-    (job.on_stop)(Box::new(move || cancel_token.cancel()));
     let attributes = job
         .num
         .map(|num| (JOB_NUM_ATTRIBUTE.to_string(), job_num(&num)));
@@ -93,7 +84,6 @@ mod tests {
 
     use serde_json::json;
     use tracel_experiment::ExperimentProvider;
-    use tracel_experiment::error::ExperimentErrorKind;
     use tracel_experiment::local::LocalExperiments;
 
     use super::*;
@@ -101,18 +91,12 @@ mod tests {
     /// What a test keeps of what it is given.
     type Kept<T> = Arc<Mutex<Vec<T>>>;
 
-    /// A job numbered `num`, running with `input`, and the actions it runs once asked to stop.
-    fn job(num: Option<&str>, input: Value) -> (RunningJob, Kept<StopAction>) {
-        let on_stop = Arc::new(Mutex::new(Vec::new()));
-        let job = RunningJob {
+    /// A job numbered `num`, running with `input`.
+    fn job(num: Option<&str>, input: Value) -> RunningJob {
+        RunningJob {
             num: num.map(str::to_string),
             input,
-            on_stop: Box::new({
-                let on_stop = on_stop.clone();
-                move |action| on_stop.lock().unwrap().push(action)
-            }),
-        };
-        (job, on_stop)
+        }
     }
 
     fn offline(dir: &Path) -> Experiments {
@@ -141,16 +125,10 @@ mod tests {
     #[test]
     fn an_experiment_started_in_a_job_belongs_to_it() {
         let dir = tempfile::tempdir().unwrap();
-        let (job, on_stop) = job(Some("12"), json!({"epochs": 2}));
+        let job = job(Some("12"), json!({"epochs": 2}));
 
         let (experiments, announced) = linked_to(offline(dir.path()), job);
-        let run = experiments.start("train").unwrap();
-        let actions: Vec<StopAction> = on_stop.lock().unwrap().drain(..).collect();
-        for action in actions {
-            action();
-        }
-        let stopped = experiments.start("train");
-        run.finish().unwrap();
+        experiments.start("train").unwrap().finish().unwrap();
 
         let runs = dir.path().canonicalize().unwrap();
         assert!(events(dir.path(), 1).contains(&json!({
@@ -162,16 +140,6 @@ mod tests {
             "type": "arguments",
             "value": {"epochs": 2}
         })));
-        assert!(
-            events(dir.path(), 1)
-                .iter()
-                .any(|event| event["type"] == "log" && event["level"] == "warn"),
-            "no stop warning"
-        );
-        assert!(matches!(
-            stopped,
-            Err(error) if error.kind == ExperimentErrorKind::Cancelled
-        ));
         assert_eq!(
             *announced.lock().unwrap(),
             [format!(
@@ -184,7 +152,7 @@ mod tests {
     #[test]
     fn an_experiment_started_in_a_job_without_a_number_or_input_records_neither() {
         let dir = tempfile::tempdir().unwrap();
-        let (job, _) = job(None, Value::Null);
+        let job = job(None, Value::Null);
         let (experiments, announced) = linked_to(offline(dir.path()), job);
 
         experiments.start("train").unwrap().finish().unwrap();

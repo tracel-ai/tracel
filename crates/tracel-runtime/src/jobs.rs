@@ -45,9 +45,6 @@ use crate::job::{IntoJob, JobDefinition, Prepared, Registered};
 ///
 /// fn train(config: TrainingConfig) -> Result<(), BoxError> {
 ///     for epoch in 1..=config.epochs {
-///         if tracel_runtime::stop_requested() {
-///             break;
-///         }
 ///         println!("epoch {epoch}");
 ///     }
 ///     Ok(())
