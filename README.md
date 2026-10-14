@@ -19,7 +19,7 @@ This repository contains the SDK associated with the project. It gives your prog
 the platform's services, picked from the environment, and one job protocol: the functions your
 program registers as jobs run from the command line, locally or launched by the platform, sending
 training data to our application as they run. To use this project you must first create an
-account on the [application](https://s1-central.burn.dev/).
+account on the [console](https://console.tracel.ai/).
 
 You'll also want the [tracel-cli](https://github.com/tracel-ai/tracel-cli) to log in (`tracel login`) and store your credentials locally.
 
@@ -40,7 +40,7 @@ Optional features:
 
 ## Quick Start
 
-Here's how to integrate Tracel into your training workflow:
+Here's how to integrate Tracel into a Burn training workflow:
 
 ### 1. Register your training function as a job
 
@@ -222,8 +222,8 @@ track them on the console instead.
 ## Requirements
 
 - Rust 1.97.0 or higher
-- A Burn Central account (create one at [central.burn.dev](https://central.burn.dev/))
-- The [tracel-cli](https://github.com/tracel-ai/tracel-cli), to log in and store your credentials locally
+- A Tracel account (create one on the [console](https://console.tracel.ai/))
+- The [tracel-cli](https://github.com/tracel-ai/tracel-cli), to log in and store your credentials locally (or set `TRACEL_API_KEY`)
 
 ## Contribution
 
