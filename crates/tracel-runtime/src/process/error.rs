@@ -1,5 +1,5 @@
-use tracel_job_args::ConfigError;
-use tracel_job_proto::ExitCode;
+use tracel_job::ExitCode;
+use tracel_job::cli::ConfigError;
 
 use crate::process::describe::DescribeError;
 use crate::{BoxError, PrepareError};

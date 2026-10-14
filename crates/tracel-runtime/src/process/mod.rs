@@ -13,8 +13,8 @@ use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap_complete::Shell;
 use serde_json::Value;
-use tracel_job_args::{command, completions, job_input};
-use tracel_job_proto::TRACEL_JOB_NUM;
+use tracel_job::TRACEL_JOB_NUM;
+use tracel_job::cli::{command, completions, job_input};
 
 use crate::{Execution, JobDefinition, Jobs};
 use describe::describe;
@@ -48,7 +48,7 @@ impl Jobs {
     /// [`job_input`](crate::job_input) the input it runs with.
     pub fn run(self) -> ExitCode {
         let exit = match execute(&self) {
-            Ok(()) => tracel_job_proto::ExitCode::Completed,
+            Ok(()) => tracel_job::ExitCode::Completed,
             Err(error) => {
                 error.print();
                 error.exit_code()
@@ -83,21 +83,22 @@ fn execute(jobs: &Jobs) -> Result<(), RunError> {
 /// The command line of the program `name`: the [`command`] of `jobs`, with `--version` when the
 /// program gives its version.
 fn command_line(jobs: &Jobs, name: impl Into<String>) -> Command {
-    let command = command(name, jobs.definitions().map(job_args));
+    let definitions: Vec<_> = jobs.definitions().map(protocol_definition).collect();
+    let command = command(name, &definitions);
     match jobs.get_version() {
         Some(version) => command.version(version.to_string()),
         None => command,
     }
 }
 
-/// The name, description, input schema and default input of the job `definition` defines, which
-/// its command line is generated from.
-fn job_args(definition: &JobDefinition) -> tracel_job_args::Job<'_> {
-    tracel_job_args::Job {
-        name: &definition.name,
-        description: definition.description.as_deref(),
-        input_schema: definition.input_schema.as_ref(),
-        default_input: definition.input_example.as_ref(),
+/// The job `definition` defines, as the protocol gives it: in the definitions file, and to
+/// generate its command line from.
+fn protocol_definition(definition: &JobDefinition) -> tracel_job::JobDefinition {
+    tracel_job::JobDefinition {
+        name: definition.name.clone(),
+        description: definition.description.clone(),
+        input_schema: definition.input_schema.clone(),
+        input_example: definition.input_example.clone(),
     }
 }
 

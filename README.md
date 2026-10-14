@@ -179,9 +179,8 @@ code says how the job ended:
 | 1 | The job failed |
 | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 
-Programs that launch job binaries, as `tracel run` does, follow the protocol of the
-`tracel-job-proto` crate, and read a job's flags as its binary does with the `tracel-job-args`
-crate.
+Programs that launch job binaries, as `tracel run` does, follow the protocol of the `tracel-job`
+crate, and read a job's flags as its binary does with its `cli` feature.
 
 ### 2. Integrate with your Learner
 

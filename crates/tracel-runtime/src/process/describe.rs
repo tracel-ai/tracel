@@ -4,8 +4,9 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
-use tracel_job_proto::{DefinitionsFile, TRACEL_DESCRIBE};
+use tracel_job::{DefinitionsFile, TRACEL_DESCRIBE};
 
+use super::protocol_definition;
 use crate::JobDefinition;
 use crate::process::file::write_atomically;
 
@@ -21,19 +22,9 @@ pub fn describe<'a>(
         return Ok(false);
     };
     let path = PathBuf::from(path);
-    let file = DefinitionsFile::new(definitions.into_iter().map(entry).collect());
+    let file = DefinitionsFile::new(definitions.into_iter().map(protocol_definition).collect());
     write_atomically(&path, &file.to_json()).map_err(|source| DescribeError { path, source })?;
     Ok(true)
-}
-
-/// The job `definition` defines, as the definitions file gives it.
-fn entry(definition: &JobDefinition) -> tracel_job_proto::JobDefinition {
-    tracel_job_proto::JobDefinition {
-        name: definition.name.clone(),
-        description: definition.description.clone(),
-        input_schema: definition.input_schema.clone(),
-        input_example: definition.input_example.clone(),
-    }
 }
 
 /// The definitions file could not be written.
@@ -108,7 +99,10 @@ mod tests {
         let read = DefinitionsFile::from_json(contents.as_bytes()).unwrap();
         assert_eq!(
             read.jobs,
-            definitions().iter().map(entry).collect::<Vec<_>>()
+            definitions()
+                .iter()
+                .map(protocol_definition)
+                .collect::<Vec<_>>()
         );
         assert_eq!(contents, read.to_json());
     }

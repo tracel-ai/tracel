@@ -1,10 +1,12 @@
 #![deny(missing_docs)]
 
-//! The protocol between a Tracel job binary and the programs that launch it, such as `tracel run`
-//! and compute providers: how a launcher asks the binary for its jobs, how it runs one, and what
-//! the binary's exit code says. It is the protocol of jobs run as processes; jobs served another
-//! way, such as by a Station runner, follow that transport's own API. It is not an API for writing
-//! jobs.
+//! Tracel jobs run as processes: the protocol between a job binary and the programs that launch
+//! it, such as `tracel run` and compute providers, and, with the `cli` feature, the command line
+//! of its jobs.
+//!
+//! The protocol says how a launcher asks the binary for its jobs, how it runs one, and what the
+//! binary's exit code says. Jobs served another way, such as by a Station runner, follow that
+//! transport's own API. It is not an API for writing jobs.
 //!
 //! It holds the protocol's shapes and names, and does no I/O: [`DefinitionsFile::to_json`] gives
 //! the exact text of the definitions file, and [`DefinitionsFile::from_json`] reads it back,
@@ -48,6 +50,8 @@
 //! | 1, [`Failed`](ExitCode::Failed) | The job failed, or the definitions file could not be written |
 //! | 2, [`Rejected`](ExitCode::Rejected) | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
 
+#[cfg(feature = "cli")]
+pub mod cli;
 mod definitions;
 mod run;
 

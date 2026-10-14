@@ -79,8 +79,7 @@ tracel-console = { path = "crates/tracel-console", version = "0.11.0" }
 tracel-models = { path = "crates/tracel-models", version = "0.11.0" }
 tracel-station = { path = "crates/tracel-station", version = "0.11.0" }
 tracel-datasets = { path = "crates/tracel-datasets", version = "0.11.0" }
-tracel-job-proto = { path = "crates/tracel-job-proto", version = "0.11.0" }
-tracel-job-args = { path = "crates/tracel-job-args", version = "0.11.0" }
+tracel-job = { path = "crates/tracel-job", version = "0.11.0" }
 tracel-runtime = { path = "crates/tracel-runtime", version = "0.11.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.11.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.11.0" }

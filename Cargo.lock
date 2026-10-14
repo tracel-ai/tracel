@@ -7349,7 +7349,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracel-job-args"
+name = "tracel-job"
 version = "0.11.0"
 dependencies = [
  "clap",
@@ -7359,14 +7359,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "tracel-job-proto"
-version = "0.11.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -7413,8 +7405,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tracel-job-args",
- "tracel-job-proto",
+ "tracel-job",
  "tracing",
  "url",
  "uuid",

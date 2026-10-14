@@ -1,14 +1,12 @@
-#![deny(missing_docs)]
-
 //! The command line of a program's jobs, generated from their input schemas, and the JSON input
 //! it gives.
 //!
 //! [`command`] builds the command line `<program> <job> [<input-json>] [<flags>]` from each job's
-//! name, description, input schema and default input, as a [`Job`] gives them, and [`job_input`]
-//! reads a job's input back from the arguments it parsed. The command line depends on nothing
-//! else, so a program that knows another program's jobs parses the same flags as that program
-//! does: a job binary parses its own command line with it, and `tracel run <job> --<flag>` parses
-//! the job's flags before it launches the binary.
+//! [`JobDefinition`](crate::JobDefinition): its name, description, input schema and example
+//! input, which is its default input. [`job_input`] reads a job's input back from the arguments
+//! it parsed. The command line depends on nothing else, so a program that knows another program's
+//! jobs parses the same flags as that program does: a job binary parses its own command line with
+//! it, and `tracel run <job> --<flag>` parses the job's flags before it launches the binary.
 //!
 //! ## Flags
 //!
@@ -48,20 +46,4 @@
 mod command;
 mod flags;
 
-use serde_json::Value;
-
 pub use command::{ConfigError, command, completions, job_command, job_input};
-
-/// What a job's command line is generated from: the job's name, description, input schema and
-/// default input.
-#[derive(Debug, Clone, Copy)]
-pub struct Job<'a> {
-    /// The name that selects the job, its subcommand.
-    pub name: &'a str,
-    /// What the job does, its subcommand's help.
-    pub description: Option<&'a str>,
-    /// The JSON Schema of the job's input, from which its flags are typed.
-    pub input_schema: Option<&'a Value>,
-    /// The input the job's input is merged onto, which gives the flags their shown defaults.
-    pub default_input: Option<&'a Value>,
-}

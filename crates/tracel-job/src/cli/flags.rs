@@ -5,7 +5,7 @@ use std::ptr;
 use referencing::{Registry, Resolver};
 use serde_json::{Map, Number, Value};
 
-use crate::Job;
+use crate::JobDefinition;
 
 /// Flag names the command line keeps: a field with one of these names has no flag.
 const RESERVED: [&str; 3] = ["help", "version", "config"];
@@ -158,8 +158,8 @@ fn float_text(value: f64) -> String {
 ///
 /// A field whose key is not made of letters, digits, `_` and `-`, whose flag name is reserved, or
 /// whose flag name an earlier field took, has no flag.
-pub fn flags(job: &Job<'_>) -> Vec<Flag> {
-    let Some(schema) = job.input_schema else {
+pub fn flags(job: &JobDefinition) -> Vec<Flag> {
+    let Some(schema) = &job.input_schema else {
         return Vec::new();
     };
     let Ok(registry) = Registry::new()
@@ -175,7 +175,7 @@ pub fn flags(job: &Job<'_>) -> Vec<Flag> {
         flags: Vec::new(),
     };
     if let Shape::Object(object) = walk.shape(schema) {
-        walk.object(object, &mut Vec::new(), job.default_input, true);
+        walk.object(object, &mut Vec::new(), job.input_example.as_ref(), true);
     }
 
     let mut names = Vec::new();
@@ -403,11 +403,11 @@ mod tests {
 
     /// The flags of a job whose input schema is `schema` and default input `default`.
     fn flags_of(schema: Value, default: Option<Value>) -> Vec<Flag> {
-        flags(&Job {
-            name: "train",
+        flags(&JobDefinition {
+            name: "train".to_string(),
             description: None,
-            input_schema: Some(&schema),
-            default_input: default.as_ref(),
+            input_schema: Some(schema),
+            input_example: default,
         })
     }
 
@@ -703,11 +703,11 @@ mod tests {
         assert!(flags_for::<serde_json::Value>().is_empty());
         assert!(flags_of(json!({"type": "object", "properties": {}}), None).is_empty());
         assert!(
-            flags(&Job {
-                name: "train",
+            flags(&JobDefinition {
+                name: "train".to_string(),
                 description: None,
                 input_schema: None,
-                default_input: Some(&json!({"epochs": 10})),
+                input_example: Some(json!({"epochs": 10})),
             })
             .is_empty()
         );

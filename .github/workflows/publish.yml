@@ -7,18 +7,10 @@ on:
 
 jobs:
   # --------------------------------------------------------------------------------
-  tracel-job-proto:
+  tracel-job:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
-      crate: tracel-job-proto
-      tag-validation: false
-    secrets:
-      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-  # --------------------------------------------------------------------------------
-  tracel-job-args:
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
-    with:
-      crate: tracel-job-args
+      crate: tracel-job
       tag-validation: false
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
@@ -55,8 +47,7 @@ jobs:
       crate: tracel-runtime
       tag-validation: false
     needs:
-      - tracel-job-args
-      - tracel-job-proto
+      - tracel-job
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------

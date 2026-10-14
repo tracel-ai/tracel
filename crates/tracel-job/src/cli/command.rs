@@ -12,8 +12,8 @@ use clap::{Arg, ArgMatches, Command, ValueHint, value_parser};
 use clap_complete::Shell;
 use serde_json::{Map, Value};
 
-use crate::Job;
-use crate::flags::{Flag, Kind, flags};
+use super::flags::{Flag, Kind, flags};
+use crate::JobDefinition;
 
 /// The id of a job's input argument, which no field's flag has: field ids have no `:`.
 const INPUT: &str = "tracel:input";
@@ -29,7 +29,10 @@ const COMPLETIONS: &str = "tracel:completions";
 /// `<name> --completions <SHELL>` asks for the program's completion script, which
 /// [`completions`] reads and [`clap_complete::generate`] writes from this command. A program that
 /// gives its version adds `--version`.
-pub fn command<'a>(name: impl Into<String>, jobs: impl IntoIterator<Item = Job<'a>>) -> Command {
+pub fn command<'a>(
+    name: impl Into<String>,
+    jobs: impl IntoIterator<Item = &'a JobDefinition>,
+) -> Command {
     Command::new(name.into())
         .subcommand_value_name("JOB")
         .subcommand_help_heading("Jobs")
@@ -52,11 +55,11 @@ pub fn command<'a>(name: impl Into<String>, jobs: impl IntoIterator<Item = Job<'
 /// 1. `-c, --config <FILE>`: a file holding a JSON document.
 /// 2. `[INPUT]`: a JSON document, which launchers pass.
 /// 3. One flag per field of the input, which sets that field, when the job's input schema
-///    describes an object, as the [crate](crate#flags) describes.
-pub fn job_command(job: Job<'_>) -> Command {
-    let command = Command::new(job.name.to_string())
+///    describes an object, as the [`cli`](crate::cli#flags) module describes.
+pub fn job_command(job: &JobDefinition) -> Command {
+    let command = Command::new(job.name.clone())
         .args_override_self(true)
-        .args(flags(&job).iter().map(flag_arg))
+        .args(flags(job).iter().map(flag_arg))
         .arg(
             Arg::new(INPUT)
                 .value_name("INPUT")
@@ -73,8 +76,8 @@ pub fn job_command(job: Job<'_>) -> Command {
                 .value_parser(PathBufValueParser::new())
                 .help("JSON merged before the input and the flags"),
         );
-    match job.description {
-        Some(description) => command.about(description.to_string()),
+    match &job.description {
+        Some(description) => command.about(description.clone()),
         None => command,
     }
 }
@@ -265,20 +268,24 @@ mod tests {
 
     use super::*;
 
-    /// A job's input schema and default input, which the [`Job`] it gives borrows.
+    /// A job's input schema and default input.
     struct Definition {
         name: &'static str,
         schema: Option<Value>,
         default: Option<Value>,
     }
 
+    fn jobs(definitions: &[Definition]) -> Vec<JobDefinition> {
+        definitions.iter().map(Definition::job).collect()
+    }
+
     impl Definition {
-        fn job(&self) -> Job<'_> {
-            Job {
-                name: self.name,
-                description: Some("Run the job"),
-                input_schema: self.schema.as_ref(),
-                default_input: self.default.as_ref(),
+        fn job(&self) -> JobDefinition {
+            JobDefinition {
+                name: self.name.to_string(),
+                description: Some("Run the job".to_string()),
+                input_schema: self.schema.clone(),
+                input_example: self.default.clone(),
             }
         }
     }
@@ -366,7 +373,7 @@ mod tests {
         args: &[&str],
         files: &[(&str, &str)],
     ) -> Result<Result<Value, ConfigError>, clap::Error> {
-        let matches = job_command(definition.job())
+        let matches = job_command(&definition.job())
             .try_get_matches_from([definition.name].iter().chain(args))?;
         Ok(job_input(&matches, |path| {
             files
@@ -384,13 +391,15 @@ mod tests {
 
     /// The job's `--help`.
     fn help(definition: &Definition) -> String {
-        job_command(definition.job()).render_long_help().to_string()
+        job_command(&definition.job())
+            .render_long_help()
+            .to_string()
     }
 
     #[test]
     fn the_command_has_a_subcommand_per_job() {
         let definitions = [train(), prompt()];
-        let mut command = command("program", definitions.iter().map(Definition::job));
+        let mut command = command("program", &jobs(&definitions));
         command.build();
 
         let names: Vec<&str> = command.get_subcommands().map(Command::get_name).collect();
@@ -667,7 +676,7 @@ mod tests {
         };
         let files = [("large.json", r#"{"config": "large"}"#)];
 
-        let command = job_command(job.job());
+        let command = job_command(&job.job());
         let longs: Vec<&str> = command.get_arguments().filter_map(Arg::get_long).collect();
         assert_eq!(longs, ["epochs", "config"]);
         assert_eq!(
@@ -690,7 +699,7 @@ mod tests {
     fn completions_names_the_shell_the_command_line_asks_for() {
         let definitions = [train()];
         let matches = |args: &[&str]| {
-            command("program", definitions.iter().map(Definition::job))
+            command("program", &jobs(&definitions))
                 .try_get_matches_from(["program"].iter().chain(args))
                 .unwrap()
         };
@@ -701,7 +710,7 @@ mod tests {
         );
         assert_eq!(completions(&matches(&["train"])), None);
         assert_eq!(
-            command("program", definitions.iter().map(Definition::job))
+            command("program", &jobs(&definitions))
                 .try_get_matches_from(["program", "--completions", "tcsh"])
                 .unwrap_err()
                 .kind(),
@@ -716,7 +725,7 @@ mod tests {
 
         clap_complete::generate(
             Shell::Bash,
-            &mut command("program", definitions.iter().map(Definition::job)),
+            &mut command("program", &jobs(&definitions)),
             "program",
             &mut script,
         );
