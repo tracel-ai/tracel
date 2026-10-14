@@ -479,7 +479,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "basics"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "schemars 1.2.2",
@@ -4676,7 +4676,7 @@ dependencies = [
 
 [[package]]
 name = "mnist"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "burn",
  "rand 0.9.5",
@@ -7224,7 +7224,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tracel"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7243,7 +7243,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-artifact"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "crossbeam",
  "reqwest",
@@ -7275,7 +7275,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-console"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chrono",
  "crossbeam",
@@ -7298,7 +7298,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-datasets"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "burn",
  "serde",
@@ -7308,7 +7308,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-experiment"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "burn",
  "chrono",
@@ -7324,7 +7324,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-experiment-remote"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chrono",
  "crossbeam",
@@ -7338,7 +7338,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-inference"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "crossbeam",
  "serde",
@@ -7350,7 +7350,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-job"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -7383,7 +7383,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-models"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde_json",
  "sha2",
@@ -7394,7 +7394,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-runtime"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -7413,7 +7413,7 @@ dependencies = [
 
 [[package]]
 name = "tracel-station"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chrono",
  "serde",
@@ -8684,7 +8684,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "log",
  "strum 0.27.2",
