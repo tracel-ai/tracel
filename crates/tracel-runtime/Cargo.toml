@@ -1,0 +1,36 @@
+[package]
+name = "tracel-runtime"
+description = "The runtime of Tracel jobs: a program's jobs, plain functions of their input, and the adapters that run them."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+schema = ["dep:schemars"]
+station = ["dep:reqwest", "dep:tracing", "dep:url", "dep:uuid"]
+
+[dependencies]
+clap = { workspace = true, features = ["string"] }
+clap_complete.workspace = true
+tracel-job = { workspace = true, features = ["cli"] }
+serde.workspace = true
+serde_json.workspace = true
+json-patch.workspace = true
+schemars = { workspace = true, optional = true }
+thiserror.workspace = true
+reqwest = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["std"] }
+tempfile.workspace = true
+uuid = { workspace = true, features = ["v4"] }

@@ -11,13 +11,13 @@ pub type VersionFileReader = Box<dyn Read + Send>;
 /// One backend-owned file in a model version.
 ///
 /// Implementations own transport, authentication, presigning, and any backend-specific cache
-/// behavior. [`crate::Models`] owns descriptor validation, transfer orchestration, staging,
+/// behavior. [`crate::ModelRegistry`] owns descriptor validation, transfer orchestration, staging,
 /// integrity verification, progress, and delivery.
 pub trait VersionFileSource: Send + Sync + 'static {
-    /// Returns the published descriptor that the capability must verify.
+    /// Returns the published descriptor that the registry must verify.
     fn file(&self) -> &VersionFile;
 
-    /// Opens the file at byte zero using its capability-validated logical path.
+    /// Opens the file at byte zero using its registry-validated logical path.
     ///
     /// The supplied path is the canonical form of [`Self::file`]'s published relative path. It
     /// lets implementations use one stable identity for backend-private concerns without taking
@@ -25,7 +25,7 @@ pub trait VersionFileSource: Send + Sync + 'static {
     fn open(&self, canonical_path: &str) -> Result<VersionFileReader, ModelsError>;
 }
 
-/// Backend primitives required by the model capability.
+/// Backend primitives required by the model registry.
 ///
 /// An implementation is already scoped to one location, so it is never asked which one.
 ///
@@ -57,7 +57,7 @@ pub trait ModelOps: Send + Sync + 'static {
     /// Creates a model that can hold versions.
     fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError>;
 
-    /// Publishes a version of `model` containing the files the capability measured.
+    /// Publishes a version of `model` containing the files the registry measured.
     ///
     /// The bytes are read from `contents` by each file's relative path. Whether they travel in
     /// one request or a hundred, and whether the version appears atomically or is assembled

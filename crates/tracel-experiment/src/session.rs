@@ -54,9 +54,6 @@ pub enum ExperimentCompletion {
 
     /// The run failed with the provided reason.
     Failed(String),
-
-    /// The run was cancelled before completion.
-    Cancelled,
 }
 
 pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError> + 'a;

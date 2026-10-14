@@ -1,19 +1,16 @@
 //! TRACEL_NAMESPACE=<owner> TRACEL_PROJECT=<project> cargo run -p basics --example console
 
-use tracel::console::{Console, TracelCredentials};
+use tracel::console::ProjectHandle;
 
 fn main() -> anyhow::Result<()> {
-    let console = Console::connect(&credentials()?)?;
-    let (namespace, project) = project()?;
+    let project = ProjectHandle::from_env()?;
 
-    match console.me()? {
+    match project.console().me()? {
         Some(user) => println!("signed in as {} ({})", user.username, user.namespace.name),
         None => println!("the session is no longer valid; sign in again"),
     }
 
-    let models = console
-        .project(namespace.as_str(), project.as_str())
-        .models();
+    let models = project.models();
 
     for model in models.list()? {
         let latest = model
@@ -39,17 +36,4 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn credentials() -> anyhow::Result<TracelCredentials> {
-    TracelCredentials::from_env()
-        .map_err(|_| anyhow::anyhow!("set TRACEL_API_KEY to reach the console"))
-}
-
-fn project() -> anyhow::Result<(String, String)> {
-    let namespace = std::env::var("TRACEL_NAMESPACE")
-        .map_err(|_| anyhow::anyhow!("set TRACEL_NAMESPACE to the owner of the project"))?;
-    let project = std::env::var("TRACEL_PROJECT")
-        .map_err(|_| anyhow::anyhow!("set TRACEL_PROJECT to the project name"))?;
-    Ok((namespace, project))
 }

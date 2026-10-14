@@ -39,11 +39,6 @@ impl ExperimentRunControl {
         self.inner.run_cancel_token.cancel();
     }
 
-    /// Return whether cancellation has been requested for the whole run.
-    pub fn is_run_cancelled(&self) -> bool {
-        self.inner.run_cancel_token.is_cancelled()
-    }
-
     /// Request cancellation of a registered cancellable activity.
     ///
     /// Returns `true` when an activity token was found and cancellation was requested.
@@ -105,7 +100,7 @@ mod tests {
 
         control.cancel_run();
 
-        assert!(control.is_run_cancelled());
+        assert!(control.cancel_token().is_cancelled());
         assert!(activity_token.is_cancelled());
     }
 

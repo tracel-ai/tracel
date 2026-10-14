@@ -11,7 +11,7 @@ edition = "2024"
 version = "0.11.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
-rust-version = "1.87.0"
+rust-version = "1.97.0"
 authors = ["Tracel Technologies Inc."]
 repository = "https://github.com/tracel-ai/tracel"
 keywords = ["tracel", "burn", "sdk"]
@@ -25,13 +25,12 @@ categories = ["development-tools"]
 burn = { version = "0.22", default-features = false, features = [ "train" ] }
 
 rand = "0.9.2"
-ctrlc = "3.5.2"
-dotenvy = "0.15"
 tempfile = "3.27.0"
 
 url = "2.5.8"
 anyhow = "1.0.103"
-clap = { version = "4.6", features = ["derive"] }
+clap = "4.6"
+clap_complete = "4.6"
 derive-new = { version = "0.7.0", default-features = false }
 log = { version = "0.4.33", features = ["std"] }
 proc-macro2 = "1.0.106"
@@ -52,11 +51,9 @@ crossbeam = { version = "0.8.4", default-features = false, features = [
 ] }
 json-patch = { version = "4.1.0", default-features = false }
 schemars = "1.2.2"
+referencing = "0.58.6"
 reqwest = { version = "0.13.4", features = ["blocking", "json"] }
 uuid = { version = "1.23.4", features = ["serde"] }
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
-tokio-stream = "0.1"
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
 derive_more = { version = "2.1.1", default-features = false, features = [
@@ -72,23 +69,22 @@ tracing-subscriber = "0.3.23"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 serde_with = { version = "3.20.0", features = ["base64", "macros"] }
 
-tracel-client = { version = "0.21.0", default-features = false, features = [
+tracel-client = { version = "0.22.0", default-features = false, features = [
     "console",
     "station",
 ] }
 
 ## Crate
-tracel-runner = { path = "crates/tracel-runner", version = "0.11.0" }
 tracel-console = { path = "crates/tracel-console", version = "0.11.0" }
 tracel-models = { path = "crates/tracel-models", version = "0.11.0" }
 tracel-station = { path = "crates/tracel-station", version = "0.11.0" }
 tracel-datasets = { path = "crates/tracel-datasets", version = "0.11.0" }
-tracel-app = { path = "crates/tracel-app", version = "0.11.0" }
+tracel-job = { path = "crates/tracel-job", version = "0.11.0" }
+tracel-runtime = { path = "crates/tracel-runtime", version = "0.11.0" }
 tracel-inference = { path = "crates/tracel-inference", version = "0.11.0" }
 tracel-artifact = { path = "crates/tracel-artifact", version = "0.11.0" }
 tracel-experiment = { path = "crates/tracel-experiment", version = "0.11.0" }
 tracel-experiment-remote = { path = "crates/tracel-experiment-remote", version = "0.11.0" }
-tracel-core = { path = "crates/tracel-core", version = "0.11.0" }
 tracel = { path = "crates/tracel", version = "0.11.0" }
 
 ### For xtask crate ###

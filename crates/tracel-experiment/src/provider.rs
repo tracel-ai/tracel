@@ -1,15 +1,17 @@
 use std::collections::HashMap;
-use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::ExperimentRun;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::try_init_tracing_subscriber;
+use crate::{ExperimentGlobalExt, ExperimentRun};
 
+/// A backend that records experiments: it creates the run of each experiment started.
 pub trait ExperimentProvider: Send + Sync + 'static {
+    /// Creates the experiment `name`, which records `attributes`, and returns its run.
     fn create_experiment(
         &self,
         name: String,
@@ -17,75 +19,52 @@ pub trait ExperimentProvider: Send + Sync + 'static {
     ) -> Result<ExperimentRun, ExperimentError>;
 }
 
-pub trait ExperimentFn<I, O>: Send + Sync {
-    fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error + Send + Sync>>;
-}
+/// Called with the run of each experiment started, once it exists.
+type OnStart = Arc<dyn Fn(&ExperimentRun) + Send + Sync>;
 
-impl<I, O, F> ExperimentFn<I, O> for F
-where
-    F: Fn(&ExperimentRun, I) -> Result<O, Box<dyn Error + Send + Sync>> + Send + Sync,
-{
-    fn call(&self, run: &ExperimentRun, input: I) -> Result<O, Box<dyn Error + Send + Sync>> {
-        (self)(run, input)
-    }
-}
-
+/// The experiments of a backend, and how each experiment started from them starts: the attributes
+/// and arguments it records, and the hooks called with its run.
+///
+/// [`run`](Self::run) runs code in a new experiment and ends the experiment by what the code
+/// returns. [`start`](Self::start) starts one and returns its run, for code that ends it itself.
+///
+/// ```no_run
+/// use tracel_experiment::{ExperimentRun, Experiments};
+///
+/// type BoxError = Box<dyn std::error::Error + Send + Sync>;
+///
+/// fn train(run: &ExperimentRun) -> Result<(), BoxError> {
+///     run.log_info("training");
+///     Ok(())
+/// }
+///
+/// fn train_tracked(experiments: Experiments) -> Result<(), BoxError> {
+///     experiments.attribute("dataset", "mnist")?.run("train", train)
+/// }
+/// ```
 #[derive(Clone)]
-pub struct ExperimentModule {
+pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
-}
-
-impl ExperimentModule {
-    // TODO: Add settings here (e.g., an ExperimentModule builder).
-    pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
-        Self { provider }
-    }
-
-    pub fn create<I, O>(
-        &self,
-        name: &str,
-        f: impl ExperimentFn<I, O> + 'static,
-    ) -> ExperimentJob<I, O> {
-        ExperimentJob::new(self.provider.clone(), name.to_string(), f)
-    }
-}
-
-pub struct ExperimentJob<I, O> {
-    provider: Arc<dyn ExperimentProvider>,
-    name: String,
     attributes: HashMap<String, Value>,
-    f: Arc<dyn ExperimentFn<I, O>>,
+    arguments: Option<Value>,
+    on_start: Vec<OnStart>,
 }
 
-impl<I, O> Clone for ExperimentJob<I, O> {
-    fn clone(&self) -> Self {
-        Self {
-            provider: self.provider.clone(),
-            name: self.name.clone(),
-            attributes: self.attributes.clone(),
-            f: self.f.clone(),
-        }
-    }
-}
-
-impl<I, O> ExperimentJob<I, O> {
-    fn new<F>(provider: Arc<dyn ExperimentProvider>, name: String, f: F) -> Self
-    where
-        F: ExperimentFn<I, O> + 'static,
-    {
+impl Experiments {
+    /// Experiments backed by `provider`, recording no attributes.
+    pub fn new(provider: Arc<dyn ExperimentProvider>) -> Self {
         Self {
             provider,
-            name,
             attributes: HashMap::new(),
-            f: Arc::new(f),
+            arguments: None,
+            on_start: Vec::new(),
         }
     }
 
-    #[doc(hidden)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
+    /// Records `value`, as JSON, as the attribute `key` of each experiment started from the
+    /// returned experiments.
+    ///
+    /// Fails when `value` does not serialize.
     pub fn attribute(
         mut self,
         key: impl Into<String>,
@@ -103,41 +82,79 @@ impl<I, O> ExperimentJob<I, O> {
         Ok(self)
     }
 
-    pub fn attributes(mut self, attrs: HashMap<String, Value>) -> Self {
-        self.attributes.extend(attrs);
+    /// Records `attributes` on each experiment started from the returned experiments.
+    pub fn attributes(mut self, attributes: HashMap<String, Value>) -> Self {
+        self.attributes.extend(attributes);
         self
     }
 
-    pub fn run(&self, input: I) -> Result<O, Box<dyn std::error::Error + Send + Sync>> {
+    /// Records `arguments`, JSON such as the configuration a run trains with, as the arguments of
+    /// each experiment started from the returned experiments, when it starts.
+    ///
+    /// [`ExperimentRun::log_args`] replaces them: the arguments logged last are the run's.
+    pub fn arguments(mut self, arguments: Value) -> Self {
+        self.arguments = Some(arguments);
+        self
+    }
+
+    /// Calls `hook` with the run of each experiment started from the returned experiments, once
+    /// it exists and before [`start`](Self::start) returns it, after the hooks given before.
+    pub fn on_start(mut self, hook: impl Fn(&ExperimentRun) + Send + Sync + 'static) -> Self {
+        self.on_start.push(Arc::new(hook));
+        self
+    }
+
+    /// Starts the experiment `name` and returns its run.
+    ///
+    /// The experiment records the attributes and arguments these experiments give it, and each
+    /// [`on_start`](Self::on_start) hook is called with the run. The run ends as completed
+    /// through [`ExperimentRun::finish`], and as failed through [`ExperimentRun::fail`] or when it
+    /// is dropped before either. Unless the program has installed a `tracing` subscriber, this
+    /// installs one that forwards events to experiments.
+    pub fn start(&self, name: &str) -> Result<ExperimentRun, ExperimentError> {
         let _ = try_init_tracing_subscriber();
 
-        let experiment = self
+        let run = self
             .provider
-            .create_experiment(self.name.clone(), self.attributes.clone())?;
-        let handle = experiment.handle();
+            .create_experiment(name.to_string(), self.attributes.clone())?;
+        if let Some(arguments) = &self.arguments {
+            run.record_args(arguments.clone());
+        }
+        for hook in &self.on_start {
+            hook(&run);
+        }
+        Ok(run)
+    }
+
+    /// Runs `f` in a new experiment `name`, as [`start`](Self::start) starts it, and ends the
+    /// experiment by what `f` returns: completed when it returns `Ok`, and failed with the
+    /// error's message when it returns `Err`, or with the panic's message when it panics.
+    ///
+    /// While `f` runs, the run is the current experiment, as
+    /// [`ExperimentGlobalExt::in_scope`] makes it, so `tracing` events reach it, and a panic on any
+    /// thread is logged to it, as [`ExperimentRun::capture_panics`] logs it. Fails without running
+    /// `f` when the experiment does not start, and with the backend's error when it cannot be
+    /// finished.
+    pub fn run<T, E>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&ExperimentRun) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<ExperimentError> + fmt::Display,
+    {
+        let run = self.start(name)?;
         // Worker-thread panics (a kernel compiler, a data loader) land in the
         // run's log even when they never unwind the run itself.
-        let _panic_watch = experiment.capture_panics();
-        let result = handle.in_scope(|| self.f.call(&experiment, input));
-
-        match result {
+        let _panic_watch = run.capture_panics();
+        match run.in_scope(|| f(&run)) {
             Ok(output) => {
-                if experiment.cancel_token().is_cancelled() {
-                    // Dropping without an explicit completion finalizes the run as cancelled.
-                    drop(experiment);
-                } else {
-                    experiment.finish()?;
-                }
+                run.finish()?;
                 Ok(output)
             }
-            Err(e) if experiment.cancel_token().is_cancelled() => {
-                drop(experiment);
-                Err(e)
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = experiment.fail(msg);
-                Err(e)
+            Err(error) => {
+                let _ = run.fail(error.to_string());
+                Err(error)
             }
         }
     }
@@ -146,128 +163,230 @@ impl<I, O> ExperimentJob<I, O> {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use serde_json::json;
 
     use super::*;
-    use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
-    use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId};
+    use crate::ExperimentId;
+    use crate::session::{Event, ExperimentCompletion};
+    use crate::test_support::{MockSession, create_run_with_id};
 
-    #[derive(Default)]
-    struct MockSession {
-        completions: Mutex<Vec<ExperimentCompletion>>,
-    }
+    type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-    impl ExperimentSession for MockSession {
-        fn record_event(&self, _event: crate::session::Event) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn save_artifact(
-            &self,
-            _name: &str,
-            _kind: ArtifactKind,
-            _artifact: Box<BundleFn>,
-        ) -> Result<(), ExperimentError> {
-            Ok(())
-        }
-
-        fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-            self.completions.lock().unwrap().push(completion);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct NoopExperimentDataReader;
-
-    impl ExperimentArtifactReader for NoopExperimentDataReader {
-        fn load_artifact_raw(
-            &self,
-            _experiment_id: ExperimentId,
-            _name: &str,
-        ) -> Result<LoadedArtifact, ExperimentReaderError> {
-            Err(ExperimentReaderError::new("Artifact not found"))
-        }
-    }
-
+    /// Creates runs numbered 7 on one session, and keeps the attributes each was created with.
     struct MockProvider {
         session: Arc<MockSession>,
+        attributes: Arc<Mutex<Vec<HashMap<String, Value>>>>,
     }
 
     impl ExperimentProvider for MockProvider {
         fn create_experiment(
             &self,
             _name: String,
-            _attributes: HashMap<String, Value>,
+            attributes: HashMap<String, Value>,
         ) -> Result<ExperimentRun, ExperimentError> {
-            Ok(ExperimentRun::new(
-                "test/experiment/1",
-                self.session.clone(),
-                NoopExperimentDataReader,
-                CancelToken::new(),
-            ))
+            self.attributes.lock().unwrap().push(attributes);
+            Ok(create_run_with_id("7", self.session.clone()))
         }
     }
 
-    fn module(session: Arc<MockSession>) -> ExperimentModule {
-        ExperimentModule::new(Arc::new(MockProvider { session }))
+    struct Fixture {
+        session: Arc<MockSession>,
+        attributes: Arc<Mutex<Vec<HashMap<String, Value>>>>,
+        experiments: Experiments,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let session = Arc::new(MockSession::default());
+            let attributes = Arc::default();
+            let experiments = Experiments::new(Arc::new(MockProvider {
+                session: session.clone(),
+                attributes: Arc::clone(&attributes),
+            }));
+            Self {
+                session,
+                attributes,
+                experiments,
+            }
+        }
+
+        fn completions(&self) -> Vec<ExperimentCompletion> {
+            self.session.completions.lock().unwrap().clone()
+        }
+
+        /// The arguments the runs recorded, in order.
+        fn arguments(&self) -> Vec<Value> {
+            self.session
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Args(value) => Some(value.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
     }
 
     #[test]
-    fn given_run_when_completing_then_finalizes_with_success() {
-        let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| Ok(()));
+    fn run_ends_the_experiment_by_what_its_code_returns() {
+        let fixture = Fixture::new();
 
-        job.run(()).unwrap();
+        let output = fixture
+            .experiments
+            .run("train", |_run| Ok::<_, BoxError>(3));
+        let failed = fixture
+            .experiments
+            .run("train", |_run| Err::<(), BoxError>("diverged".into()));
 
-        let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
-    }
-
-    #[test]
-    fn given_run_cancelled_through_control_when_running_then_complete_cancelled() {
-        let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
-            // A remote backend would cancel the run's own control plane; simulate that here.
-            run.cancel_token().cancel();
-            Ok(())
-        });
-
-        job.run(()).unwrap();
-
-        let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
-    }
-
-    #[test]
-    fn given_run_error_when_cancel_started_then_complete_cancelled() {
-        let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |run: &ExperimentRun, _input: ()| {
-            run.cancel_token().cancel();
-            Err::<(), _>("interrupted".into())
-        });
-
-        let result = job.run(());
-
-        assert!(result.is_err());
-        let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
-    }
-
-    #[test]
-    fn given_run_error_when_running_then_complete_failed() {
-        let session = Arc::new(MockSession::default());
-        let job = module(session.clone()).create("job", |_run: &ExperimentRun, _input: ()| {
-            Err::<(), _>("boom".into())
-        });
-
-        let result = job.run(());
-
-        assert!(result.is_err());
-        let completions = session.completions.lock().unwrap();
+        assert_eq!(output.unwrap(), 3);
+        assert_eq!(failed.unwrap_err().to_string(), "diverged");
         assert_eq!(
-            completions.as_slice(),
-            &[ExperimentCompletion::Failed("boom".to_string())]
+            fixture.completions(),
+            [
+                ExperimentCompletion::Success,
+                ExperimentCompletion::Failed("diverged".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_panic_in_run_fails_the_experiment_with_its_message() {
+        let fixture = Fixture::new();
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fixture
+                .experiments
+                .run("train", |_run| -> Result<(), BoxError> {
+                    panic!("loss is NaN")
+                })
+        }));
+
+        assert!(panicked.is_err());
+        match fixture.completions().as_slice() {
+            [ExperimentCompletion::Failed(reason)] => {
+                assert!(reason.contains("loss is NaN"), "{reason}");
+            }
+            other => panic!("unexpected completions: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_makes_the_run_the_current_experiment() {
+        let fixture = Fixture::new();
+
+        let current = fixture.experiments.run("train", |run| {
+            let current = ExperimentRun::current().map(|current| current.id().clone());
+            Ok::<_, BoxError>(current == Some(run.id().clone()))
+        });
+
+        assert!(current.unwrap());
+        assert!(ExperimentRun::current().is_none());
+    }
+
+    #[test]
+    fn run_runs_nothing_when_the_experiment_does_not_start() {
+        struct Unreachable;
+
+        impl ExperimentProvider for Unreachable {
+            fn create_experiment(
+                &self,
+                _name: String,
+                _attributes: HashMap<String, Value>,
+            ) -> Result<ExperimentRun, ExperimentError> {
+                Err(ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "the backend is unreachable",
+                ))
+            }
+        }
+        let ran = AtomicBool::new(false);
+
+        let error = Experiments::new(Arc::new(Unreachable))
+            .run("train", |_run| -> Result<(), BoxError> {
+                ran.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "the backend is unreachable");
+        assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_started_experiment_records_the_attributes() {
+        let fixture = Fixture::new();
+        let experiments = fixture
+            .experiments
+            .clone()
+            .attribute("kind", "example")
+            .unwrap()
+            .attributes(HashMap::from([("seed".to_string(), json!(42))]));
+
+        experiments.start("train").unwrap().finish().unwrap();
+
+        assert_eq!(
+            *fixture.attributes.lock().unwrap(),
+            [HashMap::from([
+                ("kind".to_string(), json!("example")),
+                ("seed".to_string(), json!(42)),
+            ])]
+        );
+    }
+
+    #[test]
+    fn a_started_experiment_records_the_arguments_logging_replaces() {
+        let fixture = Fixture::new();
+        let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
+
+        let run = experiments.start("train").unwrap();
+        let recorded = fixture.arguments();
+        run.log_args(&json!({"epochs": 2, "fold": 1})).unwrap();
+        fixture
+            .experiments
+            .start("train")
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        assert_eq!(recorded, [json!({"epochs": 2})]);
+        assert_eq!(
+            fixture.arguments(),
+            [json!({"epochs": 2}), json!({"epochs": 2, "fold": 1})]
+        );
+    }
+
+    #[test]
+    fn each_hook_is_called_with_each_run_started() {
+        let fixture = Fixture::new();
+        let called = Arc::new(Mutex::new(Vec::new()));
+        let hook = |tag: &'static str| {
+            let called = called.clone();
+            move |run: &ExperimentRun| called.lock().unwrap().push((tag, run.id().clone()))
+        };
+        let experiments = fixture
+            .experiments
+            .clone()
+            .on_start(hook("first"))
+            .on_start(hook("second"));
+
+        experiments.start("train").unwrap().finish().unwrap();
+        fixture
+            .experiments
+            .start("train")
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        assert_eq!(
+            *called.lock().unwrap(),
+            [
+                ("first", ExperimentId::from("7")),
+                ("second", ExperimentId::from("7"))
+            ]
         );
     }
 }

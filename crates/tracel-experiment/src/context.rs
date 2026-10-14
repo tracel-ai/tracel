@@ -53,15 +53,18 @@ pub struct WithCurrentExperiment<F> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// In code that runs in an experiment, given its run, such as code
+/// [`Experiments::run`](crate::Experiments::run) runs:
+///
+/// ```no_run
 /// use tracel_experiment::{ExperimentInstrument, ExperimentRun};
 ///
-/// let run = ExperimentRun::local("./runs").unwrap();
-///
-/// let _future = async move {
-///     tracing::info!("this future will poll inside the experiment context");
+/// fn train(run: &ExperimentRun) {
+///     let _future = async move {
+///         tracing::info!("this future will poll inside the experiment context");
+///     }
+///     .in_experiment(run);
 /// }
-/// .in_experiment(&run);
 /// ```
 pub trait ExperimentInstrument: Future + Sized {
     /// Instrument this future to automatically enter the given experiment context.
@@ -102,15 +105,18 @@ impl<F> WithCurrentExperiment<F> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// In code that runs in an experiment, given its run, such as code
+/// [`Experiments::run`](crate::Experiments::run) runs:
+///
+/// ```no_run
 /// use tracel_experiment::{ExperimentGlobalExt, ExperimentRun};
 ///
-/// let run = ExperimentRun::local("./runs").unwrap();
-///
-/// run.in_scope(|| {
-///     let current = ExperimentRun::current().unwrap();
-///     assert_eq!(current.id(), run.id());
-/// });
+/// fn train(run: &ExperimentRun) {
+///     run.in_scope(|| {
+///         let current = ExperimentRun::current().unwrap();
+///         assert_eq!(current.id(), run.id());
+///     });
+/// }
 /// ```
 pub trait ExperimentGlobalExt {
     /// Enter an ambient scope for this run until the returned guard is dropped.

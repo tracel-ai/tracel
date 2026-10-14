@@ -85,7 +85,7 @@ impl<I, O> InferenceJob<I, O> {
         }
     }
 
-    /// The job's name, used to select it from a CLI or HTTP request path.
+    /// The inference's name, which names the sessions it opens.
     pub fn name(&self) -> &str {
         &self.name
     }

@@ -5,8 +5,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracel::inference::{Inference, InferenceInput, InferenceOutput, InferenceSession};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct Prompt {
+    /// The text to split into tokens.
     pub text: String,
 }
 
@@ -90,7 +91,9 @@ pub mod training {
 
     #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct TrainingConfig {
+        /// Passes over the toy dataset.
         pub epochs: usize,
+        /// Batches in each epoch.
         pub batches_per_epoch: usize,
     }
 
@@ -104,7 +107,6 @@ pub mod training {
     }
 
     pub fn train(experiment: &ExperimentRun, config: TrainingConfig) -> Result<(), BoxError> {
-        experiment.log_args(&config)?;
         experiment.log_metric_definition(MetricSpec {
             name: "loss".to_string(),
             description: Some("training loss".to_string()),

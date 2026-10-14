@@ -2,27 +2,40 @@
 //! See src/training.rs for the wiring.
 //!
 //! cargo run -p mnist --example mnist
+//! cargo run -p mnist --example mnist -- mnist '{"num_epochs": 5, "optimizer": {"weight_decay": 0.0001}}'
+//! cargo run -p mnist --example mnist -- mnist -c config.json
 #![recursion_limit = "256"]
+
+use std::process::ExitCode;
 
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::Device;
 use mnist::training::{self, MnistTrainingConfig};
 
-use tracel::experiment::ExperimentRun;
+use tracel::Target;
+use tracel::runtime::{BoxError, Job, Jobs};
 
-fn main() -> anyhow::Result<()> {
-    let module = common::context()?.experiment();
+/// Trains the model in an experiment, which records the job's input as its arguments.
+fn mnist(config: MnistTrainingConfig) -> Result<(), BoxError> {
+    let experiments = Target::from_env()?.experiments()?;
+    experiments.run("mnist", |experiment| {
+        training::run(
+            experiment,
+            config,
+            vec![Device::autodiff(WgpuDevice::default().into())],
+        )
+    })
+}
 
-    module
-        .create("mnist", |experiment: &ExperimentRun, config| {
-            training::run(
-                experiment,
-                config,
-                vec![Device::autodiff(WgpuDevice::default().into())],
-            )
-        })
-        .run(MnistTrainingConfig::small())
-        .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
-
-    Ok(())
+fn main() -> ExitCode {
+    Jobs::new()
+        .version(env!("CARGO_PKG_VERSION"))
+        .job(
+            "mnist",
+            Job::new(mnist)
+                .with_description("Train an MNIST classifier")
+                .with_default(MnistTrainingConfig::small()),
+        )
+        .default_job("mnist")
+        .run()
 }
