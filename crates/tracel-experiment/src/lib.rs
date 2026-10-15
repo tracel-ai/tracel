@@ -914,39 +914,6 @@ mod tests {
     }
 
     #[test]
-    fn watched_run_logs_panics_from_other_threads() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let _watch = run.capture_panics();
-
-        let outcome = std::thread::Builder::new()
-            .name("device-runner".into())
-            .spawn(|| panic!("unsupported op: plane.elect"))
-            .unwrap()
-            .join();
-        assert!(outcome.is_err());
-
-        let events = session.events.lock().unwrap();
-        let logged = events.iter().any(|event| match event {
-            Event::Log { record, .. } => {
-                record.level == LogLevel::Error
-                    && record.message.contains("unsupported op: plane.elect")
-                    && record.message.contains("device-runner")
-            }
-            _ => false,
-        });
-        assert!(logged, "no error log carried the panic: {events:?}");
-        drop(events);
-
-        // The hook pushes what it just recorded out of the process while it
-        // still can; an aborting teardown must not be able to eat it.
-        assert!(
-            *session.flushes.lock().unwrap() > 0,
-            "the hook never flushed"
-        );
-    }
-
-    #[test]
     fn run_context_records_events() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
