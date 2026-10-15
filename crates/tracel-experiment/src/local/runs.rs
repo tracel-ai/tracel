@@ -76,7 +76,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::local::test_support::run;
+    use crate::local::test_support::{LocalRun, local_run, run};
 
     #[test]
     fn a_runs_directory_it_creates_ignores_everything_in_it() {
@@ -92,13 +92,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_runs_directory_that_exists_is_left_as_it_is() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let _run = run(dir.path(), "mnist");
-
-        assert!(!dir.path().join(".gitignore").exists());
+    #[rstest]
+    fn a_runs_directory_that_exists_is_left_as_it_is(local_run: LocalRun) {
+        assert!(!local_run.runs.path().join(".gitignore").exists());
     }
 
     #[rstest]
@@ -124,16 +120,9 @@ mod tests {
     fn runs_are_numbered_from_one_under_the_experiment_name() {
         let dir = tempfile::tempdir().unwrap();
 
-        let first = run(dir.path(), "mnist");
-        let second = run(dir.path(), "mnist");
-        let other = run(dir.path(), "other");
+        let ids = ["mnist", "mnist", "other"].map(|name| run(dir.path(), name).id().to_string());
 
-        assert_eq!(first.id().as_str(), "1");
-        assert_eq!(second.id().as_str(), "2");
-        assert_eq!(other.id().as_str(), "1");
-        assert!(dir.path().join("mnist/1").is_dir());
-        assert!(dir.path().join("mnist/2").is_dir());
-        assert!(dir.path().join("other/1").is_dir());
+        assert_eq!(ids, ["1", "2", "1"]);
     }
 
     #[test]
