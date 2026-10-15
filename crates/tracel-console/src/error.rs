@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tracel_client::error::ClientError;
 
 /// Errors produced while configuring, authenticating with or calling the console.
@@ -42,6 +44,14 @@ pub enum ConsoleError {
          (expected keys: `namespace` and `project`)"
     )]
     NoProject,
+    /// The `tracel.toml` that would name the project cannot be read, or is not valid TOML.
+    #[error("could not read {}: {reason}", path.display())]
+    InvalidTracelToml {
+        /// The file.
+        path: PathBuf,
+        /// Why it cannot be used.
+        reason: String,
+    },
     /// The credential cannot be used for this request: an API key reaches project data only.
     #[error("this credential cannot be used for this request; API keys reach project data only")]
     CredentialNotAllowed,

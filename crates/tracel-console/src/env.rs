@@ -2,6 +2,7 @@
 //! environment and `tracel.toml`.
 
 use std::ffi::OsString;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -147,7 +148,8 @@ impl ProjectRef {
     /// The owner namespace is `TRACEL_NAMESPACE` and the project name `TRACEL_PROJECT`; either
     /// one unset is read from `namespace` or `project` in `tracel.toml` in the current
     /// directory. Fails with [`ConsoleError::NoNamespace`] or [`ConsoleError::NoProject`] when
-    /// neither names it.
+    /// neither names it, and with [`ConsoleError::InvalidTracelToml`] when `tracel.toml`
+    /// cannot be read.
     pub fn from_env() -> Result<Self, ConsoleError> {
         Self::from_vars(|name| std::env::var_os(name), Path::new("."))
     }
@@ -163,7 +165,7 @@ impl ProjectRef {
         let file = if namespace.is_some() && project.is_some() {
             TracelToml::default()
         } else {
-            TracelToml::read(&dir.join(TRACEL_TOML))
+            TracelToml::read(&dir.join(TRACEL_TOML))?
         };
 
         let namespace = namespace
@@ -190,15 +192,20 @@ struct TracelToml {
 }
 
 impl TracelToml {
-    /// A missing, unreadable or malformed file names nothing.
-    fn read(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .map(|contents| Self::parse(&contents))
-            .unwrap_or_default()
-    }
-
-    fn parse(contents: &str) -> Self {
-        toml::from_str(contents).unwrap_or_default()
+    /// The project the file at `path` names; a missing file names nothing.
+    ///
+    /// Fails with [`ConsoleError::InvalidTracelToml`] when the file cannot be read or is not
+    /// valid TOML.
+    fn read(path: &Path) -> Result<Self, ConsoleError> {
+        let invalid = |reason: String| ConsoleError::InvalidTracelToml {
+            path: path.to_path_buf(),
+            reason,
+        };
+        match std::fs::read_to_string(path) {
+            Ok(contents) => toml::from_str(&contents).map_err(|error| invalid(error.to_string())),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(invalid(error.to_string())),
+        }
     }
 }
 
@@ -275,11 +282,35 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_tracel_toml_names_nothing() {
+    fn a_missing_tracel_toml_names_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+
         assert!(matches!(
-            located(None, Some("env-project"), "namespace = "),
+            ProjectRef::from_vars(|_| None, dir.path()),
             Err(ConsoleError::NoNamespace)
         ));
+    }
+
+    #[rstest]
+    #[case::malformed(|path: &Path| std::fs::write(path, "namespace = ").unwrap())]
+    #[case::unreadable(|path: &Path| std::fs::create_dir(path).unwrap())]
+    fn an_unreadable_or_malformed_tracel_toml_is_an_error_naming_it(#[case] write: fn(&Path)) {
+        let dir = tempfile::tempdir().unwrap();
+        let tracel_toml = dir.path().join(TRACEL_TOML);
+        write(&tracel_toml);
+
+        assert!(matches!(
+            ProjectRef::from_vars(|_| None, dir.path()),
+            Err(ConsoleError::InvalidTracelToml { path, .. }) if path == tracel_toml
+        ));
+    }
+
+    #[test]
+    fn tracel_toml_is_not_read_when_the_environment_names_the_project() {
+        assert_eq!(
+            located(Some("env-owner"), Some("env-project"), "namespace = ").unwrap(),
+            ProjectRef::new("env-owner", "env-project")
+        );
     }
 
     #[test]

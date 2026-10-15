@@ -306,7 +306,8 @@ impl ProjectHandle {
     /// The owner namespace is `TRACEL_NAMESPACE` and the project name `TRACEL_PROJECT`; either
     /// one unset is read from `namespace` or `project` in `tracel.toml` in the current
     /// directory. Fails with [`ConsoleError::NoNamespace`] or [`ConsoleError::NoProject`] when
-    /// neither names it.
+    /// neither names it, and with [`ConsoleError::InvalidTracelToml`] when `tracel.toml`
+    /// cannot be read.
     pub fn from_env() -> Result<Self, ConsoleError> {
         Self::from_vars(
             |name| std::env::var_os(name),
