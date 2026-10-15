@@ -1,8 +1,8 @@
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tracel_console::{Console, ConsoleError, CredentialSource, Env, ProjectHandle, ProjectRef};
+use tracel_console::{ConsoleError, FileSessionStore, ProjectHandle, SessionStoreError};
 use tracel_datasets::DatasetRegistry;
 use tracel_experiment::Experiments;
 use tracel_experiment::local::LocalExperiments;
@@ -10,7 +10,6 @@ use tracel_inference::{InferenceModule, NoopInferenceProvider};
 use tracel_models::ModelRegistry;
 #[cfg(feature = "station")]
 use tracel_station::Station;
-#[cfg(feature = "station")]
 use url::Url;
 
 use crate::running_job;
@@ -35,8 +34,7 @@ const TARGETS: &str = "offline, console or station";
 ///
 /// Build one directly, or read it from the environment with [`Target::from_env`]. Neither
 /// performs network I/O, and neither do the services a target builds: the first request that
-/// needs a server reaches it. Each call to a service method binds a new connection; to share one
-/// across services, build them from a [`ProjectHandle`] instead.
+/// needs a server reaches it.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Target {
@@ -45,14 +43,11 @@ pub enum Target {
         /// The directory runs are recorded under.
         dir: PathBuf,
     },
-    /// A project on the Tracel console.
+    /// A project on the Tracel console. The services the target builds share its connection, so
+    /// the credential is verified once.
     Console {
-        /// The console to reach.
-        env: Env,
-        /// Where the credential comes from.
-        credentials: CredentialSource,
         /// The project experiments, models and datasets belong to.
-        project: ProjectRef,
+        project: ProjectHandle,
     },
     /// A Tracel Station (requires the `station` feature).
     #[cfg(feature = "station")]
@@ -86,16 +81,26 @@ impl Target {
         doc = "| `TRACEL_STATION_URL` | the Station's base URL | `http://localhost:8000` |"
     )]
     ///
-    /// Fails with [`TargetError::UnknownTarget`] when `TRACEL_TARGET` names no target, with
-    /// [`TargetError::Console`] when the console target cannot be filled in, and with
-    /// [`TargetError::InvalidSetting`] when `TRACEL_STATION_URL` is not an http or https URL.
+    /// The console target is the project [`ProjectHandle::from_env`] reads, and fails as it
+    /// does, with [`TargetError::Console`]. Fails with [`TargetError::UnknownTarget`] when
+    /// `TRACEL_TARGET` names no target, and with [`TargetError::InvalidSetting`] when
+    /// `TRACEL_STATION_URL` is not an http or https URL.
     pub fn from_env() -> Result<Target, TargetError> {
-        Self::from_vars(|name| std::env::var_os(name))
+        Self::from_vars(
+            |name| std::env::var_os(name),
+            Path::new("."),
+            FileSessionStore::for_server,
+        )
     }
 
-    /// [`from_env`](Self::from_env) over the values `lookup` gives this crate's variables. The
-    /// console's own variables are read by [`tracel_console`].
-    fn from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Target, TargetError> {
+    /// [`from_env`](Self::from_env), reading the variables from `lookup`, `tracel.toml` from
+    /// `dir`, and the stored `tracel login` session from the store `sessions` gives for the
+    /// console's URL.
+    fn from_vars(
+        lookup: impl Fn(&str) -> Option<OsString>,
+        dir: &Path,
+        sessions: impl FnOnce(&Url) -> Result<FileSessionStore, SessionStoreError>,
+    ) -> Result<Target, TargetError> {
         let var = |name: &str| lookup(name).filter(|value| !value.is_empty());
         let target = var(TRACEL_TARGET).map(|value| value.to_string_lossy().into_owned());
 
@@ -104,9 +109,7 @@ impl Target {
                 dir: var(TRACEL_RUNS_DIR).map_or_else(|| DEFAULT_RUNS_DIR.into(), PathBuf::from),
             }),
             Some("console") => Ok(Target::Console {
-                env: tracel_console::env_from_environment()?,
-                credentials: CredentialSource::from_env(),
-                project: ProjectRef::from_env()?,
+                project: ProjectHandle::from_vars(&lookup, dir, sessions)?,
             }),
             #[cfg(feature = "station")]
             Some("station") => {
@@ -153,11 +156,7 @@ impl Target {
     pub fn experiments(&self) -> Result<Experiments, TargetError> {
         let experiments = match self {
             Target::Offline { dir } => Experiments::new(Arc::new(LocalExperiments::new(dir))),
-            Target::Console {
-                env,
-                credentials,
-                project,
-            } => console_project(env, credentials, project)?.experiments(),
+            Target::Console { project } => project.experiments(),
             #[cfg(feature = "station")]
             Target::Station { url } => Station::connect(url.clone()).experiments(),
         };
@@ -173,11 +172,7 @@ impl Target {
                 service: "models",
                 target: "offline",
             }),
-            Target::Console {
-                env,
-                credentials,
-                project,
-            } => Ok(console_project(env, credentials, project)?.models()),
+            Target::Console { project } => Ok(project.models()),
             #[cfg(feature = "station")]
             Target::Station { url } => Ok(Station::connect(url.clone()).models()),
         }
@@ -192,11 +187,7 @@ impl Target {
                 service: "datasets",
                 target: "offline",
             }),
-            Target::Console {
-                env,
-                credentials,
-                project,
-            } => Ok(console_project(env, credentials, project)?.datasets()),
+            Target::Console { project } => Ok(project.datasets()),
             #[cfg(feature = "station")]
             Target::Station { url } => Ok(Station::connect(url.clone()).datasets()),
         }
@@ -210,25 +201,11 @@ impl Target {
     pub fn inference(&self) -> Result<InferenceModule, TargetError> {
         match self {
             Target::Offline { .. } => Ok(noop_inference()),
-            Target::Console {
-                env,
-                credentials,
-                project,
-            } => Ok(console_project(env, credentials, project)?.inference()),
+            Target::Console { project } => Ok(project.inference()),
             #[cfg(feature = "station")]
             Target::Station { .. } => Ok(noop_inference()),
         }
     }
-}
-
-/// Binds `project` on the console `env` names, with the credential `credentials` provides.
-fn console_project(
-    env: &Env,
-    credentials: &CredentialSource,
-    project: &ProjectRef,
-) -> Result<ProjectHandle, TargetError> {
-    let console = Console::connect(env.clone(), credentials.resolve(env)?);
-    Ok(console.project(&project.namespace, &project.name))
 }
 
 fn noop_inference() -> InferenceModule {
@@ -280,16 +257,21 @@ pub enum TargetError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use tracel_console::ProjectRef;
 
     use super::*;
 
     fn target(vars: &[(&str, &str)]) -> Result<Target, TargetError> {
-        Target::from_vars(|name| {
-            vars.iter()
-                .find(|(variable, _)| *variable == name)
-                .map(|(_, value)| OsString::from(value))
-        })
+        let dir = tempfile::tempdir().unwrap();
+        Target::from_vars(
+            |name| {
+                vars.iter()
+                    .find(|(variable, _)| *variable == name)
+                    .map(|(_, value)| OsString::from(value))
+            },
+            dir.path(),
+            |_| Ok(FileSessionStore::new(dir.path().join("session.json"))),
+        )
     }
 
     fn offline_dir(target: Result<Target, TargetError>) -> PathBuf {
@@ -429,6 +411,38 @@ mod tests {
                 service: "datasets",
                 target: "offline"
             })
+        ));
+    }
+
+    #[test]
+    fn a_console_target_is_the_project_its_variables_name() {
+        let mnist = ProjectRef::new("alice", "mnist");
+
+        let console = target(&[
+            (TRACEL_TARGET, "console"),
+            ("TRACEL_API_KEY", "tcl_key"),
+            ("TRACEL_NAMESPACE", mnist.namespace.as_str()),
+            ("TRACEL_PROJECT", mnist.name.as_str()),
+        ]);
+
+        assert!(matches!(
+            console,
+            Ok(Target::Console { project })
+                if ProjectRef::new(project.owner(), project.name()) == mnist
+        ));
+    }
+
+    #[test]
+    fn a_console_target_without_a_credential_fails_as_the_console_does() {
+        let console = target(&[
+            (TRACEL_TARGET, "console"),
+            ("TRACEL_NAMESPACE", "alice"),
+            ("TRACEL_PROJECT", "mnist"),
+        ]);
+
+        assert!(matches!(
+            console,
+            Err(TargetError::Console(ConsoleError::NoCredentials))
         ));
     }
 }
