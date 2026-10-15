@@ -31,5 +31,6 @@ thiserror.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 serde = { workspace = true, features = ["std"] }
 tempfile.workspace = true
