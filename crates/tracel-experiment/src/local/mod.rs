@@ -9,11 +9,9 @@ mod test_support;
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread::{self, JoinHandle};
 
 use serde_json::Value;
 
@@ -133,7 +131,7 @@ impl ExperimentProvider for LocalExperiments {
 struct LocalExperimentSession {
     root: PathBuf,
     status: Status,
-    active: Mutex<Option<LocalWorker>>,
+    events: Mutex<Option<BufWriter<File>>>,
 }
 
 impl LocalExperimentSession {
@@ -151,68 +149,67 @@ impl LocalExperimentSession {
         let attributes = attributes
             .into_iter()
             .map(|(key, value)| Line::Attribute { key, value });
-        let mut events = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(root.join(EVENTS_FILE))?;
+        let mut events = BufWriter::new(file);
         events.write_all(to_jsonl(attributes)?.as_bytes())?;
         let status = Status::running(name, num);
         status.write(&root.join(STATUS_FILE))?;
-        let (sender, receiver) = channel();
-        let join = thread::spawn(move || local_worker(receiver, events));
 
         Ok(Self {
             root,
             status,
-            active: Mutex::new(Some(LocalWorker { sender, join })),
+            events: Mutex::new(Some(events)),
         })
     }
 
-    fn sender(&self) -> Result<Sender<LocalWrite>, ExperimentError> {
-        let guard = self.active.lock().unwrap();
-        guard
-            .as_ref()
-            .map(|worker| worker.sender.clone())
-            .ok_or_else(|| {
-                ExperimentError::new(
-                    ExperimentErrorKind::AlreadyFinished,
-                    "Local experiment session has already finished",
-                )
-            })
+    /// Runs `write` on the run's events file, unless the run has finished.
+    fn write_events(
+        &self,
+        write: impl FnOnce(&mut BufWriter<File>) -> io::Result<()>,
+    ) -> Result<(), ExperimentError> {
+        let mut events = self.events.lock().unwrap();
+        let events = events.as_mut().ok_or_else(already_finished)?;
+        write(events).map_err(writer_failed)
     }
+}
 
-    /// Stops the writer once it has written every event, then writes the run's status.
-    fn finish_worker(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-        let worker = self.active.lock().unwrap().take().ok_or_else(|| {
-            ExperimentError::new(
-                ExperimentErrorKind::AlreadyFinished,
-                "Local experiment session has already finished",
+impl ExperimentSession for LocalExperimentSession {
+    fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
+        let lines = to_jsonl(lines(event)).map_err(|err| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Internal,
+                "Failed to serialize local experiment event",
+                err,
             )
         })?;
+        self.write_events(|events| events.write_all(lines.as_bytes()))
+    }
 
-        let send_result = worker.sender.send(LocalWrite::Finish);
-        match worker.join.join() {
-            Ok(Ok(())) if send_result.is_ok() => {}
-            Ok(Ok(())) => {
-                return Err(ExperimentError::new(
-                    ExperimentErrorKind::Internal,
-                    "Failed to send local experiment completion",
-                ));
-            }
-            Ok(Err(err)) => {
-                return Err(ExperimentError::with_source(
-                    ExperimentErrorKind::Internal,
-                    "Local experiment writer failed",
-                    err,
-                ));
-            }
-            Err(_) => {
-                return Err(ExperimentError::new(
-                    ExperimentErrorKind::Internal,
-                    "Local experiment writer thread panicked",
-                ));
-            }
-        }
+    fn flush(&self) -> Result<(), ExperimentError> {
+        self.write_events(|events| events.flush())
+    }
+
+    fn save_artifact(
+        &self,
+        name: &str,
+        _kind: ArtifactKind,
+        artifact: Box<BundleFn>,
+    ) -> Result<(), ExperimentError> {
+        save_artifact(&self.root, name, artifact)
+    }
+
+    /// Writes every event recorded, then the run's status.
+    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        let mut events = self
+            .events
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(already_finished)?;
+        events.flush().map_err(writer_failed)?;
 
         self.status
             .ended(completion)
@@ -227,64 +224,29 @@ impl LocalExperimentSession {
     }
 }
 
-impl ExperimentSession for LocalExperimentSession {
-    fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-        let lines = to_jsonl(lines(event)).map_err(|err| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Internal,
-                "Failed to serialize local experiment event",
-                err,
-            )
-        })?;
-        self.sender()?.send(LocalWrite::Lines(lines)).map_err(|_| {
-            ExperimentError::new(
-                ExperimentErrorKind::Internal,
-                "Failed to queue local experiment event",
-            )
-        })
-    }
-
-    fn save_artifact(
-        &self,
-        name: &str,
-        _kind: ArtifactKind,
-        artifact: Box<BundleFn>,
-    ) -> Result<(), ExperimentError> {
-        save_artifact(&self.root, name, artifact)
-    }
-
-    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-        self.finish_worker(completion)
-    }
+fn already_finished() -> ExperimentError {
+    ExperimentError::new(
+        ExperimentErrorKind::AlreadyFinished,
+        "Local experiment session has already finished",
+    )
 }
 
-struct LocalWorker {
-    sender: Sender<LocalWrite>,
-    join: JoinHandle<Result<(), io::Error>>,
-}
-
-enum LocalWrite {
-    /// Lines to append to `events.jsonl`, each ending with a newline.
-    Lines(String),
-    /// Stop once every line sent before is written.
-    Finish,
-}
-
-/// Appends each batch of lines to `events` as it arrives, until told to finish.
-fn local_worker(receiver: Receiver<LocalWrite>, mut events: File) -> Result<(), io::Error> {
-    while let Ok(message) = receiver.recv() {
-        match message {
-            LocalWrite::Lines(lines) => events.write_all(lines.as_bytes())?,
-            LocalWrite::Finish => break,
-        }
-    }
-    Ok(())
+fn writer_failed(error: io::Error) -> ExperimentError {
+    ExperimentError::with_source(
+        ExperimentErrorKind::Internal,
+        "Local experiment writer failed",
+        error,
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
+    use super::test_support::{LocalRun, local_run};
     use super::*;
-    use test_support::run;
+    use crate::MetricValue;
+    use test_support::{read_lines, run};
 
     #[test]
     fn a_run_is_located_in_its_directory() {
@@ -310,5 +272,17 @@ mod tests {
             .expect("the name is refused");
 
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[rstest]
+    fn flush_writes_the_events_recorded_before_it_returns(local_run: LocalRun) {
+        local_run.run.log_summary(vec![MetricValue {
+            name: "accuracy".to_string(),
+            value: 0.95,
+        }]);
+
+        local_run.run.handle().flush();
+
+        assert_eq!(read_lines(&local_run.dir.join(EVENTS_FILE)).len(), 1);
     }
 }

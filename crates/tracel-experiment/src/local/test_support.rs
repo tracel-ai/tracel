@@ -1,18 +1,19 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rstest::fixture;
 use serde_json::Value;
 use tempfile::TempDir;
 
 use super::LocalExperiments;
-use crate::{ExperimentProvider, ExperimentRun};
+use crate::{ExperimentLocation, ExperimentProvider, ExperimentRun};
 
 pub const EXPERIMENT: &str = "mnist";
 
 pub struct LocalRun {
     pub run: ExperimentRun,
+    pub dir: PathBuf,
     pub runs: TempDir,
 }
 
@@ -20,13 +21,24 @@ pub struct LocalRun {
 pub fn local_run() -> LocalRun {
     let runs = tempfile::tempdir().unwrap();
     let run = run(runs.path(), EXPERIMENT);
-    LocalRun { run, runs }
+    LocalRun {
+        dir: run_dir(&run),
+        run,
+        runs,
+    }
 }
 
 pub fn run(dir: &Path, name: &str) -> ExperimentRun {
     LocalExperiments::new(dir)
         .create_experiment(name.to_string(), HashMap::new())
         .unwrap()
+}
+
+pub fn run_dir(run: &ExperimentRun) -> PathBuf {
+    match run.location() {
+        Some(ExperimentLocation::Dir(dir)) => dir.clone(),
+        location => panic!("a local run is located in a directory, not {location:?}"),
+    }
 }
 
 pub fn read_lines(path: &Path) -> Vec<Value> {
