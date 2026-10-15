@@ -1,17 +1,22 @@
 //! Reading which console to reach, with which credential, and which project, from the
 //! environment and `tracel.toml`.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
 use serde::Deserialize;
 use tracel_client::ClientError;
 use tracel_client::console::auth::DeviceAuthClient;
-use tracel_client::console::{AppSession, Env, FileSessionStore, SessionStore, TracelCredentials};
+use tracel_client::console::{
+    AppSession, Env, FileSessionStore, SessionStore, SessionStoreError, TracelCredentials,
+};
+use url::Url;
 
 use crate::ConsoleError;
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
+const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
 const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
 const TRACEL_TOML: &str = "tracel.toml";
@@ -29,7 +34,12 @@ const TRACEL_ENV_VALUES: &str =
 /// `staging-n` spellings of the `tracel` CLI. Fails with [`ConsoleError::InvalidSetting`] for any
 /// other value.
 pub fn env_from_environment() -> Result<Env, ConsoleError> {
-    let value = std::env::var_os(TRACEL_ENV).map(|value| value.to_string_lossy().into_owned());
+    env_from_vars(|name| std::env::var_os(name))
+}
+
+/// [`env_from_environment`], reading `TRACEL_ENV` from `lookup`.
+pub fn env_from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Env, ConsoleError> {
+    let value = lookup(TRACEL_ENV).map(|value| value.to_string_lossy().into_owned());
     parse_env(value.as_deref())
 }
 
@@ -66,7 +76,14 @@ pub enum CredentialSource {
 impl CredentialSource {
     /// `TRACEL_API_KEY` when it is set and not empty, else the stored `tracel login` session.
     pub fn from_env() -> Self {
-        TracelCredentials::from_env().map_or(Self::StoredLogin, Self::Explicit)
+        Self::from_vars(|name| std::env::var_os(name))
+    }
+
+    /// [`from_env`](Self::from_env), reading `TRACEL_API_KEY` from `lookup`.
+    pub fn from_vars(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+        non_empty(lookup(TRACEL_API_KEY)).map_or(Self::StoredLogin, |key| {
+            Self::Explicit(TracelCredentials::api_key(key))
+        })
     }
 
     /// The credential this source names for `env`'s console.
@@ -74,16 +91,28 @@ impl CredentialSource {
     /// Reads a stored session from disk, without network I/O. Fails with
     /// [`ConsoleError::NoCredentials`] when `tracel login` stored none for that console.
     pub fn resolve(&self, env: &Env) -> Result<TracelCredentials, ConsoleError> {
+        self.resolve_with(env, FileSessionStore::for_server)
+    }
+
+    /// [`resolve`](Self::resolve), reading a stored session from the store `sessions` gives for
+    /// the console's URL. Only [`StoredLogin`](Self::StoredLogin) asks `sessions` for it.
+    pub fn resolve_with(
+        &self,
+        env: &Env,
+        sessions: impl FnOnce(&Url) -> Result<FileSessionStore, SessionStoreError>,
+    ) -> Result<TracelCredentials, ConsoleError> {
         match self {
             Self::Explicit(credentials) => Ok(credentials.clone()),
-            Self::StoredLogin => stored_login(env),
+            Self::StoredLogin => {
+                let store = sessions(&env.get_url()).map_err(ClientError::from)?;
+                stored_login(env, store)
+            }
         }
     }
 }
 
-/// The app session `tracel login` stored for `env`'s console.
-fn stored_login(env: &Env) -> Result<TracelCredentials, ConsoleError> {
-    let store = FileSessionStore::for_server(&env.get_url()).map_err(ClientError::from)?;
+/// The app session `tracel login` stored in `store` for `env`'s console.
+fn stored_login(env: &Env, store: FileSessionStore) -> Result<TracelCredentials, ConsoleError> {
     if store.load().map_err(ClientError::from)?.is_none() {
         return Err(ConsoleError::NoCredentials);
     }
@@ -120,34 +149,37 @@ impl ProjectRef {
     /// directory. Fails with [`ConsoleError::NoNamespace`] or [`ConsoleError::NoProject`] when
     /// neither names it.
     pub fn from_env() -> Result<Self, ConsoleError> {
-        let namespace = non_empty_var(TRACEL_NAMESPACE);
-        let project = non_empty_var(TRACEL_PROJECT);
+        Self::from_vars(|name| std::env::var_os(name), Path::new("."))
+    }
+
+    /// [`from_env`](Self::from_env), reading the variables from `lookup` and `tracel.toml` from
+    /// `dir`.
+    pub fn from_vars(
+        lookup: impl Fn(&str) -> Option<OsString>,
+        dir: &Path,
+    ) -> Result<Self, ConsoleError> {
+        let namespace = non_empty(lookup(TRACEL_NAMESPACE));
+        let project = non_empty(lookup(TRACEL_PROJECT));
         let file = if namespace.is_some() && project.is_some() {
             TracelToml::default()
         } else {
-            TracelToml::read(Path::new(TRACEL_TOML))
+            TracelToml::read(&dir.join(TRACEL_TOML))
         };
 
-        locate_project(namespace, project, file)
+        let namespace = namespace
+            .or(file.namespace)
+            .ok_or(ConsoleError::NoNamespace)?;
+        let name = project.or(file.project).ok_or(ConsoleError::NoProject)?;
+
+        Ok(Self { namespace, name })
     }
 }
 
-fn locate_project(
-    namespace: Option<String>,
-    project: Option<String>,
-    file: TracelToml,
-) -> Result<ProjectRef, ConsoleError> {
-    let namespace = namespace
-        .or(file.namespace)
-        .ok_or(ConsoleError::NoNamespace)?;
-    let name = project.or(file.project).ok_or(ConsoleError::NoProject)?;
-
-    Ok(ProjectRef { namespace, name })
-}
-
-/// A variable's value; an empty one reads as unset.
-fn non_empty_var(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
+/// A variable's value; an empty or non-UTF-8 one reads as unset.
+fn non_empty(value: Option<OsString>) -> Option<String> {
+    value
+        .and_then(|value| value.into_string().ok())
+        .filter(|value| !value.is_empty())
 }
 
 /// The project a `tracel.toml` names with its `namespace` and `project` keys.
@@ -172,18 +204,29 @@ impl TracelToml {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
+    use rstest::{fixture, rstest};
+    use tempfile::TempDir;
+    use tracel_client::console::{AccessToken, RefreshToken, StoredAppSession};
+
     use super::*;
+
+    const API_KEY: &str = "tcl_key";
 
     fn located(
         namespace: Option<&str>,
         project: Option<&str>,
         tracel_toml: &str,
     ) -> Result<ProjectRef, ConsoleError> {
-        locate_project(
-            namespace.map(str::to_string),
-            project.map(str::to_string),
-            TracelToml::parse(tracel_toml),
-        )
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tracel.toml"), tracel_toml).unwrap();
+        let lookup = |name: &str| match name {
+            TRACEL_NAMESPACE => namespace.map(OsString::from),
+            TRACEL_PROJECT => project.map(OsString::from),
+            _ => None,
+        };
+        ProjectRef::from_vars(lookup, dir.path())
     }
 
     #[test]
@@ -252,13 +295,88 @@ mod tests {
         assert!(no_project.to_string().contains("tracel.toml"));
     }
 
+    fn api_key(value: Option<&str>) -> CredentialSource {
+        CredentialSource::from_vars(|name| match name {
+            TRACEL_API_KEY => value.map(OsString::from),
+            _ => None,
+        })
+    }
+
+    #[fixture]
+    fn sessions() -> TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    fn store_in(sessions: &TempDir) -> FileSessionStore {
+        FileSessionStore::new(sessions.path().join("session.json"))
+    }
+
+    fn no_store(_: &Url) -> Result<FileSessionStore, SessionStoreError> {
+        Err(SessionStoreError::new("no home directory"))
+    }
+
     #[test]
-    fn an_explicit_credential_is_used_as_given() {
-        let source = CredentialSource::Explicit(TracelCredentials::api_key("tcl_key"));
+    fn tracel_api_key_is_the_credential() {
+        assert!(matches!(
+            api_key(Some(API_KEY)),
+            CredentialSource::Explicit(TracelCredentials::ApiKey(key)) if key == API_KEY
+        ));
+    }
+
+    #[rstest]
+    #[case::unset(None)]
+    #[case::empty(Some(""))]
+    fn without_tracel_api_key_the_credential_is_the_stored_login(#[case] value: Option<&str>) {
+        assert!(matches!(api_key(value), CredentialSource::StoredLogin));
+    }
+
+    #[test]
+    fn a_stored_login_is_read_from_the_store_for_its_console() {
+        let env = Env::Staging(2);
+        let mut asked_for = None;
+
+        let _ = CredentialSource::StoredLogin.resolve_with(&env, |url| {
+            asked_for = Some(url.clone());
+            no_store(url)
+        });
+
+        assert_eq!(asked_for, Some(env.get_url()));
+    }
+
+    #[rstest]
+    fn a_store_without_a_session_gives_no_credential(sessions: TempDir) {
+        assert!(matches!(
+            CredentialSource::StoredLogin
+                .resolve_with(&Env::Production, |_| Ok(store_in(&sessions))),
+            Err(ConsoleError::NoCredentials)
+        ));
+    }
+
+    #[rstest]
+    fn a_stored_session_is_the_credential(sessions: TempDir) {
+        store_in(&sessions)
+            .save(&StoredAppSession {
+                access_token: AccessToken::new("tcl_at_stored"),
+                access_token_expires_at: SystemTime::UNIX_EPOCH,
+                refresh_token: RefreshToken::new("tcl_rt_stored"),
+                refresh_token_expires_at: SystemTime::UNIX_EPOCH,
+            })
+            .unwrap();
 
         assert!(matches!(
-            source.resolve(&Env::Development),
-            Ok(TracelCredentials::ApiKey(key)) if key == "tcl_key"
+            CredentialSource::StoredLogin
+                .resolve_with(&Env::Production, |_| Ok(store_in(&sessions))),
+            Ok(TracelCredentials::AppSession(_))
+        ));
+    }
+
+    #[test]
+    fn an_explicit_credential_needs_no_session_store() {
+        let source = CredentialSource::Explicit(TracelCredentials::api_key(API_KEY));
+
+        assert!(matches!(
+            source.resolve_with(&Env::Production, no_store),
+            Ok(TracelCredentials::ApiKey(key)) if key == API_KEY
         ));
     }
 

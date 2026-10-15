@@ -29,3 +29,7 @@ tracel-experiment-remote = { workspace = true }
 tracel-inference = { workspace = true }
 tracel-models = { workspace = true }
 url = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+tempfile = { workspace = true }

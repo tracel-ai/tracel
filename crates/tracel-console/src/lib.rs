@@ -10,6 +10,8 @@
 //! project from `TRACEL_ENV`, `TRACEL_API_KEY`, `TRACEL_NAMESPACE` and `TRACEL_PROJECT`, falling
 //! back to the `tracel login` sign-in and to `tracel.toml`. [`env_from_environment`],
 //! [`CredentialSource::from_env`] and [`ProjectRef::from_env`] read each of the three on its own.
+//! Their `from_vars` variants, and [`ProjectHandle::from_vars`], read the variables from a lookup,
+//! `tracel.toml` from a directory and the sign-in from a session store the caller gives.
 
 mod console;
 mod datasets;
@@ -24,8 +26,10 @@ mod wire;
 
 pub use console::{Console, ProjectHandle};
 pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibility};
-pub use env::{CredentialSource, ProjectRef, env_from_environment};
+pub use env::{CredentialSource, ProjectRef, env_from_environment, env_from_vars};
 pub use error::ConsoleError;
 pub use login::{DeviceApproval, DeviceLogin, refresh_session, sign_out};
 pub use tracel_client::console::auth::IssuedAppSession;
-pub use tracel_client::console::{AccessToken, Env, RefreshToken, TracelCredentials};
+pub use tracel_client::console::{
+    AccessToken, Env, FileSessionStore, RefreshToken, SessionStoreError, TracelCredentials,
+};
