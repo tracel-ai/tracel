@@ -103,7 +103,7 @@ complete, runnable version.
 
 | Variable | Value | Default |
 | --- | --- | --- |
-| `TRACEL_TARGET` | `offline` or `console` | `offline` |
+| `TRACEL_TARGET` | `offline`, `console`, or `station` with the `station` feature of `tracel` | `offline` |
 | `TRACEL_RUNS_DIR` | the directory offline runs are recorded under | `./runs` |
 | `TRACEL_ENV` | the console to reach | `Production` |
 | `TRACEL_API_KEY` | an API key or a job token | the stored `tracel login` session |
