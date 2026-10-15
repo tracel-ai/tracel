@@ -33,10 +33,9 @@
 //! JSON document. The schema's other constraints, such as `minimum` or `pattern`, are not checked
 //! here: the job's input is checked as a whole once it is resolved.
 //!
-//! `--help`, `--version` and `--config` belong to the command line, so a field named `help`,
-//! `version` or `config` has no flag; neither does a field whose key is not made of letters,
-//! digits, `_` and `-`, or whose flag name an earlier field took. Such a field is set through the
-//! JSON document or `--config`.
+//! `--help` and `--config` belong to the command line, so a field named `help` or `config` has no
+//! flag; neither does a field whose key is not made of letters, digits, `_` and `-`, or whose flag
+//! name an earlier field took. Such a field is set through the JSON document or `--config`.
 //!
 //! ## Input
 //!

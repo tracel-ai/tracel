@@ -692,7 +692,7 @@ mod tests {
 
         let command = job_command(&job.job());
         let longs: Vec<&str> = command.get_arguments().filter_map(Arg::get_long).collect();
-        assert_eq!(longs, ["epochs", "config"]);
+        assert_eq!(longs, ["epochs", "version", "config"]);
         assert_eq!(
             input_from(&job, &["--config", "large.json"], &files)
                 .unwrap()
@@ -704,8 +704,8 @@ mod tests {
             ErrorKind::DisplayHelp
         );
         assert_eq!(
-            input(&job, &["--version"]).unwrap_err().kind(),
-            ErrorKind::UnknownArgument
+            input(&job, &["--version", "3"]).unwrap(),
+            json!({"version": 3})
         );
     }
 

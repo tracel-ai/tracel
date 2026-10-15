@@ -9,7 +9,7 @@ use serde_json::{Map, Number, Value};
 use crate::JobDefinition;
 
 /// Flag names the command line keeps: a field with one of these names has no flag.
-const RESERVED: [&str; 3] = ["help", "version", "config"];
+const RESERVED: [&str; 2] = ["help", "config"];
 
 /// The URI the input schema is registered under, which its references resolve against.
 const BASE: &str = "json-schema:///input";
@@ -846,6 +846,7 @@ mod tests {
                 ("batch-size".to_string(), Kind::Integer),
                 ("config.path".to_string(), Kind::String),
                 ("optimizer.config".to_string(), Kind::Integer),
+                ("version".to_string(), Kind::String),
             ]
         );
     }
