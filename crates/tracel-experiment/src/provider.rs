@@ -144,8 +144,6 @@ impl Experiments {
         E: From<ExperimentError> + fmt::Display,
     {
         let run = self.start(name)?;
-        // Worker-thread panics (a kernel compiler, a data loader) land in the
-        // run's log even when they never unwind the run itself.
         let _panic_watch = run.capture_panics();
         match run.in_scope(|| f(&run)) {
             Ok(output) => {
