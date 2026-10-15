@@ -51,21 +51,18 @@ pub struct StationRunnerClient {
 }
 
 impl StationRunnerClient {
-    pub fn new(base_url: Url) -> Self {
+    /// The client of the station at `base_url`, an `http` or `https` URL.
+    pub fn new(base_url: Url) -> Result<Self, reqwest::Error> {
         let events_stream_client = Client::builder()
             .timeout(None)
             .tcp_keepalive(Duration::from_secs(60))
-            .build()
-            .expect("failed to build HTTP client");
-        let short_call_client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .expect("failed to build HTTP client");
-        Self {
+            .build()?;
+        let short_call_client = Client::builder().timeout(Duration::from_secs(60)).build()?;
+        Ok(Self {
             base_url,
             events_stream_client,
             short_call_client,
-        }
+        })
     }
 
     /// Register with the station; the successful response IS the runner's event stream.

@@ -13,6 +13,15 @@ pub enum RunnerError {
         /// Why it does not parse.
         source: url::ParseError,
     },
+    /// The station URL is not an `http` or `https` URL.
+    #[error("station url '{url}' is not an http or https url")]
+    NotHttp {
+        /// The URL given.
+        url: String,
+    },
+    /// The HTTP client that reaches the station could not be built.
+    #[error("failed to build the http client: {0}")]
+    HttpClient(#[source] reqwest::Error),
     /// The runner was given no jobs to serve.
     #[error("no jobs registered")]
     NoJobs,

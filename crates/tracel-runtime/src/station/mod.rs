@@ -88,6 +88,9 @@ impl StationRunner {
             url: self.url.clone(),
             source,
         })?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(RunnerError::NotHttp { url: self.url });
+        }
         if jobs.definitions().next().is_none() {
             return Err(RunnerError::NoJobs);
         }
@@ -97,7 +100,7 @@ impl StationRunner {
             metadata: self.metadata,
             jobs: jobs.definitions().map(RegisteredJob::from).collect(),
         };
-        let client = StationRunnerClient::new(url);
+        let client = StationRunnerClient::new(url).map_err(RunnerError::HttpClient)?;
         let executor = Executor::new(Arc::new(jobs), Arc::new(client.clone()));
         Err(serve::serve_forever(client, register, executor))
     }
@@ -105,6 +108,8 @@ impl StationRunner {
 
 #[cfg(test)]
 mod tests {
+    use rstest::{fixture, rstest};
+
     use super::*;
     use crate::BoxError;
 
@@ -112,17 +117,33 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn given_invalid_url_when_running_then_fails_to_start() {
-        let result = StationRunner::new("not a url").run(Jobs::new().job("train", train));
+    #[fixture]
+    fn jobs() -> Jobs {
+        Jobs::new().job("train", train)
+    }
 
-        assert!(matches!(result, Err(RunnerError::InvalidUrl { .. })));
+    #[rstest]
+    fn a_url_that_does_not_parse_does_not_start_the_runner(jobs: Jobs) {
+        let given = "not a url";
+
+        let failed = StationRunner::new(given).run(jobs);
+
+        assert!(matches!(failed, Err(RunnerError::InvalidUrl { url, .. }) if url == given));
+    }
+
+    #[rstest]
+    #[case::a_host_and_port("localhost:8000")]
+    #[case::of_another_scheme("ftp://station")]
+    fn a_url_that_is_not_http_does_not_start_the_runner(jobs: Jobs, #[case] given: &str) {
+        let failed = StationRunner::new(given).run(jobs);
+
+        assert!(matches!(failed, Err(RunnerError::NotHttp { url }) if url == given));
     }
 
     #[test]
-    fn given_no_jobs_when_running_then_fails_to_start() {
-        let result = StationRunner::new("http://localhost:9000").run(Jobs::new());
+    fn a_runner_with_no_jobs_does_not_start() {
+        let failed = StationRunner::new("http://localhost:9000").run(Jobs::new());
 
-        assert!(matches!(result, Err(RunnerError::NoJobs)));
+        assert!(matches!(failed, Err(RunnerError::NoJobs)));
     }
 }
