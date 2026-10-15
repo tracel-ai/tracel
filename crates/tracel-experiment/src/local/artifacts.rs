@@ -363,6 +363,16 @@ mod tests {
         );
     }
 
+    #[rstest]
+    fn an_artifact_never_saved_does_not_load(local_run: LocalRun) {
+        let loaded =
+            local_run
+                .run
+                .use_artifact::<Files>(local_run.run.id().clone(), "missing", &());
+
+        assert!(loaded.is_err());
+    }
+
     #[test]
     fn an_artifact_with_a_nested_name_loads_back_with_its_nested_files() {
         let dir = tempfile::tempdir().unwrap();
