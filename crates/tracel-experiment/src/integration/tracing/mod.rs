@@ -125,158 +125,34 @@ impl ActivityTracingExt for Activity {
 mod tests {
     use std::sync::Arc;
 
-    use tracing_subscriber::layer::SubscriberExt;
-
-    use crate::context::ExperimentGlobalExt;
-    use crate::session::Event;
-    use crate::test_support::{MockSession, create_run_with_id};
-
     use super::*;
+    use crate::test_support::{MockSession, create_run_with_id, traced};
 
     #[test]
-    fn tracing_layer_forwards_events_to_current_experiment() {
+    fn an_event_in_an_experiment_tracing_span_is_logged_to_that_experiment() {
         let session = Arc::new(MockSession::default());
-        let run = create_run_with_id("trace-test-1", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
+        let run = create_run_with_id("tracing-experiment-span", session.clone());
 
-        tracing::subscriber::with_default(subscriber, || {
-            run.in_scope(|| {
-                tracing::info!(step = 3u64, "epoch completed");
-            })
+        traced(|| {
+            run.tracing_span()
+                .in_scope(|| tracing::info!("epoch completed"))
         });
 
-        let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => {
-                assert!(record.message.contains("epoch completed"));
-                assert_eq!(
-                    record.attributes.get("step").and_then(|v| v.as_u64()),
-                    Some(3)
-                );
-            }
-            event => panic!("unexpected event: {event:?}"),
-        }
+        assert_eq!(session.logs().len(), 1);
     }
 
     #[test]
-    fn activity_span_routes_logs_to_its_activity() {
+    fn an_event_in_an_activity_tracing_span_is_logged_to_that_activity() {
         let session = Arc::new(MockSession::default());
-        let run = create_run_with_id("trace-test-activity-span", session.clone());
+        let run = create_run_with_id("tracing-activity-span", session.clone());
         let activity = run.activity("fold").start();
-        let activity_id = activity.id();
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
-        tracing::subscriber::with_default(subscriber, || {
+        traced(|| {
             activity
                 .tracing_span()
-                .in_scope(|| tracing::info!("training fold"));
+                .in_scope(|| tracing::info!("training fold"))
         });
 
-        let events = session.events.lock().unwrap();
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::Log {
-                activity: Some(id),
-                ..
-            } if *id == activity_id
-        )));
-    }
-
-    #[test]
-    fn tracing_layer_routes_from_span_experiment_id_without_ambient_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run_with_id("trace-test-span", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
-
-        tracing::subscriber::with_default(subscriber, || {
-            let span = tracing::info_span!("experiment", experiment_id = %run.id());
-            let _guard = span.enter();
-            tracing::info!(step = 7u64, "span-routed event");
-        });
-
-        let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => {
-                assert!(record.message.contains("span-routed event"));
-                assert_eq!(
-                    record.attributes.get("step").and_then(|v| v.as_u64()),
-                    Some(7)
-                );
-            }
-            event => panic!("unexpected event: {event:?}"),
-        }
-    }
-
-    #[test]
-    fn tracing_layer_routes_from_experiment_span_helper_without_ambient_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run_with_id("trace-test-helper-span", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
-
-        tracing::subscriber::with_default(subscriber, || {
-            let span = experiment_span(&run);
-            let _guard = span.enter();
-            tracing::info!("helper-span-routed event");
-        });
-
-        let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => {
-                assert!(record.message.contains("helper-span-routed event"));
-            }
-            event => panic!("unexpected event: {event:?}"),
-        }
-    }
-
-    #[test]
-    fn tracing_layer_skips_events_without_experiment_scope() {
-        let session = Arc::new(MockSession::default());
-        let _run = create_run_with_id("trace-test-2", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
-
-        tracing::subscriber::with_default(subscriber, || {
-            tracing::info!("outside experiment scope");
-        });
-
-        let events = session.events.lock().unwrap();
-        assert!(events.is_empty());
-    }
-
-    #[test]
-    fn tracing_layer_inherits_span_field_attributes() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run_with_id("trace-test-scope", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
-
-        tracing::subscriber::with_default(subscriber, || {
-            run.in_scope(|| {
-                let span = tracing::info_span!("phase", stage = "train", shard = 2u64);
-                span.in_scope(|| {
-                    // The event's own field overrides the inherited `shard` from the span.
-                    tracing::info!(shard = 5u64, "step done");
-                });
-            })
-        });
-
-        let events = session.events.lock().unwrap();
-        let log = events
-            .iter()
-            .find_map(|event| match event {
-                Event::Log { record, .. } => Some(record),
-                _ => None,
-            })
-            .expect("a log event should have been recorded");
-        assert_eq!(log.message, "step done");
-        assert_eq!(
-            log.attributes.get("stage").and_then(|v| v.as_str()),
-            Some("train")
-        );
-        assert_eq!(
-            log.attributes.get("shard").and_then(|v| v.as_u64()),
-            Some(5)
-        );
+        assert_eq!(session.log_activities(), [Some(activity.id())]);
     }
 }

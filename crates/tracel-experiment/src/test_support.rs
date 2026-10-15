@@ -1,9 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use rstest::fixture;
+use tracing_subscriber::layer::SubscriberExt;
 
 use crate::activity::{ActivityEvent, ActivityId, ActivitySpec};
 use crate::error::ExperimentError;
+use crate::integration::tracing::tracing_log_layer;
 use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl, LogRecord};
@@ -146,4 +148,8 @@ pub fn mock_run() -> MockRun {
         run: create_run(session.clone()),
         session,
     }
+}
+
+pub fn traced<T>(f: impl FnOnce() -> T) -> T {
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(tracing_log_layer()), f)
 }
