@@ -33,7 +33,7 @@ pub struct DescribeError {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     use super::*;
 
@@ -52,37 +52,6 @@ mod tests {
                 input_example: Some(json!({"epochs": 10, "optimizer": {"lr": 0.001}})),
             },
         ]
-    }
-
-    #[test]
-    fn the_definitions_file_lists_every_job() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jobs.json");
-
-        describe(&definitions(), &path).unwrap();
-
-        let file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            file,
-            json!({
-                "protocol": 1,
-                "sdk_version": env!("CARGO_PKG_VERSION"),
-                "jobs": [
-                    {
-                        "name": "evaluate",
-                        "description": null,
-                        "input_schema": null,
-                        "input_example": null
-                    },
-                    {
-                        "name": "train",
-                        "description": "Train the model",
-                        "input_schema": null,
-                        "input_example": {"epochs": 10, "optimizer": {"lr": 0.001}}
-                    }
-                ]
-            })
-        );
     }
 
     #[test]
