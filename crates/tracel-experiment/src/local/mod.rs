@@ -29,10 +29,12 @@ use status::{STATUS_FILE, Status};
 ///
 /// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`. Each run
 /// keeps its status in `status.json`, written when the run starts and again when it ends, appends
-/// its events to `events.jsonl`, and saves its artifacts under `artifacts/`. Creating a
-/// `LocalExperiments` performs no I/O; the first run creates the directories. When it creates
-/// `dir` itself, it writes a `.gitignore` there that ignores everything under it, so the records
-/// stay out of git and of code packages; a `dir` that already exists is left as it is.
+/// its events to `events.jsonl`, and saves its artifacts under `artifacts/`, each in the directory
+/// its name gives, such as `checkpoints/best`; a name that is not a relative path of plain
+/// components, such as `..` or an absolute path, is refused. Creating a `LocalExperiments`
+/// performs no I/O; the first run creates the directories. When it creates `dir` itself, it writes
+/// a `.gitignore` there that ignores everything under it, so the records stay out of git and of
+/// code packages; a `dir` that already exists is left as it is.
 ///
 /// `status.json` names the experiment and numbers the run, says whether the run is `running`,
 /// `completed` or `failed`, when it started and ended, in RFC 3339 UTC to the second, and why it

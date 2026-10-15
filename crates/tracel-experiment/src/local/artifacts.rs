@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use relative_path::RelativePath;
 use tracel_artifact::bundle::FsBundle;
 
 use crate::ExperimentId;
@@ -14,7 +15,8 @@ pub fn save_artifact(
     name: &str,
     artifact: Box<BundleFn>,
 ) -> Result<(), ExperimentError> {
-    let artifact_root = root.join("artifacts").join(name);
+    let artifact_root = artifact_dir(root, name)
+        .map_err(|message| ExperimentError::new(ExperimentErrorKind::Artifact, message))?;
     if artifact_root.exists() {
         fs::remove_dir_all(&artifact_root).map_err(|err| {
             ExperimentError::with_source(
@@ -53,7 +55,8 @@ impl ExperimentArtifactReader for LocalExperimentReader {
         name: &str,
     ) -> Result<LoadedArtifact, ExperimentReaderError> {
         let experiment_root = parse_local_experiment_root(&self.root, &experiment_id)?;
-        let artifact_root = experiment_root.join("artifacts").join(name);
+        let artifact_root =
+            artifact_dir(&experiment_root, name).map_err(ExperimentReaderError::new)?;
 
         if !artifact_root.is_dir() {
             return Err(ExperimentReaderError::new(format!(
@@ -93,6 +96,19 @@ fn parse_local_experiment_root(
     Ok(root.join(experiment_dir))
 }
 
+/// The directory the artifact `name` of the run recorded in `root` is saved in.
+///
+/// `name` is a relative path inside the run's `artifacts` directory, such as `checkpoints/best`,
+/// a leading `/` included. Fails when it resolves to that directory itself or to one outside it,
+/// as `..` does, or when it holds a `\`, which separates paths on Windows only.
+fn artifact_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
+    let path = RelativePath::new(name).normalize();
+    if name.contains('\\') || path.as_str().is_empty() || path.starts_with("..") {
+        return Err(format!("Invalid local artifact name: {name:?}"));
+    }
+    Ok(path.to_path(root.join("artifacts")))
+}
+
 fn collect_bundle_files(root: &Path, current: &Path) -> Result<Vec<String>, std::io::Error> {
     let mut files = Vec::new();
     for entry in fs::read_dir(current)? {
@@ -117,11 +133,12 @@ fn collect_bundle_files(root: &Path, current: &Path) -> Result<Vec<String>, std:
 mod tests {
     use std::io::Read;
 
+    use rstest::rstest;
     use tracel_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 
     use super::*;
     use crate::ArtifactKind;
-    use crate::local::test_support::run;
+    use crate::local::test_support::{LocalRun, local_run, run};
 
     /// A one-file artifact.
     #[derive(Debug, PartialEq)]
@@ -164,6 +181,33 @@ mod tests {
         let note: Note = second.use_artifact(first_id, "note", &()).unwrap();
 
         assert_eq!(note, Note("kept".to_string()));
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::current(".")]
+    #[case::parent("..")]
+    #[case::parent_through_a_nested_name("checkpoints/../..")]
+    #[case::windows_separator("..\\outside")]
+    fn an_artifact_name_not_inside_the_run_artifacts_is_refused(#[case] name: &str) {
+        assert!(artifact_dir(Path::new("run"), name).is_err());
+    }
+
+    #[rstest]
+    fn an_absolute_artifact_name_is_saved_inside_its_run(local_run: LocalRun) {
+        let outside = local_run.runs.path().join("outside");
+
+        local_run
+            .run
+            .save_artifact(
+                outside.to_str().unwrap(),
+                ArtifactKind::Other,
+                Note("saved".to_string()),
+                &(),
+            )
+            .unwrap();
+
+        assert!(!outside.exists());
     }
 
     #[test]

@@ -2,10 +2,26 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use rstest::fixture;
 use serde_json::Value;
+use tempfile::TempDir;
 
 use super::LocalExperiments;
 use crate::{ExperimentProvider, ExperimentRun};
+
+pub const EXPERIMENT: &str = "mnist";
+
+pub struct LocalRun {
+    pub run: ExperimentRun,
+    pub runs: TempDir,
+}
+
+#[fixture]
+pub fn local_run() -> LocalRun {
+    let runs = tempfile::tempdir().unwrap();
+    let run = run(runs.path(), EXPERIMENT);
+    LocalRun { run, runs }
+}
 
 pub fn run(dir: &Path, name: &str) -> ExperimentRun {
     LocalExperiments::new(dir)

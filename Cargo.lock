@@ -7312,6 +7312,8 @@ version = "0.12.0"
 dependencies = [
  "burn",
  "chrono",
+ "relative-path",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",
