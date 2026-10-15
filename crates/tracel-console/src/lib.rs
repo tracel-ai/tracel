@@ -4,7 +4,8 @@
 //!
 //! [`Console`] owns one connection to the console. Creating it performs no I/O: the first
 //! request verifies the credential. Project handles are cheap views over that shared client and
-//! vend backend-agnostic, project-scoped capabilities without performing I/O when created.
+//! vend backend-agnostic, project-scoped registries and services without performing I/O when
+//! created.
 //!
 //! [`Console::from_env`] and [`ProjectHandle::from_env`] read the console, the credential and the
 //! project from `TRACEL_ENV`, `TRACEL_API_KEY`, `TRACEL_NAMESPACE` and `TRACEL_PROJECT`, falling
