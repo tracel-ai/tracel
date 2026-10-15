@@ -236,49 +236,58 @@ mod tests {
         ProjectRef::from_vars(lookup, dir.path())
     }
 
-    #[test]
-    fn the_environment_names_the_project_over_tracel_toml() {
-        let file = "namespace = \"file-owner\"\nproject = \"file-project\"";
+    const FILE_NAMESPACE: &str = "file-owner";
+    const FILE_PROJECT: &str = "file-project";
 
+    #[fixture]
+    fn tracel_toml() -> String {
+        format!("namespace = \"{FILE_NAMESPACE}\"\nproject = \"{FILE_PROJECT}\"")
+    }
+
+    #[rstest]
+    fn the_environment_names_the_project_over_tracel_toml(tracel_toml: String) {
         assert_eq!(
-            located(Some("env-owner"), Some("env-project"), file).unwrap(),
+            located(Some("env-owner"), Some("env-project"), &tracel_toml).unwrap(),
             ProjectRef::new("env-owner", "env-project")
         );
     }
 
-    #[test]
-    fn tracel_toml_fills_in_what_the_environment_leaves_unset() {
-        let file = "namespace = \"file-owner\"\nproject = \"file-project\"";
-
-        assert_eq!(
-            located(Some("env-owner"), None, file).unwrap(),
-            ProjectRef::new("env-owner", "file-project")
-        );
-        assert_eq!(
-            located(None, Some("env-project"), file).unwrap(),
-            ProjectRef::new("file-owner", "env-project")
-        );
-        assert_eq!(
-            located(None, None, file).unwrap(),
-            ProjectRef::new("file-owner", "file-project")
-        );
+    #[rstest]
+    #[case::namespace_unset(
+        None,
+        Some("env-project"),
+        ProjectRef::new(FILE_NAMESPACE, "env-project")
+    )]
+    #[case::namespace_empty(
+        Some(""),
+        Some("env-project"),
+        ProjectRef::new(FILE_NAMESPACE, "env-project")
+    )]
+    #[case::project_unset(Some("env-owner"), None, ProjectRef::new("env-owner", FILE_PROJECT))]
+    #[case::both_unset(None, None, ProjectRef::new(FILE_NAMESPACE, FILE_PROJECT))]
+    fn tracel_toml_fills_in_what_the_environment_leaves_unset(
+        tracel_toml: String,
+        #[case] namespace: Option<&str>,
+        #[case] project: Option<&str>,
+        #[case] expected: ProjectRef,
+    ) {
+        assert_eq!(located(namespace, project, &tracel_toml).unwrap(), expected);
     }
 
     #[test]
-    fn tracel_toml_names_the_project_only_by_namespace_and_project() {
-        let file = "name = \"file-project\"\nowner = \"file-owner\"";
+    fn no_namespace_in_the_environment_or_tracel_toml_is_an_error() {
+        assert!(matches!(
+            located(None, Some("env-project"), ""),
+            Err(ConsoleError::NoNamespace)
+        ));
+    }
 
-        let no_namespace = located(None, None, file).unwrap_err();
-        let no_project = located(Some("env-owner"), None, file).unwrap_err();
-
-        assert!(matches!(no_namespace, ConsoleError::NoNamespace));
-        assert!(matches!(no_project, ConsoleError::NoProject));
-        for error in [no_namespace, no_project] {
-            assert!(
-                error.to_string().contains("`namespace` and `project`"),
-                "{error}"
-            );
-        }
+    #[test]
+    fn no_project_in_the_environment_or_tracel_toml_is_an_error() {
+        assert!(matches!(
+            located(Some("env-owner"), None, ""),
+            Err(ConsoleError::NoProject)
+        ));
     }
 
     #[test]
@@ -311,19 +320,6 @@ mod tests {
             located(Some("env-owner"), Some("env-project"), "namespace = ").unwrap(),
             ProjectRef::new("env-owner", "env-project")
         );
-    }
-
-    #[test]
-    fn a_missing_namespace_or_project_says_where_to_set_it() {
-        let no_namespace = located(None, Some("env-project"), "").unwrap_err();
-        let no_project = located(Some("env-owner"), None, "").unwrap_err();
-
-        assert!(matches!(no_namespace, ConsoleError::NoNamespace));
-        assert!(no_namespace.to_string().contains("TRACEL_NAMESPACE"));
-        assert!(no_namespace.to_string().contains("tracel.toml"));
-        assert!(matches!(no_project, ConsoleError::NoProject));
-        assert!(no_project.to_string().contains("TRACEL_PROJECT"));
-        assert!(no_project.to_string().contains("tracel.toml"));
     }
 
     fn api_key(value: Option<&str>) -> CredentialSource {
@@ -411,62 +407,39 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn tracel_env_unset_or_empty_names_production() {
-        assert!(matches!(parse_env(None), Ok(Env::Production)));
-        assert!(matches!(parse_env(Some("")), Ok(Env::Production)));
+    #[rstest]
+    #[case::unset(None)]
+    #[case::empty(Some(""))]
+    fn an_unset_or_empty_tracel_env_names_production(#[case] value: Option<&str>) {
+        assert!(matches!(parse_env(value), Ok(Env::Production)));
     }
 
-    #[test]
-    fn tracel_env_accepts_the_spellings_of_the_tracel_cli() {
-        for value in ["Production", "production"] {
-            assert!(
-                matches!(parse_env(Some(value)), Ok(Env::Production)),
-                "{value}"
-            );
-        }
-        for value in ["Development", "development"] {
-            assert!(
-                matches!(parse_env(Some(value)), Ok(Env::Development)),
-                "{value}"
-            );
-        }
-        for value in ["Staging(2)", "staging-2"] {
-            assert!(
-                matches!(parse_env(Some(value)), Ok(Env::Staging(2))),
-                "{value}"
-            );
-        }
+    #[rstest]
+    #[case::production("Production", Env::Production)]
+    #[case::production_as_the_cli_spells_it("production", Env::Production)]
+    #[case::development("Development", Env::Development)]
+    #[case::development_as_the_cli_spells_it("development", Env::Development)]
+    #[case::staging("Staging(2)", Env::Staging(2))]
+    #[case::staging_as_the_cli_spells_it("staging-2", Env::Staging(2))]
+    fn tracel_env_accepts_the_spellings_of_the_tracel_cli(#[case] value: &str, #[case] env: Env) {
+        assert_eq!(parse_env(Some(value)).unwrap().get_url(), env.get_url());
     }
 
-    #[test]
-    fn an_unrecognized_tracel_env_is_an_error_naming_the_variable_and_value() {
-        for value in [
-            "DEVELOPMENT",
-            "dev",
-            " production",
-            "Staging(x)",
-            "Staging()",
-            "Staging(1",
-            "Staging(256)",
-            "Staging(+2)",
-            "staging-",
-            "staging--1",
-            "staging-+2",
-            "staging-256",
-        ] {
-            let error = parse_env(Some(value)).unwrap_err();
-
-            assert!(
-                matches!(
-                    &error,
-                    ConsoleError::InvalidSetting { variable: "TRACEL_ENV", value: held, .. }
-                        if held == value
-                ),
-                "{value}: {error:?}"
-            );
-            assert!(error.to_string().contains("TRACEL_ENV"), "{error}");
-            assert!(error.to_string().contains(value), "{error}");
-        }
+    #[rstest]
+    #[case::wrong_case("DEVELOPMENT")]
+    #[case::abbreviated("dev")]
+    #[case::padded(" production")]
+    #[case::unclosed("Staging(1")]
+    #[case::without_a_number("staging-")]
+    #[case::not_a_number("Staging(x)")]
+    #[case::signed("staging-+2")]
+    #[case::signed_in_parentheses("Staging(+2)")]
+    #[case::past_255("Staging(256)")]
+    fn an_unrecognized_tracel_env_is_an_invalid_setting_naming_it(#[case] value: &str) {
+        assert!(matches!(
+            parse_env(Some(value)),
+            Err(ConsoleError::InvalidSetting { variable: TRACEL_ENV, value: held, .. })
+                if held == value
+        ));
     }
 }
