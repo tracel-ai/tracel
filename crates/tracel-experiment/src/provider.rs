@@ -161,7 +161,6 @@ impl Experiments {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     use serde_json::json;
 
@@ -263,7 +262,7 @@ mod tests {
         assert!(panicked.is_err());
         match fixture.completions().as_slice() {
             [ExperimentCompletion::Failed(reason)] => {
-                assert!(reason.contains("loss is NaN"), "{reason}");
+                assert!(reason.ends_with("loss is NaN"), "{reason}");
             }
             other => panic!("unexpected completions: {other:?}"),
         }
@@ -298,17 +297,17 @@ mod tests {
                 ))
             }
         }
-        let ran = AtomicBool::new(false);
+        let mut ran = false;
 
         let error = Experiments::new(Arc::new(Unreachable))
             .run("train", |_run| -> Result<(), BoxError> {
-                ran.store(true, Ordering::SeqCst);
+                ran = true;
                 Ok(())
             })
             .unwrap_err();
 
         assert_eq!(error.to_string(), "the backend is unreachable");
-        assert!(!ran.load(Ordering::SeqCst));
+        assert!(!ran);
     }
 
     #[test]
