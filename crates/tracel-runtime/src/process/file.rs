@@ -19,7 +19,16 @@ pub fn write_atomically(path: &Path, contents: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use super::*;
+
+    fn entries(dir: &Path) -> Vec<OsString> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect()
+    }
 
     #[test]
     fn the_file_holds_the_contents_and_no_temporary_file_is_left() {
@@ -45,11 +54,14 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_cannot_be_written_leaves_no_file() {
+    fn a_failed_rename_leaves_no_temporary_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing").join("jobs.json");
+        let path = dir.path().join("jobs.json");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("kept"), "").unwrap();
 
-        assert!(write_atomically(&path, "{}").is_err());
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        write_atomically(&path, "{}").unwrap_err();
+
+        assert_eq!(entries(dir.path()), [path.file_name().unwrap()]);
     }
 }

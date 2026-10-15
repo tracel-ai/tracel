@@ -115,6 +115,16 @@ mod tests {
     }
 
     #[test]
+    fn a_nested_scope_gives_way_to_the_one_before_when_its_guard_drops() {
+        let outer = scope("1");
+        let _outer = enter(outer.clone());
+
+        drop(enter(scope("2")));
+
+        assert_eq!(job_num().as_deref(), outer.num());
+    }
+
+    #[test]
     fn each_thread_sees_the_scope_of_the_job_it_runs() {
         let run = |num: &'static str| {
             let scope = scope(num);
