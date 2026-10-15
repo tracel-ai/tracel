@@ -62,7 +62,7 @@ mod tests {
     }
 
     #[test]
-    fn given_event_and_data_when_blank_line_then_frame_is_complete() {
+    fn a_blank_line_completes_the_frame_of_its_event_and_data() {
         let frames = parse(&["event: job", "data: {\"id\":1}", ""]);
 
         assert_eq!(
@@ -75,28 +75,28 @@ mod tests {
     }
 
     #[test]
-    fn given_no_event_name_then_defaults_to_message() {
+    fn a_frame_without_an_event_name_is_a_message() {
         let frames = parse(&["data: hello", ""]);
 
         assert_eq!(frames[0].event, "message");
     }
 
     #[test]
-    fn given_multiple_data_lines_then_joined_with_newline() {
+    fn data_lines_join_with_a_newline() {
         let frames = parse(&["event: job", "data: a", "data: b", ""]);
 
         assert_eq!(frames[0].data, "a\nb");
     }
 
     #[test]
-    fn given_comments_and_other_fields_then_ignored() {
+    fn comments_and_other_fields_are_ignored() {
         let frames = parse(&[": keep-alive", "id: 42", "retry: 1000", ""]);
 
         assert!(frames.is_empty());
     }
 
     #[test]
-    fn given_value_without_leading_space_then_parsed() {
+    fn a_value_needs_no_leading_space() {
         let frames = parse(&["event:job", "data:x", ""]);
 
         assert_eq!(frames[0].event, "job");
@@ -104,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn given_consecutive_frames_then_state_resets_between_them() {
+    fn each_frame_starts_afresh() {
         let frames = parse(&["event: a", "data: 1", "", "data: 2", ""]);
 
         assert_eq!(frames.len(), 2);

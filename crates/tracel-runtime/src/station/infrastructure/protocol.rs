@@ -113,7 +113,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn given_unknown_event_when_decoding_then_yields_none() {
+    fn an_unknown_event_decodes_to_nothing() {
         assert_eq!(RunnerEvent::decode("heartbeat", "{}").unwrap(), None);
     }
 }
