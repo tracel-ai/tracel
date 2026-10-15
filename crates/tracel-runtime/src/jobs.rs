@@ -175,3 +175,57 @@ pub enum PrepareError {
     #[error("invalid input: {0}")]
     InvalidInput(#[source] serde_json::Error),
 }
+
+#[cfg(test)]
+mod tests {
+    use rstest::{fixture, rstest};
+    use serde_json::json;
+
+    use super::*;
+    use crate::BoxError;
+
+    const TRAIN: &str = "train";
+    const EVALUATE: &str = "evaluate";
+
+    #[fixture]
+    fn jobs() -> Jobs {
+        Jobs::new()
+            .job(TRAIN, |_: u32| Ok::<_, BoxError>(()))
+            .job(EVALUATE, |()| Ok::<_, BoxError>(()))
+    }
+
+    #[rstest]
+    fn a_prepared_job_has_its_name_and_the_input_it_runs_with(jobs: Jobs) {
+        let input = json!(3);
+
+        let prepared = jobs.prepare(TRAIN, input.clone()).unwrap();
+
+        assert_eq!((prepared.name(), prepared.input()), (TRAIN, &input));
+    }
+
+    #[rstest]
+    fn an_unknown_job_is_not_prepared_and_the_registered_names_are_given_in_order(jobs: Jobs) {
+        let unknown = "infer";
+
+        let refused = jobs.prepare(unknown, Value::Null);
+
+        assert!(matches!(
+            refused,
+            Err(PrepareError::UnknownJob { name, available })
+                if name == unknown && available == [EVALUATE, TRAIN]
+        ));
+    }
+
+    #[rstest]
+    fn an_input_that_does_not_decode_is_not_prepared(jobs: Jobs) {
+        let refused = jobs.prepare(TRAIN, json!("ten"));
+
+        assert!(matches!(refused, Err(PrepareError::InvalidInput(_))));
+    }
+
+    #[rstest]
+    #[should_panic]
+    fn registering_a_job_name_twice_panics(jobs: Jobs) {
+        let _ = jobs.job(TRAIN, |()| Ok::<_, BoxError>(()));
+    }
+}

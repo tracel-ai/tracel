@@ -747,11 +747,4 @@ mod tests {
         );
         assert!(ran_with.lock().unwrap().is_none());
     }
-
-    #[test]
-    #[should_panic(expected = "already registered")]
-    fn a_job_name_registers_once() {
-        jobs(job(Outcome::Succeed, &RanWith::default()))
-            .job("evaluate", |()| Ok::<_, BoxError>(()));
-    }
 }

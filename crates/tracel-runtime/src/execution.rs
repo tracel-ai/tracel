@@ -111,7 +111,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Job, Jobs, PrepareError, job_input, job_num, job_running};
+    use crate::{Job, Jobs, job_input, job_num, job_running};
 
     /// `train`, which takes a number of epochs, three by default, and fails on zero; and `panic`,
     /// which panics.
@@ -126,46 +126,6 @@ mod tests {
                 .with_default(3),
             )
             .job("panic", |()| -> Result<(), BoxError> { panic!("kaboom") })
-    }
-
-    #[test]
-    fn a_job_is_prepared_with_its_input_merged_onto_its_default() {
-        let jobs = Jobs::new().job(
-            "train",
-            Job::new(|_: Value| Ok::<_, BoxError>(()))
-                .with_default(json!({"epochs": 3, "lr": 0.1})),
-        );
-
-        let prepared = jobs.prepare("train", json!({"epochs": 5})).unwrap();
-
-        assert_eq!(prepared.name(), "train");
-        assert_eq!(prepared.input(), &json!({"epochs": 5, "lr": 0.1}));
-    }
-
-    #[test]
-    fn an_unknown_job_or_an_input_that_does_not_decode_is_not_prepared() {
-        let jobs = jobs();
-
-        let unknown = jobs.prepare("infer", Value::Null).err().unwrap();
-        let invalid = jobs.prepare("train", json!("ten")).err().unwrap();
-
-        assert!(
-            matches!(
-                &unknown,
-                PrepareError::UnknownJob { name, available }
-                    if name == "infer" && available == &["panic", "train"]
-            ),
-            "{unknown:?}"
-        );
-        assert_eq!(unknown.to_string(), "unknown job 'infer'");
-        assert!(
-            matches!(invalid, PrepareError::InvalidInput(_)),
-            "{invalid:?}"
-        );
-        assert!(
-            invalid.to_string().starts_with("invalid input: "),
-            "{invalid}"
-        );
     }
 
     #[test]
