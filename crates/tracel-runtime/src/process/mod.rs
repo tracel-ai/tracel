@@ -215,7 +215,6 @@ mod tests {
             .job("fail", |()| Err::<(), BoxError>("the job failed".into()))
     }
 
-    /// What the command line `program <args>` asks of `jobs`.
     fn parse(jobs: &Jobs, args: &[&str]) -> Result<Request, RunError> {
         let mut command = command_line(jobs, "program");
         read_request(jobs, &mut command, ["program"].iter().chain(args))
