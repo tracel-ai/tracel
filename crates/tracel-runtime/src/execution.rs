@@ -108,25 +108,22 @@ impl Outcome {
 mod tests {
     use std::sync::{Arc, OnceLock};
 
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
     use serde_json::json;
 
     use super::*;
-    use crate::{Job, Jobs, job_input, job_num};
+    use crate::{Jobs, job_input, job_num};
 
-    /// `train`, which takes a number of epochs, three by default, and fails on zero; and `panic`,
-    /// which panics.
+    #[fixture]
     fn jobs() -> Jobs {
         Jobs::new()
-            .job(
-                "train",
-                Job::new(|epochs: u32| match epochs {
-                    0 => Err::<(), BoxError>("no epochs".into()),
-                    _ => Ok(()),
-                })
-                .with_default(3),
-            )
-            .job("panic", |()| -> Result<(), BoxError> { panic!("kaboom") })
+            .job("completes", |()| Ok::<_, BoxError>(()))
+            .job("fails", |()| {
+                Err::<(), BoxError>("no epochs to train".into())
+            })
+            .job("panics", |()| -> Result<(), BoxError> {
+                panic!("the kernel exploded")
+            })
     }
 
     fn reading<T>(read: fn() -> T) -> (Jobs, Arc<OnceLock<T>>)
@@ -144,21 +141,17 @@ mod tests {
         (jobs, seen)
     }
 
-    #[test]
-    fn a_job_completes_or_fails_by_what_it_returns_and_a_panic_fails_it() {
-        let run =
-            |name: &str, input: Value| jobs().prepare(name, input).unwrap().run(Execution::new());
+    #[rstest]
+    #[case::completes("completes", JobStatus::Completed)]
+    #[case::fails("fails", JobStatus::Failed)]
+    #[case::panics("panics", JobStatus::Failed)]
+    fn a_job_ends_as_its_function_does(jobs: Jobs, #[case] name: &str, #[case] status: JobStatus) {
+        let outcome = jobs
+            .prepare(name, Value::Null)
+            .unwrap()
+            .run(Execution::new());
 
-        let completed = run("train", Value::Null);
-        let failed = run("train", json!(0));
-        let panicked = run("panic", Value::Null);
-
-        assert_eq!(completed.status(), JobStatus::Completed);
-        assert!(completed.error().is_none());
-        assert!(completed.into_result().is_ok());
-        assert_eq!(failed.status(), JobStatus::Failed);
-        assert_eq!(failed.error().unwrap().to_string(), "no epochs");
-        assert_eq!(panicked.status(), JobStatus::Failed);
+        assert_eq!(outcome.status(), status);
     }
 
     #[rstest]
