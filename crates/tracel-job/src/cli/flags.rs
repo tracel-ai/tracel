@@ -1,8 +1,9 @@
 //! The flags of a job's command line, read from its input schema: one per field of its input.
 
+use std::error::Error;
 use std::ptr;
 
-use referencing::{Registry, Resolver};
+use referencing::{Registry, Resolver, Retrieve, Uri};
 use serde_json::{Map, Number, Value};
 
 use crate::JobDefinition;
@@ -11,7 +12,7 @@ use crate::JobDefinition;
 const RESERVED: [&str; 3] = ["help", "version", "config"];
 
 /// The URI the input schema is registered under, which its references resolve against.
-const BASE: &str = "urn:tracel:input";
+const BASE: &str = "json-schema:///input";
 
 /// A flag that sets one field of a job's input.
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +164,7 @@ pub fn flags(job: &JobDefinition) -> Vec<Flag> {
         return Vec::new();
     };
     let Ok(registry) = Registry::new()
+        .retriever(Unfetched)
         .add(BASE, schema)
         .and_then(|registry| registry.prepare())
     else {
@@ -186,6 +188,17 @@ pub fn flags(job: &JobDefinition) -> Vec<Flag> {
         keep
     });
     walk.flags
+}
+
+/// Answers each schema the input schema refers to outside itself with `true`, the schema of any
+/// value, since none is fetched: the registry is prepared whatever the input schema refers to, and
+/// a reference into such a schema does not resolve.
+struct Unfetched;
+
+impl Retrieve for Unfetched {
+    fn retrieve(&self, _: &Uri<String>) -> Result<Value, Box<dyn Error + Send + Sync>> {
+        Ok(Value::Bool(true))
+    }
 }
 
 /// Whether `key` can be part of a flag name.
@@ -395,6 +408,7 @@ fn description(schema: &Map<String, Value>) -> Option<String> {
 mod tests {
     use std::collections::HashMap;
 
+    use rstest::rstest;
     use schemars::JsonSchema;
     use serde::Serialize;
     use serde_json::json;
@@ -723,29 +737,53 @@ mod tests {
                 ("value".to_string(), Kind::Integer),
             ]
         );
-        let flags = flags_of(
-            json!({
-                "type": "object",
-                "properties": {
-                    "node": {"$ref": "#"},
-                    "loop": {"$ref": "#/$defs/A"},
-                    "missing": {"$ref": "#/$defs/Missing"}
-                },
-                "$defs": {"A": {"$ref": "#/$defs/B"}, "B": {"$ref": "#/$defs/A"}}
-            }),
-            None,
-        );
         assert_eq!(
-            kinds(&flags),
-            [
-                ("loop".to_string(), Kind::Json),
-                ("missing".to_string(), Kind::Json),
-                ("node".to_string(), Kind::Json),
-            ]
+            kinds(&flags_of(
+                json!({"type": "object", "properties": {"node": {"$ref": "#"}}}),
+                None
+            )),
+            [("node".to_string(), Kind::Json)]
         );
     }
 
+    #[rstest]
+    #[case::missing_from_the_schema("#/$defs/Missing")]
+    #[case::that_comes_back_round("#/$defs/Loop")]
+    #[case::into_another_document("https://example.com/input.json#/$defs/Epochs")]
+    fn a_field_whose_reference_does_not_resolve_takes_json(#[case] reference: &str) {
+        let schema = json!({
+            "type": "object",
+            "properties": {"field": {"$ref": reference}},
+            "$defs": {"Loop": {"$ref": "#/$defs/Loop"}}
+        });
+
+        assert_eq!(flag(&flags_of(schema, None), "field").kind, Kind::Json);
+    }
+
+    #[rstest]
+    #[case::from_a_field(json!({
+        "type": "object",
+        "properties": {
+            "epochs": {"type": "integer"},
+            "remote": {"$ref": "https://example.com/input.json"}
+        }
+    }))]
+    #[case::from_a_definition_to_a_file_beside_it(json!({
+        "type": "object",
+        "properties": {"epochs": {"type": "integer"}},
+        "$defs": {"Shared": {"$ref": "shared.json"}}
+    }))]
+    #[case::to_its_dialect(json!({
+        "$schema": "https://example.com/an-unknown-dialect",
+        "type": "object",
+        "properties": {"epochs": {"type": "integer"}}
+    }))]
+    fn a_schema_that_refers_outside_itself_keeps_its_flags(#[case] schema: Value) {
+        assert_eq!(flag(&flags_of(schema, None), "epochs").kind, Kind::Integer);
+    }
+
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     struct Escaped {
         odd: Odd,
         slash: Slash,
@@ -753,12 +791,14 @@ mod tests {
 
     #[derive(JsonSchema)]
     #[schemars(rename = "Odd name%")]
+    #[expect(dead_code)]
     struct Odd {
         a: u32,
     }
 
     #[derive(JsonSchema)]
     #[schemars(rename = "a/b~c")]
+    #[expect(dead_code)]
     struct Slash {
         b: bool,
     }

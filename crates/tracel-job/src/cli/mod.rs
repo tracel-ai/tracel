@@ -18,7 +18,8 @@
 //! - An object's `properties` are its fields, and a nested object's fields are flags too: the
 //!   field `weight_decay` of `optimizer` is `--optimizer.weight-decay`, the keys joined with dots
 //!   and `_` written as `-`.
-//! - `$ref` is followed into the schema's `$defs` or `definitions`.
+//! - `$ref` is followed within the schema, such as into its `$defs` or `definitions`; a field
+//!   whose reference leads out of the schema or nowhere takes a JSON literal.
 //! - `enum`, `const`, and `oneOf` or `anyOf` of constants, such as the unit variants of an enum,
 //!   are the values a flag takes, each with its description.
 //! - An optional field, `type: [T, "null"]` or `anyOf` of `T` and `null`, takes the values of `T`.
