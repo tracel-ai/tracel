@@ -1,0 +1,293 @@
+//! Recording experiments on this machine, without reaching any server.
+
+mod artifacts;
+mod events;
+mod runs;
+mod status;
+#[cfg(test)]
+mod test_support;
+
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread::{self, JoinHandle};
+
+use serde_json::Value;
+
+use crate::error::{ExperimentError, ExperimentErrorKind};
+use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+use crate::{ArtifactKind, CancelToken, ExperimentLocation, ExperimentProvider, ExperimentRun};
+use artifacts::{LocalExperimentReader, save_artifact};
+use events::{EVENTS_FILE, Line, lines, to_jsonl};
+use runs::{create_local_run_dir, create_runs_dir};
+use status::{STATUS_FILE, Status};
+
+/// Records experiments under a directory on this machine.
+///
+/// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`. Each run
+/// keeps its status in `status.json`, written when the run starts and again when it ends, appends
+/// its events to `events.jsonl`, and saves its artifacts under `artifacts/`. Creating a
+/// `LocalExperiments` performs no I/O; the first run creates the directories. When it creates
+/// `dir` itself, it writes a `.gitignore` there that ignores everything under it, so the records
+/// stay out of git and of code packages; a `dir` that already exists is left as it is.
+///
+/// `status.json` names the experiment and numbers the run, says whether the run is `running`,
+/// `completed` or `failed`, when it started and ended, in RFC 3339 UTC to the second, and why it
+/// failed:
+///
+/// ```json
+/// {
+///   "name": "mnist",
+///   "num": 3,
+///   "status": "failed",
+///   "started_at": "2026-10-06T14:02:11Z",
+///   "finished_at": "2026-10-06T14:31:40Z",
+///   "error": "loss is NaN"
+/// }
+/// ```
+///
+/// Each line of `events.jsonl` is one event, a JSON object whose `type` names it, with the
+/// fields the console's experiment API gives it:
+///
+/// | `type` | Fields |
+/// | --- | --- |
+/// | `attribute` | `key`, `value` |
+/// | `arguments` | `value`, the run's input, which the console lists as the experiment's `config`; the last one is the run's |
+/// | `config` | `name`, `value` |
+/// | `log` | `timestamp`, `level`, `message`, `metadata`, `activity` |
+/// | `metric` | `name`, `epoch`, `iteration`, `value`, `group`, `activity` |
+/// | `metric_definition` | `name`, `description`, `unit`, `higher_is_better` |
+/// | `epoch_summary` | `name`, `epoch`, `group`, `value`, `activity` |
+/// | `summary` | `name`, `value`, `activity` |
+/// | `input_used` | `experiment`, `name`, `artifact_id` |
+/// | `activity_started` | `activity`: `id`, `parent`, `name`, `cancellable`, `meter`, `attributes` |
+/// | `activity_updated` | `id`, `current` |
+/// | `activity_message` | `id`, `message` |
+/// | `activity_finished` | `id`, `status`, `message` |
+///
+/// `activity` is the ID of the activity an event was recorded in, or `null`. A metric logged with
+/// several values is one `metric` line per value.
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use tracel_experiment::Experiments;
+/// use tracel_experiment::local::LocalExperiments;
+///
+/// let experiments = Experiments::new(Arc::new(LocalExperiments::new("./runs")));
+/// ```
+#[derive(Debug, Clone)]
+pub struct LocalExperiments {
+    dir: PathBuf,
+}
+
+impl LocalExperiments {
+    /// Records experiments under `dir`.
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+}
+
+impl ExperimentProvider for LocalExperiments {
+    fn create_experiment(
+        &self,
+        name: String,
+        attributes: HashMap<String, Value>,
+    ) -> Result<ExperimentRun, ExperimentError> {
+        let internal = |message: &'static str| {
+            move |error| ExperimentError::with_source(ExperimentErrorKind::Internal, message, error)
+        };
+        create_runs_dir(&self.dir)
+            .map_err(internal("Failed to create local experiment directory"))?;
+        let root = self.dir.join(&name);
+        let root = root
+            .canonicalize()
+            .or_else(|_| {
+                fs::create_dir_all(&root)?;
+                root.canonicalize()
+            })
+            .map_err(internal("Failed to create local experiment directory"))?;
+        let (num, run_root) = create_local_run_dir(&root)
+            .map_err(internal("Failed to create local experiment run directory"))?;
+        let session = LocalExperimentSession::start(run_root.clone(), name, num, attributes)
+            .map_err(internal("Failed to initialize local experiment session"))?;
+        let reader = LocalExperimentReader { root };
+
+        let run = ExperimentRun::new(num.to_string(), session, reader, CancelToken::new());
+        Ok(run.with_location(ExperimentLocation::Dir(run_root)))
+    }
+}
+
+struct LocalExperimentSession {
+    root: PathBuf,
+    status: Status,
+    active: Mutex<Option<LocalWorker>>,
+}
+
+impl LocalExperimentSession {
+    /// Starts recording the run `num` of the experiment `name` in `root`: writes its status as
+    /// running and its attributes as its first events.
+    fn start(
+        root: PathBuf,
+        name: String,
+        num: u64,
+        attributes: HashMap<String, Value>,
+    ) -> io::Result<Self> {
+        fs::create_dir_all(root.join("artifacts"))?;
+        let mut attributes: Vec<(String, Value)> = attributes.into_iter().collect();
+        attributes.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let attributes = attributes
+            .into_iter()
+            .map(|(key, value)| Line::Attribute { key, value });
+        let mut events = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join(EVENTS_FILE))?;
+        events.write_all(to_jsonl(attributes)?.as_bytes())?;
+        let status = Status::running(name, num);
+        status.write(&root.join(STATUS_FILE))?;
+        let (sender, receiver) = channel();
+        let join = thread::spawn(move || local_worker(receiver, events));
+
+        Ok(Self {
+            root,
+            status,
+            active: Mutex::new(Some(LocalWorker { sender, join })),
+        })
+    }
+
+    fn sender(&self) -> Result<Sender<LocalWrite>, ExperimentError> {
+        let guard = self.active.lock().unwrap();
+        guard
+            .as_ref()
+            .map(|worker| worker.sender.clone())
+            .ok_or_else(|| {
+                ExperimentError::new(
+                    ExperimentErrorKind::AlreadyFinished,
+                    "Local experiment session has already finished",
+                )
+            })
+    }
+
+    /// Stops the writer once it has written every event, then writes the run's status.
+    fn finish_worker(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        let worker = self.active.lock().unwrap().take().ok_or_else(|| {
+            ExperimentError::new(
+                ExperimentErrorKind::AlreadyFinished,
+                "Local experiment session has already finished",
+            )
+        })?;
+
+        let send_result = worker.sender.send(LocalWrite::Finish);
+        match worker.join.join() {
+            Ok(Ok(())) if send_result.is_ok() => {}
+            Ok(Ok(())) => {
+                return Err(ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "Failed to send local experiment completion",
+                ));
+            }
+            Ok(Err(err)) => {
+                return Err(ExperimentError::with_source(
+                    ExperimentErrorKind::Internal,
+                    "Local experiment writer failed",
+                    err,
+                ));
+            }
+            Err(_) => {
+                return Err(ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "Local experiment writer thread panicked",
+                ));
+            }
+        }
+
+        self.status
+            .ended(completion)
+            .write(&self.root.join(STATUS_FILE))
+            .map_err(|err| {
+                ExperimentError::with_source(
+                    ExperimentErrorKind::Internal,
+                    "Failed to write the local experiment status",
+                    err,
+                )
+            })
+    }
+}
+
+impl ExperimentSession for LocalExperimentSession {
+    fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
+        let lines = to_jsonl(lines(event)).map_err(|err| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Internal,
+                "Failed to serialize local experiment event",
+                err,
+            )
+        })?;
+        self.sender()?.send(LocalWrite::Lines(lines)).map_err(|_| {
+            ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "Failed to queue local experiment event",
+            )
+        })
+    }
+
+    fn save_artifact(
+        &self,
+        name: &str,
+        _kind: ArtifactKind,
+        artifact: Box<BundleFn>,
+    ) -> Result<(), ExperimentError> {
+        save_artifact(&self.root, name, artifact)
+    }
+
+    fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        self.finish_worker(completion)
+    }
+}
+
+struct LocalWorker {
+    sender: Sender<LocalWrite>,
+    join: JoinHandle<Result<(), io::Error>>,
+}
+
+enum LocalWrite {
+    /// Lines to append to `events.jsonl`, each ending with a newline.
+    Lines(String),
+    /// Stop once every line sent before is written.
+    Finish,
+}
+
+/// Appends each batch of lines to `events` as it arrives, until told to finish.
+fn local_worker(receiver: Receiver<LocalWrite>, mut events: File) -> Result<(), io::Error> {
+    while let Ok(message) = receiver.recv() {
+        match message {
+            LocalWrite::Lines(lines) => events.write_all(lines.as_bytes())?,
+            LocalWrite::Finish => break,
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_support::run;
+
+    #[test]
+    fn a_run_is_located_in_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let experiment = run(dir.path(), "mnist");
+
+        assert_eq!(
+            experiment.location(),
+            Some(&ExperimentLocation::Dir(
+                dir.path().canonicalize().unwrap().join("mnist/1")
+            ))
+        );
+    }
+}
