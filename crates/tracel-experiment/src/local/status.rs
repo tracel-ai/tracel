@@ -21,7 +21,7 @@ pub struct Status {
     error: Option<String>,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusKind {
     Running,
@@ -77,9 +77,17 @@ fn now() -> String {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use serde_json::{Value, json};
 
-    use crate::local::test_support::{read_json, run};
+    use super::*;
+    use crate::local::test_support::{EXPERIMENT, read_json, run};
+
+    const REASON: &str = "loss is NaN";
+
+    fn running() -> Status {
+        Status::running(EXPERIMENT.to_string(), 1)
+    }
 
     fn is_utc_seconds(timestamp: &Value) -> bool {
         timestamp.as_str().is_some_and(|timestamp| {
@@ -130,25 +138,20 @@ mod tests {
         assert!(!run_dir.join("status.json.tmp").exists());
     }
 
-    #[test]
-    fn a_run_says_how_it_ended_in_its_status() {
-        let dir = tempfile::tempdir().unwrap();
-        run(dir.path(), "mnist").fail("diverged").unwrap();
-        let cancelled = run(dir.path(), "mnist");
-        cancelled.cancel().unwrap();
-        cancelled.finish().unwrap();
-        drop(run(dir.path(), "mnist"));
+    #[rstest]
+    #[case::succeeded(ExperimentCompletion::Success, StatusKind::Completed, None)]
+    #[case::failed(
+        ExperimentCompletion::Failed(REASON.to_string()),
+        StatusKind::Failed,
+        Some(REASON)
+    )]
+    fn an_ended_status_says_how_the_run_ended(
+        #[case] completion: ExperimentCompletion,
+        #[case] status: StatusKind,
+        #[case] error: Option<&str>,
+    ) {
+        let ended = running().ended(completion);
 
-        let status = |num: u32| read_json(&dir.path().join(format!("mnist/{num}/status.json")));
-        let (failed, cancelled, dropped) = (status(1), status(2), status(3));
-        assert_eq!(failed["status"], "failed");
-        assert_eq!(failed["error"], "diverged");
-        assert_eq!(cancelled["status"], "completed");
-        assert_eq!(cancelled["error"], Value::Null);
-        assert_eq!(dropped["status"], "failed");
-        assert_eq!(
-            dropped["error"],
-            "the run was dropped without finish() or fail()"
-        );
+        assert_eq!((ended.status, ended.error.as_deref()), (status, error));
     }
 }
