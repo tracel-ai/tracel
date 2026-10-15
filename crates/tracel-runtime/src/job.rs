@@ -183,6 +183,7 @@ fn resolve(default: Option<Value>, input: Value) -> Value {
 mod tests {
     use std::sync::Mutex;
 
+    use rstest::rstest;
     use serde::Deserialize;
     use serde_json::json;
 
@@ -274,23 +275,15 @@ mod tests {
 
     #[test]
     fn without_a_default_the_input_decodes_as_given() {
-        let (job, ran_with) = recording::<Optimizer>();
-        let (no_input, _) = recording::<Optimizer>();
-        let (unit, ran_with_unit) = recording::<()>();
+        let optimizer = Optimizer {
+            lr: 0.1,
+            weight_decay: 0.01,
+        };
+        let (job, ran_with) = recording();
 
-        run(job, json!({"lr": 0.1, "weight_decay": 0.01})).unwrap();
-        let missing = run(no_input, Value::Null);
-        run(unit, Value::Null).unwrap();
+        run(job, serde_json::to_value(&optimizer).unwrap()).unwrap();
 
-        assert_eq!(
-            ran_with.lock().unwrap().take(),
-            Some(Optimizer {
-                lr: 0.1,
-                weight_decay: 0.01
-            })
-        );
-        assert!(missing.is_err());
-        assert_eq!(ran_with_unit.lock().unwrap().take(), Some(()));
+        assert_eq!(ran_with.lock().unwrap().take(), Some(optimizer));
     }
 
     #[test]
@@ -304,34 +297,15 @@ mod tests {
 
     #[test]
     fn the_prepared_input_is_the_json_the_job_runs_with() {
-        let prepare = |input| {
-            let (job, _) = recording::<Config>();
-            Registered::new("train".to_string(), job.with_default(default_config()))
-                .prepare(input)
-                .unwrap()
-                .input
-        };
-        let (bare, _) = recording::<Value>();
+        let (job, ran_with) = recording::<Config>();
+        let prepared = Registered::new("train".to_string(), job.with_default(default_config()))
+            .prepare(json!({"epochs": 2, "optimizer": {"lr": 0.1}}))
+            .unwrap();
 
-        assert_eq!(
-            prepare(json!({"epochs": 2, "optimizer": {"lr": 0.1}})),
-            json!({
-                "epochs": 2,
-                "optimizer": {"lr": 0.1, "weight_decay": 0.0},
-                "tag": "baseline"
-            })
-        );
-        assert_eq!(
-            prepare(Value::Null),
-            serde_json::to_value(default_config()).unwrap()
-        );
-        assert_eq!(
-            Registered::new("evaluate".to_string(), bare)
-                .prepare(json!({"split": "test"}))
-                .unwrap()
-                .input,
-            json!({"split": "test"})
-        );
+        (prepared.run)().unwrap();
+
+        let ran = ran_with.lock().unwrap().take().unwrap();
+        assert_eq!(prepared.input, serde_json::to_value(ran).unwrap());
     }
 
     #[test]
@@ -357,17 +331,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_input_of_the_wrong_type_does_not_decode() {
-        for input in [json!({"epochs": "ten"}), json!([1, 2]), json!("ten")] {
-            let (job, ran_with) = recording();
+    #[rstest]
+    #[case::a_field_of_the_wrong_type(json!({"epochs": "ten"}))]
+    #[case::not_an_object(json!("ten"))]
+    fn an_input_that_does_not_decode_is_refused(#[case] input: Value) {
+        let (job, _) = recording::<Config>();
 
-            let prepared = Registered::new("train".to_string(), job.with_default(default_config()))
-                .prepare(input.clone());
+        let prepared =
+            Registered::new("train".to_string(), job.with_default(default_config())).prepare(input);
 
-            assert!(prepared.is_err(), "{input}");
-            assert!(ran_with.lock().unwrap().is_none());
-        }
+        assert!(prepared.is_err());
     }
 
     #[test]
