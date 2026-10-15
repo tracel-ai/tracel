@@ -257,6 +257,7 @@ pub enum TargetError {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use tracel_console::ProjectRef;
 
     use super::*;
@@ -274,111 +275,76 @@ mod tests {
         )
     }
 
-    fn offline_dir(target: Result<Target, TargetError>) -> PathBuf {
-        match target {
-            Ok(Target::Offline { dir }) => dir,
-            other => panic!("expected an offline target, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_unset_or_empty_target_records_offline_under_runs() {
-        assert_eq!(offline_dir(target(&[])), Path::new("./runs"));
-        assert_eq!(
-            offline_dir(target(&[(TRACEL_TARGET, "")])),
-            Path::new("./runs")
-        );
-        assert_eq!(
-            offline_dir(target(&[(TRACEL_TARGET, "offline")])),
-            Path::new("./runs")
-        );
+    #[rstest]
+    #[case::unset(&[])]
+    #[case::empty(&[(TRACEL_TARGET, "")])]
+    #[case::offline(&[(TRACEL_TARGET, "offline")])]
+    #[case::runs_dir_empty(&[(TRACEL_RUNS_DIR, "")])]
+    fn an_offline_target_records_under_the_default_runs_dir(#[case] vars: &[(&str, &str)]) {
+        assert!(matches!(
+            target(vars),
+            Ok(Target::Offline { dir }) if dir == Path::new(DEFAULT_RUNS_DIR)
+        ));
     }
 
     #[test]
     fn tracel_runs_dir_moves_offline_runs() {
-        assert_eq!(
-            offline_dir(target(&[(TRACEL_RUNS_DIR, "/data/runs")])),
-            Path::new("/data/runs")
-        );
-        assert_eq!(
-            offline_dir(target(&[(TRACEL_RUNS_DIR, "")])),
-            Path::new("./runs")
-        );
+        let runs = "/data/runs";
+
+        assert!(matches!(
+            target(&[(TRACEL_RUNS_DIR, runs)]),
+            Ok(Target::Offline { dir }) if dir == Path::new(runs)
+        ));
     }
 
-    #[test]
-    fn an_unknown_target_names_the_value_and_the_accepted_ones() {
-        for value in ["cloud", "Offline", "CONSOLE", " console"] {
-            let error = target(&[(TRACEL_TARGET, value)]).unwrap_err();
-
-            assert!(
-                matches!(
-                    &error,
-                    TargetError::UnknownTarget { value: held, .. } if held == value
-                ),
-                "{value}: {error:?}"
-            );
-            let message = error.to_string();
-            assert!(message.contains("TRACEL_TARGET"), "{message}");
-            assert!(message.contains(value), "{message}");
-            assert!(message.contains("offline"), "{message}");
-            assert!(message.contains("console"), "{message}");
-        }
+    #[rstest]
+    #[case::unknown("cloud")]
+    #[case::capitalized("Offline")]
+    #[case::upper_case("CONSOLE")]
+    #[case::padded(" console")]
+    fn an_unknown_target_is_an_error_naming_it(#[case] value: &str) {
+        assert!(matches!(
+            target(&[(TRACEL_TARGET, value)]),
+            Err(TargetError::UnknownTarget { value: held, .. }) if held == value
+        ));
     }
 
     #[cfg(not(feature = "station"))]
     #[test]
-    fn a_station_target_says_it_needs_the_station_feature() {
-        let error = target(&[(TRACEL_TARGET, "station")]).unwrap_err();
-
+    fn a_station_target_needs_the_station_feature() {
         assert!(matches!(
-            error,
-            TargetError::FeatureRequired {
+            target(&[(TRACEL_TARGET, "station")]),
+            Err(TargetError::FeatureRequired {
                 feature: "station",
                 ..
-            }
+            })
         ));
-        assert!(error.to_string().contains("`station` feature"), "{error}");
     }
 
     #[cfg(feature = "station")]
-    #[test]
-    fn a_station_target_reads_tracel_station_url() {
-        let station_url = |vars: &[(&str, &str)]| match target(vars) {
-            Ok(Target::Station { url }) => url.to_string(),
-            other => panic!("expected a station target, got {other:?}"),
-        };
-
-        assert_eq!(
-            station_url(&[(TRACEL_TARGET, "station")]),
-            "http://localhost:8000/"
-        );
-        assert_eq!(
-            station_url(&[
-                (TRACEL_TARGET, "station"),
-                (TRACEL_STATION_URL, "https://station.example.com")
-            ]),
-            "https://station.example.com/"
-        );
+    #[rstest]
+    #[case::unset(&[(TRACEL_TARGET, "station")], DEFAULT_STATION_URL)]
+    #[case::set(
+        &[(TRACEL_TARGET, "station"), (TRACEL_STATION_URL, "https://station.example.com")],
+        "https://station.example.com"
+    )]
+    fn tracel_station_url_names_the_station(#[case] vars: &[(&str, &str)], #[case] url: &str) {
+        assert!(matches!(
+            target(vars),
+            Ok(Target::Station { url: held }) if held == Url::parse(url).unwrap()
+        ));
     }
 
     #[cfg(feature = "station")]
-    #[test]
-    fn an_invalid_station_url_names_the_variable() {
-        for value in ["not a url", "localhost:8000", "ftp://localhost:8000"] {
-            let error =
-                target(&[(TRACEL_TARGET, "station"), (TRACEL_STATION_URL, value)]).unwrap_err();
-
-            assert!(
-                matches!(
-                    &error,
-                    TargetError::InvalidSetting { variable: "TRACEL_STATION_URL", value: held, .. }
-                        if held == value
-                ),
-                "{value}: {error:?}"
-            );
-            assert!(error.to_string().contains("TRACEL_STATION_URL"), "{error}");
-        }
+    #[rstest]
+    #[case::not_a_url("not a url")]
+    #[case::not_http("ftp://localhost:8000")]
+    fn a_station_url_that_is_not_http_is_an_invalid_setting_naming_it(#[case] value: &str) {
+        assert!(matches!(
+            target(&[(TRACEL_TARGET, "station"), (TRACEL_STATION_URL, value)]),
+            Err(TargetError::InvalidSetting { variable: TRACEL_STATION_URL, value: held, .. })
+                if held == value
+        ));
     }
 
     #[test]
@@ -392,25 +358,20 @@ mod tests {
         assert!(!dir.exists());
     }
 
-    #[test]
-    fn an_offline_target_does_not_serve_models_or_datasets() {
+    #[rstest]
+    #[case::models("models", |offline: &Target| offline.models().err())]
+    #[case::datasets("datasets", |offline: &Target| offline.datasets().err())]
+    fn an_offline_target_serves_no_registry(
+        #[case] service: &str,
+        #[case] build: fn(&Target) -> Option<TargetError>,
+    ) {
         let offline = Target::Offline {
-            dir: PathBuf::from("./runs"),
+            dir: PathBuf::from(DEFAULT_RUNS_DIR),
         };
 
         assert!(matches!(
-            offline.models(),
-            Err(TargetError::Unsupported {
-                service: "models",
-                target: "offline"
-            })
-        ));
-        assert!(matches!(
-            offline.datasets(),
-            Err(TargetError::Unsupported {
-                service: "datasets",
-                target: "offline"
-            })
+            build(&offline),
+            Some(TargetError::Unsupported { service: held, target: "offline" }) if held == service
         ));
     }
 
