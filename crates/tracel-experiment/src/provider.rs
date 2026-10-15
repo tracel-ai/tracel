@@ -166,16 +166,15 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::ExperimentId;
     use crate::session::{Event, ExperimentCompletion};
     use crate::test_support::{MockSession, create_run_with_id};
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-    /// Creates runs numbered 7 on one session, and keeps the attributes each was created with.
+    #[derive(Default)]
     struct MockProvider {
         session: Arc<MockSession>,
-        attributes: Arc<Mutex<Vec<HashMap<String, Value>>>>,
+        attributes: Mutex<Vec<HashMap<String, Value>>>,
     }
 
     impl ExperimentProvider for MockProvider {
@@ -184,39 +183,37 @@ mod tests {
             _name: String,
             attributes: HashMap<String, Value>,
         ) -> Result<ExperimentRun, ExperimentError> {
-            self.attributes.lock().unwrap().push(attributes);
-            Ok(create_run_with_id("7", self.session.clone()))
+            let mut created = self.attributes.lock().unwrap();
+            created.push(attributes);
+            Ok(create_run_with_id(
+                created.len().to_string(),
+                self.session.clone(),
+            ))
         }
     }
 
     struct Fixture {
-        session: Arc<MockSession>,
-        attributes: Arc<Mutex<Vec<HashMap<String, Value>>>>,
+        provider: Arc<MockProvider>,
         experiments: Experiments,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let session = Arc::new(MockSession::default());
-            let attributes = Arc::default();
-            let experiments = Experiments::new(Arc::new(MockProvider {
-                session: session.clone(),
-                attributes: Arc::clone(&attributes),
-            }));
+            let provider = Arc::new(MockProvider::default());
             Self {
-                session,
-                attributes,
-                experiments,
+                experiments: Experiments::new(provider.clone()),
+                provider,
             }
         }
 
         fn completions(&self) -> Vec<ExperimentCompletion> {
-            self.session.completions.lock().unwrap().clone()
+            self.provider.session.completions.lock().unwrap().clone()
         }
 
         /// The arguments the runs recorded, in order.
         fn arguments(&self) -> Vec<Value> {
-            self.session
+            self.provider
+                .session
                 .events
                 .lock()
                 .unwrap()
@@ -327,7 +324,7 @@ mod tests {
         experiments.start("train").unwrap().finish().unwrap();
 
         assert_eq!(
-            *fixture.attributes.lock().unwrap(),
+            *fixture.provider.attributes.lock().unwrap(),
             [HashMap::from([
                 ("kind".to_string(), json!("example")),
                 ("seed".to_string(), json!(42)),
@@ -371,19 +368,22 @@ mod tests {
             .on_start(hook("first"))
             .on_start(hook("second"));
 
-        experiments.start("train").unwrap().finish().unwrap();
+        let first = experiments.start("train").unwrap();
         fixture
             .experiments
             .start("train")
             .unwrap()
             .finish()
             .unwrap();
+        let second = experiments.start("train").unwrap();
 
         assert_eq!(
             *called.lock().unwrap(),
             [
-                ("first", ExperimentId::from("7")),
-                ("second", ExperimentId::from("7"))
+                ("first", first.id().clone()),
+                ("second", first.id().clone()),
+                ("first", second.id().clone()),
+                ("second", second.id().clone())
             ]
         );
     }
