@@ -333,13 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn a_started_experiment_records_the_arguments_logging_replaces() {
+    fn only_experiments_given_arguments_record_them_when_a_run_starts() {
         let fixture = Fixture::new();
         let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
 
-        let run = experiments.start("train").unwrap();
+        experiments.start("train").unwrap().finish().unwrap();
         let recorded = fixture.arguments();
-        run.log_args(&json!({"epochs": 2, "fold": 1})).unwrap();
         fixture
             .experiments
             .start("train")
@@ -348,6 +347,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(recorded, [json!({"epochs": 2})]);
+        assert_eq!(fixture.arguments(), recorded);
+    }
+
+    #[test]
+    fn arguments_logged_on_a_run_are_recorded_after_those_it_started_with() {
+        let fixture = Fixture::new();
+        let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
+        let run = experiments.start("train").unwrap();
+
+        run.log_args(&json!({"epochs": 2, "fold": 1})).unwrap();
+
         assert_eq!(
             fixture.arguments(),
             [json!({"epochs": 2}), json!({"epochs": 2, "fold": 1})]
