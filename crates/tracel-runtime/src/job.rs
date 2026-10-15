@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tracel_job::JobDefinition;
 
 /// The error a job fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
@@ -75,21 +76,6 @@ where
         self.schema = Some(schemars::schema_for!(I).to_value());
         self
     }
-}
-
-/// What a transport reads about a registered job: its name and description, and the input it
-/// takes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct JobDefinition {
-    /// The name that selects the job.
-    pub name: String,
-    /// What the job does, as [`Job::with_description`] gives it.
-    pub description: Option<String>,
-    /// The JSON Schema of the job's input, when it was given one (requires the `schema` feature).
-    pub input_schema: Option<Value>,
-    /// The job's default input, which its input is merged onto, as [`Job::with_default`] gives
-    /// it.
-    pub input_example: Option<Value>,
 }
 
 /// What [`Jobs::job`](crate::Jobs::job) registers: a [`Job`], or a function of the job's input.

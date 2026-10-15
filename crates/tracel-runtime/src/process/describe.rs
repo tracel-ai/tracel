@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use tracel_job::{DefinitionsFile, TRACEL_DESCRIBE};
 
-use super::protocol_definition;
 use crate::JobDefinition;
 use crate::process::file::write_atomically;
 
@@ -22,7 +21,7 @@ pub fn describe<'a>(
         return Ok(false);
     };
     let path = PathBuf::from(path);
-    let file = DefinitionsFile::new(definitions.into_iter().map(protocol_definition).collect());
+    let file = DefinitionsFile::new(definitions.into_iter().cloned().collect());
     write_atomically(&path, &file.to_json()).map_err(|source| DescribeError { path, source })?;
     Ok(true)
 }
@@ -97,13 +96,7 @@ mod tests {
             })
         );
         let read = DefinitionsFile::from_json(contents.as_bytes()).unwrap();
-        assert_eq!(
-            read.jobs,
-            definitions()
-                .iter()
-                .map(protocol_definition)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(read.jobs, definitions());
         assert_eq!(contents, read.to_json());
     }
 
