@@ -21,7 +21,10 @@ pub fn describe<'a>(
         return Ok(false);
     };
     let path = PathBuf::from(path);
-    let file = DefinitionsFile::new(definitions.into_iter().cloned().collect());
+    let file = DefinitionsFile::new(
+        env!("CARGO_PKG_VERSION"),
+        definitions.into_iter().cloned().collect(),
+    );
     write_atomically(&path, &file.to_json()).map_err(|source| DescribeError { path, source })?;
     Ok(true)
 }

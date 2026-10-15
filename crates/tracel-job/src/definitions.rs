@@ -36,12 +36,12 @@ pub struct DefinitionsFile {
 }
 
 impl DefinitionsFile {
-    /// The file of a program that can run `jobs`: following [`PROTOCOL`], and built with this
-    /// version of the SDK.
-    pub fn new(jobs: Vec<JobDefinition>) -> Self {
+    /// The file of a program built with version `sdk_version` of the Tracel SDK that can run
+    /// `jobs`, following [`PROTOCOL`].
+    pub fn new(sdk_version: impl Into<String>, jobs: Vec<JobDefinition>) -> Self {
         Self {
             protocol: PROTOCOL,
-            sdk_version: env!("CARGO_PKG_VERSION").to_string(),
+            sdk_version: sdk_version.into(),
             jobs,
         }
     }
@@ -113,7 +113,7 @@ mod tests {
     use super::*;
 
     fn file() -> DefinitionsFile {
-        DefinitionsFile::new(vec![
+        let jobs = vec![
             JobDefinition {
                 name: "echo".to_string(),
                 description: None,
@@ -126,14 +126,15 @@ mod tests {
                 input_schema: None,
                 input_example: Some(json!({"epochs": 10, "optimizer": {"lr": 0.001}})),
             },
-        ])
+        ];
+        DefinitionsFile::new("0.10.0", jobs)
     }
 
     #[test]
     fn the_file_is_pretty_printed_json_ending_with_a_newline() {
         let expected = r#"{
   "protocol": 1,
-  "sdk_version": "SDK_VERSION",
+  "sdk_version": "0.10.0",
   "jobs": [
     {
       "name": "echo",
@@ -156,8 +157,7 @@ mod tests {
     }
   ]
 }
-"#
-        .replace("SDK_VERSION", env!("CARGO_PKG_VERSION"));
+"#;
 
         assert_eq!(file().to_json(), expected);
         assert_eq!(
