@@ -1,10 +1,12 @@
 use std::sync::{Arc, Mutex};
 
+use rstest::fixture;
+
 use crate::activity::ActivityEvent;
 use crate::error::ExperimentError;
 use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl};
+use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl, LogRecord};
 
 #[derive(Default)]
 pub struct MockSession {
@@ -23,6 +25,25 @@ impl MockSession {
                 Event::Activity(event) => Some(event.clone()),
                 _ => None,
             })
+            .collect()
+    }
+
+    pub fn logs(&self) -> Vec<LogRecord> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Log { record, .. } => Some(record.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn log_messages(&self) -> Vec<String> {
+        self.logs()
+            .into_iter()
+            .map(|record| record.message)
             .collect()
     }
 }
@@ -89,4 +110,18 @@ pub fn create_run_with_control(
         NoopExperimentDataReader,
         control,
     )
+}
+
+pub struct MockRun {
+    pub run: ExperimentRun,
+    pub session: Arc<MockSession>,
+}
+
+#[fixture]
+pub fn mock_run() -> MockRun {
+    let session = Arc::new(MockSession::default());
+    MockRun {
+        run: create_run(session.clone()),
+        session,
+    }
 }

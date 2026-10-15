@@ -878,8 +878,12 @@ impl Drop for ExperimentRun {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use crate::activity::ActivityEvent;
-    use crate::test_support::{MockSession, create_run, create_run_with_control};
+    use crate::test_support::{
+        MockRun, MockSession, create_run, create_run_with_control, mock_run,
+    };
 
     use super::*;
 
@@ -1227,21 +1231,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cancel_does_not_prevent_logging_before_drop() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-
-        run.cancel().unwrap();
-        run.log_info("still-logging");
-
-        let events = session.events.lock().unwrap();
-        match events.last() {
-            Some(Event::Log { record, .. }) => assert_eq!(record.message, "still-logging"),
-            event => panic!("unexpected event: {event:?}"),
-        }
-    }
-
     /// The level, message, attributes and activity of each log `session` recorded.
     fn logs(session: &MockSession) -> Vec<(LogLevel, String, usize, Option<ActivityId>)> {
         session
@@ -1259,6 +1248,18 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[rstest]
+    fn a_cancelled_run_keeps_logging_after_the_stop_warning(mock_run: MockRun) {
+        mock_run.run.cancel().unwrap();
+
+        mock_run.run.log_info("still logging");
+
+        assert_eq!(
+            mock_run.session.log_messages(),
+            [STOP_REQUESTED, "still logging"]
+        );
     }
 
     #[test]
