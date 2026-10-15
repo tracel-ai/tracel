@@ -1,32 +1,26 @@
 //! Describing the registered jobs instead of running one.
 
-use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use tracel_job::{DefinitionsFile, TRACEL_DESCRIBE};
+use tracel_job::DefinitionsFile;
 
 use crate::JobDefinition;
 use crate::process::file::write_atomically;
 
-/// Writes the definitions file of the jobs `definitions` gives when `TRACEL_DESCRIBE`, among the
-/// environment variables `lookup` gives, names a path.
-///
-/// Returns whether it did; the program then runs no job.
+/// Writes the definitions file of the jobs `definitions` gives to `path`.
 pub fn describe<'a>(
     definitions: impl IntoIterator<Item = &'a JobDefinition>,
-    lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<bool, DescribeError> {
-    let Some(path) = lookup(TRACEL_DESCRIBE).filter(|path| !path.is_empty()) else {
-        return Ok(false);
-    };
-    let path = PathBuf::from(path);
+    path: &Path,
+) -> Result<(), DescribeError> {
     let file = DefinitionsFile::new(
         env!("CARGO_PKG_VERSION"),
         definitions.into_iter().cloned().collect(),
     );
-    write_atomically(&path, &file.to_json()).map_err(|source| DescribeError { path, source })?;
-    Ok(true)
+    write_atomically(path, &file.to_json()).map_err(|source| DescribeError {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// The definitions file could not be written.
@@ -39,8 +33,6 @@ pub struct DescribeError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use serde_json::{Value, json};
 
     use super::*;
@@ -62,18 +54,12 @@ mod tests {
         ]
     }
 
-    fn describe_to(path: &Path) -> Result<bool, DescribeError> {
-        describe(&definitions(), |name| {
-            (name == TRACEL_DESCRIBE).then(|| path.as_os_str().to_owned())
-        })
-    }
-
     #[test]
     fn the_definitions_file_lists_every_job() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.json");
 
-        assert!(describe_to(&path).unwrap());
+        describe(&definitions(), &path).unwrap();
 
         let file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -104,14 +90,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("jobs.json");
 
-        let error = describe_to(&path).unwrap_err();
+        let error = describe(&definitions(), &path).unwrap_err();
 
         assert_eq!(error.path, path);
-    }
-
-    #[test]
-    fn an_unset_or_empty_tracel_describe_writes_nothing() {
-        assert!(!describe(&definitions(), |_| None).unwrap());
-        assert!(!describe(&definitions(), |_| Some(OsString::new())).unwrap());
     }
 }

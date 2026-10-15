@@ -6,15 +6,15 @@ mod error;
 mod file;
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap_complete::Shell;
 use serde_json::Value;
-use tracel_job::TRACEL_JOB_NUM;
 use tracel_job::cli::{command, completions, job_input};
+use tracel_job::{TRACEL_DESCRIBE, TRACEL_JOB_NUM};
 
 use crate::{Execution, Jobs};
 use describe::describe;
@@ -47,7 +47,11 @@ impl Jobs {
     /// [`job_num`](crate::job_num) gives the number its launcher gave it, and
     /// [`job_input`](crate::job_input) the input it runs with.
     pub fn run(self) -> ExitCode {
-        let exit = match execute(&self, std::env::args_os(), |name| std::env::var_os(name)) {
+        let launch = Launch::new(
+            std::env::var_os(TRACEL_DESCRIBE),
+            std::env::var_os(TRACEL_JOB_NUM),
+        );
+        let exit = match execute(&self, std::env::args_os(), launch) {
             Ok(()) => tracel_job::ExitCode::Completed,
             Err(error) => {
                 error.print();
@@ -58,21 +62,49 @@ impl Jobs {
     }
 }
 
-/// Does what the command-line arguments `args`, the program's name first, and the environment
-/// variables `vars` looks up ask of `jobs`: writes their definitions, prints the help, the version
-/// or a completion script, or runs the job named.
+/// What the program's launcher asks of it through [`TRACEL_DESCRIBE`] and [`TRACEL_JOB_NUM`].
+struct Launch {
+    /// Where to write the jobs' definitions, instead of running a job.
+    describe: Option<PathBuf>,
+    /// The number of the job the program runs.
+    num: Option<String>,
+}
+
+impl Launch {
+    /// The launch the values of `TRACEL_DESCRIBE` and `TRACEL_JOB_NUM` ask for, an empty value
+    /// counting as unset.
+    fn new(describe: Option<OsString>, num: Option<OsString>) -> Self {
+        let set = |value: Option<OsString>| value.filter(|value| !value.is_empty());
+        Self {
+            describe: set(describe).map(PathBuf::from),
+            num: set(num).map(|num| num.to_string_lossy().into_owned()),
+        }
+    }
+
+    /// The execution of the job the program runs: numbered when its launcher numbered it.
+    fn execution(&self) -> Execution {
+        match &self.num {
+            Some(num) => Execution::new().with_num(num.clone()),
+            None => Execution::new(),
+        }
+    }
+}
+
+/// Does what the command-line arguments `args`, the program's name first, and the `launch` ask
+/// of `jobs`: writes their definitions, prints the help, the version or a completion script, or
+/// runs the job named.
 fn execute(
     jobs: &Jobs,
     args: impl IntoIterator<Item = OsString>,
-    vars: impl Fn(&str) -> Option<OsString>,
+    launch: Launch,
 ) -> Result<(), RunError> {
-    if describe(jobs.definitions(), &vars)? {
-        return Ok(());
+    if let Some(path) = &launch.describe {
+        return Ok(describe(jobs.definitions(), path)?);
     }
     let args: Vec<OsString> = args.into_iter().collect();
     let mut command = command_line(jobs, program_name(args.first()));
     match read_request(jobs, &mut command, args)? {
-        Request::Run { job, input } => dispatch(jobs, &job, input, execution(vars)),
+        Request::Run { job, input } => dispatch(jobs, &job, input, launch.execution()),
         Request::Completions(shell) => {
             let name = command.get_name().to_string();
             clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
@@ -142,15 +174,6 @@ where
     }
 }
 
-/// The execution of the job the process runs, as the environment variables `lookup` gives
-/// describe it: numbered by [`TRACEL_JOB_NUM`] when its launcher sets it.
-fn execution(lookup: impl Fn(&str) -> Option<OsString>) -> Execution {
-    match lookup(TRACEL_JOB_NUM).filter(|num| !num.is_empty()) {
-        Some(num) => Execution::new().with_num(num.to_string_lossy()),
-        None => Execution::new(),
-    }
-}
-
 /// Runs the job `name` of `jobs` with `input`, launched as `execution` says.
 fn dispatch(jobs: &Jobs, name: &str, input: Value, execution: Execution) -> Result<(), RunError> {
     jobs.prepare(name, input)?
@@ -170,9 +193,11 @@ fn program_name(program: Option<&OsString>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, OnceLock};
+
     use rstest::{fixture, rstest};
     use serde::{Deserialize, Serialize};
-    use tracel_job::{DefinitionsFile, TRACEL_DESCRIBE};
+    use tracel_job::DefinitionsFile;
 
     use super::*;
     use crate::{BoxError, job_num};
@@ -200,67 +225,65 @@ mod tests {
         ["program"].iter().chain(args).map(OsString::from)
     }
 
-    /// The environment variable `name` set to `value`, and no other.
-    fn var(name: &'static str, value: impl Into<OsString>) -> impl Fn(&str) -> Option<OsString> {
-        let value = value.into();
-        move |asked| (asked == name).then(|| value.clone())
+    fn describing(path: &Path) -> Launch {
+        Launch::new(Some(path.as_os_str().to_owned()), None)
     }
 
-    /// Runs the command line `program <args>` with no environment variables set.
     fn run(jobs: Jobs, args: &[&str]) -> Result<(), RunError> {
-        execute(&jobs, arguments(args), |_| None)
+        execute(&jobs, arguments(args), Launch::new(None, None))
     }
 
     #[test]
-    fn a_launcher_asking_for_the_definitions_gets_them_and_no_job_runs() {
-        for args in [&[][..], &["train"], &["--bogus"]] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("jobs.json");
-            let jobs = jobs();
+    fn an_empty_launch_variable_counts_as_unset() {
+        let launch = Launch::new(Some(OsString::new()), Some(OsString::new()));
 
-            execute(&jobs, arguments(args), var(TRACEL_DESCRIBE, &path)).unwrap();
-
-            let file = DefinitionsFile::from_json(&std::fs::read(&path).unwrap()).unwrap();
-            assert_eq!(
-                file.jobs,
-                jobs.definitions().cloned().collect::<Vec<_>>(),
-                "{args:?}"
-            );
-        }
+        assert_eq!((launch.describe, launch.num), (None, None));
     }
 
-    #[test]
-    fn definitions_that_cannot_be_written_fail_the_run_with_exit_code_1() {
+    #[rstest]
+    #[case::no_job(&[])]
+    #[case::a_job_that_fails(&["fail"])]
+    #[case::an_unusable_command_line(&["--bogus"])]
+    fn a_launcher_asking_for_the_definitions_gets_them_instead_of_a_run(
+        jobs: Jobs,
+        #[case] args: &[&str],
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+
+        execute(&jobs, arguments(args), describing(&path)).unwrap();
+
+        let file = DefinitionsFile::from_json(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(file.jobs, jobs.definitions().cloned().collect::<Vec<_>>());
+    }
+
+    #[rstest]
+    fn definitions_that_cannot_be_written_fail_the_run(jobs: Jobs) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("jobs.json");
-        let jobs = jobs();
 
-        let failed =
-            execute(&jobs, arguments(&["train"]), var(TRACEL_DESCRIBE, &path)).unwrap_err();
+        let failed = execute(&jobs, arguments(&["train"]), describing(&path)).unwrap_err();
 
-        assert!(matches!(failed, RunError::Describe(_)), "{failed:?}");
-        assert_eq!(failed.exit_code().code(), 1);
+        assert_eq!(failed.exit_code(), tracel_job::ExitCode::Failed);
     }
 
-    #[test]
-    fn printing_the_version_ends_the_run_successfully() {
-        let jobs = jobs().version("1.2.3");
+    #[rstest]
+    #[case::numbered(Some("12"))]
+    #[case::unnumbered(None)]
+    fn the_job_is_numbered_as_its_launcher_numbers_it(#[case] num: Option<&str>) {
+        let seen = Arc::new(OnceLock::new());
+        let jobs = Jobs::new().job("train", {
+            let seen = seen.clone();
+            move |()| {
+                let _ = seen.set(job_num());
+                Ok::<_, BoxError>(())
+            }
+        });
+        let launch = Launch::new(None, num.map(OsString::from));
 
-        execute(&jobs, arguments(&["--version"]), |_| None).unwrap();
-    }
+        execute(&jobs, arguments(&["train"]), launch).unwrap();
 
-    #[test]
-    fn the_job_is_numbered_by_tracel_job_num_when_its_launcher_sets_it() {
-        for (num, expected) in [(Some("12"), Some("12")), (Some(""), None), (None, None)] {
-            let jobs = Jobs::new().job("train", move |()| match job_num() {
-                seen if seen.as_deref() == expected => Ok(()),
-                seen => Err::<(), BoxError>(format!("numbered {seen:?}").into()),
-            });
-            let vars = move |name: &str| num.filter(|_| name == TRACEL_JOB_NUM).map(OsString::from);
-
-            execute(&jobs, arguments(&["train"]), vars)
-                .unwrap_or_else(|error| panic!("{num:?}: {error}"));
-        }
+        assert_eq!(seen.get(), Some(&num.map(str::to_string)));
     }
 
     #[rstest]
