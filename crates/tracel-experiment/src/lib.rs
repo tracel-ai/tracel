@@ -888,45 +888,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn panic_unwinding_a_guard_fails_the_activity_with_the_panic() {
-        let session = Arc::new(MockSession::default());
-        let run_session = session.clone();
-
-        let outcome = std::thread::Builder::new()
-            .name("stage-runner".into())
-            .spawn(move || {
-                let run = create_run(run_session);
-                let _stage = run.activity("Train fold 3 of 6").cancellable().start();
-                panic!("fusion stream out of order");
-            })
-            .unwrap()
-            .join();
-        assert!(outcome.is_err());
-
-        let finished = session
-            .activity_events()
-            .into_iter()
-            .find_map(|event| match event {
-                ActivityEvent::Finished {
-                    status, message, ..
-                } => Some((status, message)),
-                _ => None,
-            })
-            .expect("the stage reported an ending");
-        assert!(matches!(finished.0, ActivityStatus::Failed));
-        let message = finished.1.expect("the ending carried the panic");
-        assert!(message.contains("fusion stream out of order"), "{message}");
-
-        let completions = session.completions.lock().unwrap();
-        match completions.as_slice() {
-            [ExperimentCompletion::Failed(reason)] => {
-                assert!(reason.contains("fusion stream out of order"), "{reason}");
-            }
-            other => panic!("unexpected completions: {other:?}"),
-        }
-    }
-
-    #[test]
     fn panicking_run_reports_the_panic_as_its_failure_reason() {
         let session = Arc::new(MockSession::default());
         let run_session = session.clone();
@@ -1032,48 +993,6 @@ mod tests {
                 .all(|event| event_activity(event) == Some(activity.id()))
         );
         assert_eq!(event_activity(&events[5]), None);
-    }
-
-    #[test]
-    fn activity_run_finishes_fails_and_propagates_panics() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-
-        let value = run
-            .activity("ok")
-            .run(|_| Ok::<_, &'static str>(7))
-            .unwrap();
-        assert_eq!(value, 7);
-
-        let error = run
-            .activity("error")
-            .run(|_| Err::<(), _>("fold failed"))
-            .unwrap_err();
-        assert_eq!(error, "fold failed");
-
-        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _: Result<(), &'static str> = run.activity("panic").run(|_| panic!("boom"));
-        }));
-        assert!(panic.is_err());
-
-        let events = session.events.lock().unwrap();
-        let completions = events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Activity(ActivityEvent::Finished {
-                    status, message, ..
-                }) => Some((status, message.as_deref())),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        match completions.as_slice() {
-            [
-                (ActivityStatus::Success, None),
-                (ActivityStatus::Failed, Some("fold failed")),
-                (ActivityStatus::Failed, Some(panicked)),
-            ] => assert!(panicked.contains("boom"), "{panicked}"),
-            other => panic!("unexpected completions: {other:?}"),
-        }
     }
 
     #[test]

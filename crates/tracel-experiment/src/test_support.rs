@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rstest::fixture;
 
-use crate::activity::ActivityEvent;
+use crate::activity::{ActivityEvent, ActivityId, ActivitySpec};
 use crate::error::ExperimentError;
 use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
@@ -28,6 +28,16 @@ impl MockSession {
             .collect()
     }
 
+    pub fn started_activities(&self) -> Vec<ActivitySpec> {
+        self.activity_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActivityEvent::Started { activity } => Some(activity),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn logs(&self) -> Vec<LogRecord> {
         self.events
             .lock()
@@ -35,6 +45,18 @@ impl MockSession {
             .iter()
             .filter_map(|event| match event {
                 Event::Log { record, .. } => Some(record.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn log_activities(&self) -> Vec<Option<ActivityId>> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Log { activity, .. } => Some(*activity),
                 _ => None,
             })
             .collect()

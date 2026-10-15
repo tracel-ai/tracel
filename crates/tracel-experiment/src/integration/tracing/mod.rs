@@ -160,32 +160,6 @@ mod tests {
     }
 
     #[test]
-    fn activity_run_installs_its_scope_for_tracing_events() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run_with_id("trace-test-activity", session.clone());
-        let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
-
-        let activity_id = tracing::subscriber::with_default(subscriber, || {
-            run.activity("fold")
-                .run(|activity| {
-                    tracing::info!(fold = 1u64, "training fold");
-                    Ok::<_, std::convert::Infallible>(activity.id())
-                })
-                .unwrap()
-        });
-
-        let events = session.events.lock().unwrap();
-        let activity = events
-            .iter()
-            .find_map(|event| match event {
-                Event::Log { activity, .. } => *activity,
-                _ => None,
-            })
-            .expect("tracing log should carry an activity scope");
-        assert_eq!(activity, activity_id);
-    }
-
-    #[test]
     fn activity_span_routes_logs_to_its_activity() {
         let session = Arc::new(MockSession::default());
         let run = create_run_with_id("trace-test-activity-span", session.clone());

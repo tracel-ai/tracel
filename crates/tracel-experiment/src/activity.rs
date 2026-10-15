@@ -68,7 +68,7 @@ pub struct ActivitySpec {
 }
 
 /// Terminal state for an activity.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActivityStatus {
     /// The activity completed successfully.
     Success,
@@ -644,229 +644,199 @@ impl std::ops::Deref for ActivityGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::convert::Infallible;
 
+    use rstest::rstest;
     use serde_json::json;
 
-    use crate::test_support::{MockSession, create_run, create_run_with_control};
+    use crate::ExperimentRun;
+    use crate::context::ExperimentGlobalExt;
+    use crate::test_support::{
+        MockRun, MockSession, create_run, create_run_with_control, mock_run,
+    };
 
     use super::*;
 
-    fn setup_run() -> (Arc<MockSession>, crate::ExperimentRun) {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        (session, run)
-    }
+    const REASON: &str = "fold failed";
+    const PANIC: &str = "fusion stream out of order";
 
-    #[test]
-    fn start_reports_configured_activity() {
-        let (session, run) = setup_run();
-
-        let _guard = run
-            .activity("load")
-            .meter(12, "items")
-            .attr("split", "train")
-            .start();
-
-        let events = session.activity_events();
-        let ActivityEvent::Started { activity } = &events[0] else {
-            panic!("unexpected event: {:?}", events[0]);
-        };
-        assert_eq!(activity.name, "load");
-        let meter = activity.meter.as_ref().expect("expected activity meter");
-        assert_eq!(meter.total, Some(12));
-        assert_eq!(meter.unit.as_deref(), Some("items"));
-        assert_eq!(activity.attributes.get("split"), Some(&json!("train")));
-    }
-
-    #[test]
-    fn inc_reports_updated_progress() {
-        let (session, run) = setup_run();
-        let guard = run.activity("items").meter(8, "items").start();
-
-        guard.inc(3);
-
-        let events = session.activity_events();
-        let ActivityEvent::Updated { current, .. } = &events[1] else {
-            panic!("unexpected event: {:?}", events[1]);
-        };
-        assert_eq!(*current, 3);
-    }
-
-    #[test]
-    fn cloned_activity_reports_accumulated_progress_from_another_thread() {
-        let (session, run) = setup_run();
-        let guard = run.activity("items").meter(8, "items").start();
-        let activity = guard.share();
-
-        activity.inc(2);
-        let worker_activity = activity.clone();
-        std::thread::spawn(move || worker_activity.inc(3))
-            .join()
-            .unwrap();
-
-        let updates = session
+    fn updates(session: &MockSession) -> Vec<u64> {
+        session
             .activity_events()
             .into_iter()
             .filter_map(|event| match event {
                 ActivityEvent::Updated { current, .. } => Some(current),
                 _ => None,
             })
-            .collect::<Vec<_>>();
-        assert_eq!(updates, vec![2, 5]);
+            .collect()
     }
 
-    #[test]
-    fn meterless_activity_reports_updates_as_open_ended_counts() {
-        let (session, run) = setup_run();
-        let guard = run.activity("items").start();
+    fn endings(session: &MockSession) -> Vec<(ActivityStatus, Option<String>)> {
+        session
+            .activity_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActivityEvent::Finished {
+                    status, message, ..
+                } => Some((status, message)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[rstest]
+    fn starting_an_activity_reports_how_it_was_built(mock_run: MockRun) {
+        let _guard = mock_run
+            .run
+            .activity("load")
+            .meter(12, "items")
+            .attr("split", "train")
+            .start();
+
+        let started = mock_run.session.started_activities().remove(0);
+        let meter = started.meter.unwrap();
+        assert_eq!(
+            (
+                started.name.as_str(),
+                meter.total,
+                meter.unit.as_deref(),
+                started.attributes.get("split")
+            ),
+            ("load", Some(12), Some("items"), Some(&json!("train")))
+        );
+    }
+
+    #[rstest]
+    #[case::metered(|run: &ExperimentRun| run.activity("items").meter(8, "items").start())]
+    #[case::open_ended(|run: &ExperimentRun| run.activity("items").start())]
+    fn increments_from_any_thread_report_the_accumulated_progress(
+        mock_run: MockRun,
+        #[case] start: fn(&ExperimentRun) -> ActivityGuard,
+    ) {
+        let guard = start(&mock_run.run);
         let activity = guard.share();
 
-        activity.inc(4);
+        activity.inc(2);
+        let worker = activity.clone();
+        std::thread::spawn(move || worker.inc(3)).join().unwrap();
 
-        let events = session.activity_events();
-        assert!(matches!(
-            &events[0],
-            ActivityEvent::Started { activity } if activity.meter.is_none()
-        ));
-        assert!(matches!(
-            &events[1],
-            ActivityEvent::Updated { current: 4, .. }
-        ));
+        assert_eq!(updates(&mock_run.session), [2, 5]);
     }
 
-    #[test]
-    fn message_reports_activity_message() {
-        let (session, run) = setup_run();
-        let guard = run.activity("items").start();
+    #[rstest]
+    fn a_message_is_reported_for_its_activity(mock_run: MockRun) {
+        let guard = mock_run.run.activity("items").start();
 
         guard.message("halfway");
 
-        let events = session.activity_events();
         assert!(matches!(
-            &events[1],
-            ActivityEvent::Message { id, message }
-                if *id == guard.id() && message == "halfway"
+            mock_run.session.activity_events().last(),
+            Some(ActivityEvent::Message { id, message }) if *id == guard.id() && message == "halfway"
         ));
     }
 
-    #[test]
-    fn finish_reports_one_success_completion() {
-        let (session, run) = setup_run();
+    #[rstest]
+    #[case::finished(ActivityGuard::finish, ActivityStatus::Success, None)]
+    #[case::failed(|guard: ActivityGuard| guard.fail(REASON), ActivityStatus::Failed, Some(REASON))]
+    #[case::abandoned(ActivityGuard::abandon, ActivityStatus::Abandoned, None)]
+    #[case::dropped(drop, ActivityStatus::Abandoned, None)]
+    #[case::dropped_once_cancelled(
+        |guard: ActivityGuard| {
+            guard.cancel_token().cancel();
+            drop(guard);
+        },
+        ActivityStatus::Abandoned,
+        None
+    )]
+    fn an_activity_reports_once_how_it_ended(
+        mock_run: MockRun,
+        #[case] end: fn(ActivityGuard),
+        #[case] status: ActivityStatus,
+        #[case] message: Option<&str>,
+    ) {
+        end(mock_run.run.activity("node").start());
 
-        run.activity("node").start().finish();
-
-        let events = session.activity_events();
-        let finished: Vec<_> = events
-            .iter()
-            .filter_map(|event| match event {
-                ActivityEvent::Finished { status, .. } => Some(status),
-                _ => None,
-            })
-            .collect();
-        assert!(matches!(finished.as_slice(), [ActivityStatus::Success]));
+        assert_eq!(
+            endings(&mock_run.session),
+            [(status, message.map(String::from))]
+        );
     }
 
     #[test]
-    fn fail_reports_failed_completion_with_its_message() {
-        let (session, run) = setup_run();
-
-        run.activity("node").start().fail("kernel panicked");
-
-        let events = session.activity_events();
-        assert!(matches!(
-            events.last(),
-            Some(ActivityEvent::Finished {
-                status: ActivityStatus::Failed,
-                message: Some(message),
-                ..
-            }) if message == "kernel panicked"
-        ));
-    }
-
-    #[test]
-    fn abandon_reports_abandoned_completion() {
-        let (session, run) = setup_run();
-
-        run.activity("node").start().abandon();
-
-        let events = session.activity_events();
-        assert!(matches!(
-            events.last(),
-            Some(ActivityEvent::Finished {
-                status: ActivityStatus::Abandoned,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn drop_reports_abandoned_completion() {
-        let (session, run) = setup_run();
-
-        drop(run.activity("node").start());
-
-        let events = session.activity_events();
-        assert!(matches!(
-            events.last(),
-            Some(ActivityEvent::Finished {
-                status: ActivityStatus::Abandoned,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn cancellable_activity_reports_control_metadata() {
-        let (session, run) = setup_run();
-
-        let _guard = run.activity("node").cancellable().start();
-
-        let events = session.activity_events();
-        let ActivityEvent::Started { activity } = &events[0] else {
-            panic!("unexpected event: {:?}", events[0]);
-        };
-        assert!(activity.cancellable);
-    }
-
-    #[test]
-    fn cancellable_activity_registers_with_control() {
+    fn a_guard_unwound_by_a_panic_fails_its_activity_with_the_panic() {
         let session = Arc::new(MockSession::default());
+        let run_session = session.clone();
+
+        std::thread::spawn(move || {
+            let run = create_run(run_session);
+            let _stage = run.activity("stage").start();
+            panic!("{PANIC}");
+        })
+        .join()
+        .unwrap_err();
+
+        assert!(matches!(
+            endings(&session).as_slice(),
+            [(ActivityStatus::Failed, Some(reason))] if reason.ends_with(PANIC)
+        ));
+    }
+
+    #[rstest]
+    #[case::returned_ok(Ok(()), ActivityStatus::Success, None)]
+    #[case::returned_an_error(Err(REASON), ActivityStatus::Failed, Some(REASON))]
+    fn running_an_activity_ends_it_by_what_its_code_returns(
+        mock_run: MockRun,
+        #[case] returned: Result<(), &'static str>,
+        #[case] status: ActivityStatus,
+        #[case] message: Option<&str>,
+    ) {
+        let _ = mock_run.run.activity("fold").run(|_| returned);
+
+        assert_eq!(
+            endings(&mock_run.session),
+            [(status, message.map(String::from))]
+        );
+    }
+
+    #[rstest]
+    fn running_an_activity_makes_it_the_current_scope(mock_run: MockRun) {
+        let fold = mock_run
+            .run
+            .activity("fold")
+            .run(|activity| {
+                ExperimentRun::current().unwrap().log_info("in the fold");
+                Ok::<_, Infallible>(activity.id())
+            })
+            .unwrap();
+
+        assert_eq!(mock_run.session.log_activities(), [Some(fold)]);
+    }
+
+    #[rstest]
+    fn a_cancellable_activity_says_so_when_it_starts(mock_run: MockRun) {
+        let _guard = mock_run.run.activity("node").cancellable().start();
+
+        assert!(mock_run.session.started_activities()[0].cancellable);
+    }
+
+    #[test]
+    fn a_cancellable_activity_is_cancelled_through_its_run_control() {
         let control = ExperimentRunControl::default();
-        let run = create_run_with_control(session, control.clone());
+        let run = create_run_with_control(Default::default(), control.clone());
         let guard = run.activity("node").cancellable().start();
 
-        assert!(control.cancel_activity(guard.id()));
+        control.cancel_activity(guard.id());
+
         assert!(guard.is_cancel_requested());
     }
 
-    #[test]
-    fn child_activity_cancel_request_is_linked_to_parent_activity_token() {
-        let (_session, run) = setup_run();
-        let parent = run.activity("parent").start();
+    #[rstest]
+    fn cancelling_an_activity_requests_the_cancel_of_its_children(mock_run: MockRun) {
+        let parent = mock_run.run.activity("parent").start();
         let child = parent.activity("child").start();
 
         parent.cancel_token().cancel();
 
-        assert!(parent.is_cancel_requested());
         assert!(child.is_cancel_requested());
-    }
-
-    #[test]
-    fn drop_reports_abandoned_even_when_cancel_was_requested() {
-        let (session, run) = setup_run();
-        let guard = run.activity("node").start();
-
-        guard.cancel_token().cancel();
-        drop(guard);
-
-        let events = session.activity_events();
-        assert!(matches!(
-            events.last(),
-            Some(ActivityEvent::Finished {
-                status: ActivityStatus::Abandoned,
-                ..
-            })
-        ));
     }
 }
