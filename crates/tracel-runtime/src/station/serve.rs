@@ -15,7 +15,7 @@ use crate::station::infrastructure::protocol::{
 };
 use crate::{Execution, Jobs};
 
-/// Reports job outcomes back to the station. Split out so the loop is testable with a fake.
+/// Reports job outcomes back to the station.
 pub trait FinishSink: Send + Sync + 'static {
     fn finish_job(&self, job_id: Uuid, finish: &FinishJob);
 }

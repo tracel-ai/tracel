@@ -2,8 +2,8 @@
 //!
 //! Each execution of a job has a scope of its own, current on the thread that runs the job's
 //! function, while it runs. Code in the job reads it through the functions below, or holds it,
-//! through [`JobScope::current`], to read it on another thread. While a thread runs no job, such as
-//! in a plain binary or a unit test, there is none, and the functions say so.
+//! through [`JobScope::current`], to read it on another thread. Outside a job there is none, and the
+//! functions say so.
 
 use std::cell::RefCell;
 use std::sync::Arc;

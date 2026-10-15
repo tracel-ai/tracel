@@ -73,9 +73,8 @@
 //! function, while it runs, so jobs a Station runner runs at once each see their own. The
 //! functions read it: [`job_running`] says whether there is one, [`job_num`] gives its number, and
 //! [`job_input`] its input, as JSON. To read it on another thread, hold [`JobScope::current`]. The
-//! `tracel` crate links the experiments a job starts to it through its scope. While a thread runs
-//! no job, such as in a plain binary or a unit test, there is none: [`job_running`] gives `false`,
-//! and [`job_num`] and [`job_input`] give `None`.
+//! `tracel` crate links the experiments a job starts to it through its scope. Outside a job there
+//! is none: [`job_running`] gives `false`, and [`job_num`] and [`job_input`] give `None`.
 
 mod execution;
 mod job;
