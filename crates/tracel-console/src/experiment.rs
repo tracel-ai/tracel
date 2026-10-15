@@ -28,6 +28,7 @@ use tracel_experiment_remote::{ArtifactUploadError, ArtifactUploader, RemoteExpe
 use url::Url;
 
 use crate::console::ProjectScope;
+use crate::wire::console_timestamp;
 use crate::{Namespace, NamespaceKind};
 
 /// Experiment provider backed by the console's experiment run protocol.
@@ -250,7 +251,7 @@ impl ExperimentArtifactClient {
         Ok(bundle)
     }
 
-    /// The artifact of the experiment named `name`.
+    /// The artifact of the experiment named `name`, the newest when several are.
     fn fetch(&self, name: &str) -> Result<ArtifactResponse, ArtifactError> {
         let listed = self.scope.client()?.list_artifacts_by_name(
             &self.scope.owner,
@@ -258,26 +259,24 @@ impl ExperimentArtifactClient {
             self.experiment_num,
             name,
         )?;
-        named(listed.items, name, |artifact| &artifact.name)
+        newest_named(listed.items, name)
     }
 }
 
-/// The one item of `items` whose name, which `name_of` gives, is `name`.
+/// The newest of `artifacts` named exactly `name`.
 ///
 /// The console's name filter lists the artifacts whose names contain the name asked for, so
-/// asking for `model` can list `model-2` as well.
-fn named<T>(items: Vec<T>, name: &str, name_of: impl Fn(&T) -> &str) -> Result<T, ArtifactError> {
-    let mut matching = items.into_iter().filter(|item| name_of(item) == name);
-    let found = matching
-        .next()
-        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))?;
-    match matching.count() {
-        0 => Ok(found),
-        others => Err(ArtifactError::Ambiguous {
-            name: name.to_owned(),
-            count: others + 1,
-        }),
-    }
+/// asking for `model` can list `model-2` as well, and an experiment can hold several artifacts of
+/// one name.
+fn newest_named(
+    artifacts: Vec<ArtifactResponse>,
+    name: &str,
+) -> Result<ArtifactResponse, ArtifactError> {
+    artifacts
+        .into_iter()
+        .filter(|artifact| artifact.name == name)
+        .max_by_key(|artifact| console_timestamp(&artifact.created_at))
+        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
 }
 
 fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
@@ -292,8 +291,6 @@ fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
 enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
-    #[error("Artifact name is ambiguous: {count} artifacts are named {name}")]
-    Ambiguous { name: String, count: usize },
     #[error(transparent)]
     Client(#[from] ClientError),
     #[error(transparent)]
@@ -383,46 +380,66 @@ impl ArtifactUploader for ConsoleArtifactUploader {
 
 #[cfg(test)]
 mod tests {
+    use rstest::{fixture, rstest};
     use tracel_client::console::Env;
+    use tracel_client::console::artifact::response::ArtifactSourceResponse;
 
     use super::*;
 
-    /// The id of the artifact `named` picks among `(id, name)` pairs.
-    fn pick(
-        artifacts: &[(&'static str, &'static str)],
-        name: &str,
-    ) -> Result<&'static str, ArtifactError> {
-        named(artifacts.to_vec(), name, |(_, name)| name).map(|(id, _)| id)
+    fn artifact(name: &str, created_at: &str) -> ArtifactResponse {
+        ArtifactResponse {
+            id: format!("{name} at {created_at}"),
+            created_at: created_at.to_string(),
+            name: name.to_string(),
+            kind: "model".to_string(),
+            bucket_id: "bucket".to_string(),
+            experiment: ArtifactSourceResponse {
+                id: 1,
+                experiment_num: 1,
+            },
+            manifest: Value::Null,
+        }
     }
 
-    #[test]
-    fn an_artifact_is_picked_by_its_exact_name() {
-        let listed = [("2", "model-2"), ("1", "model"), ("3", "model.bpk")];
-
-        assert_eq!(pick(&listed, "model").unwrap(), "1");
-        assert_eq!(pick(&listed, "model-2").unwrap(), "2");
+    #[fixture]
+    fn listed() -> Vec<ArtifactResponse> {
+        vec![
+            artifact("model-2", "2026-10-01T00:00:00Z"),
+            artifact("model", "2026-10-01T00:00:00Z"),
+            artifact("model.bpk", "2026-10-01T00:00:00Z"),
+        ]
     }
 
-    #[test]
-    fn a_name_no_artifact_has_exactly_is_not_found() {
-        let error = pick(&[("2", "model-2")], "model").unwrap_err();
+    #[rstest]
+    #[case::a_name_others_extend("model")]
+    #[case::a_name_extending_another("model-2")]
+    fn an_artifact_is_picked_by_its_exact_name(listed: Vec<ArtifactResponse>, #[case] name: &str) {
+        assert_eq!(newest_named(listed, name).unwrap().name, name);
+    }
 
-        assert!(matches!(&error, ArtifactError::NotFound(name) if name == "model"));
+    #[rstest]
+    #[case::only_longer_names_listed(vec![artifact("model-2", "2026-10-01T00:00:00Z")])]
+    #[case::nothing_listed(vec![])]
+    fn a_name_no_artifact_has_exactly_is_not_found(#[case] listed: Vec<ArtifactResponse>) {
+        let asked = "model";
+
         assert!(matches!(
-            pick(&[], "model"),
-            Err(ArtifactError::NotFound(_))
+            newest_named(listed, asked),
+            Err(ArtifactError::NotFound(name)) if name == asked
         ));
     }
 
     #[test]
-    fn a_name_several_artifacts_have_is_ambiguous() {
-        let error = pick(&[("1", "model"), ("2", "model-2"), ("3", "model")], "model").unwrap_err();
+    fn the_newest_of_same_named_artifacts_is_picked() {
+        let newest = artifact("model", "2026-10-03T00:00:00Z");
+        let listed = vec![
+            artifact("model", "2026-10-01T00:00:00Z"),
+            newest.clone(),
+            artifact("model-2", "2026-10-04T00:00:00Z"),
+            artifact("model", "2026-10-02T00:00:00Z"),
+        ];
 
-        assert!(matches!(&error, ArtifactError::Ambiguous { count: 2, .. }));
-        assert_eq!(
-            error.to_string(),
-            "Artifact name is ambiguous: 2 artifacts are named model"
-        );
+        assert_eq!(newest_named(listed, "model").unwrap().id, newest.id);
     }
 
     fn page(api_url: &str, owner: Namespace, project: &str, num: i32) -> Option<String> {

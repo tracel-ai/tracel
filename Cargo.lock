@@ -7422,6 +7422,7 @@ name = "tracel-station"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "rstest",
  "serde",
  "serde_json",
  "serde_with",
