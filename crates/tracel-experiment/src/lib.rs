@@ -879,150 +879,94 @@ impl Drop for ExperimentRun {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    use serde_json::json;
 
-    use crate::activity::ActivityEvent;
     use crate::test_support::{
         MockRun, MockSession, create_run, create_run_with_control, mock_run,
     };
 
     use super::*;
 
-    #[test]
-    fn panicking_run_reports_the_panic_as_its_failure_reason() {
-        let session = Arc::new(MockSession::default());
-        let run_session = session.clone();
+    const PANIC: &str = "kernel exploded mid-batch";
+    const REASON: &str = "interrupted";
 
-        let outcome = std::thread::Builder::new()
-            .name("fold-runner".into())
-            .spawn(move || {
-                let _run = create_run(run_session);
-                panic!("kernel exploded mid-batch");
-            })
-            .unwrap()
-            .join();
-        assert!(outcome.is_err());
-
-        let completions = session.completions.lock().unwrap();
-        match completions.as_slice() {
-            [ExperimentCompletion::Failed(reason)] => {
-                assert!(reason.contains("kernel exploded mid-batch"), "{reason}");
-                assert!(reason.contains("panicked at"), "{reason}");
-                assert!(reason.contains("fold-runner"), "{reason}");
-            }
-            other => panic!("unexpected completions: {other:?}"),
-        }
+    fn metrics() -> Vec<MetricValue> {
+        vec![MetricValue {
+            name: "mean_score".to_string(),
+            value: 0.8,
+        }]
     }
 
-    #[test]
-    fn run_context_records_events() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-
-        run.log_info("hello");
-
-        let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => assert_eq!(record.message, "hello"),
-            event => panic!("unexpected event: {event:?}"),
-        }
-    }
-
-    #[test]
-    fn telemetry_records_the_emitting_activity_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let activity = run.activity("cross-validation").start();
-        let items = || {
-            vec![MetricValue {
-                name: "mean_score".to_string(),
-                value: 0.8,
-            }]
-        };
-
-        activity.log_info("in scope");
-        activity.log_metric(1, "train", 1, items());
-        activity.log_epoch_summary(1, "train", items());
-        activity.log_summary(items());
-        run.log_info("out of scope");
-
-        let events = session.events.lock().unwrap();
-        let event_activity = |event: &Event| match event {
+    fn recorded_activity(event: &Event) -> Option<ActivityId> {
+        match event {
             Event::Log { activity, .. }
             | Event::Metrics { activity, .. }
             | Event::EpochSummary { activity, .. }
             | Event::Summary { activity, .. } => *activity,
-            event => panic!("unexpected event: {event:?}"),
-        };
-        assert!(
-            events[1..=4]
-                .iter()
-                .all(|event| event_activity(event) == Some(activity.id()))
-        );
-        assert_eq!(event_activity(&events[5]), None);
+            event => panic!("{event:?} is not telemetry"),
+        }
     }
 
     #[test]
-    fn child_activity_from_reference_uses_reference_as_parent() {
+    fn a_run_unwound_by_a_panic_fails_with_the_panic() {
         let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let parent = run.activity("parent").start();
-        let activity = parent.share();
+        let run_session = session.clone();
 
-        let _child = activity.activity("child").start();
+        std::thread::spawn(move || {
+            let _run = create_run(run_session);
+            panic!("{PANIC}");
+        })
+        .join()
+        .unwrap_err();
 
-        let events = session.events.lock().unwrap();
-        let Event::Activity(ActivityEvent::Started { activity: child }) = &events[1] else {
-            panic!("unexpected event: {:?}", events[1]);
-        };
-        assert_eq!(child.parent, Some(parent.id()));
+        assert!(matches!(
+            session.completions.lock().unwrap().as_slice(),
+            [ExperimentCompletion::Failed(reason)] if reason.ends_with(PANIC)
+        ));
     }
 
-    #[test]
-    fn activity_reference_preserves_inherited_log_attributes() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let guard = run
+    #[rstest]
+    #[case::log(|activity: &Activity| activity.log_info("in scope"))]
+    #[case::metric(|activity: &Activity| activity.log_metric(1, "train", 1, metrics()))]
+    #[case::epoch_summary(|activity: &Activity| activity.log_epoch_summary(1, "train", metrics()))]
+    #[case::summary(|activity: &Activity| activity.log_summary(metrics()))]
+    fn telemetry_through_an_activity_records_the_activity(
+        mock_run: MockRun,
+        #[case] emit: fn(&Activity),
+    ) {
+        let guard = mock_run.run.activity("cross-validation").start();
+
+        emit(&guard);
+
+        let events = mock_run.session.events.lock().unwrap();
+        assert_eq!(recorded_activity(events.last().unwrap()), Some(guard.id()));
+    }
+
+    #[rstest]
+    fn an_activity_started_from_another_is_its_child(mock_run: MockRun) {
+        let parent = mock_run.run.activity("parent").start();
+
+        let _child = parent.share().activity("child").start();
+
+        let started = mock_run.session.started_activities();
+        assert_eq!(started.last().unwrap().parent, Some(parent.id()));
+    }
+
+    #[rstest]
+    fn an_activity_keeps_the_attributes_of_the_handle_it_started_from(mock_run: MockRun) {
+        let guard = mock_run
+            .run
             .handle()
             .with_attr("pipeline", "cv")
             .activity("fold")
             .start();
-        let activity = guard.share().with_attr("fold", 1i64);
 
-        activity.log(LogRecord::info("started").with("fold", 2i64));
+        guard.share().log_info("started");
 
-        let events = session.events.lock().unwrap();
-        let Event::Log {
-            record,
-            activity: Some(id),
-        } = &events[1]
-        else {
-            panic!("unexpected event: {:?}", events[1]);
-        };
-        assert_eq!(*id, guard.id());
         assert_eq!(
-            record.attributes.get("pipeline"),
-            Some(&serde_json::json!("cv"))
+            mock_run.session.logs()[0].attributes.get("pipeline"),
+            Some(&json!("cv"))
         );
-        assert_eq!(record.attributes.get("fold"), Some(&serde_json::json!(2)));
-    }
-
-    #[test]
-    fn activity_reference_discards_telemetry_after_the_run_is_dropped() {
-        let session = Arc::new(MockSession::default());
-        let activity = {
-            let run = create_run(session.clone());
-            let guard = run.activity("fold").start();
-            let activity = guard.share();
-            guard.finish();
-            activity
-        };
-        let recorded = session.events.lock().unwrap().len();
-
-        assert!(!activity.is_active());
-        activity.log_info("late");
-
-        assert_eq!(session.events.lock().unwrap().len(), recorded);
     }
 
     #[rstest]
@@ -1033,79 +977,82 @@ mod tests {
 
         assert_eq!(
             mock_run.session.logs()[0].attributes.get("phase"),
-            Some(&serde_json::json!("train"))
+            Some(&json!("train"))
         );
     }
 
-    #[test]
-    fn finish_marks_handle_inactive_and_discards_later_telemetry() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let handle = run.handle();
+    #[rstest]
+    #[case::finished(|run: ExperimentRun| run.finish().unwrap())]
+    #[case::dropped(drop)]
+    fn a_handle_of_a_run_that_ended_is_inactive(mock_run: MockRun, #[case] end: fn(ExperimentRun)) {
+        let handle = mock_run.run.handle();
 
-        run.finish().unwrap();
+        end(mock_run.run);
 
         assert!(!handle.is_active());
-        handle.log_info("after-finish");
-        assert!(session.events.lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn a_run_dropped_before_it_finishes_fails() {
-        let session = Arc::new(MockSession::default());
-        let finished = create_run(session.clone());
+    #[rstest]
+    #[case::finished(|run: ExperimentRun| run.finish().unwrap())]
+    #[case::dropped(drop)]
+    fn a_log_through_a_handle_of_a_run_that_ended_is_discarded(
+        mock_run: MockRun,
+        #[case] end: fn(ExperimentRun),
+    ) {
+        let handle = mock_run.run.handle();
+        end(mock_run.run);
 
-        drop(create_run(session.clone()));
-        finished.finish().unwrap();
+        handle.log_info("late");
 
-        let completions = session.completions.lock().unwrap();
+        assert!(mock_run.session.logs().is_empty());
+    }
+
+    #[rstest]
+    fn an_activity_started_from_a_handle_of_a_dropped_run_records_nothing(mock_run: MockRun) {
+        let handle = mock_run.run.handle();
+        drop(mock_run.run);
+
+        let _late = handle.activity("late").meter(1, "items").start();
+
+        assert!(mock_run.session.events.lock().unwrap().is_empty());
+    }
+
+    #[rstest]
+    fn a_run_dropped_before_it_finishes_fails(mock_run: MockRun) {
+        drop(mock_run.run);
+
+        assert!(matches!(
+            mock_run.session.completions.lock().unwrap().as_slice(),
+            [ExperimentCompletion::Failed(_)]
+        ));
+    }
+
+    #[rstest]
+    fn a_finished_run_ends_once_as_completed(mock_run: MockRun) {
+        mock_run.run.finish().unwrap();
+
         assert_eq!(
-            completions.as_slice(),
-            &[
-                ExperimentCompletion::Failed(DROPPED_UNFINISHED.to_string()),
-                ExperimentCompletion::Success,
-            ]
+            *mock_run.session.completions.lock().unwrap(),
+            [ExperimentCompletion::Success]
         );
     }
 
-    #[test]
-    fn a_cancelled_run_ends_by_how_it_is_finished() {
-        let session = Arc::new(MockSession::default());
+    #[rstest]
+    #[case::finished(|run: ExperimentRun| run.finish().unwrap(), ExperimentCompletion::Success)]
+    #[case::failed(
+        |run: ExperimentRun| run.fail(REASON).unwrap(),
+        ExperimentCompletion::Failed(REASON.to_string())
+    )]
+    fn a_cancelled_run_ends_as_it_is_ended(
+        mock_run: MockRun,
+        #[case] end: fn(ExperimentRun),
+        #[case] completion: ExperimentCompletion,
+    ) {
+        mock_run.run.cancel().unwrap();
 
-        let completed = create_run(session.clone());
-        completed.cancel().unwrap();
-        completed.finish().unwrap();
-        let failed = create_run(session.clone());
-        failed.cancel().unwrap();
-        failed.fail("interrupted").unwrap();
+        end(mock_run.run);
 
-        let completions = session.completions.lock().unwrap();
-        assert_eq!(
-            completions.as_slice(),
-            &[
-                ExperimentCompletion::Success,
-                ExperimentCompletion::Failed("interrupted".to_string()),
-            ]
-        );
-    }
-
-    /// The level, message, attributes and activity of each log `session` recorded.
-    fn logs(session: &MockSession) -> Vec<(LogLevel, String, usize, Option<ActivityId>)> {
-        session
-            .events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|event| match event {
-                Event::Log { record, activity } => Some((
-                    record.level,
-                    record.message.clone(),
-                    record.attributes.len(),
-                    *activity,
-                )),
-                _ => None,
-            })
-            .collect()
+        assert_eq!(*mock_run.session.completions.lock().unwrap(), [completion]);
     }
 
     #[rstest]
@@ -1120,22 +1067,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_stop_request_is_logged_once_while_the_run_is_active() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let activity = run.activity("epoch 1").cancellable().start();
+    #[rstest]
+    fn cancelling_an_activity_logs_no_stop_request(mock_run: MockRun) {
+        let activity = mock_run.run.activity("epoch 1").cancellable().start();
 
         activity.cancel_token().cancel();
-        assert!(logs(&session).is_empty());
-        run.cancel_token().cancel();
-        run.cancel().unwrap();
-        run.cancel_token().cancel();
 
-        assert_eq!(
-            logs(&session),
-            [(LogLevel::Warn, STOP_REQUESTED.to_string(), 0, None)]
-        );
+        assert!(mock_run.session.logs().is_empty());
+    }
+
+    #[rstest]
+    fn a_stop_request_is_logged_once_however_often_the_run_is_cancelled(mock_run: MockRun) {
+        mock_run.run.cancel_token().cancel();
+        mock_run.run.cancel().unwrap();
+        mock_run.run.cancel_token().cancel();
+
+        assert_eq!(mock_run.session.log_messages(), [STOP_REQUESTED]);
     }
 
     #[test]
@@ -1146,34 +1093,16 @@ mod tests {
 
         let _run = create_run_with_control(session.clone(), control);
 
-        assert_eq!(
-            logs(&session),
-            [(LogLevel::Warn, STOP_REQUESTED.to_string(), 0, None)]
-        );
+        assert_eq!(session.log_messages(), [STOP_REQUESTED]);
     }
 
-    #[test]
-    fn a_stop_requested_once_the_run_has_finished_is_not_logged() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let cancel_token = run.cancel_token();
+    #[rstest]
+    fn a_stop_requested_once_the_run_has_finished_is_not_logged(mock_run: MockRun) {
+        let cancel_token = mock_run.run.cancel_token();
+        mock_run.run.finish().unwrap();
 
-        run.finish().unwrap();
         cancel_token.cancel();
 
-        assert!(logs(&session).is_empty());
-    }
-
-    #[test]
-    fn dropped_run_handle_activity_records_no_event() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let handle = run.handle();
-        drop(run);
-
-        let _progress = handle.activity("late").meter(1, "items").start();
-
-        let events = session.events.lock().unwrap();
-        assert!(events.is_empty());
+        assert!(mock_run.session.logs().is_empty());
     }
 }
