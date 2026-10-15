@@ -159,7 +159,6 @@ mod tests {
     use crate::local::test_support::{EXPERIMENT, LocalRun, local_run, run};
     use crate::{ArtifactKind, ExperimentRun};
 
-    /// A one-file artifact.
     #[derive(Debug, PartialEq)]
     struct Note(String);
 
@@ -251,20 +250,22 @@ mod tests {
         names
     }
 
-    #[test]
-    fn a_saved_artifact_loads_back_from_a_later_run() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = run(dir.path(), "mnist");
-        first
-            .save_artifact("note", ArtifactKind::Other, Note("kept".to_string()), &())
+    #[rstest]
+    fn a_saved_artifact_loads_back_from_a_later_run(local_run: LocalRun) {
+        let saved = || Note("kept".to_string());
+        local_run
+            .run
+            .save_artifact("note", ArtifactKind::Other, saved(), &())
             .unwrap();
-        let first_id = first.id().clone();
-        first.finish().unwrap();
+        let saved_by = local_run.run.id().clone();
+        local_run.run.finish().unwrap();
 
-        let second = run(dir.path(), "mnist");
-        let note: Note = second.use_artifact(first_id, "note", &()).unwrap();
+        let later = run(local_run.runs.path(), EXPERIMENT);
 
-        assert_eq!(note, Note("kept".to_string()));
+        assert_eq!(
+            later.use_artifact::<Note>(saved_by, "note", &()).unwrap(),
+            saved()
+        );
     }
 
     #[rstest]
