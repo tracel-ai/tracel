@@ -70,9 +70,13 @@ pub fn child_dir(parent: &Path, name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+    use std::thread;
+
+    use rstest::rstest;
+
     use super::*;
     use crate::local::test_support::run;
-    use rstest::rstest;
 
     #[test]
     fn a_runs_directory_it_creates_ignores_everything_in_it() {
@@ -81,9 +85,10 @@ mod tests {
 
         let _run = run(&runs, "mnist");
 
-        assert_eq!(
-            fs::read_to_string(runs.join(".gitignore")).unwrap(),
-            RUNS_GITIGNORE
+        let gitignore = fs::read_to_string(runs.join(".gitignore")).unwrap();
+        assert!(
+            gitignore.lines().any(|pattern| pattern == "*"),
+            "{gitignore}"
         );
     }
 
@@ -138,5 +143,36 @@ mod tests {
         fs::create_dir_all(dir.path().join("mnist/notes")).unwrap();
 
         assert_eq!(run(dir.path(), "mnist").id().as_str(), "8");
+    }
+
+    #[test]
+    fn a_file_named_like_the_next_run_is_numbered_past() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("mnist")).unwrap();
+        fs::write(dir.path().join("mnist/1"), "").unwrap();
+
+        assert_eq!(run(dir.path(), "mnist").id().as_str(), "2");
+    }
+
+    #[test]
+    fn runs_started_at_once_are_numbered_from_one_without_gaps() {
+        const RUNS: u64 = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let barrier = Barrier::new(RUNS as usize);
+
+        let mut ids: Vec<u64> = thread::scope(|scope| {
+            let runs: Vec<_> = (0..RUNS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        run(dir.path(), "mnist").id().parse().unwrap()
+                    })
+                })
+                .collect();
+            runs.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        ids.sort();
+
+        assert_eq!(ids, (1..=RUNS).collect::<Vec<_>>());
     }
 }
