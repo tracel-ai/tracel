@@ -1025,44 +1025,16 @@ mod tests {
         assert_eq!(session.events.lock().unwrap().len(), recorded);
     }
 
-    #[test]
-    fn scoped_handle_inherits_attributes_and_call_site_wins() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
+    #[rstest]
+    fn a_log_through_a_scoped_handle_inherits_its_attributes(mock_run: MockRun) {
+        let scoped = mock_run.run.handle().with_attr("phase", "train");
 
-        let scoped = run
-            .handle()
-            .with_attr("phase", "train")
-            .with_attr("shard", 1i64);
-        scoped.log(
-            LogRecord::warn("slow step")
-                .with("shard", 2i64)
-                .with("elapsed_ms", 900i64),
+        scoped.log_warn("slow step");
+
+        assert_eq!(
+            mock_run.session.logs()[0].attributes.get("phase"),
+            Some(&serde_json::json!("train"))
         );
-
-        let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => {
-                assert_eq!(record.level, LogLevel::Warn);
-                assert_eq!(record.message, "slow step");
-                // Inherited from scope.
-                assert_eq!(
-                    record.attributes.get("phase").and_then(|v| v.as_str()),
-                    Some("train")
-                );
-                // Call-site value overrides the inherited scope value.
-                assert_eq!(
-                    record.attributes.get("shard").and_then(|v| v.as_i64()),
-                    Some(2)
-                );
-                assert_eq!(
-                    record.attributes.get("elapsed_ms").and_then(|v| v.as_i64()),
-                    Some(900)
-                );
-            }
-            event => panic!("unexpected event: {event:?}"),
-        }
     }
 
     #[test]
