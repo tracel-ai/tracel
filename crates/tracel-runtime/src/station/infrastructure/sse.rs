@@ -99,16 +99,25 @@ mod tests {
     fn a_value_needs_no_leading_space() {
         let frames = parse(&["event:job", "data:x", ""]);
 
-        assert_eq!(frames[0].event, "job");
-        assert_eq!(frames[0].data, "x");
+        assert_eq!(
+            frames,
+            [SseFrame {
+                event: "job".to_string(),
+                data: "x".to_string(),
+            }]
+        );
     }
 
     #[test]
     fn each_frame_starts_afresh() {
         let frames = parse(&["event: a", "data: 1", "", "data: 2", ""]);
 
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[1].event, "message");
-        assert_eq!(frames[1].data, "2");
+        assert_eq!(
+            frames[1],
+            SseFrame {
+                event: "message".to_string(),
+                data: "2".to_string(),
+            }
+        );
     }
 }
