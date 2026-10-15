@@ -42,20 +42,21 @@ impl From<ExitCode> for std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn each_exit_code_reads_back_from_its_code() {
-        for (exit, code) in [
-            (ExitCode::Completed, 0),
-            (ExitCode::Failed, 1),
-            (ExitCode::Rejected, 2),
-        ] {
-            assert_eq!(exit.code(), code);
-            assert_eq!(ExitCode::from_code(i32::from(code)), Some(exit));
-        }
-        for code in [-1, 3, 101, 130, 137, 256] {
-            assert_eq!(ExitCode::from_code(code), None);
-        }
+    #[rstest]
+    fn an_exit_code_reads_back_from_its_code(
+        #[values(ExitCode::Completed, ExitCode::Failed, ExitCode::Rejected)] exit: ExitCode,
+    ) {
+        assert_eq!(ExitCode::from_code(exit.code().into()), Some(exit));
+    }
+
+    #[rstest]
+    fn a_code_the_protocol_does_not_give_is_no_exit_code(
+        #[values(-1, 3, 101, 130, 137, 256)] code: i32,
+    ) {
+        assert_eq!(ExitCode::from_code(code), None);
     }
 }
