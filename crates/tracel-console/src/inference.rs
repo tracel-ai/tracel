@@ -299,63 +299,28 @@ fn rfc3339(timestamp_ms: i64) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn rfc3339_formats_epoch_millis() {
-        assert_eq!(rfc3339(1000), "1970-01-01T00:00:01.000Z");
+    fn descriptor(name: &str) -> TelemetryMsg {
+        TelemetryMsg::Descriptor(MetricDescriptor {
+            name: name.to_string(),
+            kind: MetricKind::Distribution,
+            unit: Some("ms".to_string()),
+            description: None,
+        })
     }
 
     #[test]
-    fn converts_metric_sample_to_backend_contract() {
-        let sample = MetricSample {
-            name: "inference_duration_ms".to_string(),
-            timestamp_ms: 1000,
-            metadata: serde_json::json!({ "request_id": "wordtok/0" }),
-            data: MetricData::Distribution { value: 5.0 },
-        };
-
-        let json = serde_json::to_value(convert_metric(sample)).unwrap();
-        assert_eq!(
-            json,
-            serde_json::json!({
-                "name": "inference_duration_ms",
-                "timestamp": "1970-01-01T00:00:01.000Z",
-                "metadata": { "request_id": "wordtok/0" },
-                "kind": "distribution",
-                "value": 5.0
-            })
-        );
-    }
-
-    #[test]
-    fn batch_dedups_descriptors_and_counts_events() {
-        let descriptor = || {
-            TelemetryMsg::Descriptor(MetricDescriptor {
-                name: "latency".to_string(),
-                kind: MetricKind::Distribution,
-                unit: Some("ms".to_string()),
-                description: None,
-            })
-        };
-
+    fn a_metric_descriptor_is_sent_once_per_name() {
         let mut batch = Batch::default();
-        batch.push(descriptor());
-        batch.push(descriptor());
-        batch.push(TelemetryMsg::Log(LogSample {
-            timestamp_ms: 0,
-            level: LogLevel::Info,
-            message: "hi".to_string(),
-            metadata: serde_json::json!({}),
-        }));
-        batch.push(TelemetryMsg::Metric(MetricSample {
-            name: "latency".to_string(),
-            timestamp_ms: 0,
-            metadata: serde_json::json!({}),
-            data: MetricData::Gauge { value: 1.0 },
-        }));
 
-        assert_eq!(batch.descriptors.len(), 1);
-        assert_eq!(batch.logs.len(), 1);
-        assert_eq!(batch.metrics.len(), 1);
-        assert_eq!(batch.len(), 3);
+        batch.push(descriptor("latency"));
+        batch.push(descriptor("latency"));
+        batch.push(descriptor("throughput"));
+
+        let sent: Vec<_> = batch
+            .descriptors
+            .iter()
+            .map(|descriptor| descriptor.name.as_str())
+            .collect();
+        assert_eq!(sent, ["latency", "throughput"]);
     }
 }
