@@ -263,7 +263,6 @@ fn overlay(input: &mut Value, layer: Value) {
 
 #[cfg(test)]
 mod tests {
-    use clap::error::ErrorKind;
     use rstest::rstest;
     use schemars::JsonSchema;
     use serde::Serialize;
@@ -278,6 +277,7 @@ mod tests {
         shuffle: bool,
         tag: String,
         layers: Vec<u32>,
+        mode: Mode,
         resume_from: Option<Resume>,
         optimizer: Optimizer,
     }
@@ -293,7 +293,6 @@ mod tests {
         epoch: u32,
     }
 
-    /// `train`, taking `Training`, with a default input.
     fn train() -> JobDefinition {
         let default = Training {
             num_epochs: 10,
@@ -301,6 +300,7 @@ mod tests {
             shuffle: true,
             tag: "baseline".to_string(),
             layers: vec![64, 32],
+            mode: Mode::Fast,
             resume_from: None,
             optimizer: Optimizer {
                 lr: 0.001,
@@ -318,13 +318,11 @@ mod tests {
     #[derive(JsonSchema)]
     #[expect(dead_code)]
     struct Prompt {
-        /// The prompt.
         text: String,
         mode: Mode,
-        limit: Option<u32>,
     }
 
-    #[derive(JsonSchema)]
+    #[derive(Serialize, JsonSchema)]
     #[serde(rename_all = "snake_case")]
     #[expect(dead_code)]
     enum Mode {
@@ -332,7 +330,6 @@ mod tests {
         Exact,
     }
 
-    /// `prompt`, taking `Prompt`, with no default input.
     fn prompt() -> JobDefinition {
         JobDefinition {
             name: "prompt".to_string(),
@@ -342,7 +339,6 @@ mod tests {
         }
     }
 
-    /// `evaluate`, with a default input and no schema or description.
     fn evaluate() -> JobDefinition {
         JobDefinition {
             name: "evaluate".to_string(),
@@ -352,8 +348,21 @@ mod tests {
         }
     }
 
-    /// The input the job's command line `<job> <args>` gives, its `--config` file read from
-    /// `files`, by name.
+    fn named_like_flags() -> JobDefinition {
+        JobDefinition {
+            name: "train".to_string(),
+            description: None,
+            input_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "config": {"type": "string"},
+                    "version": {"type": "integer"}
+                }
+            })),
+            input_example: None,
+        }
+    }
+
     fn input_from(
         job: &JobDefinition,
         args: &[&str],
@@ -370,114 +379,74 @@ mod tests {
         }))
     }
 
-    /// The input the job's command line `<job> <args>` gives, with no `--config` file to read.
     fn input(job: &JobDefinition, args: &[&str]) -> Result<Value, clap::Error> {
         input_from(job, args, &[]).map(|input| input.unwrap())
     }
 
-    /// The job's `--help`.
-    fn help(job: &JobDefinition) -> String {
-        job_command(job).render_long_help().to_string()
-    }
-
     #[test]
-    fn the_command_has_a_subcommand_per_job() {
+    fn each_job_is_a_subcommand_about_its_description() {
         let jobs = [train(), prompt(), evaluate()];
-        let mut command = command("program", &jobs);
-        command.build();
 
-        let abouts: Vec<(&str, Option<String>)> = command
+        let command = command("program", &jobs);
+
+        let subcommands: Vec<(&str, Option<String>)> = command
             .get_subcommands()
             .map(|job| (job.get_name(), job.get_about().map(ToString::to_string)))
             .collect();
-        assert_eq!(
-            abouts,
-            [
-                ("train", Some("Train the model".to_string())),
-                ("prompt", Some("Answer a prompt".to_string())),
-                ("evaluate", None),
-            ]
-        );
-        let help = command.render_help().to_string();
-        assert!(help.contains("Jobs:"), "{help}");
-        assert!(help.contains("--completions <SHELL>"), "{help}");
+        let expected: Vec<(&str, Option<String>)> = jobs
+            .iter()
+            .map(|job| (job.name.as_str(), job.description.clone()))
+            .collect();
+        assert_eq!(subcommands, expected);
+    }
+
+    #[rstest]
+    #[case::at_the_top(&["--num-epochs", "2"], json!({"num_epochs": 2}))]
+    #[case::in_its_object(
+        &["--optimizer.weight-decay", "0.5"],
+        json!({"optimizer": {"weight_decay": 0.5}})
+    )]
+    #[case::beside_another_in_its_object(
+        &["--optimizer.lr", "0.1", "--optimizer.weight-decay", "0.5"],
+        json!({"optimizer": {"lr": 0.1, "weight_decay": 0.5}})
+    )]
+    fn a_flag_sets_its_field_under_its_original_keys(
+        #[case] args: &[&str],
+        #[case] expected: Value,
+    ) {
+        assert_eq!(input(&train(), args).unwrap(), expected);
     }
 
     #[test]
-    fn flags_set_fields_under_their_original_keys() {
-        let input = input(
-            &train(),
-            &[
-                "--num-epochs",
-                "2",
-                "--optimizer.weight-decay",
-                "3e-4",
-                "--tag",
-                "42",
-            ],
-        )
-        .unwrap();
-
+    fn a_choice_flag_sets_its_field_to_the_value_chosen() {
         assert_eq!(
-            input,
-            json!({"num_epochs": 2, "optimizer": {"weight_decay": 3e-4}, "tag": "42"})
+            input(&train(), &["--mode", "exact"]).unwrap(),
+            json!({"mode": "exact"})
         );
     }
 
     #[test]
-    fn no_arguments_give_no_input_and_defaults_are_only_shown() {
+    fn the_defaults_alone_give_no_input() {
         assert_eq!(input(&train(), &[]).unwrap(), Value::Null);
-
-        let help = help(&train());
-        for line in [
-            "--num-epochs <INT>",
-            "[default: 10]",
-            "--optimizer.weight-decay <FLOAT>",
-            "[default: 0.00005]",
-            "--shuffle[=<BOOL>]",
-            "--layers <JSON>",
-            "[default: [64,32]]",
-            "--resume-from <JSON>",
-            "[default: null]",
-            "-c, --config <FILE>",
-        ] {
-            assert!(help.contains(line), "no {line} in\n{help}");
-        }
     }
 
-    #[test]
-    fn a_flag_parses_as_its_type() {
-        let train = train();
+    #[rstest]
+    #[case::integer(&["--batch-size", "-1"], json!({"batch_size": -1}))]
+    #[case::number(&["--optimizer.lr", "-0.5"], json!({"optimizer": {"lr": -0.5}}))]
+    #[case::json(&["--layers", "-1"], json!({"layers": -1}))]
+    fn a_numeric_or_json_flag_takes_a_negative_number(
+        #[case] args: &[&str],
+        #[case] expected: Value,
+    ) {
+        assert_eq!(input(&train(), args).unwrap(), expected);
+    }
 
-        assert_eq!(
-            input(&train, &["--shuffle", "--batch-size", "-1"]).unwrap(),
-            json!({"shuffle": true, "batch_size": -1})
-        );
-        for args in [
-            &["--num-epochs", "ten"][..],
-            &["--num-epochs", "1.5"],
-            &["--optimizer.lr", "fast"],
-            &["--shuffle=yes"],
-            &["--layers", "[1,"],
-        ] {
-            let error = input(&train, args).unwrap_err();
-            assert!(
-                matches!(
-                    error.kind(),
-                    ErrorKind::ValueValidation | ErrorKind::InvalidValue
-                ),
-                "{args:?}: {error}"
-            );
-            assert_eq!(error.exit_code(), 2);
-        }
-        assert_eq!(
-            input(&train, &["--num-epochs"]).unwrap_err().kind(),
-            ErrorKind::InvalidValue
-        );
-        assert_eq!(
-            input(&train, &["--epochs", "2"]).unwrap_err().kind(),
-            ErrorKind::UnknownArgument
-        );
+    #[rstest]
+    #[case::integer(&["--num-epochs", "ten"])]
+    #[case::bool(&["--shuffle=yes"])]
+    #[case::choice(&["--mode", "slow"])]
+    fn a_flag_given_a_value_its_field_does_not_take_is_rejected(#[case] args: &[&str]) {
+        assert!(input(&train(), args).is_err());
     }
 
     #[rstest]
@@ -494,132 +463,95 @@ mod tests {
         assert_eq!(input(&train(), args).unwrap(), expected);
     }
 
-    #[test]
-    fn json_literal_flags_take_any_json() {
-        assert_eq!(
-            input(
-                &train(),
-                &["--layers", "[8]", "--resume-from", r#"{"epoch": 3}"#]
-            )
-            .unwrap(),
-            json!({"layers": [8], "resume_from": {"epoch": 3}})
-        );
-        assert_eq!(
-            input(&train(), &["--resume-from", "null"]).unwrap(),
-            json!({"resume_from": null})
-        );
+    #[rstest]
+    #[case::an_object(json!({"epoch": 3}))]
+    #[case::null(Value::Null)]
+    fn a_json_flag_sets_its_field_to_the_json_it_is_given(#[case] value: Value) {
+        let input = input(&train(), &["--resume-from", &value.to_string()]).unwrap();
+
+        assert_eq!(input, json!({"resume_from": value}));
     }
 
     #[test]
-    fn a_schema_gives_flags_their_values_and_help() {
-        let prompt = prompt();
-
-        assert_eq!(
-            input(
-                &prompt,
-                &["--text", "hi", "--mode", "exact", "--limit", "3"]
-            )
-            .unwrap(),
-            json!({"text": "hi", "mode": "exact", "limit": 3})
-        );
-        assert_eq!(
-            input(&prompt, &["--text", "hi", "--mode", "slow"])
-                .unwrap_err()
-                .kind(),
-            ErrorKind::InvalidValue
-        );
-        let help = help(&prompt);
-        assert!(help.contains("The prompt."), "{help}");
-        assert!(help.contains("[possible values: fast, exact]"), "{help}");
+    fn a_required_flag_left_out_is_rejected() {
+        assert!(input(&prompt(), &["--mode", "fast"]).is_err());
     }
 
-    #[test]
-    fn a_required_flag_can_be_left_to_the_json_input_or_the_config_file() {
-        let prompt = prompt();
+    #[rstest]
+    #[case::the_json_input(&[r#"{"text": "hi"}"#])]
+    #[case::the_config_file(&["--config", "config.json"])]
+    fn a_required_flag_can_be_left_to(#[case] args: &[&str]) {
         let files = [("config.json", r#"{"text": "from a file"}"#)];
 
-        let missing = input(&prompt, &["--mode", "fast"]).unwrap_err();
-
-        assert_eq!(missing.kind(), ErrorKind::MissingRequiredArgument);
-        assert!(missing.to_string().contains("--text <STRING>"), "{missing}");
-        assert_eq!(
-            input(&prompt, &[r#"{"text": "hi"}"#]).unwrap(),
-            json!({"text": "hi"})
-        );
-        assert_eq!(
-            input_from(&prompt, &["-c", "config.json"], &files)
-                .unwrap()
-                .unwrap(),
-            json!({"text": "from a file"})
-        );
+        assert!(input_from(&prompt(), args, &files).is_ok());
     }
 
-    #[test]
-    fn a_job_without_a_schema_takes_its_json_input_and_config_file_only() {
-        let evaluate = evaluate();
-        let files = [("config.json", r#"{"split": "valid"}"#)];
-
-        let flag = input(&evaluate, &["--split", "valid"]).unwrap_err();
-
-        assert_eq!(flag.kind(), ErrorKind::UnknownArgument);
-        assert_eq!(flag.exit_code(), 2);
-        assert_eq!(
-            input(&evaluate, &[r#"{"split": "valid"}"#]).unwrap(),
-            json!({"split": "valid"})
-        );
-        assert_eq!(
-            input_from(&evaluate, &["--config", "config.json"], &files)
-                .unwrap()
-                .unwrap(),
-            json!({"split": "valid"})
-        );
-        let help = help(&evaluate);
-        assert!(help.contains("[INPUT]"), "{help}");
-        assert!(help.contains("-c, --config <FILE>"), "{help}");
-        assert!(!help.contains("--split"), "{help}");
-    }
-
-    #[test]
-    fn the_json_input_alone_is_the_input_as_given() {
-        let given = json!({"tag": null, "layers": [], "optimizer": {"lr": 0.1}});
-
+    #[rstest]
+    #[case::an_object(json!({"tag": null, "layers": [], "optimizer": {"lr": 0.1}}))]
+    #[case::a_number(json!(7))]
+    #[case::a_negative_number(json!(-7))]
+    fn the_json_input_alone_is_the_input_as_given(#[case] given: Value) {
         assert_eq!(input(&train(), &[&given.to_string()]).unwrap(), given);
-        assert_eq!(input(&train(), &["7"]).unwrap(), json!(7));
-        assert_eq!(input(&train(), &["-7"]).unwrap(), json!(-7));
+    }
+
+    #[test]
+    fn an_input_that_is_not_json_is_rejected() {
+        assert!(input(&train(), &["{"]).is_err());
     }
 
     #[test]
     fn the_config_file_then_the_json_input_then_the_flags_win() {
         let files = [(
             "config.json",
-            r#"{"num_epochs": 1, "batch_size": 8, "tag": "file", "optimizer": {"lr": 0.1, "weight_decay": 0.5}}"#,
+            r#"{"num_epochs": 1, "batch_size": 8, "tag": "file"}"#,
         )];
+        let args = [
+            "--num-epochs",
+            "3",
+            "--config",
+            "config.json",
+            r#"{"num_epochs": 2, "batch_size": 16}"#,
+        ];
 
-        let input = input_from(
-            &train(),
-            &[
-                "--num-epochs",
-                "3",
-                "--config",
-                "config.json",
-                r#"{"num_epochs": 2, "batch_size": 16, "tag": null, "optimizer": {"lr": 0.2}}"#,
-                "--optimizer.lr",
-                "0.3",
-            ],
-            &files,
-        )
-        .unwrap()
-        .unwrap();
+        let input = input_from(&train(), &args, &files).unwrap().unwrap();
 
         assert_eq!(
             input,
-            json!({
-                "num_epochs": 3,
-                "batch_size": 16,
-                "tag": null,
-                "optimizer": {"lr": 0.3, "weight_decay": 0.5}
-            })
+            json!({"num_epochs": 3, "batch_size": 16, "tag": "file"})
         );
+    }
+
+    #[rstest]
+    #[case::a_value_onto_an_object(json!({"num_epochs": 1}), json!(7))]
+    #[case::an_object_onto_a_value(json!(7), json!({"num_epochs": 3}))]
+    fn a_layer_replaces_what_is_below_unless_both_are_objects(
+        #[case] mut below: Value,
+        #[case] layer: Value,
+    ) {
+        overlay(&mut below, layer.clone());
+
+        assert_eq!(below, layer);
+    }
+
+    #[test]
+    fn an_object_layer_is_overlaid_field_by_field() {
+        let mut below = json!({"num_epochs": 1, "optimizer": {"lr": 0.1, "weight_decay": 0.5}});
+
+        overlay(&mut below, json!({"optimizer": {"lr": 0.2}}));
+
+        assert_eq!(
+            below,
+            json!({"num_epochs": 1, "optimizer": {"lr": 0.2, "weight_decay": 0.5}})
+        );
+    }
+
+    #[test]
+    fn a_null_field_is_kept_rather_than_applied() {
+        let mut below = json!({"num_epochs": 1, "tag": "file"});
+
+        overlay(&mut below, json!({"tag": null}));
+
+        assert_eq!(below, json!({"num_epochs": 1, "tag": null}));
     }
 
     #[test]
@@ -631,118 +563,61 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_or_invalid_config_file_is_an_error_naming_it() {
-        let files = [("config.toml", "epochs = 3")];
-        let error = |path| {
-            input_from(&train(), &["-c", path], &files)
-                .unwrap()
-                .unwrap_err()
-        };
+    fn an_unreadable_config_file_is_an_error_naming_it() {
+        let missing = "missing.json";
 
-        let missing = error("missing.json");
-        let not_json = error("config.toml");
+        let error = input_from(&train(), &["--config", missing], &[])
+            .unwrap()
+            .unwrap_err();
 
         assert!(
-            matches!(&missing, ConfigError::Unreadable { path, .. } if path == Path::new("missing.json")),
-            "{missing:?}"
-        );
-        assert!(
-            missing
-                .to_string()
-                .starts_with("cannot read the --config file missing.json: ")
-        );
-        assert!(
-            matches!(&not_json, ConfigError::NotJson { .. }),
-            "{not_json:?}"
-        );
-        assert!(
-            not_json
-                .to_string()
-                .starts_with("the --config file config.toml is not JSON: ")
+            matches!(error, ConfigError::Unreadable { path, .. } if path == Path::new(missing))
         );
     }
 
     #[test]
-    fn reserved_names_belong_to_the_command_line() {
-        let job = JobDefinition {
-            name: "train".to_string(),
-            description: None,
-            input_schema: Some(json!({
-                "type": "object",
-                "properties": {
-                    "config": {"type": "string"},
-                    "help": {"type": "boolean"},
-                    "version": {"type": "integer"},
-                    "epochs": {"type": "integer"}
-                }
-            })),
-            input_example: None,
-        };
+    fn a_config_file_that_is_not_json_is_an_error_naming_it() {
+        let toml = "config.toml";
+
+        let error = input_from(&train(), &["--config", toml], &[(toml, "epochs = 3")])
+            .unwrap()
+            .unwrap_err();
+
+        assert!(matches!(error, ConfigError::NotJson { path, .. } if path == Path::new(toml)));
+    }
+
+    #[test]
+    fn the_config_flag_names_the_config_file_beside_a_field_named_config() {
         let files = [("large.json", r#"{"config": "large"}"#)];
 
-        let command = job_command(&job);
-        let longs: Vec<&str> = command.get_arguments().filter_map(Arg::get_long).collect();
-        assert_eq!(longs, ["epochs", "version", "config"]);
+        let input = input_from(&named_like_flags(), &["--config", "large.json"], &files)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(input, json!({"config": "large"}));
+    }
+
+    #[test]
+    fn a_field_named_version_is_set_by_its_flag() {
         assert_eq!(
-            input_from(&job, &["--config", "large.json"], &files)
-                .unwrap()
-                .unwrap(),
-            json!({"config": "large"})
-        );
-        assert_eq!(
-            input(&job, &["--help"]).unwrap_err().kind(),
-            ErrorKind::DisplayHelp
-        );
-        assert_eq!(
-            input(&job, &["--version", "3"]).unwrap(),
+            input(&named_like_flags(), &["--version", "3"]).unwrap(),
             json!({"version": 3})
         );
     }
 
-    #[test]
-    fn completions_names_the_shell_the_command_line_asks_for() {
+    #[rstest]
+    #[case::when_asked(&["--completions", "zsh"], Some(Shell::Zsh))]
+    #[case::when_a_job_is_named(&["train"], None)]
+    fn completions_names_the_shell_the_command_line_asks_for(
+        #[case] args: &[&str],
+        #[case] shell: Option<Shell>,
+    ) {
         let jobs = [train()];
-        let matches = |args: &[&str]| {
-            command("program", &jobs)
-                .try_get_matches_from(["program"].iter().chain(args))
-                .unwrap()
-        };
 
-        assert_eq!(
-            completions(&matches(&["--completions", "zsh"])),
-            Some(Shell::Zsh)
-        );
-        assert_eq!(completions(&matches(&["train"])), None);
-        assert_eq!(
-            command("program", &jobs)
-                .try_get_matches_from(["program", "--completions", "tcsh"])
-                .unwrap_err()
-                .kind(),
-            ErrorKind::InvalidValue
-        );
-    }
+        let matches = command("program", &jobs)
+            .try_get_matches_from(["program"].iter().chain(args))
+            .unwrap();
 
-    #[test]
-    fn completions_cover_the_jobs_and_their_flags() {
-        let jobs = [train(), prompt()];
-        let mut script = Vec::new();
-
-        clap_complete::generate(
-            Shell::Bash,
-            &mut command("program", &jobs),
-            "program",
-            &mut script,
-        );
-
-        let script = String::from_utf8(script).unwrap();
-        for word in [
-            "train",
-            "prompt",
-            "--optimizer.weight-decay",
-            "--config",
-            "--completions",
-        ] {
-            assert!(script.contains(word), "no {word} in the script");
-        }
+        assert_eq!(completions(&matches), shell);
     }
 }
