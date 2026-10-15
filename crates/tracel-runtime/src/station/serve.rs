@@ -22,8 +22,6 @@ pub trait FinishSink: Send + Sync + 'static {
 
 impl FinishSink for StationRunnerClient {
     fn finish_job(&self, job_id: Uuid, finish: &FinishJob) {
-        // A rejected finish is expected after a disconnect: the station has already failed the
-        // job and this session no longer owns it.
         if let Err(e) = StationRunnerClient::finish_job(self, job_id, finish) {
             warn!(%job_id, error = %e, "failed to report the outcome of the job to the station");
         }
@@ -204,8 +202,6 @@ pub fn serve_forever(
                 if let StreamOutcome::Served = serve_stream(stream, &executor) {
                     backoff.reset();
                 }
-                // Never re-register while user code still runs: the station failed those jobs when
-                // the stream dropped, and a fresh session would get new ones. Drain them first.
                 executor.wait_idle();
             }
             Err(e) if e.is_permanent() => return RunnerError::Registration(e.to_string()),
