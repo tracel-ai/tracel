@@ -399,9 +399,8 @@ mod tests {
         assert_eq!(statuses(&finishes), completed(&waiting));
     }
 
-    #[test]
-    fn a_cancelled_job_runs_to_completion_and_the_stream_goes_on() {
-        let setup = setup();
+    #[rstest]
+    fn a_cancelled_job_runs_to_completion_and_the_stream_goes_on(setup: Setup) {
         let (cancelled, next) = (dispatched("train"), dispatched("train"));
 
         serve_stream(
@@ -419,14 +418,7 @@ mod tests {
         );
         setup.executor.wait_idle();
 
-        let finishes = setup.sink.finishes.lock().unwrap().clone();
-        assert_eq!(finishes.len(), 2);
-        for job in [&cancelled, &next] {
-            assert!(
-                finishes.contains(&(job.id, setup.runner_id, FinishStatus::Completed, None)),
-                "{finishes:?}"
-            );
-        }
+        assert_eq!(statuses(&finishes(&setup)), completed([&cancelled, &next]));
     }
 
     #[rstest]
