@@ -17,9 +17,6 @@ use crate::running_job;
 
 const TRACEL_TARGET: &str = "TRACEL_TARGET";
 const TRACEL_RUNS_DIR: &str = "TRACEL_RUNS_DIR";
-const TRACEL_API_KEY: &str = "TRACEL_API_KEY";
-const TRACEL_NAMESPACE: &str = "TRACEL_NAMESPACE";
-const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
 #[cfg(feature = "station")]
 const TRACEL_STATION_URL: &str = "TRACEL_STATION_URL";
 
@@ -89,9 +86,9 @@ impl Target {
         doc = "| `TRACEL_STATION_URL` | the Station's base URL | `http://localhost:8000` |"
     )]
     ///
-    /// Fails with [`TargetError::UnknownTarget`] when `TRACEL_TARGET` names no target, and with
-    /// [`TargetError::MissingSetting`] or [`TargetError::InvalidSetting`] naming the variable to
-    /// set when the target cannot be filled in.
+    /// Fails with [`TargetError::UnknownTarget`] when `TRACEL_TARGET` names no target, with
+    /// [`TargetError::Console`] when the console target cannot be filled in, and with
+    /// [`TargetError::InvalidSetting`] when `TRACEL_STATION_URL` is not an http or https URL.
     pub fn from_env() -> Result<Target, TargetError> {
         Self::from_vars(|name| std::env::var_os(name))
     }
@@ -258,13 +255,7 @@ pub enum TargetError {
         /// The `tracel` feature that adds the target.
         feature: &'static str,
     },
-    /// A setting the target needs is not set.
-    #[error("{variable} is not set{}", fallback(.variable))]
-    MissingSetting {
-        /// The environment variable to set.
-        variable: &'static str,
-    },
-    /// An environment variable holds a value the SDK does not accept.
+    /// `TRACEL_STATION_URL` holds a value that is not an http or https URL.
     #[error("invalid {variable} value `{value}`: expected {expected}")]
     InvalidSetting {
         /// The environment variable.
@@ -282,50 +273,9 @@ pub enum TargetError {
         /// The kind of target that does not serve it.
         target: &'static str,
     },
-    /// The console settings could not be read for another reason, such as a stored sign-in
-    /// that cannot be read.
+    /// The console target cannot be filled in or reached, as the console says.
     #[error(transparent)]
-    Console(ConsoleError),
-}
-
-/// What else provides a setting whose variable is unset, as [`TargetError::MissingSetting`] says.
-fn fallback(variable: &str) -> &'static str {
-    match variable {
-        TRACEL_API_KEY => ", and there is no `tracel login` sign-in for this console",
-        TRACEL_NAMESPACE => {
-            ", and tracel.toml sets no `namespace` (expected keys: `namespace` and `project`)"
-        }
-        TRACEL_PROJECT => {
-            ", and tracel.toml sets no `project` (expected keys: `namespace` and `project`)"
-        }
-        _ => "",
-    }
-}
-
-impl From<ConsoleError> for TargetError {
-    fn from(error: ConsoleError) -> Self {
-        match error {
-            ConsoleError::NoCredentials => Self::MissingSetting {
-                variable: TRACEL_API_KEY,
-            },
-            ConsoleError::NoNamespace => Self::MissingSetting {
-                variable: TRACEL_NAMESPACE,
-            },
-            ConsoleError::NoProject => Self::MissingSetting {
-                variable: TRACEL_PROJECT,
-            },
-            ConsoleError::InvalidSetting {
-                variable,
-                value,
-                expected,
-            } => Self::InvalidSetting {
-                variable,
-                value,
-                expected,
-            },
-            error => Self::Console(error),
-        }
-    }
+    Console(#[from] ConsoleError),
 }
 
 #[cfg(test)]
@@ -480,36 +430,5 @@ mod tests {
                 target: "offline"
             })
         ));
-    }
-
-    #[test]
-    fn a_missing_console_setting_names_the_variable_to_set() {
-        for (error, variable, fallback) in [
-            (ConsoleError::NoCredentials, TRACEL_API_KEY, "tracel login"),
-            (ConsoleError::NoNamespace, TRACEL_NAMESPACE, "tracel.toml"),
-            (ConsoleError::NoProject, TRACEL_PROJECT, "tracel.toml"),
-        ] {
-            let error = TargetError::from(error);
-
-            assert!(
-                matches!(error, TargetError::MissingSetting { variable: held } if held == variable),
-                "{error:?}"
-            );
-            assert!(error.to_string().contains(variable), "{error}");
-            assert!(error.to_string().contains(fallback), "{error}");
-        }
-    }
-
-    #[test]
-    fn a_missing_namespace_or_project_names_the_keys_of_tracel_toml() {
-        for (error, key) in [
-            (ConsoleError::NoNamespace, "no `namespace`"),
-            (ConsoleError::NoProject, "no `project`"),
-        ] {
-            let message = TargetError::from(error).to_string();
-
-            assert!(message.contains(key), "{message}");
-            assert!(message.contains("`namespace` and `project`"), "{message}");
-        }
     }
 }
