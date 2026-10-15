@@ -408,7 +408,6 @@ fn description(schema: &Map<String, Value>) -> Option<String> {
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 mod tests {
     use std::collections::HashMap;
 
@@ -464,6 +463,7 @@ mod tests {
 
     #[derive(JsonSchema)]
     #[serde(rename_all = "camelCase")]
+    #[expect(dead_code)]
     struct Shapes {
         epochs: u32,
         offset: i64,
@@ -475,8 +475,8 @@ mod tests {
         #[serde(rename = "seed_value")]
         seed: Option<u64>,
         label: Option<String>,
-        optimizer: Optimizer,
-        resume_from: Option<Resume>,
+        optimizer: Nested,
+        resume_from: Option<Checkpoint>,
         layers: Vec<u32>,
         labels: HashMap<String, String>,
         pair: (u32, String),
@@ -490,7 +490,7 @@ mod tests {
     }
 
     #[derive(Serialize, JsonSchema)]
-    struct Optimizer {
+    struct Nested {
         lr: f64,
         weight_decay: f64,
         schedule: Schedule,
@@ -502,12 +502,14 @@ mod tests {
     }
 
     #[derive(JsonSchema)]
-    struct Resume {
+    #[expect(dead_code)]
+    struct Checkpoint {
         experiment: u32,
     }
 
     #[derive(JsonSchema)]
     #[serde(tag = "kind")]
+    #[expect(dead_code)]
     enum Tagged {
         Adam { beta: f64 },
         Sgd,
@@ -515,18 +517,21 @@ mod tests {
 
     #[derive(JsonSchema)]
     #[serde(untagged)]
+    #[expect(dead_code)]
     enum Untagged {
         Count(u32),
         Name(String),
     }
 
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     enum Mixed {
         Unit,
         Data(u32),
     }
 
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     struct Flattened {
         workers: u32,
     }
@@ -569,6 +574,7 @@ mod tests {
 
     /// How to train.
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     struct Documented {
         /// Passes over the data.
         epochs: u32,
@@ -578,11 +584,12 @@ mod tests {
         fallback: Option<Backend>,
         /// The backend to compare with.
         baseline: Option<Backend>,
-        optimizer: Optimizer,
+        optimizer: Nested,
     }
 
     #[derive(JsonSchema)]
     #[serde(rename_all = "snake_case")]
+    #[expect(dead_code)]
     enum Device {
         /// The CPU.
         Cpu,
@@ -592,6 +599,7 @@ mod tests {
 
     /// The tensor backend.
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     enum Backend {
         Wgpu,
         Cuda,
@@ -631,7 +639,7 @@ mod tests {
         seed: u64,
         #[serde(default)]
         schedule: Scheduled,
-        optimizer: Optimizer,
+        optimizer: Nested,
         tag: Option<String>,
     }
 
@@ -707,6 +715,7 @@ mod tests {
     }
 
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     struct Node {
         value: u32,
         next: Option<Box<Node>>,
@@ -719,7 +728,7 @@ mod tests {
         assert!(flags_for::<()>().is_empty());
         assert!(flags_for::<Vec<u32>>().is_empty());
         assert!(flags_for::<Device>().is_empty());
-        assert!(flags_for::<Option<Resume>>().is_empty());
+        assert!(flags_for::<Option<Checkpoint>>().is_empty());
         assert!(flags_for::<serde_json::Value>().is_empty());
         assert!(flags_of(json!({"type": "object", "properties": {}}), None).is_empty());
         assert!(

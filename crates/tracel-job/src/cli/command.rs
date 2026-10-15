@@ -262,7 +262,6 @@ fn overlay(input: &mut Value, layer: Value) {
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 mod tests {
     use clap::error::ErrorKind;
     use rstest::rstest;
@@ -271,28 +270,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-
-    /// A job's input schema and default input.
-    struct Definition {
-        name: &'static str,
-        schema: Option<Value>,
-        default: Option<Value>,
-    }
-
-    fn jobs(definitions: &[Definition]) -> Vec<JobDefinition> {
-        definitions.iter().map(Definition::job).collect()
-    }
-
-    impl Definition {
-        fn job(&self) -> JobDefinition {
-            JobDefinition {
-                name: self.name.to_string(),
-                description: Some("Run the job".to_string()),
-                input_schema: self.schema.clone(),
-                input_example: self.default.clone(),
-            }
-        }
-    }
 
     #[derive(Serialize, JsonSchema)]
     struct Training {
@@ -317,7 +294,7 @@ mod tests {
     }
 
     /// `train`, taking `Training`, with a default input.
-    fn train() -> Definition {
+    fn train() -> JobDefinition {
         let default = Training {
             num_epochs: 10,
             batch_size: 64,
@@ -330,14 +307,16 @@ mod tests {
                 weight_decay: 5e-5,
             },
         };
-        Definition {
-            name: "train",
-            schema: Some(schemars::schema_for!(Training).to_value()),
-            default: Some(serde_json::to_value(default).unwrap()),
+        JobDefinition {
+            name: "train".to_string(),
+            description: Some("Train the model".to_string()),
+            input_schema: Some(schemars::schema_for!(Training).to_value()),
+            input_example: Some(serde_json::to_value(default).unwrap()),
         }
     }
 
     #[derive(JsonSchema)]
+    #[expect(dead_code)]
     struct Prompt {
         /// The prompt.
         text: String,
@@ -347,38 +326,41 @@ mod tests {
 
     #[derive(JsonSchema)]
     #[serde(rename_all = "snake_case")]
+    #[expect(dead_code)]
     enum Mode {
         Fast,
         Exact,
     }
 
     /// `prompt`, taking `Prompt`, with no default input.
-    fn prompt() -> Definition {
-        Definition {
-            name: "prompt",
-            schema: Some(schemars::schema_for!(Prompt).to_value()),
-            default: None,
+    fn prompt() -> JobDefinition {
+        JobDefinition {
+            name: "prompt".to_string(),
+            description: Some("Answer a prompt".to_string()),
+            input_schema: Some(schemars::schema_for!(Prompt).to_value()),
+            input_example: None,
         }
     }
 
-    /// `evaluate`, with a default input and no schema.
-    fn evaluate() -> Definition {
-        Definition {
-            name: "evaluate",
-            schema: None,
-            default: Some(json!({"split": "test", "limit": 10})),
+    /// `evaluate`, with a default input and no schema or description.
+    fn evaluate() -> JobDefinition {
+        JobDefinition {
+            name: "evaluate".to_string(),
+            description: None,
+            input_schema: None,
+            input_example: Some(json!({"split": "test", "limit": 10})),
         }
     }
 
     /// The input the job's command line `<job> <args>` gives, its `--config` file read from
     /// `files`, by name.
     fn input_from(
-        definition: &Definition,
+        job: &JobDefinition,
         args: &[&str],
         files: &[(&str, &str)],
     ) -> Result<Result<Value, ConfigError>, clap::Error> {
-        let matches = job_command(&definition.job())
-            .try_get_matches_from([definition.name].iter().chain(args))?;
+        let matches =
+            job_command(job).try_get_matches_from([job.name.as_str()].iter().chain(args))?;
         Ok(job_input(&matches, |path| {
             files
                 .iter()
@@ -389,28 +371,35 @@ mod tests {
     }
 
     /// The input the job's command line `<job> <args>` gives, with no `--config` file to read.
-    fn input(definition: &Definition, args: &[&str]) -> Result<Value, clap::Error> {
-        input_from(definition, args, &[]).map(|input| input.unwrap())
+    fn input(job: &JobDefinition, args: &[&str]) -> Result<Value, clap::Error> {
+        input_from(job, args, &[]).map(|input| input.unwrap())
     }
 
     /// The job's `--help`.
-    fn help(definition: &Definition) -> String {
-        job_command(&definition.job())
-            .render_long_help()
-            .to_string()
+    fn help(job: &JobDefinition) -> String {
+        job_command(job).render_long_help().to_string()
     }
 
     #[test]
     fn the_command_has_a_subcommand_per_job() {
-        let definitions = [train(), prompt()];
-        let mut command = command("program", &jobs(&definitions));
+        let jobs = [train(), prompt(), evaluate()];
+        let mut command = command("program", &jobs);
         command.build();
 
-        let names: Vec<&str> = command.get_subcommands().map(Command::get_name).collect();
-        assert_eq!(names, ["train", "prompt"]);
+        let abouts: Vec<(&str, Option<String>)> = command
+            .get_subcommands()
+            .map(|job| (job.get_name(), job.get_about().map(ToString::to_string)))
+            .collect();
+        assert_eq!(
+            abouts,
+            [
+                ("train", Some("Train the model".to_string())),
+                ("prompt", Some("Answer a prompt".to_string())),
+                ("evaluate", None),
+            ]
+        );
         let help = command.render_help().to_string();
         assert!(help.contains("Jobs:"), "{help}");
-        assert!(help.contains("Run the job"), "{help}");
         assert!(help.contains("--completions <SHELL>"), "{help}");
     }
 
@@ -522,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn a_schema_gives_flags_their_values_help_and_requirement() {
+    fn a_schema_gives_flags_their_values_and_help() {
         let prompt = prompt();
 
         assert_eq!(
@@ -642,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_or_invalid_config_file_gives_no_input() {
+    fn an_unreadable_or_invalid_config_file_is_an_error_naming_it() {
         let files = [("config.toml", "epochs = 3")];
         let error = |path| {
             input_from(&train(), &["-c", path], &files)
@@ -675,9 +664,10 @@ mod tests {
 
     #[test]
     fn reserved_names_belong_to_the_command_line() {
-        let job = Definition {
-            name: "train",
-            schema: Some(json!({
+        let job = JobDefinition {
+            name: "train".to_string(),
+            description: None,
+            input_schema: Some(json!({
                 "type": "object",
                 "properties": {
                     "config": {"type": "string"},
@@ -686,11 +676,11 @@ mod tests {
                     "epochs": {"type": "integer"}
                 }
             })),
-            default: None,
+            input_example: None,
         };
         let files = [("large.json", r#"{"config": "large"}"#)];
 
-        let command = job_command(&job.job());
+        let command = job_command(&job);
         let longs: Vec<&str> = command.get_arguments().filter_map(Arg::get_long).collect();
         assert_eq!(longs, ["epochs", "version", "config"]);
         assert_eq!(
@@ -711,9 +701,9 @@ mod tests {
 
     #[test]
     fn completions_names_the_shell_the_command_line_asks_for() {
-        let definitions = [train()];
+        let jobs = [train()];
         let matches = |args: &[&str]| {
-            command("program", &jobs(&definitions))
+            command("program", &jobs)
                 .try_get_matches_from(["program"].iter().chain(args))
                 .unwrap()
         };
@@ -724,7 +714,7 @@ mod tests {
         );
         assert_eq!(completions(&matches(&["train"])), None);
         assert_eq!(
-            command("program", &jobs(&definitions))
+            command("program", &jobs)
                 .try_get_matches_from(["program", "--completions", "tcsh"])
                 .unwrap_err()
                 .kind(),
@@ -734,12 +724,12 @@ mod tests {
 
     #[test]
     fn completions_cover_the_jobs_and_their_flags() {
-        let definitions = [train(), prompt()];
+        let jobs = [train(), prompt()];
         let mut script = Vec::new();
 
         clap_complete::generate(
             Shell::Bash,
-            &mut command("program", &jobs(&definitions)),
+            &mut command("program", &jobs),
             "program",
             &mut script,
         );
