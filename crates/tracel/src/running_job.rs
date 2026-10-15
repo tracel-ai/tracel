@@ -205,10 +205,14 @@ mod tests {
         assert_eq!(recorder.recorded(), Recorded::default());
     }
 
-    #[test]
-    fn a_job_number_is_recorded_as_a_number_when_it_is_one() {
-        assert_eq!(job_num("42"), json!(42));
-        assert_eq!(job_num("job-42"), json!("job-42"));
+    #[rstest]
+    #[case::digits("42", json!(42))]
+    #[case::not_only_digits("job-42", json!("job-42"))]
+    fn a_job_number_is_recorded_as_a_number_when_it_is_one(
+        #[case] num: &str,
+        #[case] recorded: Value,
+    ) {
+        assert_eq!(job_num(num), recorded);
     }
 
     #[rstest]
