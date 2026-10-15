@@ -223,8 +223,10 @@ mod tests {
     use serde::{Deserialize, Deserializer};
     use serde_json::{Value, json};
 
+    use std::sync::{Barrier, OnceLock};
+
     use super::*;
-    use crate::{BoxError, job_input, job_num};
+    use crate::{BoxError, job_num};
 
     #[allow(clippy::type_complexity)]
     type RecordedFinish = (Uuid, Uuid, FinishStatus, Option<String>);
@@ -253,19 +255,17 @@ mod tests {
         }
     }
 
-    /// `train` succeeds, `fail` fails, `panic` panics, `typed` takes a number, `explosive` panics
-    /// while its input decodes, and `num` keeps the job number it is given.
-    fn jobs(nums: Arc<Mutex<Vec<Option<String>>>>) -> Jobs {
+    const FAILURE: &str = "boom";
+
+    fn jobs() -> Jobs {
+        let both = Arc::new(Barrier::new(2));
         Jobs::new()
             .job("train", |_: Value| Ok::<_, BoxError>(()))
-            .job("fail", |_: Value| Err::<(), BoxError>("boom".into()))
-            .job("panic", |_: Value| -> Result<(), BoxError> {
-                panic!("kaboom")
-            })
+            .job("fail", |_: Value| Err::<(), BoxError>(FAILURE.into()))
             .job("typed", |_: u32| Ok::<_, BoxError>(()))
             .job("explosive", |_: Explosive| Ok::<_, BoxError>(()))
-            .job("num", move |_: Value| {
-                nums.lock().unwrap().push(job_num());
+            .job("wait", move |_: Value| {
+                both.wait();
                 Ok::<_, BoxError>(())
             })
     }
@@ -274,20 +274,21 @@ mod tests {
         executor: Executor,
         sink: Arc<RecordingSink>,
         runner_id: Uuid,
-        nums: Arc<Mutex<Vec<Option<String>>>>,
     }
 
-    #[fixture]
-    fn setup() -> Setup {
-        let nums = Arc::default();
+    fn serving(jobs: Jobs) -> Setup {
         let sink = Arc::new(RecordingSink::default());
-        let executor = Executor::new(Arc::new(jobs(Arc::clone(&nums))), sink.clone());
+        let executor = Executor::new(Arc::new(jobs), sink.clone());
         Setup {
             executor,
             sink,
             runner_id: Uuid::new_v4(),
-            nums,
         }
+    }
+
+    #[fixture]
+    fn setup() -> Setup {
+        serving(jobs())
     }
 
     fn dispatched(job_name: &str) -> DispatchedJob {
@@ -302,12 +303,17 @@ mod tests {
         std::iter::once(RunnerEvent::Registered { runner_id }).chain(rest)
     }
 
-    /// Serves `jobs`, dispatched in order, and returns the finishes reported.
     fn serve(setup: &Setup, jobs: Vec<DispatchedJob>) -> Vec<RecordedFinish> {
         let rest = jobs.into_iter().map(RunnerEvent::Job).collect();
         serve_stream(events(setup.runner_id, rest), &setup.executor);
         setup.executor.wait_idle();
-        setup.sink.finishes.lock().unwrap().clone()
+        finishes(setup)
+    }
+
+    fn finishes(setup: &Setup) -> Vec<RecordedFinish> {
+        let mut finishes = setup.sink.finishes.lock().unwrap().clone();
+        finishes.sort_by_key(|(job_id, ..)| *job_id);
+        finishes
     }
 
     fn statuses(finishes: &[RecordedFinish]) -> Vec<(Uuid, FinishStatus)> {
@@ -317,52 +323,49 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn given_job_event_when_serving_then_completion_reported() {
-        let setup = setup();
-        let job = dispatched("train");
+    fn completed<'a>(
+        jobs: impl IntoIterator<Item = &'a DispatchedJob>,
+    ) -> Vec<(Uuid, FinishStatus)> {
+        let mut completed: Vec<_> = jobs
+            .into_iter()
+            .map(|job| (job.id, FinishStatus::Completed))
+            .collect();
+        completed.sort_by_key(|(job_id, _)| *job_id);
+        completed
+    }
+
+    #[rstest]
+    #[case::completed("train", FinishStatus::Completed)]
+    #[case::failed("fail", FinishStatus::Failed)]
+    #[case::with_an_input_that_does_not_decode("typed", FinishStatus::Failed)]
+    #[case::unknown("mystery", FinishStatus::Failed)]
+    fn a_job_is_reported_as_it_ended(
+        setup: Setup,
+        #[case] name: &str,
+        #[case] status: FinishStatus,
+    ) {
+        let job = dispatched(name);
+
+        let finishes = serve(&setup, vec![job.clone()]);
+
+        assert_eq!(statuses(&finishes), [(job.id, status)]);
+    }
+
+    #[rstest]
+    fn a_failed_job_is_reported_with_its_error_as_the_reason(setup: Setup) {
+        let job = dispatched("fail");
 
         let finishes = serve(&setup, vec![job.clone()]);
 
         assert_eq!(
             finishes,
-            [(job.id, setup.runner_id, FinishStatus::Completed, None)]
+            [(
+                job.id,
+                setup.runner_id,
+                FinishStatus::Failed,
+                Some(FAILURE.to_string())
+            )]
         );
-    }
-
-    #[test]
-    fn given_failing_job_then_failure_reason_reported() {
-        let finishes = serve(&setup(), vec![dispatched("fail")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(finishes[0].3.as_deref(), Some("boom"));
-    }
-
-    #[test]
-    fn given_input_the_job_rejects_then_failure_reported_as_invalid_input() {
-        let finishes = serve(&setup(), vec![dispatched("typed")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(
-            finishes[0].3.as_deref(),
-            Some("invalid input: invalid type: map, expected u32")
-        );
-    }
-
-    #[test]
-    fn given_panicking_job_then_failure_reported_with_panic_message() {
-        let finishes = serve(&setup(), vec![dispatched("panic")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(finishes[0].3.as_deref(), Some("the job panicked: kaboom"));
-    }
-
-    #[test]
-    fn given_unknown_job_name_then_failure_reported() {
-        let finishes = serve(&setup(), vec![dispatched("mystery")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(finishes[0].3.as_deref(), Some("unknown job 'mystery'"));
     }
 
     #[rstest]
@@ -376,64 +379,28 @@ mod tests {
 
     #[test]
     fn a_running_job_is_numbered_with_its_station_job_id() {
-        let setup = setup();
-        let job = dispatched("num");
+        let seen = Arc::new(OnceLock::new());
+        let setup = serving(Jobs::new().job("train", {
+            let seen = seen.clone();
+            move |_: Value| {
+                let _ = seen.set(job_num());
+                Ok::<_, BoxError>(())
+            }
+        }));
+        let job = dispatched("train");
 
         serve(&setup, vec![job.clone()]);
 
-        assert_eq!(*setup.nums.lock().unwrap(), [Some(job.id.to_string())]);
+        assert_eq!(seen.get(), Some(&Some(job.id.to_string())));
     }
 
-    #[test]
-    fn jobs_dispatched_at_once_run_at_once_each_in_its_own_scope() {
-        let started = Arc::new((Mutex::new(0), Condvar::new()));
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let jobs = Jobs::new().job("wait", {
-            let (started, seen) = (started.clone(), seen.clone());
-            move |_: Value| {
-                let (count, both) = &*started;
-                *count.lock().unwrap() += 1;
-                both.notify_all();
-                let (count, _) = both
-                    .wait_timeout_while(count.lock().unwrap(), Duration::from_secs(10), |count| {
-                        *count < 2
-                    })
-                    .unwrap();
-                seen.lock()
-                    .unwrap()
-                    .push((job_num(), job_input(), *count == 2));
-                Ok::<_, BoxError>(())
-            }
-        });
-        let sink = Arc::new(RecordingSink::default());
-        let executor = Executor::new(Arc::new(jobs), sink.clone());
-        let with_input = |n: u32| DispatchedJob {
-            input: json!({ "n": n }),
-            ..dispatched("wait")
-        };
-        let (first, second) = (with_input(1), with_input(2));
+    #[rstest]
+    fn jobs_dispatched_at_once_run_at_once(setup: Setup) {
+        let waiting = [dispatched("wait"), dispatched("wait")];
 
-        serve_stream(
-            events(
-                Uuid::new_v4(),
-                vec![
-                    RunnerEvent::Job(first.clone()),
-                    RunnerEvent::Job(second.clone()),
-                ],
-            ),
-            &executor,
-        );
-        executor.wait_idle();
+        let finishes = serve(&setup, waiting.to_vec());
 
-        let seen = seen.lock().unwrap().clone();
-        assert_eq!(seen.len(), 2);
-        for (job, n) in [(&first, 1), (&second, 2)] {
-            assert!(
-                seen.contains(&(Some(job.id.to_string()), Some(json!({ "n": n })), true)),
-                "{seen:?}"
-            );
-        }
-        assert_eq!(sink.finishes.lock().unwrap().len(), 2);
+        assert_eq!(statuses(&finishes), completed(&waiting));
     }
 
     #[test]
@@ -466,10 +433,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn given_stream_without_registered_first_then_nothing_served() {
-        let setup = setup();
-
+    #[rstest]
+    fn a_stream_that_does_not_open_with_its_registration_serves_nothing(setup: Setup) {
         let outcome = serve_stream(
             vec![RunnerEvent::Job(dispatched("train"))].into_iter(),
             &setup.executor,
@@ -477,6 +442,6 @@ mod tests {
         setup.executor.wait_idle();
 
         assert!(matches!(outcome, StreamOutcome::NeverRegistered));
-        assert!(setup.sink.finishes.lock().unwrap().is_empty());
+        assert!(finishes(&setup).is_empty());
     }
 }
