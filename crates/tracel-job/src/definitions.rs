@@ -37,8 +37,9 @@ pub struct DefinitionsFile {
 
 impl DefinitionsFile {
     /// The file of a program built with version `sdk_version` of the Tracel SDK that can run
-    /// `jobs`, following [`PROTOCOL`].
-    pub fn new(sdk_version: impl Into<String>, jobs: Vec<JobDefinition>) -> Self {
+    /// `jobs`, following [`PROTOCOL`], with `jobs` ordered by name.
+    pub fn new(sdk_version: impl Into<String>, mut jobs: Vec<JobDefinition>) -> Self {
+        jobs.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
             protocol: PROTOCOL,
             sdk_version: sdk_version.into(),
@@ -164,6 +165,21 @@ mod tests {
             DefinitionsFile::from_json(expected.as_bytes()).unwrap(),
             file()
         );
+    }
+
+    #[test]
+    fn the_jobs_are_ordered_by_name() {
+        let job = |name: &str| JobDefinition {
+            name: name.to_string(),
+            description: None,
+            input_schema: None,
+            input_example: None,
+        };
+
+        let file =
+            DefinitionsFile::new("0.10.0", vec![job("train"), job("evaluate"), job("infer")]);
+
+        assert_eq!(file.jobs, [job("evaluate"), job("infer"), job("train")]);
     }
 
     #[test]
