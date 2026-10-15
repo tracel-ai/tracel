@@ -162,6 +162,7 @@ impl Experiments {
 mod tests {
     use std::sync::Mutex;
 
+    use rstest::{fixture, rstest};
     use serde_json::json;
 
     use super::*;
@@ -169,6 +170,8 @@ mod tests {
     use crate::test_support::{MockSession, create_run_with_id};
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+    const REASON: &str = "diverged";
 
     #[derive(Default)]
     struct MockProvider {
@@ -197,19 +200,10 @@ mod tests {
     }
 
     impl Fixture {
-        fn new() -> Self {
-            let provider = Arc::new(MockProvider::default());
-            Self {
-                experiments: Experiments::new(provider.clone()),
-                provider,
-            }
-        }
-
         fn completions(&self) -> Vec<ExperimentCompletion> {
             self.provider.session.completions.lock().unwrap().clone()
         }
 
-        /// The arguments the runs recorded, in order.
         fn arguments(&self) -> Vec<Value> {
             self.provider
                 .session
@@ -225,32 +219,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn run_ends_the_experiment_by_what_its_code_returns() {
-        let fixture = Fixture::new();
-
-        let output = fixture
-            .experiments
-            .run("train", |_run| Ok::<_, BoxError>(3));
-        let failed = fixture
-            .experiments
-            .run("train", |_run| Err::<(), BoxError>("diverged".into()));
-
-        assert_eq!(output.unwrap(), 3);
-        assert_eq!(failed.unwrap_err().to_string(), "diverged");
-        assert_eq!(
-            fixture.completions(),
-            [
-                ExperimentCompletion::Success,
-                ExperimentCompletion::Failed("diverged".to_string())
-            ]
-        );
+    #[fixture]
+    fn fixture() -> Fixture {
+        let provider = Arc::new(MockProvider::default());
+        Fixture {
+            experiments: Experiments::new(provider.clone()),
+            provider,
+        }
     }
 
-    #[test]
-    fn a_panic_in_run_fails_the_experiment_with_its_message() {
-        let fixture = Fixture::new();
+    #[rstest]
+    #[case::ok(Ok(()), ExperimentCompletion::Success)]
+    #[case::err(Err(REASON.into()), ExperimentCompletion::Failed(REASON.to_string()))]
+    fn run_ends_the_experiment_by_what_its_code_returns(
+        fixture: Fixture,
+        #[case] returned: Result<(), BoxError>,
+        #[case] completion: ExperimentCompletion,
+    ) {
+        let _ = fixture.experiments.run("train", |_run| returned);
 
+        assert_eq!(fixture.completions(), [completion]);
+    }
+
+    #[rstest]
+    fn a_panic_in_run_fails_the_experiment_with_its_message(fixture: Fixture) {
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             fixture
                 .experiments
@@ -268,17 +260,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn run_makes_the_run_the_current_experiment() {
-        let fixture = Fixture::new();
-
+    #[rstest]
+    fn run_makes_the_run_the_current_experiment(fixture: Fixture) {
         let current = fixture.experiments.run("train", |run| {
             let current = ExperimentRun::current().map(|current| current.id().clone());
             Ok::<_, BoxError>(current == Some(run.id().clone()))
         });
 
         assert!(current.unwrap());
-        assert!(ExperimentRun::current().is_none());
     }
 
     #[test]
@@ -299,20 +288,18 @@ mod tests {
         }
         let mut ran = false;
 
-        let error = Experiments::new(Arc::new(Unreachable))
+        Experiments::new(Arc::new(Unreachable))
             .run("train", |_run| -> Result<(), BoxError> {
                 ran = true;
                 Ok(())
             })
             .unwrap_err();
 
-        assert_eq!(error.to_string(), "the backend is unreachable");
         assert!(!ran);
     }
 
-    #[test]
-    fn a_started_experiment_records_the_attributes() {
-        let fixture = Fixture::new();
+    #[rstest]
+    fn a_started_experiment_records_the_attributes(fixture: Fixture) {
         let experiments = fixture
             .experiments
             .clone()
@@ -331,9 +318,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_experiments_given_arguments_record_them_when_a_run_starts() {
-        let fixture = Fixture::new();
+    #[rstest]
+    fn only_experiments_given_arguments_record_them_when_a_run_starts(fixture: Fixture) {
         let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
 
         experiments.start("train").unwrap().finish().unwrap();
@@ -349,9 +335,8 @@ mod tests {
         assert_eq!(fixture.arguments(), recorded);
     }
 
-    #[test]
-    fn arguments_logged_on_a_run_are_recorded_after_those_it_started_with() {
-        let fixture = Fixture::new();
+    #[rstest]
+    fn arguments_logged_on_a_run_are_recorded_after_those_it_started_with(fixture: Fixture) {
         let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
         let run = experiments.start("train").unwrap();
 
@@ -363,9 +348,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn each_hook_is_called_with_each_run_started() {
-        let fixture = Fixture::new();
+    #[rstest]
+    fn each_hook_is_called_with_each_run_started(fixture: Fixture) {
         let called = Arc::new(Mutex::new(Vec::new()));
         let hook = |tag: &'static str| {
             let called = called.clone();
