@@ -319,9 +319,18 @@ impl<'r> Walk<'r> {
         }
     }
 
+    /// The description of `schema`, or else that of the schema it refers to, or else the help of
+    /// the value it makes optional.
+    fn help(&self, schema: &'r Value) -> Option<String> {
+        schema.as_object().and_then(description).or_else(|| {
+            let target = self.target(schema)?.as_object()?;
+            description(target).or_else(|| self.help(self.nullable(target)?))
+        })
+    }
+
     /// Adds the flags of the fields of `object`, the schema of the object at `path`, whose value
     /// in the default input is `defaults`. The object is required when `required` is. A field's
-    /// help is its description, or else that of the schema it refers to.
+    /// help is its [`help`](Self::help).
     fn object(
         &mut self,
         object: &'r Map<String, Value>,
@@ -350,15 +359,10 @@ impl<'r> Walk<'r> {
             match self.shape(property) {
                 Shape::Object(object) => self.object(object, path, default, required),
                 Shape::Leaf(kind) => {
-                    let help = [Some(property), self.target(property)]
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_object)
-                        .find_map(description);
                     self.flags.push(Flag {
                         path: path.clone(),
                         kind,
-                        help,
+                        help: self.help(property),
                         default: default.cloned(),
                         required: required && default.is_none(),
                     });
@@ -571,8 +575,9 @@ mod tests {
         /// Where to train.
         device: Device,
         backend: Backend,
-        /// The fallback.
         fallback: Option<Backend>,
+        /// The backend to compare with.
+        baseline: Option<Backend>,
         optimizer: Optimizer,
     }
 
@@ -609,7 +614,8 @@ mod tests {
             ("epochs", Some("Passes over the data.")),
             ("device", Some("Where to train.")),
             ("backend", Some("The tensor backend.")),
-            ("fallback", Some("The fallback.")),
+            ("fallback", Some("The tensor backend.")),
+            ("baseline", Some("The backend to compare with.")),
             ("optimizer.lr", None),
         ] {
             assert_eq!(flag(&flags, name).help.as_deref(), help, "--{name}");
