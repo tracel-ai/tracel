@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! A program's jobs, and the adapters that run them.
 //!
 //! A job is a function of its typed input, `Fn(I) -> Result<(), E>`, registered by name in
