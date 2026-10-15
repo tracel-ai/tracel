@@ -20,7 +20,7 @@ pub struct JobDefinition {
     pub description: Option<String>,
     /// JSON Schema of the job's input, when the program gives one.
     pub input_schema: Option<Value>,
-    /// An example input, typically the job's default input, which its input is merged onto.
+    /// The job's default input, which its input is merged onto.
     pub input_example: Option<Value>,
 }
 
