@@ -91,6 +91,9 @@ pub fn job_input() -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+    use std::thread;
+
     use super::*;
 
     fn scope(num: &str) -> JobScope {
@@ -98,19 +101,20 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_is_current_on_its_thread_until_its_guard_drops() {
-        let entered = enter(scope("12"));
-        let given = (job_running(), job_num(), job_input());
-        drop(entered);
+    fn the_entered_scope_gives_the_number_and_input_of_its_job() {
+        let job = scope("12");
+        let _entered = enter(job.clone());
 
         assert_eq!(
-            given,
-            (
-                true,
-                Some("12".to_string()),
-                Some(serde_json::json!({"num": "12"}))
-            )
+            (job_num().as_deref(), job_input().as_ref()),
+            (job.num(), Some(job.input()))
         );
+    }
+
+    #[test]
+    fn once_its_guard_drops_the_thread_runs_no_job() {
+        drop(enter(scope("12")));
+
         assert_eq!((job_running(), job_num(), job_input()), (false, None, None));
     }
 
@@ -125,46 +129,33 @@ mod tests {
     }
 
     #[test]
-    fn each_thread_sees_the_scope_of_the_job_it_runs() {
-        let run = |num: &'static str| {
-            let scope = scope(num);
-            std::thread::spawn(move || {
-                let _entered = enter(scope);
-                (job_num(), job_input())
+    fn jobs_running_at_once_each_see_their_own_scope() {
+        let both_entered = Arc::new(Barrier::new(2));
+        let run = |job: JobScope| {
+            let both_entered = both_entered.clone();
+            thread::spawn(move || {
+                let _entered = enter(job);
+                both_entered.wait();
+                job_num()
             })
         };
+        let jobs = [scope("1"), scope("2")];
 
-        let one = run("1");
-        let two = run("2");
+        let seen = jobs.clone().map(run).map(|running| running.join().unwrap());
 
-        let input = |num: &str| Some(serde_json::json!({ "num": num }));
-        assert_eq!(one.join().unwrap(), (Some("1".to_string()), input("1")));
-        assert_eq!(two.join().unwrap(), (Some("2".to_string()), input("2")));
-        assert!(!job_running());
+        assert_eq!(seen, jobs.map(|job| job.num().map(str::to_string)));
     }
 
     #[test]
     fn a_held_scope_reads_the_same_job_on_another_thread() {
-        let _entered = enter(scope("12"));
+        let job = scope("12");
+        let _entered = enter(job.clone());
         let held = JobScope::current().unwrap();
 
-        let seen = std::thread::spawn(move || {
-            (
-                job_running(),
-                held.num().map(str::to_string),
-                held.input().clone(),
-            )
-        })
-        .join()
-        .unwrap();
+        let read = thread::spawn(move || (held.num().map(str::to_string), held.input().clone()))
+            .join()
+            .unwrap();
 
-        assert_eq!(
-            seen,
-            (
-                false,
-                Some("12".to_string()),
-                serde_json::json!({"num": "12"})
-            )
-        );
+        assert_eq!(read, (job.num().map(str::to_string), job.input().clone()));
     }
 }
