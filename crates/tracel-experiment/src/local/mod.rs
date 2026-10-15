@@ -321,6 +321,14 @@ mod tests {
         assert_eq!(read_lines(&local_run.dir.join(EVENTS_FILE)).len(), 1);
     }
 
+    #[rstest]
+    fn a_finished_run_is_completed_in_its_status(local_run: LocalRun) {
+        local_run.run.finish().unwrap();
+
+        let status = read_json(&local_run.dir.join(STATUS_FILE));
+        assert_eq!(status["status"], json!(StatusKind::Completed));
+    }
+
     #[derive(Default)]
     struct FailsFirstWrite {
         failed: bool,

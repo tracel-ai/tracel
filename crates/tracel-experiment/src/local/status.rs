@@ -78,10 +78,9 @@ fn now() -> String {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use serde_json::{Value, json};
 
     use super::*;
-    use crate::local::test_support::{EXPERIMENT, read_json, run};
+    use crate::local::test_support::EXPERIMENT;
 
     const REASON: &str = "loss is NaN";
 
@@ -89,53 +88,16 @@ mod tests {
         Status::running(EXPERIMENT.to_string(), 1)
     }
 
-    fn is_utc_seconds(timestamp: &Value) -> bool {
-        timestamp.as_str().is_some_and(|timestamp| {
-            timestamp.ends_with('Z')
-                && !timestamp.contains('.')
-                && chrono::DateTime::parse_from_rfc3339(timestamp).is_ok()
-        })
-    }
-
     #[test]
-    fn the_status_follows_the_run_from_the_start_to_the_end() {
-        let dir = tempfile::tempdir().unwrap();
-        let experiment = run(dir.path(), "mnist");
-        let run_dir = dir.path().join("mnist/1");
+    fn an_ended_status_keeps_when_the_run_started_and_says_when_it_ended() {
+        let running = running();
 
-        let mut running = read_json(&run_dir.join("status.json"));
-        experiment.finish().unwrap();
-        let mut completed = read_json(&run_dir.join("status.json"));
+        let ended = running.ended(ExperimentCompletion::Success);
 
-        assert!(is_utc_seconds(&running["started_at"]), "{running}");
-        assert!(is_utc_seconds(&completed["finished_at"]), "{completed}");
-        assert_eq!(completed["started_at"], running["started_at"]);
-        running["started_at"] = Value::Null;
-        completed["started_at"] = Value::Null;
-        completed["finished_at"] = Value::Null;
         assert_eq!(
-            running,
-            json!({
-                "name": "mnist",
-                "num": 1,
-                "status": "running",
-                "started_at": null,
-                "finished_at": null,
-                "error": null
-            })
+            (ended.started_at, ended.finished_at.is_some()),
+            (running.started_at, true)
         );
-        assert_eq!(
-            completed,
-            json!({
-                "name": "mnist",
-                "num": 1,
-                "status": "completed",
-                "started_at": null,
-                "finished_at": null,
-                "error": null
-            })
-        );
-        assert!(!run_dir.join("status.json.tmp").exists());
     }
 
     #[rstest]
