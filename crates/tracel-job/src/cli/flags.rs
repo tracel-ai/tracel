@@ -461,6 +461,15 @@ mod tests {
         )
     }
 
+    fn one_of(values: &[Value]) -> Kind {
+        Kind::Choice(
+            values
+                .iter()
+                .map(|value| Choice::new(value, None).unwrap())
+                .collect(),
+        )
+    }
+
     #[derive(JsonSchema)]
     #[serde(rename_all = "camelCase")]
     #[expect(dead_code)]
@@ -572,6 +581,21 @@ mod tests {
         assert_eq!(weight_decay.id(), "optimizer.weight_decay");
     }
 
+    #[test]
+    fn an_object_that_may_be_null_takes_json() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "resume": {
+                    "type": ["object", "null"],
+                    "properties": {"epoch": {"type": "integer"}}
+                }
+            }
+        });
+
+        assert_eq!(flag(&flags_of(schema, None), "resume").kind, Kind::Json);
+    }
+
     /// How to train.
     #[derive(JsonSchema)]
     #[expect(dead_code)]
@@ -628,6 +652,25 @@ mod tests {
         ] {
             assert_eq!(flag(&flags, name).help.as_deref(), help, "--{name}");
         }
+    }
+
+    #[rstest]
+    #[case::leaving_out_null(json!(["adam", null]), &[json!("adam")])]
+    #[case::keeping_numbers_as_numbers(json!([1, 2.5]), &[json!(1), json!(2.5)])]
+    fn listed_values_are_the_choices_of_their_flag(
+        #[case] listed: Value,
+        #[case] values: &[Value],
+    ) {
+        let schema = json!({"type": "object", "properties": {"field": {"enum": listed}}});
+
+        assert_eq!(flag(&flags_of(schema, None), "field").kind, one_of(values));
+    }
+
+    #[test]
+    fn listed_values_of_which_one_is_not_a_scalar_take_json() {
+        let schema = json!({"type": "object", "properties": {"field": {"enum": ["adam", [1]]}}});
+
+        assert_eq!(flag(&flags_of(schema, None), "field").kind, Kind::Json);
     }
 
     #[derive(Serialize, JsonSchema)]
