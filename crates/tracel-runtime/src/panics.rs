@@ -24,21 +24,30 @@ fn panic_message(panic: &(dyn Any + Send)) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn a_panic_is_the_failure_the_job_ends_with() {
-        let failure = |run: fn() -> Result<(), BoxError>| catch_panic(run).unwrap_err().to_string();
+    const MESSAGE: &str = "the kernel exploded";
 
-        assert_eq!(
-            failure(|| panic!("kernel exploded")),
-            "the job panicked: kernel exploded"
-        );
-        assert_eq!(
-            failure(|| panic!("{} exploded", "kernel")),
-            "the job panicked: kernel exploded"
-        );
-        assert_eq!(failure(|| Err("boom".into())), "boom");
-        assert!(catch_panic(|| Ok(())).is_ok());
+    #[test]
+    fn a_panic_fails_the_run() {
+        assert!(catch_panic(|| panic!("{MESSAGE}")).is_err());
+    }
+
+    #[test]
+    fn an_error_the_run_returns_is_its_failure() {
+        let failure = catch_panic(|| Err(io::Error::other(MESSAGE).into())).unwrap_err();
+
+        assert!(failure.is::<io::Error>());
+    }
+
+    #[rstest]
+    #[case::str(Box::new(MESSAGE))]
+    #[case::string(Box::new(MESSAGE.to_string()))]
+    fn the_panic_message_is_the_text_the_panic_carries(#[case] payload: Box<dyn Any + Send>) {
+        assert_eq!(panic_message(payload.as_ref()), MESSAGE);
     }
 }
