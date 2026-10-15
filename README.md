@@ -159,11 +159,12 @@ Options:
 - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, a map, an
   optional object or an enum with data takes a JSON literal, such as `--layers '[64, 32]'`. A
-  boolean flag given no value is `true`.
+  boolean flag given no value is `true`, and takes a value only as `--flag=value`, such as
+  `--shuffle=false`.
 - The input is the default input, then the `--config` file, then the JSON document, then the
   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
-- `help`, `version` and `config` are the command line's names: a field with one of them has no
-  flag, and is set through `--config` or the JSON document.
+- `help` and `config` are the command line's names: a field with one of them has no flag, and is
+  set through `--config` or the JSON document.
 - `--completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`, `powershell`
   or `zsh`: `cargo run -- --completions bash > cli.bash`.
 
