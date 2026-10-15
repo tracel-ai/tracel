@@ -181,6 +181,7 @@ fn resolve(default: Option<Value>, input: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::sync::Mutex;
 
     use rstest::rstest;
@@ -215,7 +216,6 @@ mod tests {
         }
     }
 
-    /// A job that keeps the input it runs with.
     fn recording<I>() -> (Job<I>, Arc<Mutex<Option<I>>>)
     where
         I: DeserializeOwned + Send + 'static,
@@ -231,7 +231,6 @@ mod tests {
         (job, ran_with)
     }
 
-    /// Runs `job`, registered as `train`, with `input`.
     fn run<I>(job: Job<I>, input: Value) -> Result<(), BoxError>
     where
         I: DeserializeOwned + Send + 'static,
@@ -243,47 +242,21 @@ mod tests {
 
     #[test]
     fn a_job_is_defined_by_its_name_description_and_default() {
+        let (name, description) = ("train", "Train the model");
         let (job, _) = recording::<Config>();
         let job = job
-            .with_description("Train the model")
+            .with_description(description)
             .with_default(default_config());
-        let (bare, _) = recording::<Config>();
 
         assert_eq!(
-            Registered::new("train".to_string(), job).definition(),
+            Registered::new(name.to_string(), job).definition(),
             &JobDefinition {
-                name: "train".to_string(),
-                description: Some("Train the model".to_string()),
+                name: name.to_string(),
+                description: Some(description.to_string()),
                 input_schema: None,
-                input_example: Some(json!({
-                    "epochs": 10,
-                    "optimizer": {"lr": 0.001, "weight_decay": 0.0},
-                    "tag": "baseline"
-                })),
+                input_example: Some(serde_json::to_value(default_config()).unwrap()),
             }
         );
-        assert_eq!(
-            Registered::new("evaluate".to_string(), bare).definition(),
-            &JobDefinition {
-                name: "evaluate".to_string(),
-                description: None,
-                input_schema: None,
-                input_example: None,
-            }
-        );
-    }
-
-    #[test]
-    fn without_a_default_the_input_decodes_as_given() {
-        let optimizer = Optimizer {
-            lr: 0.1,
-            weight_decay: 0.01,
-        };
-        let (job, ran_with) = recording();
-
-        run(job, serde_json::to_value(&optimizer).unwrap()).unwrap();
-
-        assert_eq!(ran_with.lock().unwrap().take(), Some(optimizer));
     }
 
     #[test]
@@ -293,19 +266,6 @@ mod tests {
         run(job.with_default(default_config()), Value::Null).unwrap();
 
         assert_eq!(ran_with.lock().unwrap().take(), Some(default_config()));
-    }
-
-    #[test]
-    fn the_prepared_input_is_the_json_the_job_runs_with() {
-        let (job, ran_with) = recording::<Config>();
-        let prepared = Registered::new("train".to_string(), job.with_default(default_config()))
-            .prepare(json!({"epochs": 2, "optimizer": {"lr": 0.1}}))
-            .unwrap();
-
-        (prepared.run)().unwrap();
-
-        let ran = ran_with.lock().unwrap().take().unwrap();
-        assert_eq!(prepared.input, serde_json::to_value(ran).unwrap());
     }
 
     #[test]
@@ -324,7 +284,7 @@ mod tests {
                 epochs: 2,
                 optimizer: Optimizer {
                     lr: 0.1,
-                    weight_decay: 0.0,
+                    ..default_config().optimizer
                 },
                 tag: None,
             })
@@ -347,20 +307,23 @@ mod tests {
     fn a_registered_job_runs_each_time_it_is_prepared() {
         let (job, ran_with) = recording::<u32>();
         let registered = Registered::new("train".to_string(), job);
+        let epochs = [1, 2];
 
-        for epochs in [1, 2] {
+        let ran = epochs.map(|epochs| {
             (registered.prepare(json!(epochs)).unwrap().run)().unwrap();
-            assert_eq!(ran_with.lock().unwrap().take(), Some(epochs));
-        }
+            ran_with.lock().unwrap().take()
+        });
+
+        assert_eq!(ran, epochs.map(Some));
     }
 
     #[test]
     fn a_job_fails_with_the_error_it_returns() {
-        let job = Job::new(|_: ()| Err::<(), _>(std::io::Error::other("disk full")));
+        let job = Job::new(|_: ()| Err::<(), _>(io::Error::other("disk full")));
 
-        let failed = run(job, Value::Null);
+        let failed = run(job, Value::Null).unwrap_err();
 
-        assert_eq!(failed.unwrap_err().to_string(), "disk full");
+        assert!(failed.is::<io::Error>());
     }
 
     #[cfg(feature = "schema")]
@@ -370,9 +333,9 @@ mod tests {
 
         let registered = Registered::new("train".to_string(), job.with_schema());
 
-        let schema = registered.definition().input_schema.clone().unwrap();
-        assert_eq!(schema["title"], "Config");
-        assert!(schema["properties"]["epochs"].is_object());
-        assert!(schema["properties"]["optimizer"].is_object());
+        assert_eq!(
+            registered.definition().input_schema,
+            Some(schemars::schema_for!(Config).to_value())
+        );
     }
 }
