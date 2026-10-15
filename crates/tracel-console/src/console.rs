@@ -97,8 +97,6 @@ pub struct ProjectScope {
     console: Console,
     pub owner: String,
     pub project: String,
-    /// The kind of namespace that owns the project, once read from the console.
-    owner_kind: OnceLock<NamespaceKind>,
 }
 
 impl ProjectScope {
@@ -116,17 +114,7 @@ impl ProjectScope {
     pub fn fetch(&self) -> Result<Project, ConsoleError> {
         let project = self.client()?.get_project(&self.owner, &self.project)?;
         let project = Project::try_from(project)?;
-        let _ = self.owner_kind.set(project.namespace.kind);
         Ok(project)
-    }
-
-    /// Returns the kind of namespace that owns the project, fetching the project on the first
-    /// call.
-    pub fn owner_kind(&self) -> Result<NamespaceKind, ConsoleError> {
-        match self.owner_kind.get() {
-            Some(kind) => Ok(*kind),
-            None => self.fetch().map(|project| project.namespace.kind),
-        }
     }
 
     /// Returns the client that moves files to and from presigned URLs.
@@ -241,7 +229,6 @@ impl Console {
                 console: self.clone(),
                 owner: owner.into(),
                 project: project.into(),
-                owner_kind: OnceLock::new(),
             }),
         }
     }

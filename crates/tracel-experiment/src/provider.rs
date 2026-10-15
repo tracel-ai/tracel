@@ -19,11 +19,8 @@ pub trait ExperimentProvider: Send + Sync + 'static {
     ) -> Result<ExperimentRun, ExperimentError>;
 }
 
-/// Called with the run of each experiment started, once it exists.
-type OnStart = Arc<dyn Fn(&ExperimentRun) + Send + Sync>;
-
 /// The experiments of a backend, and how each experiment started from them starts: the attributes
-/// and arguments it records, and the hooks called with its run.
+/// and arguments it records.
 ///
 /// [`run`](Self::run) runs code in a new experiment and ends the experiment by what the code
 /// returns. [`start`](Self::start) starts one and returns its run, for code that ends it itself.
@@ -47,7 +44,6 @@ pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
     attributes: HashMap<String, Value>,
     arguments: Option<Value>,
-    on_start: Vec<OnStart>,
 }
 
 impl Experiments {
@@ -57,7 +53,6 @@ impl Experiments {
             provider,
             attributes: HashMap::new(),
             arguments: None,
-            on_start: Vec::new(),
         }
     }
 
@@ -97,20 +92,12 @@ impl Experiments {
         self
     }
 
-    /// Calls `hook` with the run of each experiment started from the returned experiments, once
-    /// it exists and before [`start`](Self::start) returns it, after the hooks given before.
-    pub fn on_start(mut self, hook: impl Fn(&ExperimentRun) + Send + Sync + 'static) -> Self {
-        self.on_start.push(Arc::new(hook));
-        self
-    }
-
     /// Starts the experiment `name` and returns its run.
     ///
-    /// The experiment records the attributes and arguments these experiments give it, and each
-    /// [`on_start`](Self::on_start) hook is called with the run. The run ends as completed
-    /// through [`ExperimentRun::finish`], and as failed through [`ExperimentRun::fail`] or when it
-    /// is dropped before either. Unless the program has installed a `tracing` subscriber, this
-    /// installs one that forwards events to experiments.
+    /// The experiment records the attributes and arguments these experiments give it. The run
+    /// ends as completed through [`ExperimentRun::finish`], and as failed through
+    /// [`ExperimentRun::fail`] or when it is dropped before either. Unless the program has
+    /// installed a `tracing` subscriber, this installs one that forwards events to experiments.
     pub fn start(&self, name: &str) -> Result<ExperimentRun, ExperimentError> {
         let _ = try_init_tracing_subscriber();
 
@@ -119,9 +106,6 @@ impl Experiments {
             .create_experiment(name.to_string(), self.attributes.clone())?;
         if let Some(arguments) = &self.arguments {
             run.record_args(arguments.clone());
-        }
-        for hook in &self.on_start {
-            hook(&run);
         }
         Ok(run)
     }
@@ -345,39 +329,6 @@ mod tests {
         assert_eq!(
             fixture.arguments(),
             [json!({"epochs": 2}), json!({"epochs": 2, "fold": 1})]
-        );
-    }
-
-    #[rstest]
-    fn each_hook_is_called_with_each_run_started(fixture: Fixture) {
-        let called = Arc::new(Mutex::new(Vec::new()));
-        let hook = |tag: &'static str| {
-            let called = called.clone();
-            move |run: &ExperimentRun| called.lock().unwrap().push((tag, run.id().clone()))
-        };
-        let experiments = fixture
-            .experiments
-            .clone()
-            .on_start(hook("first"))
-            .on_start(hook("second"));
-
-        let first = experiments.start("train").unwrap();
-        fixture
-            .experiments
-            .start("train")
-            .unwrap()
-            .finish()
-            .unwrap();
-        let second = experiments.start("train").unwrap();
-
-        assert_eq!(
-            *called.lock().unwrap(),
-            [
-                ("first", first.id().clone()),
-                ("second", first.id().clone()),
-                ("first", second.id().clone()),
-                ("second", second.id().clone())
-            ]
         );
     }
 }

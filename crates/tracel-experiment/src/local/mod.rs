@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use crate::{ArtifactKind, CancelToken, ExperimentLocation, ExperimentProvider, ExperimentRun};
+use crate::{ArtifactKind, CancelToken, ExperimentProvider, ExperimentRun};
 use artifacts::{LocalExperimentReader, save_artifact};
 use events::{EVENTS_FILE, Line, lines, to_jsonl};
 use runs::{child_dir, create_local_run_dir, create_runs_dir};
@@ -120,12 +120,12 @@ impl ExperimentProvider for LocalExperiments {
             .map_err(internal("Failed to create local experiment directory"))?;
         let (num, run_root) = create_local_run_dir(&root)
             .map_err(internal("Failed to create local experiment run directory"))?;
-        let session = LocalExperimentSession::start(run_root.clone(), name, num, attributes)
+        let session = LocalExperimentSession::start(run_root, name, num, attributes)
             .map_err(internal("Failed to initialize local experiment session"))?;
         let reader = LocalExperimentReader { root };
 
         let run = ExperimentRun::new(num.to_string(), session, reader, CancelToken::new());
-        Ok(run.with_location(ExperimentLocation::Dir(run_root)))
+        Ok(run)
     }
 }
 
@@ -281,21 +281,7 @@ mod tests {
     use super::*;
     use crate::MetricValue;
     use status::StatusKind;
-    use test_support::{EXPERIMENT, LocalRun, local_run, read_json, read_lines, run, run_dir};
-
-    #[test]
-    fn a_run_is_located_in_its_directory() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let experiment = run(dir.path(), "mnist");
-
-        assert_eq!(
-            experiment.location(),
-            Some(&ExperimentLocation::Dir(
-                dir.path().canonicalize().unwrap().join("mnist/1")
-            ))
-        );
-    }
+    use test_support::{EXPERIMENT, LocalRun, local_run, read_json, read_lines, run_dir};
 
     #[test]
     fn an_experiment_name_that_is_not_one_directory_creates_nothing() {
@@ -326,7 +312,7 @@ mod tests {
         experiment.handle().flush();
 
         assert_eq!(
-            read_lines(&run_dir(&experiment).join(EVENTS_FILE)),
+            read_lines(&run_dir(dir.path(), &experiment).join(EVENTS_FILE)),
             [
                 json!({"type": "attribute", "key": "dataset", "value": "mnist"}),
                 json!({"type": "attribute", "key": "kind", "value": "example"}),

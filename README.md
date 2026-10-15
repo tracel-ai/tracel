@@ -91,10 +91,8 @@ input, merged onto its default, as its arguments, which the console lists as its
 
 The experiments `Target::experiments` builds in a job, on the thread that runs it, are linked to
 that job, even for runs started on other threads: each one started from them records the job's
-number and input, and prints where it records to stderr as it starts, such as
-`Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show. Experiments
-built another way, such as `ProjectHandle::experiments`, are not linked unless the code links
-them, through `Experiments::attribute`, `arguments` and `on_start`.
+number and input. Experiments built another way, such as `ProjectHandle::experiments`, are not
+linked unless the code links them, through `Experiments::attribute` and `arguments`.
 
 The [`cli`](examples/basics/examples/cli.rs) example in [`examples/basics`](examples/basics) is a
 complete, runnable version.

@@ -83,12 +83,10 @@
 //!
 //! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
 //! to that job, even for runs started on other threads: each one started from them records the
-//! job's number and input, and prints where it records to stderr as it starts, such as
-//! `Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show. Experiments
-//! built another way, such as [`console::ProjectHandle::experiments`], are not linked unless the
-//! code links them, through [`Experiments::attribute`](experiment::Experiments::attribute),
-//! [`arguments`](experiment::Experiments::arguments) and
-//! [`on_start`](experiment::Experiments::on_start).
+//! job's number and input. Experiments built another way, such as
+//! [`console::ProjectHandle::experiments`], are not linked unless the code links them, through
+//! [`Experiments::attribute`](experiment::Experiments::attribute) and
+//! [`arguments`](experiment::Experiments::arguments).
 //!
 //! [`version`](runtime::Jobs::version) gives the binary its `--version`, which prints the binary's
 //! name and that version; without it, the binary has no `--version`.

@@ -7,7 +7,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 use super::LocalExperiments;
-use crate::{ExperimentLocation, ExperimentProvider, ExperimentRun};
+use crate::{ExperimentProvider, ExperimentRun};
 
 pub const EXPERIMENT: &str = "mnist";
 
@@ -22,7 +22,7 @@ pub fn local_run() -> LocalRun {
     let runs = tempfile::tempdir().unwrap();
     let run = run(runs.path(), EXPERIMENT);
     LocalRun {
-        dir: run_dir(&run),
+        dir: run_dir(runs.path(), &run),
         run,
         runs,
     }
@@ -34,11 +34,8 @@ pub fn run(dir: &Path, name: &str) -> ExperimentRun {
         .unwrap()
 }
 
-pub fn run_dir(run: &ExperimentRun) -> PathBuf {
-    match run.location() {
-        Some(ExperimentLocation::Dir(dir)) => dir.clone(),
-        location => panic!("a local run is located in a directory, not {location:?}"),
-    }
+pub fn run_dir(runs: &Path, run: &ExperimentRun) -> PathBuf {
+    runs.join(EXPERIMENT).join(run.id().as_str())
 }
 
 pub fn read_lines(path: &Path) -> Vec<Value> {

@@ -28,7 +28,6 @@
 //! feature, `local::LocalExperiments` records experiments on this machine.
 
 use std::fmt;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -133,15 +132,6 @@ impl From<u32> for ExperimentId {
     }
 }
 
-/// Where an experiment run can be looked at.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExperimentLocation {
-    /// The experiment's page on the console.
-    Url(String),
-    /// The directory the run is recorded in on this machine.
-    Dir(PathBuf),
-}
-
 /// Artifact category associated with an experiment run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
@@ -198,7 +188,6 @@ struct ExperimentMetadata {
 pub struct ExperimentRun {
     inner: Arc<RunInner>,
     handle: ExperimentRunHandle,
-    location: Option<ExperimentLocation>,
     _tracing_registration: TracingRegistration,
 }
 
@@ -316,22 +305,8 @@ impl ExperimentRun {
         Self {
             inner,
             handle,
-            location: None,
             _tracing_registration: tracing_registration,
         }
-    }
-
-    /// Records where the run can be looked at, such as its page on the console.
-    ///
-    /// A provider sets it when it creates the run.
-    pub fn with_location(mut self, location: ExperimentLocation) -> Self {
-        self.location = Some(location);
-        self
-    }
-
-    /// Where the run can be looked at, when its provider says.
-    pub fn location(&self) -> Option<&ExperimentLocation> {
-        self.location.as_ref()
     }
 
     /// Stream every panic on any thread into this run's log until the guard
