@@ -49,11 +49,12 @@ pub enum Target {
         /// The project experiments, models and datasets belong to.
         project: ProjectHandle,
     },
-    /// A Tracel Station (requires the `station` feature).
+    /// A Tracel Station (requires the `station` feature). The services the target builds share
+    /// its client.
     #[cfg(feature = "station")]
     Station {
-        /// The Station's base URL.
-        url: Url,
+        /// The Station experiments, models and datasets belong to.
+        station: Station,
     },
 }
 
@@ -112,22 +113,9 @@ impl Target {
                 project: ProjectHandle::from_vars(&lookup, dir, sessions)?,
             }),
             #[cfg(feature = "station")]
-            Some("station") => {
-                let url = var(TRACEL_STATION_URL).map_or_else(
-                    || DEFAULT_STATION_URL.to_string(),
-                    |value| value.to_string_lossy().into_owned(),
-                );
-                match Url::parse(&url) {
-                    Ok(url) if matches!(url.scheme(), "http" | "https") => {
-                        Ok(Target::Station { url })
-                    }
-                    _ => Err(TargetError::InvalidSetting {
-                        variable: TRACEL_STATION_URL,
-                        value: url,
-                        expected: "an http or https URL, such as http://localhost:8000",
-                    }),
-                }
-            }
+            Some("station") => Ok(Target::Station {
+                station: Station::connect(station_url(var(TRACEL_STATION_URL))?),
+            }),
             #[cfg(not(feature = "station"))]
             Some("station") => Err(TargetError::FeatureRequired {
                 target: "station",
@@ -158,7 +146,7 @@ impl Target {
             Target::Offline { dir } => Experiments::new(Arc::new(LocalExperiments::new(dir))),
             Target::Console { project } => project.experiments(),
             #[cfg(feature = "station")]
-            Target::Station { url } => Station::connect(url.clone()).experiments(),
+            Target::Station { station } => station.experiments(),
         };
         Ok(running_job::linked(experiments))
     }
@@ -174,7 +162,7 @@ impl Target {
             }),
             Target::Console { project } => Ok(project.models()),
             #[cfg(feature = "station")]
-            Target::Station { url } => Ok(Station::connect(url.clone()).models()),
+            Target::Station { station } => Ok(station.models()),
         }
     }
 
@@ -189,7 +177,7 @@ impl Target {
             }),
             Target::Console { project } => Ok(project.datasets()),
             #[cfg(feature = "station")]
-            Target::Station { url } => Ok(Station::connect(url.clone()).datasets()),
+            Target::Station { station } => Ok(station.datasets()),
         }
     }
 
@@ -205,6 +193,25 @@ impl Target {
             #[cfg(feature = "station")]
             Target::Station { .. } => Ok(noop_inference()),
         }
+    }
+}
+
+/// The Station URL `value` names, `http://localhost:8000` when it is unset.
+///
+/// Fails with [`TargetError::InvalidSetting`] when it is not an http or https URL.
+#[cfg(feature = "station")]
+fn station_url(value: Option<OsString>) -> Result<Url, TargetError> {
+    let url = value.map_or_else(
+        || DEFAULT_STATION_URL.to_string(),
+        |value| value.to_string_lossy().into_owned(),
+    );
+    match Url::parse(&url) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") => Ok(url),
+        _ => Err(TargetError::InvalidSetting {
+            variable: TRACEL_STATION_URL,
+            value: url,
+            expected: "an http or https URL, such as http://localhost:8000",
+        }),
     }
 }
 
@@ -322,17 +329,23 @@ mod tests {
     }
 
     #[cfg(feature = "station")]
-    #[rstest]
-    #[case::unset(&[(TRACEL_TARGET, "station")], DEFAULT_STATION_URL)]
-    #[case::set(
-        &[(TRACEL_TARGET, "station"), (TRACEL_STATION_URL, "https://station.example.com")],
-        "https://station.example.com"
-    )]
-    fn tracel_station_url_names_the_station(#[case] vars: &[(&str, &str)], #[case] url: &str) {
+    #[test]
+    fn tracel_target_station_reaches_a_station() {
         assert!(matches!(
-            target(vars),
-            Ok(Target::Station { url: held }) if held == Url::parse(url).unwrap()
+            target(&[(TRACEL_TARGET, "station")]),
+            Ok(Target::Station { .. })
         ));
+    }
+
+    #[cfg(feature = "station")]
+    #[rstest]
+    #[case::unset(None, DEFAULT_STATION_URL)]
+    #[case::set(Some("https://station.example.com"), "https://station.example.com")]
+    fn tracel_station_url_names_the_station(#[case] value: Option<&str>, #[case] url: &str) {
+        assert_eq!(
+            station_url(value.map(OsString::from)).unwrap(),
+            Url::parse(url).unwrap()
+        );
     }
 
     #[cfg(feature = "station")]
