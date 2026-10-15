@@ -23,6 +23,8 @@ mod tests {
 
     use super::*;
 
+    const CONTENTS: &str = "{}\n";
+
     fn entries(dir: &Path) -> Vec<OsString> {
         fs::read_dir(dir)
             .unwrap()
@@ -31,26 +33,34 @@ mod tests {
     }
 
     #[test]
-    fn the_file_holds_the_contents_and_no_temporary_file_is_left() {
+    fn the_file_holds_the_contents_written() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.json");
 
-        write_atomically(&path, "{}\n").unwrap();
+        write_atomically(&path, CONTENTS).unwrap();
 
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{}\n");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), CONTENTS);
     }
 
     #[test]
-    fn the_file_replaces_an_existing_one_through_a_temporary_file() {
+    fn the_file_replaces_an_existing_one() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.json");
         fs::write(&path, "stale").unwrap();
 
-        write_atomically(&path, "fresh").unwrap();
+        write_atomically(&path, CONTENTS).unwrap();
 
-        assert_eq!(fs::read_to_string(&path).unwrap(), "fresh");
-        assert!(!dir.path().join("jobs.json.tmp").exists());
+        assert_eq!(fs::read_to_string(&path).unwrap(), CONTENTS);
+    }
+
+    #[test]
+    fn a_written_file_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+
+        write_atomically(&path, CONTENTS).unwrap();
+
+        assert_eq!(entries(dir.path()), [path.file_name().unwrap()]);
     }
 
     #[test]
