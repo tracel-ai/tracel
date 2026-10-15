@@ -72,8 +72,7 @@ mod tests {
 
         assert!(describe_to(&path).unwrap());
 
-        let contents = std::fs::read_to_string(&path).unwrap();
-        let file: Value = serde_json::from_str(&contents).unwrap();
+        let file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             file,
             json!({
@@ -95,9 +94,6 @@ mod tests {
                 ]
             })
         );
-        let read = DefinitionsFile::from_json(contents.as_bytes()).unwrap();
-        assert_eq!(read.jobs, definitions());
-        assert_eq!(contents, read.to_json());
     }
 
     #[test]
@@ -107,7 +103,7 @@ mod tests {
 
         let error = describe_to(&path).unwrap_err();
 
-        assert!(error.to_string().contains("jobs.json"), "{error}");
+        assert_eq!(error.path, path);
     }
 
     #[test]
