@@ -281,7 +281,7 @@ mod tests {
     use super::*;
     use crate::MetricValue;
     use status::StatusKind;
-    use test_support::{EXPERIMENT, LocalRun, local_run, read_json, read_lines, run};
+    use test_support::{EXPERIMENT, LocalRun, local_run, read_json, read_lines, run, run_dir};
 
     #[test]
     fn a_run_is_located_in_its_directory() {
@@ -307,6 +307,32 @@ mod tests {
             .expect("the name is refused");
 
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_run_records_its_attributes_sorted_by_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let experiment = LocalExperiments::new(dir.path())
+            .create_experiment(
+                EXPERIMENT.to_string(),
+                HashMap::from([
+                    ("seed".to_string(), json!(42)),
+                    ("kind".to_string(), json!("example")),
+                    ("dataset".to_string(), json!("mnist")),
+                ]),
+            )
+            .unwrap();
+
+        experiment.handle().flush();
+
+        assert_eq!(
+            read_lines(&run_dir(&experiment).join(EVENTS_FILE)),
+            [
+                json!({"type": "attribute", "key": "dataset", "value": "mnist"}),
+                json!({"type": "attribute", "key": "kind", "value": "example"}),
+                json!({"type": "attribute", "key": "seed", "value": 42}),
+            ]
+        );
     }
 
     #[rstest]
