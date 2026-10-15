@@ -8,10 +8,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::station::error::RunnerError;
+use crate::station::infrastructure::StationRunnerClient;
 use crate::station::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
-use crate::station::infrastructure::{ClientError, StationRunnerClient};
 use crate::{Execution, Jobs};
 
 /// Reports job outcomes back to the station. Split out so the loop is testable with a fake.
@@ -126,17 +126,13 @@ pub enum StreamOutcome {
 /// Drive one session: expect the leading `registered` event, then route job dispatches to the
 /// executor until the stream ends.
 pub fn serve_stream(
-    mut events: impl Iterator<Item = Result<RunnerEvent, ClientError>>,
+    mut events: impl Iterator<Item = RunnerEvent>,
     executor: &Executor,
 ) -> StreamOutcome {
     let runner_id = match events.next() {
-        Some(Ok(RunnerEvent::Registered { runner_id })) => runner_id,
-        Some(Ok(event)) => {
+        Some(RunnerEvent::Registered { runner_id }) => runner_id,
+        Some(event) => {
             warn!(?event, "expected a registered event first");
-            return StreamOutcome::NeverRegistered;
-        }
-        Some(Err(e)) => {
-            warn!(error = %e, "the event stream failed before registration");
             return StreamOutcome::NeverRegistered;
         }
         None => {
@@ -148,16 +144,12 @@ pub fn serve_stream(
 
     for event in events {
         match event {
-            Ok(RunnerEvent::Job(job)) => executor.dispatch(runner_id, job),
-            Ok(RunnerEvent::Cancel { job_id }) => {
+            RunnerEvent::Job(job) => executor.dispatch(runner_id, job),
+            RunnerEvent::Cancel { job_id } => {
                 info!(%job_id, "the station cancelled the job; it runs to completion");
             }
-            Ok(RunnerEvent::Registered { .. }) => {
+            RunnerEvent::Registered { .. } => {
                 warn!("unexpected registered event mid-stream");
-            }
-            Err(e) => {
-                warn!(error = %e, "the event stream failed");
-                break;
             }
         }
     }
@@ -283,13 +275,8 @@ mod tests {
         }
     }
 
-    fn events(
-        runner_id: Uuid,
-        rest: Vec<RunnerEvent>,
-    ) -> impl Iterator<Item = Result<RunnerEvent, ClientError>> {
-        std::iter::once(RunnerEvent::Registered { runner_id })
-            .chain(rest)
-            .map(Ok)
+    fn events(runner_id: Uuid, rest: Vec<RunnerEvent>) -> impl Iterator<Item = RunnerEvent> {
+        std::iter::once(RunnerEvent::Registered { runner_id }).chain(rest)
     }
 
     /// Serves `jobs`, dispatched in order, and returns the finishes reported.
@@ -445,7 +432,7 @@ mod tests {
         let setup = setup();
 
         let outcome = serve_stream(
-            vec![Ok(RunnerEvent::Job(dispatched("train")))].into_iter(),
+            vec![RunnerEvent::Job(dispatched("train"))].into_iter(),
             &setup.executor,
         );
         setup.executor.wait_idle();

@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use reqwest::Url;
 use reqwest::blocking::{Client, Response};
+use tracing::warn;
 use uuid::Uuid;
 
 use protocol::{FinishJob, RegisterRunner, RunnerEvent};
@@ -26,10 +27,6 @@ pub enum ClientError {
         status: reqwest::StatusCode,
         body: String,
     },
-    #[error("stream io error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("invalid event payload: {0}")]
-    Decode(#[from] serde_json::Error),
 }
 
 impl ClientError {
@@ -72,7 +69,10 @@ impl StationRunnerClient {
     }
 
     /// Register with the station; the successful response IS the runner's event stream.
-    pub fn open_events(&self, register: &RegisterRunner) -> Result<RunnerEventStream, ClientError> {
+    pub fn open_events(
+        &self,
+        register: &RegisterRunner,
+    ) -> Result<RunnerEventStream<BufReader<Response>>, ClientError> {
         let response = self
             .events_stream_client
             .post(self.join("runners/events"))
@@ -80,7 +80,7 @@ impl StationRunnerClient {
             .json(register)
             .send()?;
         let response = ensure_success(response)?;
-        Ok(RunnerEventStream::new(response))
+        Ok(RunnerEventStream::new(BufReader::new(response)))
     }
 
     pub fn finish_job(&self, job_id: Uuid, finish: &FinishJob) -> Result<(), ClientError> {
@@ -110,40 +110,100 @@ fn ensure_success(response: Response) -> Result<Response, ClientError> {
     Err(ClientError::Api { status, body })
 }
 
-/// Blocking iterator over the events of an open runner stream.
+/// Blocking iterator over the events of an open runner stream, read from `R`.
 ///
-/// Yields `None` when the station closes the stream; the session is over either way.
-pub struct RunnerEventStream {
-    lines: std::io::Lines<BufReader<Response>>,
+/// Skips a frame that does not decode, with a warning, and ends when the station closes the stream
+/// or reading it fails; the session is over either way.
+pub struct RunnerEventStream<R> {
+    lines: std::io::Lines<R>,
     parser: SseParser,
 }
 
-impl RunnerEventStream {
-    fn new(response: Response) -> Self {
+impl<R: BufRead> RunnerEventStream<R> {
+    fn new(reader: R) -> Self {
         Self {
-            lines: BufReader::new(response).lines(),
+            lines: reader.lines(),
             parser: SseParser::default(),
         }
     }
 }
 
-impl Iterator for RunnerEventStream {
-    type Item = Result<RunnerEvent, ClientError>;
+impl<R: BufRead> Iterator for RunnerEventStream<R> {
+    type Item = RunnerEvent;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let line = match self.lines.next()? {
                 Ok(line) => line,
-                Err(e) => return Some(Err(e.into())),
+                Err(error) => {
+                    warn!(%error, "the event stream failed");
+                    return None;
+                }
             };
             let Some(frame) = self.parser.push_line(&line) else {
                 continue;
             };
             match RunnerEvent::decode(&frame.event, &frame.data) {
-                Ok(Some(event)) => return Some(Ok(event)),
-                Ok(None) => continue,
-                Err(e) => return Some(Err(e.into())),
+                Ok(Some(event)) => return Some(event),
+                Ok(None) => {}
+                Err(error) => warn!(event = %frame.event, %error, "skipped a malformed event"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Read};
+
+    use serde_json::json;
+
+    use super::*;
+
+    struct FailingOnce(bool);
+
+    impl Read for FailingOnce {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            if std::mem::replace(&mut self.0, true) {
+                return Ok(0);
+            }
+            Err(io::Error::other("connection reset"))
+        }
+    }
+
+    fn frame(event: &str, data: &str) -> String {
+        format!("event: {event}\ndata: {data}\n\n")
+    }
+
+    fn registered(runner_id: Uuid) -> String {
+        frame("registered", &json!({ "runner_id": runner_id }).to_string())
+    }
+
+    fn events(stream: impl Read) -> Vec<RunnerEvent> {
+        RunnerEventStream::new(BufReader::new(stream)).collect()
+    }
+
+    #[test]
+    fn a_frame_whose_data_does_not_decode_is_skipped() {
+        let runner_id = Uuid::new_v4();
+        let stream = frame("job", "not json") + &registered(runner_id);
+
+        assert_eq!(
+            events(stream.as_bytes()),
+            [RunnerEvent::Registered { runner_id }]
+        );
+    }
+
+    #[test]
+    fn a_failed_read_ends_the_stream() {
+        let runner_id = Uuid::new_v4();
+        let registered = registered(runner_id);
+        let cancel = frame("cancel", &json!({ "job_id": Uuid::new_v4() }).to_string());
+        let stream = registered
+            .as_bytes()
+            .chain(FailingOnce(false))
+            .chain(cancel.as_bytes());
+
+        assert_eq!(events(stream), [RunnerEvent::Registered { runner_id }]);
     }
 }
