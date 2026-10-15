@@ -2,6 +2,7 @@ name: CI
 
 env:
   CARGO_TERM_COLOR: always
+  FEATURES: tracel/station,tracel/burn,tracel/schema
 
 # For now we execute CI only on PR to save on CI time
 on:
@@ -33,16 +34,16 @@ jobs:
         run: cargo xtask check format
       # --------------------------------------------------------------------------------
       - name: Lint
-        run: cargo xtask check lint
+        run: cargo xtask check --features "$FEATURES" lint
       # --------------------------------------------------------------------------------
       - name: Typos
         uses: tracel-ai/github-actions/check-typos@v11
       # --------------------------------------------------------------------------------
       - name: Unit Tests
-        run: cargo xtask test unit
+        run: cargo xtask test --features "$FEATURES" unit
       # --------------------------------------------------------------------------------
       - name: Integration Tests
-        run: cargo xtask test integration
+        run: cargo xtask test --features "$FEATURES" integration
       # --------------------------------------------------------------------------------
       - name: Documentation Tests
-        run: cargo xtask doc tests
+        run: cargo xtask doc --features "$FEATURES" tests
