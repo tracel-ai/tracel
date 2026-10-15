@@ -42,6 +42,7 @@ fn parse_env(value: Option<&str>) -> Result<Env, ConsoleError> {
             .strip_prefix("Staging(")
             .and_then(|number| number.strip_suffix(')'))
             .or_else(|| value.strip_prefix("staging-"))
+            .filter(|number| number.bytes().all(|byte| byte.is_ascii_digit()))
             .and_then(|number| number.parse::<u8>().ok())
             .map(Env::Staging)
             .ok_or_else(|| ConsoleError::InvalidSetting {
@@ -299,8 +300,10 @@ mod tests {
             "Staging()",
             "Staging(1",
             "Staging(256)",
+            "Staging(+2)",
             "staging-",
             "staging--1",
+            "staging-+2",
             "staging-256",
         ] {
             let error = parse_env(Some(value)).unwrap_err();
