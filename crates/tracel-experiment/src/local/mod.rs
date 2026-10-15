@@ -8,8 +8,9 @@ mod status;
 mod test_support;
 
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Write};
+use std::mem;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -131,7 +132,14 @@ impl ExperimentProvider for LocalExperiments {
 struct LocalExperimentSession {
     root: PathBuf,
     status: Status,
-    events: Mutex<Option<BufWriter<File>>>,
+    events: Mutex<Events>,
+}
+
+/// Where a run's events go: appended to its events file, until a write fails or the run finishes.
+enum Events {
+    Recording(BufWriter<Box<dyn Write + Send>>),
+    Failed(io::Error),
+    Finished,
 }
 
 impl LocalExperimentSession {
@@ -144,16 +152,28 @@ impl LocalExperimentSession {
         attributes: HashMap<String, Value>,
     ) -> io::Result<Self> {
         fs::create_dir_all(root.join("artifacts"))?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join(EVENTS_FILE))?;
+        Self::start_writing(root, Box::new(file), name, num, attributes)
+    }
+
+    /// Starts recording the run as [`start`](Self::start) does, with its events written to
+    /// `events`.
+    fn start_writing(
+        root: PathBuf,
+        events: Box<dyn Write + Send>,
+        name: String,
+        num: u64,
+        attributes: HashMap<String, Value>,
+    ) -> io::Result<Self> {
         let mut attributes: Vec<(String, Value)> = attributes.into_iter().collect();
         attributes.sort_by(|(a, _), (b, _)| a.cmp(b));
         let attributes = attributes
             .into_iter()
             .map(|(key, value)| Line::Attribute { key, value });
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(root.join(EVENTS_FILE))?;
-        let mut events = BufWriter::new(file);
+        let mut events = BufWriter::new(events);
         events.write_all(to_jsonl(attributes)?.as_bytes())?;
         let status = Status::running(name, num);
         status.write(&root.join(STATUS_FILE))?;
@@ -161,18 +181,27 @@ impl LocalExperimentSession {
         Ok(Self {
             root,
             status,
-            events: Mutex::new(Some(events)),
+            events: Mutex::new(Events::Recording(events)),
         })
     }
 
-    /// Runs `write` on the run's events file, unless the run has finished.
+    /// Runs `write` on the run's events file, unless the run has finished or a write has failed:
+    /// the first write that fails ends the recording.
     fn write_events(
         &self,
-        write: impl FnOnce(&mut BufWriter<File>) -> io::Result<()>,
+        write: impl FnOnce(&mut BufWriter<Box<dyn Write + Send>>) -> io::Result<()>,
     ) -> Result<(), ExperimentError> {
         let mut events = self.events.lock().unwrap();
-        let events = events.as_mut().ok_or_else(already_finished)?;
-        write(events).map_err(writer_failed)
+        let file = match &mut *events {
+            Events::Recording(file) => file,
+            Events::Failed(error) => return Err(writer_failed(error)),
+            Events::Finished => return Err(already_finished()),
+        };
+        write(file).map_err(|error| {
+            let failure = writer_failed(&error);
+            *events = Events::Failed(error);
+            failure
+        })
     }
 }
 
@@ -201,15 +230,19 @@ impl ExperimentSession for LocalExperimentSession {
         save_artifact(&self.root, name, artifact)
     }
 
-    /// Writes every event recorded, then the run's status.
+    /// Writes every event recorded, then the run's status: failed, with the writer's error, when
+    /// an event could not be written.
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-        let mut events = self
-            .events
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(already_finished)?;
-        events.flush().map_err(writer_failed)?;
+        let events = mem::replace(&mut *self.events.lock().unwrap(), Events::Finished);
+        let written = match events {
+            Events::Recording(mut file) => file.flush().map_err(|error| writer_failed(&error)),
+            Events::Failed(error) => Err(writer_failed(&error)),
+            Events::Finished => return Err(already_finished()),
+        };
+        let completion = match &written {
+            Ok(()) => completion,
+            Err(error) => ExperimentCompletion::Failed(error.message.clone()),
+        };
 
         self.status
             .ended(completion)
@@ -220,7 +253,8 @@ impl ExperimentSession for LocalExperimentSession {
                     "Failed to write the local experiment status",
                     err,
                 )
-            })
+            })?;
+        written
     }
 }
 
@@ -231,22 +265,23 @@ fn already_finished() -> ExperimentError {
     )
 }
 
-fn writer_failed(error: io::Error) -> ExperimentError {
-    ExperimentError::with_source(
+fn writer_failed(error: &io::Error) -> ExperimentError {
+    ExperimentError::new(
         ExperimentErrorKind::Internal,
-        "Local experiment writer failed",
-        error,
+        format!("Local experiment writer failed: {error}"),
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
+    use serde_json::json;
+    use tempfile::TempDir;
 
-    use super::test_support::{LocalRun, local_run};
     use super::*;
     use crate::MetricValue;
-    use test_support::{read_lines, run};
+    use status::StatusKind;
+    use test_support::{EXPERIMENT, LocalRun, local_run, read_json, read_lines, run};
 
     #[test]
     fn a_run_is_located_in_its_directory() {
@@ -284,5 +319,62 @@ mod tests {
         local_run.run.handle().flush();
 
         assert_eq!(read_lines(&local_run.dir.join(EVENTS_FILE)).len(), 1);
+    }
+
+    #[derive(Default)]
+    struct FailsFirstWrite {
+        failed: bool,
+    }
+
+    impl Write for FailsFirstWrite {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.failed {
+                return Ok(buf.len());
+            }
+            self.failed = true;
+            Err(io::Error::other("no space left on device"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FailedWrite {
+        session: LocalExperimentSession,
+        root: TempDir,
+    }
+
+    #[fixture]
+    fn failed_write() -> FailedWrite {
+        let root = tempfile::tempdir().unwrap();
+        let session = LocalExperimentSession::start_writing(
+            root.path().to_path_buf(),
+            Box::new(FailsFirstWrite::default()),
+            EXPERIMENT.to_string(),
+            1,
+            HashMap::new(),
+        )
+        .unwrap();
+        session
+            .record_event(Event::Args(json!({"epochs": 2})))
+            .unwrap();
+        session.flush().unwrap_err();
+        FailedWrite { session, root }
+    }
+
+    #[rstest]
+    fn a_run_whose_events_failed_to_write_ends_as_failed(failed_write: FailedWrite) {
+        let _ = failed_write.session.finish(ExperimentCompletion::Success);
+
+        let status = read_json(&failed_write.root.path().join(STATUS_FILE));
+        assert_eq!(status["status"], json!(StatusKind::Failed));
+    }
+
+    #[rstest]
+    fn finishing_a_run_whose_events_failed_to_write_reports_the_failure(failed_write: FailedWrite) {
+        let finished = failed_write.session.finish(ExperimentCompletion::Success);
+
+        assert_eq!(finished.unwrap_err().kind, ExperimentErrorKind::Internal);
     }
 }

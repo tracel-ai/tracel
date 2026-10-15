@@ -23,7 +23,7 @@ pub struct Status {
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum StatusKind {
+pub enum StatusKind {
     Running,
     Completed,
     Failed,
