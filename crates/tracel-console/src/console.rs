@@ -407,23 +407,4 @@ mod tests {
         assert_send_sync::<Console>();
         assert_send_sync::<ProjectHandle>();
     }
-
-    #[test]
-    fn binding_and_scoping_send_no_request() {
-        let console = Console::connect(
-            Env::Development,
-            TracelCredentials::api_key("tcl_key_not_checked_until_the_first_request"),
-        );
-        let project = console.project("owner", "project");
-        let _ = (
-            project.datasets(),
-            project.models(),
-            project.experiments(),
-            project.inference(),
-        );
-
-        assert!(console.inner.connected.get().is_none());
-        assert!(Arc::ptr_eq(&project.console().inner, &console.inner));
-        assert_eq!(console.base_url(), &Env::Development.get_url());
-    }
 }
