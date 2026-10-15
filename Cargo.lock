@@ -7226,6 +7226,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.12.0"
 dependencies = [
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",
@@ -7280,9 +7281,11 @@ dependencies = [
  "chrono",
  "crossbeam",
  "reqwest",
+ "rstest",
  "serde",
  "serde_json",
  "serde_with",
+ "tempfile",
  "thiserror 2.0.21",
  "toml",
  "tracel-artifact",
@@ -7312,6 +7315,8 @@ version = "0.12.0"
 dependencies = [
  "burn",
  "chrono",
+ "relative-path",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",
@@ -7355,6 +7360,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "referencing",
+ "rstest",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -7400,6 +7406,7 @@ dependencies = [
  "clap_complete",
  "json-patch",
  "reqwest",
+ "rstest",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -7416,6 +7423,7 @@ name = "tracel-station"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "rstest",
  "serde",
  "serde_json",
  "serde_with",

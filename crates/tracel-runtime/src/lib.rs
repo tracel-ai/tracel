@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! A program's jobs, and the adapters that run them.
 //!
 //! A job is a function of its typed input, `Fn(I) -> Result<(), E>`, registered by name in
@@ -71,9 +73,8 @@
 //! function, while it runs, so jobs a Station runner runs at once each see their own. The
 //! functions read it: [`job_running`] says whether there is one, [`job_num`] gives its number, and
 //! [`job_input`] its input, as JSON. To read it on another thread, hold [`JobScope::current`]. The
-//! `tracel` crate links the experiments a job starts to it through its scope. While a thread runs
-//! no job, such as in a plain binary or a unit test, there is none: [`job_running`] gives `false`,
-//! and [`job_num`] and [`job_input`] give `None`.
+//! `tracel` crate links the experiments a job starts to it through its scope. Outside a job there
+//! is none: [`job_running`] gives `false`, and [`job_num`] and [`job_input`] give `None`.
 
 mod execution;
 mod job;
@@ -85,6 +86,7 @@ mod scope;
 pub mod station;
 
 pub use execution::{Execution, JobStatus, Outcome, PreparedJob};
-pub use job::{BoxError, IntoJob, Job, JobDefinition};
+pub use job::{BoxError, IntoJob, Job};
 pub use jobs::{Jobs, PrepareError};
 pub use scope::{JobScope, job_input, job_num, job_running};
+pub use tracel_job::JobDefinition;

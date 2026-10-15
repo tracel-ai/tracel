@@ -1,6 +1,6 @@
 [package]
 name = "tracel-datasets"
-description = "Backend-agnostic dataset domain and capability for Tracel."
+description = "Backend-agnostic dataset domain and registry for Tracel."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -13,7 +13,7 @@ categories.workspace = true
 
 [features]
 default = []
-# Burn `Dataset` adapters over the capability. Off by default so that backends composing
+# Burn `Dataset` adapters over dataset versions. Off by default so that backends composing
 # this crate stay burn-free.
 burn = ["dep:burn"]
 

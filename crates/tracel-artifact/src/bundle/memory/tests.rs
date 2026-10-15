@@ -96,18 +96,6 @@ impl BundleDecode for ExampleConfig {
         let config: ExampleConfig = serde_json::from_str(&config_content)
             .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
 
-        // Optionally validate metadata exists (but don't require it for decoding)
-        if let Ok(mut metadata_reader) = source.open(&settings.metadata_filename) {
-            let mut metadata_content = String::new();
-            if metadata_reader
-                .read_to_string(&mut metadata_content)
-                .is_ok()
-                && let Ok(_metadata) = serde_json::from_str::<ConfigMetadata>(&metadata_content)
-            {
-                // Could validate version compatibility here
-            }
-        }
-
         Ok(config)
     }
 }

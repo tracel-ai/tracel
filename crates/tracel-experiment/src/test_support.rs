@@ -1,10 +1,14 @@
 use std::sync::{Arc, Mutex};
 
-use crate::activity::ActivityEvent;
+use rstest::fixture;
+use tracing_subscriber::layer::SubscriberExt;
+
+use crate::activity::{ActivityEvent, ActivityId, ActivitySpec};
 use crate::error::ExperimentError;
+use crate::integration::tracing::tracing_log_layer;
 use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
 use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl};
+use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl, LogRecord};
 
 #[derive(Default)]
 pub struct MockSession {
@@ -23,6 +27,47 @@ impl MockSession {
                 Event::Activity(event) => Some(event.clone()),
                 _ => None,
             })
+            .collect()
+    }
+
+    pub fn started_activities(&self) -> Vec<ActivitySpec> {
+        self.activity_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActivityEvent::Started { activity } => Some(activity),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn logs(&self) -> Vec<LogRecord> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Log { record, .. } => Some(record.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn log_activities(&self) -> Vec<Option<ActivityId>> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Log { activity, .. } => Some(*activity),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn log_messages(&self) -> Vec<String> {
+        self.logs()
+            .into_iter()
+            .map(|record| record.message)
             .collect()
     }
 }
@@ -89,4 +134,22 @@ pub fn create_run_with_control(
         NoopExperimentDataReader,
         control,
     )
+}
+
+pub struct MockRun {
+    pub run: ExperimentRun,
+    pub session: Arc<MockSession>,
+}
+
+#[fixture]
+pub fn mock_run() -> MockRun {
+    let session = Arc::new(MockSession::default());
+    MockRun {
+        run: create_run(session.clone()),
+        session,
+    }
+}
+
+pub fn traced<T>(f: impl FnOnce() -> T) -> T {
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(tracing_log_layer()), f)
 }

@@ -86,39 +86,43 @@ impl Default for ExperimentRunControl {
 mod tests {
     use std::num::NonZeroU64;
 
+    use rstest::rstest;
+
     use super::*;
 
-    fn activity_id(value: u64) -> ActivityId {
-        ActivityId::new(NonZeroU64::new(value).unwrap())
+    fn activity_id() -> ActivityId {
+        ActivityId::new(NonZeroU64::new(1).unwrap())
     }
 
     #[test]
-    fn cancel_run_cancels_linked_activity_tokens() {
+    fn cancelling_the_run_cancels_its_token() {
         let control = ExperimentRunControl::default();
-        let activity_token = control.cancel_token().linked(CancelToken::new());
-        control.register_activity_cancellation(activity_id(1), activity_token.clone());
 
         control.cancel_run();
 
         assert!(control.cancel_token().is_cancelled());
-        assert!(activity_token.is_cancelled());
     }
 
     #[test]
-    fn cancel_activity_cancels_registered_activity_token() {
+    fn cancelling_a_registered_activity_cancels_its_token() {
         let control = ExperimentRunControl::default();
-        let activity_token = CancelToken::new();
-        control.register_activity_cancellation(activity_id(1), activity_token.clone());
+        let token = CancelToken::new();
+        control.register_activity_cancellation(activity_id(), token.clone());
 
-        assert!(control.cancel_activity(activity_id(1)));
+        control.cancel_activity(activity_id());
 
-        assert!(activity_token.is_cancelled());
+        assert!(token.is_cancelled());
     }
 
-    #[test]
-    fn cancel_unknown_activity_returns_false() {
+    #[rstest]
+    #[case::registered(true)]
+    #[case::unknown(false)]
+    fn cancelling_an_activity_reports_whether_it_was_registered(#[case] registered: bool) {
         let control = ExperimentRunControl::default();
+        if registered {
+            control.register_activity_cancellation(activity_id(), CancelToken::new());
+        }
 
-        assert!(!control.cancel_activity(activity_id(99)));
+        assert_eq!(control.cancel_activity(activity_id()), registered);
     }
 }

@@ -24,4 +24,5 @@ referencing = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
+rstest = { workspace = true }
 schemars.workspace = true

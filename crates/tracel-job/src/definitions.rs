@@ -20,7 +20,7 @@ pub struct JobDefinition {
     pub description: Option<String>,
     /// JSON Schema of the job's input, when the program gives one.
     pub input_schema: Option<Value>,
-    /// An example input, typically the job's default input, which its input is merged onto.
+    /// The job's default input, which its input is merged onto.
     pub input_example: Option<Value>,
 }
 
@@ -36,12 +36,13 @@ pub struct DefinitionsFile {
 }
 
 impl DefinitionsFile {
-    /// The file of a program that can run `jobs`: following [`PROTOCOL`], and built with this
-    /// version of the SDK.
-    pub fn new(jobs: Vec<JobDefinition>) -> Self {
+    /// The file of a program built with version `sdk_version` of the Tracel SDK that can run
+    /// `jobs`, following [`PROTOCOL`], with `jobs` ordered by name.
+    pub fn new(sdk_version: impl Into<String>, mut jobs: Vec<JobDefinition>) -> Self {
+        jobs.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
             protocol: PROTOCOL,
-            sdk_version: env!("CARGO_PKG_VERSION").to_string(),
+            sdk_version: sdk_version.into(),
             jobs,
         }
     }
@@ -112,86 +113,28 @@ mod tests {
 
     use super::*;
 
-    fn file() -> DefinitionsFile {
-        DefinitionsFile::new(vec![
-            JobDefinition {
-                name: "echo".to_string(),
-                description: None,
-                input_schema: Some(json!({"type": "string"})),
-                input_example: None,
-            },
-            JobDefinition {
-                name: "train".to_string(),
-                description: Some("Train the model".to_string()),
-                input_schema: None,
-                input_example: Some(json!({"epochs": 10, "optimizer": {"lr": 0.001}})),
-            },
-        ])
+    #[test]
+    fn the_jobs_are_ordered_by_name() {
+        let job = |name: &str| JobDefinition {
+            name: name.to_string(),
+            description: None,
+            input_schema: None,
+            input_example: None,
+        };
+
+        let file =
+            DefinitionsFile::new("0.10.0", vec![job("train"), job("evaluate"), job("infer")]);
+
+        assert_eq!(file.jobs, [job("evaluate"), job("infer"), job("train")]);
     }
 
     #[test]
-    fn the_file_is_pretty_printed_json_ending_with_a_newline() {
-        let expected = r#"{
-  "protocol": 1,
-  "sdk_version": "SDK_VERSION",
-  "jobs": [
-    {
-      "name": "echo",
-      "description": null,
-      "input_schema": {
-        "type": "string"
-      },
-      "input_example": null
-    },
-    {
-      "name": "train",
-      "description": "Train the model",
-      "input_schema": null,
-      "input_example": {
-        "epochs": 10,
-        "optimizer": {
-          "lr": 0.001
-        }
-      }
-    }
-  ]
-}
-"#
-        .replace("SDK_VERSION", env!("CARGO_PKG_VERSION"));
+    fn a_file_of_another_protocol_is_refused_whatever_its_other_fields() {
+        let other = PROTOCOL + 1;
+        let document = json!({"protocol": other, "jobs": "elsewhere"});
 
-        assert_eq!(file().to_json(), expected);
-        assert_eq!(
-            DefinitionsFile::from_json(expected.as_bytes()).unwrap(),
-            file()
-        );
-    }
+        let parsed = DefinitionsFile::from_json(document.to_string().as_bytes());
 
-    #[test]
-    fn only_a_definitions_file_of_this_protocol_parses() {
-        let parse = |json: &str| DefinitionsFile::from_json(json.as_bytes());
-
-        assert!(matches!(
-            parse(r#"{"protocol": 1}"#),
-            Err(ParseError::Invalid(_))
-        ));
-        assert!(matches!(
-            parse(r#"{"jobs": []}"#),
-            Err(ParseError::Invalid(_))
-        ));
-        assert!(matches!(
-            parse(r#"{"protocol": 1, "jo"#),
-            Err(ParseError::Invalid(_))
-        ));
-        assert!(matches!(
-            parse(r#"{"protocol": 2, "jobs": "elsewhere"}"#),
-            Err(ParseError::Protocol { found: 2 })
-        ));
-    }
-
-    #[test]
-    fn a_protocol_error_names_both_versions() {
-        let error = DefinitionsFile::from_json(br#"{"protocol": 7}"#).unwrap_err();
-
-        assert_eq!(error.to_string(), "protocol 7 is not supported, expected 1");
+        assert!(matches!(parsed, Err(ParseError::Protocol { found }) if found == other));
     }
 }

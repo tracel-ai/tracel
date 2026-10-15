@@ -21,14 +21,13 @@ use tracel_experiment::reader::{
     ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact,
 };
 use tracel_experiment::{
-    ArtifactKind, CancelToken, ExperimentId, ExperimentLocation, ExperimentProvider, ExperimentRun,
+    ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
     ExperimentRunControl,
 };
 use tracel_experiment_remote::{ArtifactUploadError, ArtifactUploader, RemoteExperimentSession};
-use url::Url;
 
 use crate::console::ProjectScope;
-use crate::{Namespace, NamespaceKind};
+use crate::wire::console_timestamp;
 
 /// Experiment provider backed by the console's experiment run protocol.
 pub struct ConsoleExperimentProvider {
@@ -93,50 +92,7 @@ fn create_run(
     let id = ExperimentId::from(format!("{experiment_num}"));
     let run = ExperimentRun::new_with_control(id, session, reader, control);
 
-    Ok(match page_of(scope, experiment_num) {
-        Some(page) => run.with_location(ExperimentLocation::Url(page.into())),
-        None => run,
-    })
-}
-
-/// The console page of experiment `num` of the project `scope` names, when the project's owner
-/// can be read.
-fn page_of(scope: &ProjectScope, num: i32) -> Option<Url> {
-    let kind = match scope.owner_kind() {
-        Ok(kind) => kind,
-        Err(error) => {
-            tracing::warn!("Could not find the console page of experiment {num}: {error}");
-            return None;
-        }
-    };
-    let owner = Namespace {
-        name: scope.owner.clone(),
-        kind,
-    };
-    experiment_page(scope.console().base_url(), &owner, &scope.project, num)
-}
-
-/// The page of experiment `num` of `project`, owned by `owner`, on the console whose API is at
-/// `api_url`.
-///
-/// The console serves its API under `api/` of its web address, and an experiment's page at
-/// `users/<namespace>/projects/<project>/experiments/<num>` of it, or under `orgs/` for a project
-/// an organization owns. `None` when the API is not served under `api/`.
-fn experiment_page(api_url: &Url, owner: &Namespace, project: &str, num: i32) -> Option<Url> {
-    let mut page = Url::parse(api_url.as_str().strip_suffix("api/")?).ok()?;
-    let owners = match owner.kind {
-        NamespaceKind::User => "users",
-        NamespaceKind::Organization => "orgs",
-    };
-    page.path_segments_mut().ok()?.pop_if_empty().extend([
-        owners,
-        &owner.name,
-        "projects",
-        project,
-        "experiments",
-        &num.to_string(),
-    ]);
-    Some(page)
+    Ok(run)
 }
 
 /// A scope for artifact operations within a specific experiment.
@@ -250,7 +206,7 @@ impl ExperimentArtifactClient {
         Ok(bundle)
     }
 
-    /// The artifact of the experiment named `name`.
+    /// The artifact of the experiment named `name`, the newest when several are.
     fn fetch(&self, name: &str) -> Result<ArtifactResponse, ArtifactError> {
         let listed = self.scope.client()?.list_artifacts_by_name(
             &self.scope.owner,
@@ -258,26 +214,24 @@ impl ExperimentArtifactClient {
             self.experiment_num,
             name,
         )?;
-        named(listed.items, name, |artifact| &artifact.name)
+        newest_named(listed.items, name)
     }
 }
 
-/// The one item of `items` whose name, which `name_of` gives, is `name`.
+/// The newest of `artifacts` named exactly `name`.
 ///
 /// The console's name filter lists the artifacts whose names contain the name asked for, so
-/// asking for `model` can list `model-2` as well.
-fn named<T>(items: Vec<T>, name: &str, name_of: impl Fn(&T) -> &str) -> Result<T, ArtifactError> {
-    let mut matching = items.into_iter().filter(|item| name_of(item) == name);
-    let found = matching
-        .next()
-        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))?;
-    match matching.count() {
-        0 => Ok(found),
-        others => Err(ArtifactError::Ambiguous {
-            name: name.to_owned(),
-            count: others + 1,
-        }),
-    }
+/// asking for `model` can list `model-2` as well, and an experiment can hold several artifacts of
+/// one name.
+fn newest_named(
+    artifacts: Vec<ArtifactResponse>,
+    name: &str,
+) -> Result<ArtifactResponse, ArtifactError> {
+    artifacts
+        .into_iter()
+        .filter(|artifact| artifact.name == name)
+        .max_by_key(|artifact| console_timestamp(&artifact.created_at))
+        .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
 }
 
 fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
@@ -292,8 +246,6 @@ fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
 enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
-    #[error("Artifact name is ambiguous: {count} artifacts are named {name}")]
-    Ambiguous { name: String, count: usize },
     #[error(transparent)]
     Client(#[from] ClientError),
     #[error(transparent)]
@@ -383,104 +335,64 @@ impl ArtifactUploader for ConsoleArtifactUploader {
 
 #[cfg(test)]
 mod tests {
-    use tracel_client::console::Env;
+    use rstest::{fixture, rstest};
+    use tracel_client::console::artifact::response::ArtifactSourceResponse;
 
     use super::*;
 
-    /// The id of the artifact `named` picks among `(id, name)` pairs.
-    fn pick(
-        artifacts: &[(&'static str, &'static str)],
-        name: &str,
-    ) -> Result<&'static str, ArtifactError> {
-        named(artifacts.to_vec(), name, |(_, name)| name).map(|(id, _)| id)
+    fn artifact(name: &str, created_at: &str) -> ArtifactResponse {
+        ArtifactResponse {
+            id: format!("{name} at {created_at}"),
+            created_at: created_at.to_string(),
+            name: name.to_string(),
+            kind: "model".to_string(),
+            bucket_id: "bucket".to_string(),
+            experiment: ArtifactSourceResponse {
+                id: 1,
+                experiment_num: 1,
+            },
+            manifest: Value::Null,
+        }
     }
 
-    #[test]
-    fn an_artifact_is_picked_by_its_exact_name() {
-        let listed = [("2", "model-2"), ("1", "model"), ("3", "model.bpk")];
-
-        assert_eq!(pick(&listed, "model").unwrap(), "1");
-        assert_eq!(pick(&listed, "model-2").unwrap(), "2");
+    #[fixture]
+    fn listed() -> Vec<ArtifactResponse> {
+        vec![
+            artifact("model-2", "2026-10-01T00:00:00Z"),
+            artifact("model", "2026-10-01T00:00:00Z"),
+            artifact("model.bpk", "2026-10-01T00:00:00Z"),
+        ]
     }
 
-    #[test]
-    fn a_name_no_artifact_has_exactly_is_not_found() {
-        let error = pick(&[("2", "model-2")], "model").unwrap_err();
+    #[rstest]
+    #[case::a_name_others_extend("model")]
+    #[case::a_name_extending_another("model-2")]
+    fn an_artifact_is_picked_by_its_exact_name(listed: Vec<ArtifactResponse>, #[case] name: &str) {
+        assert_eq!(newest_named(listed, name).unwrap().name, name);
+    }
 
-        assert!(matches!(&error, ArtifactError::NotFound(name) if name == "model"));
+    #[rstest]
+    #[case::only_longer_names_listed(vec![artifact("model-2", "2026-10-01T00:00:00Z")])]
+    #[case::nothing_listed(vec![])]
+    fn a_name_no_artifact_has_exactly_is_not_found(#[case] listed: Vec<ArtifactResponse>) {
+        let asked = "model";
+
         assert!(matches!(
-            pick(&[], "model"),
-            Err(ArtifactError::NotFound(_))
+            newest_named(listed, asked),
+            Err(ArtifactError::NotFound(name)) if name == asked
         ));
     }
 
     #[test]
-    fn a_name_several_artifacts_have_is_ambiguous() {
-        let error = pick(&[("1", "model"), ("2", "model-2"), ("3", "model")], "model").unwrap_err();
+    fn the_newest_of_same_named_artifacts_is_picked() {
+        let newest = artifact("model", "2026-10-03T00:00:00Z");
+        let listed = vec![
+            artifact("model", "2026-10-01T00:00:00Z"),
+            newest.clone(),
+            artifact("model-2", "2026-10-04T00:00:00Z"),
+            artifact("model", "2026-10-02T00:00:00Z"),
+        ];
 
-        assert!(matches!(&error, ArtifactError::Ambiguous { count: 2, .. }));
-        assert_eq!(
-            error.to_string(),
-            "Artifact name is ambiguous: 2 artifacts are named model"
-        );
-    }
-
-    fn page(api_url: &str, owner: Namespace, project: &str, num: i32) -> Option<String> {
-        experiment_page(&Url::parse(api_url).unwrap(), &owner, project, num).map(String::from)
-    }
-
-    #[test]
-    fn a_user_project_experiment_is_under_users() {
-        assert_eq!(
-            page(
-                Env::Production.get_url().as_str(),
-                Namespace::user("alice"),
-                "mnist",
-                42
-            )
-            .as_deref(),
-            Some("https://console.tracel.ai/users/alice/projects/mnist/experiments/42")
-        );
-    }
-
-    #[test]
-    fn an_organization_project_experiment_is_under_orgs() {
-        assert_eq!(
-            page(
-                "https://console.example.com/api/",
-                Namespace::organization("tracel"),
-                "vision",
-                7
-            )
-            .as_deref(),
-            Some("https://console.example.com/orgs/tracel/projects/vision/experiments/7")
-        );
-    }
-
-    #[test]
-    fn names_are_escaped_as_path_segments() {
-        assert_eq!(
-            page(
-                "https://console.example.com/api/",
-                Namespace::user("a b"),
-                "x/y",
-                1
-            )
-            .as_deref(),
-            Some("https://console.example.com/users/a%20b/projects/x%2Fy/experiments/1")
-        );
-    }
-
-    #[test]
-    fn an_api_not_served_under_api_has_no_pages() {
-        assert_eq!(
-            page(
-                Env::Development.get_url().as_str(),
-                Namespace::user("alice"),
-                "mnist",
-                1
-            ),
-            None
-        );
+        assert_eq!(newest_named(listed, "model").unwrap().id, newest.id);
     }
 }

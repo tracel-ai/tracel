@@ -3,70 +3,31 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use tracel_experiment::{ExperimentLocation, ExperimentRun, Experiments};
+use tracel_experiment::Experiments;
 use tracel_runtime::JobScope;
 
 /// The experiment attribute that links an experiment to the job that started it: the job's
 /// number, as a number when it is one.
 const JOB_NUM_ATTRIBUTE: &str = "tracel.job_num";
 
-/// `experiments`, linked to the job the current thread runs, when it runs one, as [`link`] links
-/// them, each run started from them printing where it records to stderr; as they are otherwise.
-/// The link holds on any thread a run is started on.
+/// `experiments`, linked to the job the current thread runs, when it runs one; as they are
+/// otherwise.
+///
+/// Each experiment started from linked experiments, on any thread, belongs to the job: it records
+/// the job's number as its `tracel.job_num` attribute and the job's input, unless it is `null`, as
+/// its arguments.
 pub fn linked(experiments: Experiments) -> Experiments {
-    match RunningJob::current() {
-        Some(job) => link(experiments, job, |line| eprintln!("{line}")),
-        None => experiments,
-    }
-}
-
-/// What a job gives the experiments started in it.
-struct RunningJob {
-    /// The number the job's launcher gave it.
-    num: Option<String>,
-    /// The input the job runs with, as JSON.
-    input: Value,
-}
-
-impl RunningJob {
-    /// The job the current thread runs, as its [`JobScope`] gives it, while it runs one.
-    fn current() -> Option<Self> {
-        let scope = JobScope::current()?;
-        Some(Self {
-            num: scope.num().map(str::to_string),
-            input: scope.input().clone(),
-        })
-    }
-}
-
-/// `experiments`, each started from which belongs to `job`: it records the job's number as its
-/// `tracel.job_num` attribute and the job's input, unless it is `null`, as its arguments, and it
-/// gives `announce` the line saying where it records as it starts.
-fn link(
-    experiments: Experiments,
-    job: RunningJob,
-    announce: impl Fn(&str) + Send + Sync + 'static,
-) -> Experiments {
-    let attributes = job
-        .num
-        .map(|num| (JOB_NUM_ATTRIBUTE.to_string(), job_num(&num)));
-    let experiments = match job.input {
-        Value::Null => experiments,
-        input => experiments.arguments(input),
+    let Some(job) = JobScope::current() else {
+        return experiments;
     };
-    experiments
-        .attributes(HashMap::from_iter(attributes))
-        .on_start(move |run| announce(&recording(run)))
-}
-
-/// The line saying where `run` records: its number and its page on the console, or its directory
-/// offline.
-fn recording(run: &ExperimentRun) -> String {
-    match run.location() {
-        Some(ExperimentLocation::Url(url)) => format!("Recording experiment {}: {url}", run.id()),
-        Some(ExperimentLocation::Dir(dir)) => format!("Recording offline in {}", dir.display()),
-        None => format!("Recording experiment {}", run.id()),
-    }
+    let attributes = job
+        .num()
+        .map(|num| (JOB_NUM_ATTRIBUTE.to_string(), job_num(num)));
+    let experiments = match job.input() {
+        Value::Null => experiments,
+        input => experiments.arguments(input.clone()),
+    };
+    experiments.attributes(HashMap::from_iter(attributes))
 }
 
 /// The attribute value of the job number `num`: a number when it is one, its text otherwise.
@@ -79,139 +40,166 @@ fn job_num(num: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::sync::{Arc, Mutex};
 
+    use rstest::{fixture, rstest};
     use serde_json::json;
-    use tracel_experiment::ExperimentProvider;
-    use tracel_experiment::local::LocalExperiments;
+    use tracel_experiment::error::ExperimentError;
+    use tracel_experiment::reader::{
+        ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact,
+    };
+    use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
+    use tracel_experiment::{
+        ArtifactKind, CancelToken, ExperimentId, ExperimentProvider, ExperimentRun,
+    };
+    use tracel_runtime::{BoxError, Execution, Jobs};
 
     use super::*;
 
-    /// What a test keeps of what it is given.
-    type Kept<T> = Arc<Mutex<Vec<T>>>;
+    const ID: &str = "7";
 
-    /// A job numbered `num`, running with `input`.
-    fn job(num: Option<&str>, input: Value) -> RunningJob {
-        RunningJob {
-            num: num.map(str::to_string),
-            input,
+    #[derive(Debug, Default, PartialEq)]
+    struct Recorded {
+        attributes: HashMap<String, Value>,
+        arguments: Option<Value>,
+    }
+
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Recorded>>);
+
+    impl Recorder {
+        fn experiments(&self) -> Experiments {
+            Experiments::new(Arc::new(self.clone()))
+        }
+
+        fn recorded(&self) -> Recorded {
+            std::mem::take(&mut self.0.lock().unwrap())
         }
     }
 
-    fn offline(dir: &Path) -> Experiments {
-        Experiments::new(Arc::new(LocalExperiments::new(dir)))
+    impl ExperimentProvider for Recorder {
+        fn create_experiment(
+            &self,
+            _: String,
+            attributes: HashMap<String, Value>,
+        ) -> Result<ExperimentRun, ExperimentError> {
+            self.0.lock().unwrap().attributes = attributes;
+            Ok(ExperimentRun::new(
+                ID,
+                self.clone(),
+                self.clone(),
+                CancelToken::new(),
+            ))
+        }
     }
 
-    /// `experiments` linked to `job`, and the lines its runs announce.
-    fn linked_to(experiments: Experiments, job: RunningJob) -> (Experiments, Kept<String>) {
-        let announced = Arc::new(Mutex::new(Vec::new()));
-        let experiments = link(experiments, job, {
-            let announced = announced.clone();
-            move |line| announced.lock().unwrap().push(line.to_string())
-        });
-        (experiments, announced)
+    impl ExperimentSession for Recorder {
+        fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
+            if let Event::Args(arguments) = event {
+                self.0.lock().unwrap().arguments = Some(arguments);
+            }
+            Ok(())
+        }
+
+        fn save_artifact(
+            &self,
+            _: &str,
+            _: ArtifactKind,
+            _: Box<BundleFn>,
+        ) -> Result<(), ExperimentError> {
+            Ok(())
+        }
+
+        fn finish(&self, _: ExperimentCompletion) -> Result<(), ExperimentError> {
+            Ok(())
+        }
     }
 
-    /// The lines of the events file of run `num` of `train`, under `dir`.
-    fn events(dir: &Path, num: u64) -> Vec<Value> {
-        std::fs::read_to_string(dir.join(format!("train/{num}/events.jsonl")))
+    impl ExperimentArtifactReader for Recorder {
+        fn load_artifact_raw(
+            &self,
+            _: ExperimentId,
+            _: &str,
+        ) -> Result<LoadedArtifact, ExperimentReaderError> {
+            Err(ExperimentReaderError::new("a recorder keeps no artifacts"))
+        }
+    }
+
+    type Start = fn(Experiments) -> Result<(), BoxError>;
+
+    fn start(experiments: Experiments) -> Result<(), BoxError> {
+        experiments.start("train")?.finish()?;
+        Ok(())
+    }
+
+    fn start_on_another_thread(experiments: Experiments) -> Result<(), BoxError> {
+        std::thread::spawn(move || start(experiments))
+            .join()
             .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
     }
 
-    #[test]
-    fn an_experiment_started_in_a_job_belongs_to_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let job = job(Some("12"), json!({"epochs": 2}));
+    fn recorded_in_a_job(execution: Execution, input: Value, start: Start) -> Recorded {
+        let recorder = Recorder::default();
+        let train = {
+            let recorder = recorder.clone();
+            move |_: Value| start(linked(recorder.experiments()))
+        };
+        Jobs::new()
+            .job("train", train)
+            .prepare("train", input)
+            .unwrap()
+            .run(execution)
+            .into_result()
+            .unwrap();
+        recorder.recorded()
+    }
 
-        let (experiments, announced) = linked_to(offline(dir.path()), job);
-        experiments.start("train").unwrap().finish().unwrap();
+    #[fixture]
+    fn input() -> Value {
+        json!({"epochs": 2})
+    }
 
-        let runs = dir.path().canonicalize().unwrap();
-        assert!(events(dir.path(), 1).contains(&json!({
-            "type": "attribute",
-            "key": "tracel.job_num",
-            "value": 12
-        })));
-        assert!(events(dir.path(), 1).contains(&json!({
-            "type": "arguments",
-            "value": {"epochs": 2}
-        })));
+    #[rstest]
+    #[case::on_the_jobs_thread(start)]
+    #[case::on_a_thread_the_job_spawns(start_on_another_thread)]
+    fn an_experiment_started_in_a_job_belongs_to_it(#[case] start: Start, input: Value) {
+        let num = "12";
+
+        let recorded = recorded_in_a_job(Execution::new().with_num(num), input.clone(), start);
+
         assert_eq!(
-            *announced.lock().unwrap(),
-            [format!(
-                "Recording offline in {}",
-                runs.join("train/1").display()
-            )]
+            recorded,
+            Recorded {
+                attributes: HashMap::from([(JOB_NUM_ATTRIBUTE.to_string(), job_num(num))]),
+                arguments: Some(input),
+            }
         );
     }
 
     #[test]
     fn an_experiment_started_in_a_job_without_a_number_or_input_records_neither() {
-        let dir = tempfile::tempdir().unwrap();
-        let job = job(None, Value::Null);
-        let (experiments, announced) = linked_to(offline(dir.path()), job);
-
-        experiments.start("train").unwrap().finish().unwrap();
-
-        assert!(
-            events(dir.path(), 1)
-                .iter()
-                .all(|event| event["type"] != "attribute" && event["type"] != "arguments")
+        assert_eq!(
+            recorded_in_a_job(Execution::new(), Value::Null, start),
+            Recorded::default()
         );
-        assert_eq!(announced.lock().unwrap().len(), 1);
     }
 
     #[test]
     fn outside_a_job_experiments_are_not_linked() {
-        let dir = tempfile::tempdir().unwrap();
+        let recorder = Recorder::default();
 
-        linked(offline(dir.path()))
-            .start("train")
-            .unwrap()
-            .finish()
-            .unwrap();
+        start(linked(recorder.experiments())).unwrap();
 
-        assert!(
-            events(dir.path(), 1)
-                .iter()
-                .all(|event| event["type"] != "attribute" && event["type"] != "arguments")
-        );
+        assert_eq!(recorder.recorded(), Recorded::default());
     }
 
-    #[test]
-    fn a_job_number_is_recorded_as_a_number_when_it_is_one() {
-        assert_eq!(job_num("42"), json!(42));
-        assert_eq!(job_num("job-42"), json!("job-42"));
-    }
-
-    #[test]
-    fn an_experiment_announces_its_page_or_its_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let experiments = LocalExperiments::new(dir.path());
-        let page = "https://console.tracel.ai/users/me/projects/mnist/experiments/2";
-
-        let offline = experiments
-            .create_experiment("mnist".to_string(), HashMap::new())
-            .unwrap();
-        let on_the_console = experiments
-            .create_experiment("mnist".to_string(), HashMap::new())
-            .unwrap()
-            .with_location(ExperimentLocation::Url(page.to_string()));
-
-        assert_eq!(
-            recording(&offline),
-            format!(
-                "Recording offline in {}",
-                dir.path().canonicalize().unwrap().join("mnist/1").display()
-            )
-        );
-        assert_eq!(
-            recording(&on_the_console),
-            format!("Recording experiment 2: {page}")
-        );
+    #[rstest]
+    #[case::digits("42", json!(42))]
+    #[case::not_only_digits("job-42", json!("job-42"))]
+    fn a_job_number_is_recorded_as_a_number_when_it_is_one(
+        #[case] num: &str,
+        #[case] recorded: Value,
+    ) {
+        assert_eq!(job_num(num), recorded);
     }
 }

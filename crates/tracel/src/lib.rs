@@ -83,12 +83,10 @@
 //!
 //! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
 //! to that job, even for runs started on other threads: each one started from them records the
-//! job's number and input, and prints where it records to stderr as it starts, such as
-//! `Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show. Experiments
-//! built another way, such as [`console::ProjectHandle::experiments`], are not linked unless the
-//! code links them, through [`Experiments::attribute`](experiment::Experiments::attribute),
-//! [`arguments`](experiment::Experiments::arguments) and
-//! [`on_start`](experiment::Experiments::on_start).
+//! job's number and input. Experiments built another way, such as
+//! [`console::ProjectHandle::experiments`], are not linked unless the code links them, through
+//! [`Experiments::attribute`](experiment::Experiments::attribute) and
+//! [`arguments`](experiment::Experiments::arguments).
 //!
 //! [`version`](runtime::Jobs::version) gives the binary its `--version`, which prints the binary's
 //! name and that version; without it, the binary has no `--version`.
@@ -125,11 +123,12 @@
 //! - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
 //!   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, a map, an
 //!   optional object or an enum with data takes a JSON literal, such as `--layers '[64, 32]'`. A
-//!   boolean flag given no value is `true`.
+//!   boolean flag given no value is `true`, and takes a value only as `--flag=value`, such as
+//!   `--shuffle=false`.
 //! - The input is the default input, then the `--config` file, then the JSON document, then the
 //!   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
-//! - `help`, `version` and `config` are the command line's names: a field with one of them has no
-//!   flag, and is set through `--config` or the JSON document.
+//! - `help` and `config` are the command line's names: a field with one of them has no flag, and is
+//!   set through `--config` or the JSON document.
 //! - `<binary> --completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`,
 //!   `powershell` or `zsh`.
 //!
