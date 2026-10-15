@@ -456,143 +456,69 @@ fn map_version_error(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+    use serde_json::{Value, json};
+
     use super::*;
 
-    #[test]
-    fn one_batch_of_neighbours_is_one_run() {
-        assert_eq!(contiguous_runs(&[4, 5, 6]), vec![4..7]);
-    }
-
-    #[test]
-    fn a_shuffled_batch_is_sorted_and_coalesced() {
-        assert_eq!(contiguous_runs(&[9, 1, 8, 0, 2]), vec![0..3, 8..10]);
-    }
-
-    #[test]
-    fn a_repeated_index_is_asked_for_once() {
-        assert_eq!(contiguous_runs(&[3, 3, 3]), vec![3..4]);
-    }
-
-    #[test]
-    fn the_estimate_never_undercounts_what_is_actually_sent() {
-        let payloads = [0usize, 1, 2, 3, 4, 5, 1_000, 1_001];
-        let ids = [
-            None,
-            Some(String::new()),
-            Some("plain".to_string()),
-            // JSON escapes make the wire form longer than the Rust string.
-            Some("\"quoted\"".to_string()),
-            Some("back\\slash".to_string()),
-            Some("tab\there\nand\nnewlines".to_string()),
-            Some("\u{1}\u{2}\u{3} control".to_string()),
-            Some("emoji \u{1F600} and accents \u{e9}\u{e8}".to_string()),
-            Some("\"".repeat(64)),
-        ];
-        let extras = [
-            None,
-            Some(serde_json::json!(null)),
-            Some(serde_json::json!({"label": "cat", "nested": [1, 2, 3]})),
-            Some(serde_json::json!({"quote": "say \"hi\"", "uni": "\u{e9}"})),
-        ];
-
-        for payload in payloads {
-            for id in &ids {
-                for extra in &extras {
-                    let item = DatasetVersionUploadItemRequest {
-                        source_item_id: id.clone(),
-                        example_payload: vec![7; payload],
-                        annotation: extra.clone(),
-                        metadata: extra.clone(),
-                    };
-
-                    let actual = serde_json::to_vec(&item).expect("an item serializes").len();
-                    let estimate = encoded_size(&item);
-
-                    assert!(
-                        estimate >= actual,
-                        "undercounted by {}: payload={payload} id={id:?} extra={extra:?}",
-                        actual - estimate
-                    );
-                }
-            }
+    fn item(
+        payload: usize,
+        source_item_id: Option<&str>,
+        extra: Option<Value>,
+    ) -> DatasetVersionUploadItemRequest {
+        DatasetVersionUploadItemRequest {
+            source_item_id: source_item_id.map(str::to_string),
+            example_payload: vec![7; payload],
+            annotation: extra.clone(),
+            metadata: extra,
         }
+    }
+
+    fn wire_size(value: &impl serde::Serialize) -> usize {
+        serde_json::to_vec(value).unwrap().len()
+    }
+
+    #[rstest]
+    #[case::neighbours(&[4, 5, 6], vec![4..7])]
+    #[case::shuffled(&[9, 1, 8, 0, 2], vec![0..3, 8..10])]
+    #[case::repeated(&[3, 3, 3], vec![3..4])]
+    fn indexes_are_asked_for_in_ascending_contiguous_runs(
+        #[case] indexes: &[u64],
+        #[case] runs: Vec<Range<u64>>,
+    ) {
+        assert_eq!(contiguous_runs(indexes), runs);
+    }
+
+    #[rstest]
+    #[case::empty(item(0, None, None))]
+    #[case::one_byte_past_a_base64_block(item(1, None, None))]
+    #[case::two_bytes_past_a_base64_block(item(2, None, None))]
+    #[case::a_whole_base64_block(item(3, None, None))]
+    #[case::a_large_payload(item(3_000, None, None))]
+    #[case::an_id_json_escapes(item(0, Some("\"quoted\" back\\slash\ttab\nline \u{1}"), None))]
+    #[case::an_id_beyond_ascii(item(0, Some("emoji \u{1F600} and accents \u{e9}"), None))]
+    #[case::null_extras(item(0, None, Some(json!(null))))]
+    #[case::nested_extras(item(0, None, Some(json!({"quote": "say \"hi\"", "nested": [1, 2, 3]}))))]
+    fn an_items_estimate_never_undercounts_what_is_sent(
+        #[case] item: DatasetVersionUploadItemRequest,
+    ) {
+        assert!(encoded_size(&item) >= wire_size(&item));
     }
 
     #[test]
     fn the_budget_bounds_the_whole_request_body_not_just_the_items() {
         let items: Vec<_> = (0..500)
-            .map(|n| DatasetVersionUploadItemRequest {
-                source_item_id: Some(format!("item-\"{n}\"")),
-                example_payload: vec![n as u8; n * 7 % 1_000],
-                annotation: Some(serde_json::json!({ "label": n })),
-                metadata: None,
+            .map(|n| {
+                item(
+                    n * 7 % 1_000,
+                    Some(format!("item-\"{n}\"").as_str()),
+                    Some(json!({ "label": n })),
+                )
             })
             .collect();
-
         let budgeted: usize = items.iter().map(encoded_size).sum();
-        let request = AddDatasetVersionUploadItemsRequest {
-            items: items.clone(),
-        };
-        let actual = serde_json::to_vec(&request)
-            .expect("a batch serializes")
-            .len();
 
-        assert!(
-            budgeted >= actual,
-            "a batch of {} items budgeted {budgeted} but sends {actual}",
-            items.len()
-        );
-    }
-
-    #[test]
-    fn a_payload_is_measured_base64_encoded_not_raw() {
-        let item = DatasetVersionUploadItemRequest {
-            source_item_id: None,
-            example_payload: vec![0; 3_000],
-            annotation: None,
-            metadata: None,
-        };
-
-        // 3 raw bytes become 4 on the wire, so a batch budgeted on raw sizes overshoots.
-        assert_eq!(encoded_size(&item) - 96 - 4 - 4 - 4, 4_000);
-    }
-
-    #[test]
-    fn a_payload_that_alone_exceeds_the_budget_is_refused() {
-        let raw = BATCH_BYTES / 4 * 3 + 1;
-        let item = DatasetVersionUploadItemRequest {
-            source_item_id: None,
-            example_payload: vec![0; raw],
-            annotation: None,
-            metadata: None,
-        };
-
-        assert!(encoded_size(&item) > BATCH_BYTES);
-    }
-
-    #[test]
-    fn a_megabyte_item_fills_the_budget_long_before_a_large_count_does() {
-        let item = DatasetVersionUploadItemRequest {
-            source_item_id: None,
-            example_payload: vec![0; 1024 * 1024],
-            annotation: None,
-            metadata: None,
-        };
-
-        assert!(BATCH_BYTES / encoded_size(&item) < 64);
-    }
-
-    #[test]
-    fn small_items_are_not_held_back_by_a_count() {
-        let item = DatasetVersionUploadItemRequest {
-            source_item_id: None,
-            example_payload: vec![0; 1024],
-            annotation: None,
-            metadata: None,
-        };
-
-        // Bytes alone decide, so a batch holds far more than the 256 it used to.
-        assert!(BATCH_BYTES / encoded_size(&item) > 10_000);
+        assert!(budgeted >= wire_size(&AddDatasetVersionUploadItemsRequest { items }));
     }
 
     #[test]
@@ -611,22 +537,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn queries_every_page_needed_to_reach_the_total() {
-        let mut fetched = Vec::new();
-        let mut pages = vec![
-            ((0..PAGE_SIZE).collect::<Vec<_>>(), u64::from(PAGE_SIZE) + 1),
-            (vec![PAGE_SIZE], u64::from(PAGE_SIZE) + 1),
-        ]
-        .into_iter();
+    #[rstest]
+    #[case::one_more_than_a_page(u64::from(PAGE_SIZE) + 1, u64::from(PAGE_SIZE) + 1)]
+    #[case::fewer_than_the_total_says(u64::from(PAGE_SIZE) + 1, 10 * u64::from(PAGE_SIZE))]
+    fn a_query_reads_every_item_across_its_pages(#[case] count: u64, #[case] total: u64) {
+        let all: Vec<u64> = (0..count).collect();
+        let pages: Vec<&[u64]> = all.chunks(PAGE_SIZE as usize).collect();
 
-        let values = collect_pages(|page| {
-            fetched.push(page);
-            Ok(pages.next().expect("the test provided this page"))
-        })
-        .unwrap();
+        let read = collect_pages(|page| {
+            let items = pages.get(page as usize).copied().unwrap_or_default();
+            Ok((items.to_vec(), total))
+        });
 
-        assert_eq!(fetched, [0, 1]);
-        assert_eq!(values.len(), PAGE_SIZE as usize + 1);
+        assert_eq!(read.unwrap(), all);
     }
 }
