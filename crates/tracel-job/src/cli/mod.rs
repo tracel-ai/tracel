@@ -29,8 +29,9 @@
 //! A field's `description` is its flag's help, and its value in the job's default input, or else
 //! its schema `default`, is the flag's shown default. A field the schema requires is a required
 //! flag unless it has a default or the JSON document or `--config` is given. A boolean flag given
-//! no value is `true`. The schema's other constraints, such as `minimum` or `pattern`, are not
-//! checked here: the job's input is checked as a whole once it is resolved.
+//! no value is `true`, and takes a value only as `--<flag>=<value>`, so an argument after it is the
+//! JSON document. The schema's other constraints, such as `minimum` or `pattern`, are not checked
+//! here: the job's input is checked as a whole once it is resolved.
 //!
 //! `--help`, `--version` and `--config` belong to the command line, so a field named `help`,
 //! `version` or `config` has no flag; neither does a field whose key is not made of letters,

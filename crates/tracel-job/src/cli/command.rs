@@ -214,7 +214,10 @@ fn flag_arg(flag: &Flag) -> Arg {
         arg = arg.required_unless_present_any([INPUT, CONFIG]);
     }
     match flag.kind {
-        Kind::Bool => arg.num_args(0..=1).default_missing_value("true"),
+        Kind::Bool => arg
+            .num_args(0..=1)
+            .require_equals(true)
+            .default_missing_value("true"),
         Kind::Integer | Kind::Number | Kind::Json => arg.allow_negative_numbers(true),
         Kind::String | Kind::Choice(_) => arg,
     }
@@ -262,6 +265,7 @@ fn overlay(input: &mut Value, layer: Value) {
 #[allow(dead_code)]
 mod tests {
     use clap::error::ErrorKind;
+    use rstest::rstest;
     use schemars::JsonSchema;
     use serde::Serialize;
     use serde_json::json;
@@ -441,7 +445,7 @@ mod tests {
             "[default: 10]",
             "--optimizer.weight-decay <FLOAT>",
             "[default: 0.00005]",
-            "--shuffle [<BOOL>]",
+            "--shuffle[=<BOOL>]",
             "--layers <JSON>",
             "[default: [64,32]]",
             "--resume-from <JSON>",
@@ -460,15 +464,11 @@ mod tests {
             input(&train, &["--shuffle", "--batch-size", "-1"]).unwrap(),
             json!({"shuffle": true, "batch_size": -1})
         );
-        assert_eq!(
-            input(&train, &["--shuffle", "false"]).unwrap(),
-            json!({"shuffle": false})
-        );
         for args in [
             &["--num-epochs", "ten"][..],
             &["--num-epochs", "1.5"],
             &["--optimizer.lr", "fast"],
-            &["--shuffle", "yes"],
+            &["--shuffle=yes"],
             &["--layers", "[1,"],
         ] {
             let error = input(&train, args).unwrap_err();
@@ -489,6 +489,20 @@ mod tests {
             input(&train, &["--epochs", "2"]).unwrap_err().kind(),
             ErrorKind::UnknownArgument
         );
+    }
+
+    #[rstest]
+    #[case::alone(&["--shuffle"], json!({"shuffle": true}))]
+    #[case::after_an_equals_sign(&["--shuffle=false"], json!({"shuffle": false}))]
+    #[case::before_the_json_input(
+        &["--shuffle", r#"{"num_epochs": 2}"#],
+        json!({"num_epochs": 2, "shuffle": true})
+    )]
+    fn a_bool_flag_takes_a_value_only_after_an_equals_sign(
+        #[case] args: &[&str],
+        #[case] expected: Value,
+    ) {
+        assert_eq!(input(&train(), args).unwrap(), expected);
     }
 
     #[test]
