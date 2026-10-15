@@ -136,105 +136,82 @@ impl<T: Cancellable> Cancellable for Arc<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Arc;
+    use std::sync::Barrier;
     use std::sync::atomic::AtomicUsize;
     use std::thread;
-    use std::time::Duration;
 
-    struct TestCancellable {
-        cancelled: AtomicBool,
-        cancel_count: AtomicUsize,
-    }
+    use super::*;
 
-    impl TestCancellable {
-        fn new() -> Self {
-            Self {
-                cancelled: AtomicBool::new(false),
-                cancel_count: AtomicUsize::new(0),
-            }
-        }
+    #[derive(Default)]
+    struct CountsCancels(AtomicUsize);
 
-        fn cancel_count(&self) -> usize {
-            self.cancel_count.load(Ordering::Relaxed)
+    impl CountsCancels {
+        fn count(&self) -> usize {
+            self.0.load(Ordering::Acquire)
         }
     }
 
-    impl Cancellable for TestCancellable {
+    impl Cancellable for CountsCancels {
         fn cancel(&self) {
-            if !self.cancelled.swap(true, Ordering::AcqRel) {
-                self.cancel_count.fetch_add(1, Ordering::AcqRel);
-            }
+            self.0.fetch_add(1, Ordering::AcqRel);
         }
 
         fn is_cancelled(&self) -> bool {
-            self.cancelled.load(Ordering::Acquire)
+            self.count() > 0
         }
     }
 
-    #[test]
-    fn test_cancel_token() {
-        let token = CancelToken::new();
-
-        token.cancel();
-
-        assert!(token.is_cancelled());
-    }
-
-    #[test]
-    fn test_cancel_children() {
-        let token = CancelToken::new();
-        let child1 = Arc::new(TestCancellable::new());
-        let child2 = Arc::new(TestCancellable::new());
-        token.link(child1.clone());
-        token.link(child2.clone());
-
-        token.cancel();
-
-        assert!(child1.is_cancelled());
-        assert!(child2.is_cancelled());
-    }
-
-    #[test]
-    fn test_idempotent_cancel() {
-        let token = CancelToken::new();
-        let child = Arc::new(TestCancellable::new());
+    fn linked_child(token: &CancelToken) -> Arc<CountsCancels> {
+        let child = Arc::new(CountsCancels::default());
         token.link(child.clone());
-        token.cancel();
-
-        token.cancel();
-
-        assert!(token.is_cancelled());
-        assert!(child.is_cancelled());
-        assert_eq!(child.cancel_count(), 1);
+        child
     }
 
     #[test]
-    fn test_concurrent_cancel() {
+    fn cancelling_a_token_cancels_every_child_linked_to_it() {
         let token = CancelToken::new();
-        let child = Arc::new(TestCancellable::new());
-        token.link(child.clone());
-        let token_clone = token.clone();
-        let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            token_clone.cancel();
+        let children = [linked_child(&token), linked_child(&token)];
+
+        token.cancel();
+
+        assert!(children.iter().all(|child| child.is_cancelled()));
+    }
+
+    #[test]
+    fn cancelling_a_token_twice_cancels_its_child_once() {
+        let token = CancelToken::new();
+        let child = linked_child(&token);
+
+        token.cancel();
+        token.cancel();
+
+        assert_eq!(child.count(), 1);
+    }
+
+    #[test]
+    fn cancelling_a_token_from_two_threads_at_once_cancels_its_child_once() {
+        let token = CancelToken::new();
+        let child = linked_child(&token);
+        let barrier = Barrier::new(2);
+
+        thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    token.cancel();
+                });
+            }
         });
 
-        token.cancel();
-
-        handle.join().unwrap();
-        assert!(token.is_cancelled());
-        assert!(child.is_cancelled());
-        assert_eq!(child.cancel_count(), 1); // Should only be cancelled once
+        assert_eq!(child.count(), 1);
     }
 
     #[test]
-    fn test_link_after_cancel() {
+    fn a_child_linked_to_a_cancelled_token_is_cancelled() {
         let token = CancelToken::new();
         token.cancel();
 
-        let child = Arc::new(TestCancellable::new());
-        token.link(child.clone());
+        let child = linked_child(&token);
 
         assert!(child.is_cancelled());
     }
