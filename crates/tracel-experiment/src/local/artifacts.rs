@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use relative_path::RelativePath;
 use tracel_artifact::bundle::FsBundle;
 
+use super::runs::child_dir;
 use crate::ExperimentId;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
@@ -86,14 +87,8 @@ fn parse_local_experiment_root(
     root: &Path,
     experiment_id: &ExperimentId,
 ) -> Result<PathBuf, ExperimentReaderError> {
-    let experiment_dir = experiment_id.as_str();
-    if experiment_dir.is_empty() || experiment_dir.contains('/') || experiment_dir.contains('\\') {
-        return Err(ExperimentReaderError::new(
-            "Invalid local experiment ID format",
-        ));
-    }
-
-    Ok(root.join(experiment_dir))
+    child_dir(root, experiment_id.as_str())
+        .ok_or_else(|| ExperimentReaderError::new("Invalid local experiment ID format"))
 }
 
 /// The directory the artifact `name` of the run recorded in `root` is saved in.
@@ -138,7 +133,7 @@ mod tests {
 
     use super::*;
     use crate::ArtifactKind;
-    use crate::local::test_support::{LocalRun, local_run, run};
+    use crate::local::test_support::{EXPERIMENT, LocalRun, local_run, run};
 
     /// A one-file artifact.
     #[derive(Debug, PartialEq)]
@@ -210,19 +205,18 @@ mod tests {
         assert!(!outside.exists());
     }
 
-    #[test]
-    fn an_experiment_id_naming_another_directory_is_refused() {
-        let root = Path::new("/runs/mnist");
+    #[rstest]
+    fn an_experiment_id_reaching_through_its_parent_is_not_loaded(local_run: LocalRun) {
+        local_run
+            .run
+            .save_artifact("note", ArtifactKind::Other, Note("kept".to_string()), &())
+            .unwrap();
+        let through_parent = format!("../{EXPERIMENT}/{}", local_run.run.id());
 
-        for id in ["", "../other", "a/b", "a\\b"] {
-            assert!(
-                parse_local_experiment_root(root, &ExperimentId::new(id)).is_err(),
-                "{id:?}"
-            );
-        }
-        assert_eq!(
-            parse_local_experiment_root(root, &ExperimentId::new("3")).unwrap(),
-            root.join("3")
-        );
+        let loaded = local_run
+            .run
+            .use_artifact::<Note>(through_parent, "note", &());
+
+        assert!(loaded.is_err());
     }
 }

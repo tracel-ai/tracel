@@ -22,19 +22,21 @@ use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use crate::{ArtifactKind, CancelToken, ExperimentLocation, ExperimentProvider, ExperimentRun};
 use artifacts::{LocalExperimentReader, save_artifact};
 use events::{EVENTS_FILE, Line, lines, to_jsonl};
-use runs::{create_local_run_dir, create_runs_dir};
+use runs::{child_dir, create_local_run_dir, create_runs_dir};
 use status::{STATUS_FILE, Status};
 
 /// Records experiments under a directory on this machine.
 ///
-/// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`. Each run
-/// keeps its status in `status.json`, written when the run starts and again when it ends, appends
-/// its events to `events.jsonl`, and saves its artifacts under `artifacts/`, each in the directory
-/// its name gives, such as `checkpoints/best`; a name that is not a relative path of plain
-/// components, such as `..` or an absolute path, is refused. Creating a `LocalExperiments`
-/// performs no I/O; the first run creates the directories. When it creates `dir` itself, it writes
-/// a `.gitignore` there that ignores everything under it, so the records stay out of git and of
-/// code packages; a `dir` that already exists is left as it is.
+/// The runs of the experiment named `name` are numbered from 1 under `<dir>/<name>`, so `name`,
+/// read as a relative path, is one directory name: one that is empty, `.`, `..` or a path of
+/// several is refused. Each run keeps its status in `status.json`, written when the run starts and
+/// again when it ends, appends its events to `events.jsonl`, and saves its artifacts under
+/// `artifacts/`, each in the directory its name gives there, read as a relative path, such as
+/// `checkpoints/best`; a name that resolves to `artifacts/` itself or outside it, such as `..`, is
+/// refused. Creating a `LocalExperiments` performs no I/O; the first run creates the directories.
+/// When it creates `dir` itself, it writes a `.gitignore` there that ignores everything under it,
+/// so the records stay out of git and of code packages; a `dir` that already exists is left as it
+/// is.
 ///
 /// `status.json` names the experiment and numbers the run, says whether the run is `running`,
 /// `completed` or `failed`, when it started and ended, in RFC 3339 UTC to the second, and why it
@@ -99,12 +101,17 @@ impl ExperimentProvider for LocalExperiments {
         name: String,
         attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
+        let root = child_dir(&self.dir, &name).ok_or_else(|| {
+            ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                format!("Invalid local experiment name: {name:?}"),
+            )
+        })?;
         let internal = |message: &'static str| {
             move |error| ExperimentError::with_source(ExperimentErrorKind::Internal, message, error)
         };
         create_runs_dir(&self.dir)
             .map_err(internal("Failed to create local experiment directory"))?;
-        let root = self.dir.join(&name);
         let root = root
             .canonicalize()
             .or_else(|_| {
@@ -291,5 +298,17 @@ mod tests {
                 dir.path().canonicalize().unwrap().join("mnist/1")
             ))
         );
+    }
+
+    #[test]
+    fn an_experiment_name_that_is_not_one_directory_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        LocalExperiments::new(dir.path().join("runs"))
+            .create_experiment("..".to_string(), HashMap::new())
+            .err()
+            .expect("the name is refused");
+
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }

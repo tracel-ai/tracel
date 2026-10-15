@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use relative_path::{Component, RelativePath};
+
 /// The `.gitignore` written in a runs directory this backend creates: everything in it stays out
 /// of git and of code packages.
 pub const RUNS_GITIGNORE: &str =
@@ -52,10 +54,25 @@ pub fn create_local_run_dir(root: &Path) -> Result<(u64, PathBuf), std::io::Erro
     }
 }
 
+/// The directory `name` names directly inside `parent`, when `name`, read as a relative path, is
+/// one plain component: `None` when it is empty, `.`, `..`, a path of several, or holds a `\`,
+/// which separates paths on Windows only.
+pub fn child_dir(parent: &Path, name: &str) -> Option<PathBuf> {
+    if name.contains('\\') {
+        return None;
+    }
+    let mut components = RelativePath::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(dir)), None) => Some(parent.join(dir)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::local::test_support::run;
+    use rstest::rstest;
 
     #[test]
     fn a_runs_directory_it_creates_ignores_everything_in_it() {
@@ -77,6 +94,25 @@ mod tests {
         let _run = run(dir.path(), "mnist");
 
         assert!(!dir.path().join(".gitignore").exists());
+    }
+
+    #[rstest]
+    #[case::plain("mnist")]
+    #[case::absolute("/mnist")]
+    fn a_name_of_one_directory_names_that_directory_of_its_parent(#[case] name: &str) {
+        let parent = Path::new("runs");
+
+        assert_eq!(child_dir(parent, name), Some(parent.join("mnist")));
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::current(".")]
+    #[case::parent("..")]
+    #[case::nested("sweep/lr-3")]
+    #[case::windows_separator("..\\outside")]
+    fn a_name_that_is_not_exactly_one_directory_is_refused(#[case] name: &str) {
+        assert_eq!(child_dir(Path::new("runs"), name), None);
     }
 
     #[test]
