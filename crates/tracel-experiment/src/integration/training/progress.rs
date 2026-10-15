@@ -243,166 +243,178 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use crate::{
-        activity::ActivityEvent,
-        integration::training::ExperimentTrainingExt,
-        session::Event,
-        test_support::{MockSession, create_run},
-    };
+    use rstest::rstest;
+    use serde_json::json;
 
     use super::*;
+    use crate::integration::training::ExperimentTrainingExt;
+    use crate::test_support::{MockRun, MockSession, mock_run};
+    use crate::{ActivityEvent, ActivitySpec, ActivityStatus};
 
-    #[test]
-    fn training_progress_groups_splits_under_supplied_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let parent = run.activity("Fold 1").start();
-        let parent_id = parent.id();
-        let mut logger = parent.training_progress_logger();
+    const TRAINING: &str = "Pretraining";
+    const EVALUATION: &str = "Holdout";
+    const EPOCHS: usize = 2;
+    const TESTS: usize = 2;
+    const ITEMS: usize = 10;
+    const RESUMED_AT: usize = 3;
 
-        logger.start(2, 1, None, None);
-        logger.start_split("train", 10);
-        logger.update_split(4);
-        logger.end_split();
-        logger.start_split("valid", 5);
-        logger.end_split();
-        logger.update_epoch(1);
-        logger.end();
-
-        let events = session.events.lock().unwrap();
-        let started = events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Activity(ActivityEvent::Started { activity }) => Some(activity),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(started.len(), 5);
-        let training = started[1];
-        let epoch = started[2];
-        let train = started[3];
-        let valid = started[4];
-
-        assert_eq!(training.name, "Training");
-        assert_eq!(training.parent, Some(parent_id));
-        assert_eq!(
-            training.meter.as_ref().unwrap().unit.as_deref(),
-            Some("epochs")
-        );
-        assert_eq!(training.meter.as_ref().unwrap().total, Some(2));
-
-        assert_eq!(epoch.name, "Epoch 1");
-        assert_eq!(epoch.parent, Some(training.id));
-        assert!(epoch.meter.is_none());
-        assert_eq!(
-            epoch.attributes.get("activity_type"),
-            Some(&serde_json::json!("epoch"))
-        );
-        assert_eq!(epoch.attributes.get("epoch"), Some(&serde_json::json!(1)));
-
-        assert_eq!(train.name, "train");
-        assert_eq!(train.parent, Some(epoch.id));
-        assert_eq!(train.meter.as_ref().unwrap().unit.as_deref(), Some("steps"));
-        assert_eq!(train.meter.as_ref().unwrap().total, Some(10));
-
-        assert_eq!(valid.name, "valid");
-        assert_eq!(valid.parent, Some(epoch.id));
-        assert_eq!(valid.meter.as_ref().unwrap().unit.as_deref(), Some("steps"));
-        assert_eq!(valid.meter.as_ref().unwrap().total, Some(5));
+    fn started(session: &MockSession, name: &str) -> ActivitySpec {
+        session
+            .started_activities()
+            .into_iter()
+            .find(|activity| activity.name == name)
+            .unwrap()
     }
 
-    #[test]
-    fn training_progress_uses_supplied_name() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let mut logger = run.training_progress_logger().with_name("Pretraining");
-
-        logger.start(1, 1, None, None);
-        logger.end();
-
-        let names = session
-            .activity_events()
+    fn epoch_of(session: &MockSession, split: &str) -> ActivitySpec {
+        let split = started(session, split);
+        session
+            .started_activities()
             .into_iter()
-            .filter_map(|event| match event {
-                ActivityEvent::Started { activity } => Some(activity.name),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(names, ["Pretraining"]);
+            .find(|activity| Some(activity.id) == split.parent)
+            .unwrap()
     }
 
-    #[test]
-    fn endings_follow_the_meter() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let parent = run.activity("Fold 6").start();
-        let mut logger = parent.training_progress_logger();
-
-        logger.start(2, 1, None, None);
-        logger.start_split("train", 10);
-        logger.update_split(10);
-        logger.end_split();
-        logger.start_split("valid", 10);
-        logger.update_split(3);
-        logger.end_split();
-        logger.end();
-
-        let completions = session
+    fn ending(session: &MockSession, name: &str) -> Option<ActivityStatus> {
+        let id = started(session, name).id;
+        session
             .activity_events()
             .into_iter()
-            .filter_map(|event| match event {
-                ActivityEvent::Finished { id, status, .. } => Some((id, status)),
+            .find_map(|event| match event {
+                ActivityEvent::Finished {
+                    id: finished,
+                    status,
+                    ..
+                } if finished == id => Some(status),
                 _ => None,
             })
-            .collect::<Vec<_>>();
+    }
 
-        let statuses: Vec<_> = completions.iter().map(|(_, s)| s.clone()).collect();
-        assert!(
-            matches!(
-                statuses.as_slice(),
-                [
-                    crate::ActivityStatus::Success,   // the train split ran dry
-                    crate::ActivityStatus::Abandoned, // the valid split stopped at 3 of 10
-                    crate::ActivityStatus::Abandoned, // the epoch never completed
-                    crate::ActivityStatus::Abandoned, // 0 of 2 epochs is not a finished training
-                ]
+    fn total(session: &MockSession, name: &str) -> Option<u64> {
+        started(session, name).meter.and_then(|meter| meter.total)
+    }
+
+    #[rstest]
+    fn the_training_activity_takes_the_name_of_its_logger(mock_run: MockRun) {
+        let mut logger = mock_run.run.training_progress_logger().with_name(TRAINING);
+
+        logger.start(EPOCHS, 1, None, None);
+
+        assert_eq!(mock_run.session.started_activities()[0].name, TRAINING);
+    }
+
+    #[rstest]
+    fn a_split_nests_under_its_epoch_under_the_training_under_its_scope(mock_run: MockRun) {
+        let fold = mock_run.run.activity("Fold 1").start();
+        let mut logger = fold.training_progress_logger().with_name(TRAINING);
+
+        logger.start(EPOCHS, 1, None, None);
+        logger.start_split("train", ITEMS);
+
+        let training = started(&mock_run.session, TRAINING);
+        let epoch = epoch_of(&mock_run.session, "train");
+        assert_eq!(
+            (training.parent, epoch.parent),
+            (Some(fold.id()), Some(training.id))
+        );
+    }
+
+    #[rstest]
+    fn the_training_is_metered_by_its_epochs_and_a_split_by_its_items(mock_run: MockRun) {
+        let mut logger = mock_run.run.training_progress_logger().with_name(TRAINING);
+
+        logger.start(EPOCHS, 1, None, None);
+        logger.start_split("train", ITEMS);
+
+        assert_eq!(
+            (
+                total(&mock_run.session, TRAINING),
+                total(&mock_run.session, "train")
             ),
-            "unexpected endings: {statuses:?}"
+            (Some(EPOCHS as u64), Some(ITEMS as u64))
         );
     }
 
-    #[test]
-    fn evaluation_progress_groups_tests_under_supplied_scope() {
-        let session = Arc::new(MockSession::default());
-        let run = create_run(session.clone());
-        let parent = run.activity("Fold 1").start();
-        let mut logger = parent.evaluation_progress_logger().with_name("Holdout");
+    #[rstest]
+    fn an_epoch_activity_numbers_its_epoch_from_where_the_training_started(mock_run: MockRun) {
+        let mut logger = mock_run.run.training_progress_logger().with_name(TRAINING);
 
-        logger.start_global_progress(2);
-        logger.start_test("test", 4);
-        logger.update_test_progress(2);
-        logger.end_test();
-        logger.end_global_progress();
+        logger.start(EPOCHS, RESUMED_AT, None, None);
+        logger.start_split("train", ITEMS);
 
-        let events = session.events.lock().unwrap();
-        let started = events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Activity(ActivityEvent::Started { activity }) => Some(activity),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        assert_eq!(
+            epoch_of(&mock_run.session, "train").attributes.get("epoch"),
+            Some(&json!(RESUMED_AT))
+        );
+    }
 
-        assert_eq!(started.len(), 3);
-        let evaluation = started[1];
-        let test = started[2];
-        assert_eq!(evaluation.name, "Holdout");
-        assert_eq!(evaluation.parent, Some(parent.id()));
-        assert_eq!(evaluation.meter.as_ref().unwrap().total, Some(2));
-        assert_eq!(test.parent, Some(evaluation.id));
-        assert_eq!(test.meter.as_ref().unwrap().total, Some(4));
+    #[rstest]
+    #[case::through_its_items(ITEMS, ActivityStatus::Success)]
+    #[case::short_of_its_items(ITEMS - 1, ActivityStatus::Abandoned)]
+    fn a_split_ends_by_how_far_its_meter_got(
+        mock_run: MockRun,
+        #[case] processed: usize,
+        #[case] status: ActivityStatus,
+    ) {
+        let mut logger = mock_run.run.training_progress_logger().with_name(TRAINING);
+        logger.start(EPOCHS, 1, None, None);
+        logger.start_split("train", ITEMS);
+
+        logger.update_split(processed);
+        logger.end_split();
+
+        assert_eq!(ending(&mock_run.session, "train"), Some(status));
+    }
+
+    #[rstest]
+    #[case::every_epoch(EPOCHS, ActivityStatus::Success)]
+    #[case::short_of_its_epochs(EPOCHS - 1, ActivityStatus::Abandoned)]
+    fn the_training_ends_by_how_many_epochs_it_completed(
+        mock_run: MockRun,
+        #[case] completed: usize,
+        #[case] status: ActivityStatus,
+    ) {
+        let mut logger = mock_run.run.training_progress_logger().with_name(TRAINING);
+        logger.start(EPOCHS, 1, None, None);
+
+        logger.update_epoch(completed);
+        logger.end();
+
+        assert_eq!(ending(&mock_run.session, TRAINING), Some(status));
+    }
+
+    #[rstest]
+    fn a_test_nests_under_the_evaluation_under_its_scope(mock_run: MockRun) {
+        let fold = mock_run.run.activity("Fold 1").start();
+        let mut logger = fold.evaluation_progress_logger().with_name(EVALUATION);
+
+        logger.start_global_progress(TESTS);
+        logger.start_test("test", ITEMS);
+
+        let evaluation = started(&mock_run.session, EVALUATION);
+        let test = started(&mock_run.session, "test");
+        assert_eq!(
+            (evaluation.parent, test.parent),
+            (Some(fold.id()), Some(evaluation.id))
+        );
+    }
+
+    #[rstest]
+    fn the_evaluation_is_metered_by_its_tests_and_a_test_by_its_items(mock_run: MockRun) {
+        let mut logger = mock_run
+            .run
+            .evaluation_progress_logger()
+            .with_name(EVALUATION);
+
+        logger.start_global_progress(TESTS);
+        logger.start_test("test", ITEMS);
+
+        assert_eq!(
+            (
+                total(&mock_run.session, EVALUATION),
+                total(&mock_run.session, "test")
+            ),
+            (Some(TESTS as u64), Some(ITEMS as u64))
+        );
     }
 }
