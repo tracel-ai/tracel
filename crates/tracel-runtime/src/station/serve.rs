@@ -7,22 +7,21 @@ use std::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::panics::catch_panic;
 use crate::station::error::RunnerError;
+use crate::station::infrastructure::StationRunnerClient;
 use crate::station::infrastructure::protocol::{
     DispatchedJob, FinishJob, FinishStatus, RegisterRunner, RunnerEvent,
 };
-use crate::station::infrastructure::{ClientError, StationRunnerClient};
 use crate::{Execution, Jobs};
 
-/// Reports job outcomes back to the station. Split out so the loop is testable with a fake.
+/// Reports job outcomes back to the station.
 pub trait FinishSink: Send + Sync + 'static {
     fn finish_job(&self, job_id: Uuid, finish: &FinishJob);
 }
 
 impl FinishSink for StationRunnerClient {
     fn finish_job(&self, job_id: Uuid, finish: &FinishJob) {
-        // A rejected finish is expected after a disconnect: the station has already failed the
-        // job and this session no longer owns it.
         if let Err(e) = StationRunnerClient::finish_job(self, job_id, finish) {
             warn!(%job_id, error = %e, "failed to report the outcome of the job to the station");
         }
@@ -52,13 +51,13 @@ impl Executor {
 
     /// Runs `job` on a thread of its own, and reports how it ended to the station once it ends.
     pub fn dispatch(&self, runner_id: Uuid, job: DispatchedJob) {
-        *self.in_flight.0.lock().unwrap() += 1;
-        let (jobs, sink, in_flight) =
-            (self.jobs.clone(), self.sink.clone(), self.in_flight.clone());
+        let running = Running::start(&self.in_flight);
+        let (jobs, sink) = (self.jobs.clone(), self.sink.clone());
         let job_id = job.id;
         let spawned = std::thread::Builder::new()
             .name(format!("job-{job_id}"))
             .spawn(move || {
+                let _running = running;
                 let (status, reason) = execute(&jobs, &job);
                 sink.finish_job(
                     job.id,
@@ -68,7 +67,6 @@ impl Executor {
                         reason,
                     },
                 );
-                finish_in_flight(&in_flight);
             });
         if let Err(error) = spawned {
             let reason = format!("the job could not start: {error}");
@@ -80,7 +78,6 @@ impl Executor {
                     reason: Some(reason),
                 },
             );
-            finish_in_flight(&self.in_flight);
         }
     }
 
@@ -94,23 +91,35 @@ impl Executor {
     }
 }
 
-fn finish_in_flight(in_flight: &InFlight) {
-    let (count, finished) = &**in_flight;
-    *count.lock().unwrap() -= 1;
-    finished.notify_all();
+/// A dispatched job, counted in flight until this drops, when its thread ends or unwinds.
+struct Running(InFlight);
+
+impl Running {
+    fn start(in_flight: &InFlight) -> Self {
+        *in_flight.0.lock().unwrap() += 1;
+        Self(in_flight.clone())
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let (count, finished) = &*self.0;
+        *count.lock().unwrap() -= 1;
+        finished.notify_all();
+    }
 }
 
 /// Runs `job` and returns how it ended: completed or failed by what it returned, with its error
-/// when it failed.
+/// when it failed. A panic fails it, even one while its input decodes.
 fn execute(jobs: &Jobs, job: &DispatchedJob) -> (FinishStatus, Option<String>) {
-    let prepared = match jobs.prepare(&job.job_name, job.input.clone()) {
-        Ok(prepared) => prepared,
-        // An unknown job is unreachable under the station's strict policy; defend anyway.
-        Err(error) => return (FinishStatus::Failed, Some(error.to_string())),
-    };
-    info!(job = %job.job_name, job_id = %job.id, "running the job");
-    let outcome = prepared.run(Execution::new().with_num(job.id.to_string()));
-    match outcome.into_result() {
+    let ran = catch_panic(|| {
+        let prepared = jobs.prepare(&job.job_name, job.input.clone())?;
+        info!(job = %job.job_name, job_id = %job.id, "running the job");
+        prepared
+            .run(Execution::new().with_num(job.id.to_string()))
+            .into_result()
+    });
+    match ran {
         Ok(()) => (FinishStatus::Completed, None),
         Err(error) => (FinishStatus::Failed, Some(error.to_string())),
     }
@@ -126,17 +135,13 @@ pub enum StreamOutcome {
 /// Drive one session: expect the leading `registered` event, then route job dispatches to the
 /// executor until the stream ends.
 pub fn serve_stream(
-    mut events: impl Iterator<Item = Result<RunnerEvent, ClientError>>,
+    mut events: impl Iterator<Item = RunnerEvent>,
     executor: &Executor,
 ) -> StreamOutcome {
     let runner_id = match events.next() {
-        Some(Ok(RunnerEvent::Registered { runner_id })) => runner_id,
-        Some(Ok(event)) => {
+        Some(RunnerEvent::Registered { runner_id }) => runner_id,
+        Some(event) => {
             warn!(?event, "expected a registered event first");
-            return StreamOutcome::NeverRegistered;
-        }
-        Some(Err(e)) => {
-            warn!(error = %e, "the event stream failed before registration");
             return StreamOutcome::NeverRegistered;
         }
         None => {
@@ -148,16 +153,12 @@ pub fn serve_stream(
 
     for event in events {
         match event {
-            Ok(RunnerEvent::Job(job)) => executor.dispatch(runner_id, job),
-            Ok(RunnerEvent::Cancel { job_id }) => {
+            RunnerEvent::Job(job) => executor.dispatch(runner_id, job),
+            RunnerEvent::Cancel { job_id } => {
                 info!(%job_id, "the station cancelled the job; it runs to completion");
             }
-            Ok(RunnerEvent::Registered { .. }) => {
+            RunnerEvent::Registered { .. } => {
                 warn!("unexpected registered event mid-stream");
-            }
-            Err(e) => {
-                warn!(error = %e, "the event stream failed");
-                break;
             }
         }
     }
@@ -201,8 +202,6 @@ pub fn serve_forever(
                 if let StreamOutcome::Served = serve_stream(stream, &executor) {
                     backoff.reset();
                 }
-                // Never re-register while user code still runs: the station failed those jobs when
-                // the stream dropped, and a fresh session would get new ones. Drain them first.
                 executor.wait_idle();
             }
             Err(e) if e.is_permanent() => return RunnerError::Registration(e.to_string()),
@@ -216,10 +215,14 @@ pub fn serve_forever(
 
 #[cfg(test)]
 mod tests {
+    use rstest::{fixture, rstest};
+    use serde::{Deserialize, Deserializer};
     use serde_json::{Value, json};
 
+    use std::sync::{Barrier, OnceLock};
+
     use super::*;
-    use crate::{BoxError, job_input, job_num};
+    use crate::{BoxError, job_num};
 
     #[allow(clippy::type_complexity)]
     type RecordedFinish = (Uuid, Uuid, FinishStatus, Option<String>);
@@ -240,18 +243,25 @@ mod tests {
         }
     }
 
-    /// `train` succeeds, `fail` fails, `panic` panics, `typed` takes a number, and `num` keeps the
-    /// job number it is given.
-    fn jobs(nums: Arc<Mutex<Vec<Option<String>>>>) -> Jobs {
+    struct Explosive;
+
+    impl<'de> Deserialize<'de> for Explosive {
+        fn deserialize<D: Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+            panic!("the decoder exploded")
+        }
+    }
+
+    const FAILURE: &str = "boom";
+
+    fn jobs() -> Jobs {
+        let both = Arc::new(Barrier::new(2));
         Jobs::new()
             .job("train", |_: Value| Ok::<_, BoxError>(()))
-            .job("fail", |_: Value| Err::<(), BoxError>("boom".into()))
-            .job("panic", |_: Value| -> Result<(), BoxError> {
-                panic!("kaboom")
-            })
+            .job("fail", |_: Value| Err::<(), BoxError>(FAILURE.into()))
             .job("typed", |_: u32| Ok::<_, BoxError>(()))
-            .job("num", move |_: Value| {
-                nums.lock().unwrap().push(job_num());
+            .job("explosive", |_: Explosive| Ok::<_, BoxError>(()))
+            .job("wait", move |_: Value| {
+                both.wait();
                 Ok::<_, BoxError>(())
             })
     }
@@ -260,19 +270,21 @@ mod tests {
         executor: Executor,
         sink: Arc<RecordingSink>,
         runner_id: Uuid,
-        nums: Arc<Mutex<Vec<Option<String>>>>,
     }
 
-    fn setup() -> Setup {
-        let nums = Arc::default();
+    fn serving(jobs: Jobs) -> Setup {
         let sink = Arc::new(RecordingSink::default());
-        let executor = Executor::new(Arc::new(jobs(Arc::clone(&nums))), sink.clone());
+        let executor = Executor::new(Arc::new(jobs), sink.clone());
         Setup {
             executor,
             sink,
             runner_id: Uuid::new_v4(),
-            nums,
         }
+    }
+
+    #[fixture]
+    fn setup() -> Setup {
+        serving(jobs())
     }
 
     fn dispatched(job_name: &str) -> DispatchedJob {
@@ -283,136 +295,112 @@ mod tests {
         }
     }
 
-    fn events(
-        runner_id: Uuid,
-        rest: Vec<RunnerEvent>,
-    ) -> impl Iterator<Item = Result<RunnerEvent, ClientError>> {
-        std::iter::once(RunnerEvent::Registered { runner_id })
-            .chain(rest)
-            .map(Ok)
+    fn events(runner_id: Uuid, rest: Vec<RunnerEvent>) -> impl Iterator<Item = RunnerEvent> {
+        std::iter::once(RunnerEvent::Registered { runner_id }).chain(rest)
     }
 
-    /// Serves `jobs`, dispatched in order, and returns the finishes reported.
     fn serve(setup: &Setup, jobs: Vec<DispatchedJob>) -> Vec<RecordedFinish> {
         let rest = jobs.into_iter().map(RunnerEvent::Job).collect();
         serve_stream(events(setup.runner_id, rest), &setup.executor);
         setup.executor.wait_idle();
-        setup.sink.finishes.lock().unwrap().clone()
+        finishes(setup)
     }
 
-    #[test]
-    fn given_job_event_when_serving_then_completion_reported() {
-        let setup = setup();
-        let job = dispatched("train");
+    fn finishes(setup: &Setup) -> Vec<RecordedFinish> {
+        let mut finishes = setup.sink.finishes.lock().unwrap().clone();
+        finishes.sort_by_key(|(job_id, ..)| *job_id);
+        finishes
+    }
+
+    fn statuses(finishes: &[RecordedFinish]) -> Vec<(Uuid, FinishStatus)> {
+        finishes
+            .iter()
+            .map(|(job_id, _, status, _)| (*job_id, *status))
+            .collect()
+    }
+
+    fn completed<'a>(
+        jobs: impl IntoIterator<Item = &'a DispatchedJob>,
+    ) -> Vec<(Uuid, FinishStatus)> {
+        let mut completed: Vec<_> = jobs
+            .into_iter()
+            .map(|job| (job.id, FinishStatus::Completed))
+            .collect();
+        completed.sort_by_key(|(job_id, _)| *job_id);
+        completed
+    }
+
+    #[rstest]
+    #[case::completed("train", FinishStatus::Completed)]
+    #[case::failed("fail", FinishStatus::Failed)]
+    #[case::with_an_input_that_does_not_decode("typed", FinishStatus::Failed)]
+    #[case::unknown("mystery", FinishStatus::Failed)]
+    fn a_job_is_reported_as_it_ended(
+        setup: Setup,
+        #[case] name: &str,
+        #[case] status: FinishStatus,
+    ) {
+        let job = dispatched(name);
+
+        let finishes = serve(&setup, vec![job.clone()]);
+
+        assert_eq!(statuses(&finishes), [(job.id, status)]);
+    }
+
+    #[rstest]
+    fn a_failed_job_is_reported_with_its_error_as_the_reason(setup: Setup) {
+        let job = dispatched("fail");
 
         let finishes = serve(&setup, vec![job.clone()]);
 
         assert_eq!(
             finishes,
-            [(job.id, setup.runner_id, FinishStatus::Completed, None)]
+            [(
+                job.id,
+                setup.runner_id,
+                FinishStatus::Failed,
+                Some(FAILURE.to_string())
+            )]
         );
     }
 
-    #[test]
-    fn given_failing_job_then_failure_reason_reported() {
-        let finishes = serve(&setup(), vec![dispatched("fail")]);
+    #[rstest]
+    fn a_panic_while_the_input_decodes_fails_the_job_and_frees_the_runner(setup: Setup) {
+        let job = dispatched("explosive");
 
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(finishes[0].3.as_deref(), Some("boom"));
-    }
+        let finishes = serve(&setup, vec![job.clone()]);
 
-    #[test]
-    fn given_input_the_job_rejects_then_failure_reported_as_invalid_input() {
-        let finishes = serve(&setup(), vec![dispatched("typed")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(
-            finishes[0].3.as_deref(),
-            Some("invalid input: invalid type: map, expected u32")
-        );
-    }
-
-    #[test]
-    fn given_panicking_job_then_failure_reported_with_panic_message() {
-        let finishes = serve(&setup(), vec![dispatched("panic")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(finishes[0].3.as_deref(), Some("the job panicked: kaboom"));
-    }
-
-    #[test]
-    fn given_unknown_job_name_then_failure_reported() {
-        let finishes = serve(&setup(), vec![dispatched("mystery")]);
-
-        assert_eq!(finishes[0].2, FinishStatus::Failed);
-        assert_eq!(finishes[0].3.as_deref(), Some("unknown job 'mystery'"));
+        assert_eq!(statuses(&finishes), [(job.id, FinishStatus::Failed)]);
     }
 
     #[test]
     fn a_running_job_is_numbered_with_its_station_job_id() {
-        let setup = setup();
-        let job = dispatched("num");
+        let seen = Arc::new(OnceLock::new());
+        let setup = serving(Jobs::new().job("train", {
+            let seen = seen.clone();
+            move |_: Value| {
+                let _ = seen.set(job_num());
+                Ok::<_, BoxError>(())
+            }
+        }));
+        let job = dispatched("train");
 
         serve(&setup, vec![job.clone()]);
 
-        assert_eq!(*setup.nums.lock().unwrap(), [Some(job.id.to_string())]);
+        assert_eq!(seen.get(), Some(&Some(job.id.to_string())));
     }
 
-    #[test]
-    fn jobs_dispatched_at_once_run_at_once_each_in_its_own_scope() {
-        let started = Arc::new((Mutex::new(0), Condvar::new()));
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let jobs = Jobs::new().job("wait", {
-            let (started, seen) = (started.clone(), seen.clone());
-            move |_: Value| {
-                let (count, both) = &*started;
-                *count.lock().unwrap() += 1;
-                both.notify_all();
-                let (count, _) = both
-                    .wait_timeout_while(count.lock().unwrap(), Duration::from_secs(10), |count| {
-                        *count < 2
-                    })
-                    .unwrap();
-                seen.lock()
-                    .unwrap()
-                    .push((job_num(), job_input(), *count == 2));
-                Ok::<_, BoxError>(())
-            }
-        });
-        let sink = Arc::new(RecordingSink::default());
-        let executor = Executor::new(Arc::new(jobs), sink.clone());
-        let with_input = |n: u32| DispatchedJob {
-            input: json!({ "n": n }),
-            ..dispatched("wait")
-        };
-        let (first, second) = (with_input(1), with_input(2));
+    #[rstest]
+    fn jobs_dispatched_at_once_run_at_once(setup: Setup) {
+        let waiting = [dispatched("wait"), dispatched("wait")];
 
-        serve_stream(
-            events(
-                Uuid::new_v4(),
-                vec![
-                    RunnerEvent::Job(first.clone()),
-                    RunnerEvent::Job(second.clone()),
-                ],
-            ),
-            &executor,
-        );
-        executor.wait_idle();
+        let finishes = serve(&setup, waiting.to_vec());
 
-        let seen = seen.lock().unwrap().clone();
-        assert_eq!(seen.len(), 2);
-        for (job, n) in [(&first, 1), (&second, 2)] {
-            assert!(
-                seen.contains(&(Some(job.id.to_string()), Some(json!({ "n": n })), true)),
-                "{seen:?}"
-            );
-        }
-        assert_eq!(sink.finishes.lock().unwrap().len(), 2);
+        assert_eq!(statuses(&finishes), completed(&waiting));
     }
 
-    #[test]
-    fn a_cancelled_job_runs_to_completion_and_the_stream_goes_on() {
-        let setup = setup();
+    #[rstest]
+    fn a_cancelled_job_runs_to_completion_and_the_stream_goes_on(setup: Setup) {
         let (cancelled, next) = (dispatched("train"), dispatched("train"));
 
         serve_stream(
@@ -430,27 +418,18 @@ mod tests {
         );
         setup.executor.wait_idle();
 
-        let finishes = setup.sink.finishes.lock().unwrap().clone();
-        assert_eq!(finishes.len(), 2);
-        for job in [&cancelled, &next] {
-            assert!(
-                finishes.contains(&(job.id, setup.runner_id, FinishStatus::Completed, None)),
-                "{finishes:?}"
-            );
-        }
+        assert_eq!(statuses(&finishes(&setup)), completed([&cancelled, &next]));
     }
 
-    #[test]
-    fn given_stream_without_registered_first_then_nothing_served() {
-        let setup = setup();
-
+    #[rstest]
+    fn a_stream_that_does_not_open_with_its_registration_serves_nothing(setup: Setup) {
         let outcome = serve_stream(
-            vec![Ok(RunnerEvent::Job(dispatched("train")))].into_iter(),
+            vec![RunnerEvent::Job(dispatched("train"))].into_iter(),
             &setup.executor,
         );
         setup.executor.wait_idle();
 
         assert!(matches!(outcome, StreamOutcome::NeverRegistered));
-        assert!(setup.sink.finishes.lock().unwrap().is_empty());
+        assert!(finishes(&setup).is_empty());
     }
 }

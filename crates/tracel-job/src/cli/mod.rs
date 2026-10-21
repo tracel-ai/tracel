@@ -18,7 +18,8 @@
 //! - An object's `properties` are its fields, and a nested object's fields are flags too: the
 //!   field `weight_decay` of `optimizer` is `--optimizer.weight-decay`, the keys joined with dots
 //!   and `_` written as `-`.
-//! - `$ref` is followed into the schema's `$defs` or `definitions`.
+//! - `$ref` is followed within the schema, such as into its `$defs` or `definitions`; a field
+//!   whose reference leads out of the schema or nowhere takes a JSON literal.
 //! - `enum`, `const`, and `oneOf` or `anyOf` of constants, such as the unit variants of an enum,
 //!   are the values a flag takes, each with its description.
 //! - An optional field, `type: [T, "null"]` or `anyOf` of `T` and `null`, takes the values of `T`.
@@ -28,13 +29,13 @@
 //! A field's `description` is its flag's help, and its value in the job's default input, or else
 //! its schema `default`, is the flag's shown default. A field the schema requires is a required
 //! flag unless it has a default or the JSON document or `--config` is given. A boolean flag given
-//! no value is `true`. The schema's other constraints, such as `minimum` or `pattern`, are not
-//! checked here: the job's input is checked as a whole once it is resolved.
+//! no value is `true`, and takes a value only as `--<flag>=<value>`, so an argument after it is the
+//! JSON document. The schema's other constraints, such as `minimum` or `pattern`, are not checked
+//! here: the job's input is checked as a whole once it is resolved.
 //!
-//! `--help`, `--version` and `--config` belong to the command line, so a field named `help`,
-//! `version` or `config` has no flag; neither does a field whose key is not made of letters,
-//! digits, `_` and `-`, or whose flag name an earlier field took. Such a field is set through the
-//! JSON document or `--config`.
+//! `--help` and `--config` belong to the command line, so a field named `help` or `config` has no
+//! flag; neither does a field whose key is not made of letters, digits, `_` and `-`, or whose flag
+//! name an earlier field took. Such a field is set through the JSON document or `--config`.
 //!
 //! ## Input
 //!

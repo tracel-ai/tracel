@@ -1,6 +1,6 @@
 [package]
 name = "tracel-models"
-description = "Backend-agnostic model domain and capability for Tracel."
+description = "Backend-agnostic model domain and registry for Tracel."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

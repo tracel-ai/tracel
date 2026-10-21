@@ -104,3 +104,19 @@ impl LogRecord {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn an_attribute_of_the_record_wins_over_an_inherited_one() {
+        let mut record = LogRecord::warn("slow step").with("shard", 2);
+
+        record.inherit_attrs(&Map::from_iter([("shard".to_string(), json!(1))]));
+
+        assert_eq!(record.attributes.get("shard"), Some(&json!(2)));
+    }
+}

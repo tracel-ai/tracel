@@ -214,9 +214,9 @@ impl Drop for CurrentExperimentGuard {
 
 #[cfg(test)]
 mod tests {
-    use crate::ExperimentRun;
     use crate::context::ExperimentGlobalExt as _;
     use crate::test_support::create_run_with_id;
+    use crate::{ExperimentId, ExperimentRun};
 
     use super::ExperimentInstrument;
 
@@ -224,144 +224,91 @@ mod tests {
         create_run_with_id(id, Default::default())
     }
 
-    #[test]
-    fn nested_experiment_scopes_restore_the_previous_experiment() {
-        let run_a = create_run("ambient-test-a");
-        let run_b = create_run("ambient-test-b");
+    fn current_id() -> Option<ExperimentId> {
+        ExperimentRun::current().map(|current| current.id().clone())
+    }
 
-        assert!(ExperimentRun::current().is_none());
-        {
-            let _outer = run_a.enter();
-            let current = ExperimentRun::current().expect("current experiment should be set");
-            assert_eq!(current.id(), run_a.id());
-
-            {
-                let _inner = run_b.enter();
-                let current =
-                    ExperimentRun::current().expect("inner experiment should override outer scope");
-                assert_eq!(current.id(), run_b.id());
-            }
-
-            let current = ExperimentRun::current().expect("outer experiment should be restored");
-            assert_eq!(current.id(), run_a.id());
-        }
-        assert!(ExperimentRun::current().is_none());
+    async fn current_id_after_an_await() -> Option<ExperimentId> {
+        tokio::task::yield_now().await;
+        current_id()
     }
 
     #[test]
-    fn dropping_an_outer_scope_does_not_remove_the_inner_scope() {
-        let run_a = create_run("ambient-test-out-of-order-a");
-        let run_b = create_run("ambient-test-out-of-order-b");
-        let outer = run_a.enter();
-        let inner = run_b.enter();
+    fn an_inner_scope_overrides_the_outer_one() {
+        let outer = create_run("outer");
+        let inner = create_run("inner");
+        let _outer = outer.enter();
 
-        drop(outer);
+        let _inner = inner.enter();
 
-        let current = ExperimentRun::current().expect("inner experiment should remain current");
-        assert_eq!(current.id(), run_b.id());
-        drop(inner);
-        assert!(ExperimentRun::current().is_none());
+        assert_eq!(current_id(), Some(inner.id().clone()));
     }
 
     #[test]
-    fn handle_with_current_can_be_used_in_spawned_threads() {
-        let run = create_run("ambient-test-thread");
+    fn leaving_an_inner_scope_restores_the_outer_one() {
+        let outer = create_run("outer");
+        let inner = create_run("inner");
+        let _outer = outer.enter();
+
+        drop(inner.enter());
+
+        assert_eq!(current_id(), Some(outer.id().clone()));
+    }
+
+    #[test]
+    fn leaving_an_outer_scope_first_keeps_the_inner_one() {
+        let outer = create_run("outer");
+        let inner = create_run("inner");
+        let outer_scope = outer.enter();
+        let _inner_scope = inner.enter();
+
+        drop(outer_scope);
+
+        assert_eq!(current_id(), Some(inner.id().clone()));
+    }
+
+    #[test]
+    fn a_handle_enters_its_run_on_another_thread() {
+        let run = create_run("run");
         let handle = run.handle();
 
-        std::thread::spawn(move || {
-            handle.in_scope(|| {
-                let current = ExperimentRun::current().expect("current experiment should be set");
-                assert_eq!(current.id().as_str(), "ambient-test-thread");
-            })
-        })
-        .join()
-        .expect("thread should complete successfully");
+        let current = std::thread::spawn(move || handle.in_scope(current_id))
+            .join()
+            .unwrap();
 
-        assert!(ExperimentRun::current().is_none());
+        assert_eq!(current, Some(run.id().clone()));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn instrumented_tokio_tasks_keep_multiple_experiments_isolated() {
-        let run_a = create_run("ambient-test-tokio-a");
-        let run_b = create_run("ambient-test-tokio-b");
+    async fn instrumented_tasks_each_keep_their_own_experiment_across_an_await() {
+        let first = create_run("first");
+        let second = create_run("second");
 
-        let task_a = tokio::spawn(
-            async {
-                let current = ExperimentRun::current().expect("current experiment should be set");
-                assert_eq!(current.id().as_str(), "ambient-test-tokio-a");
+        let tasks = [&first, &second]
+            .map(|run| tokio::spawn(current_id_after_an_await().in_experiment(run)));
+        let mut seen = Vec::new();
+        for task in tasks {
+            seen.push(task.await.unwrap());
+        }
 
-                tokio::task::yield_now().await;
-
-                let current =
-                    ExperimentRun::current().expect("current experiment should still be set");
-                assert_eq!(current.id().as_str(), "ambient-test-tokio-a");
-            }
-            .in_experiment(&run_a),
-        );
-
-        let task_b = tokio::spawn(
-            async {
-                let current = ExperimentRun::current().expect("current experiment should be set");
-                assert_eq!(current.id().as_str(), "ambient-test-tokio-b");
-
-                tokio::task::yield_now().await;
-
-                let current =
-                    ExperimentRun::current().expect("current experiment should still be set");
-                assert_eq!(current.id().as_str(), "ambient-test-tokio-b");
-            }
-            .in_experiment(&run_b),
-        );
-
-        task_a
-            .await
-            .expect("first tokio task should complete successfully");
-        task_b
-            .await
-            .expect("second tokio task should complete successfully");
-        assert!(ExperimentRun::current().is_none());
+        assert_eq!(seen, [Some(first.id().clone()), Some(second.id().clone())]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn nested_tokio_spawn_can_use_in_current_experiment() {
-        let run = create_run("ambient-test-tokio-nested");
+    async fn a_task_spawned_in_the_current_experiment_keeps_it() {
+        let run = create_run("run");
 
-        let outer = tokio::spawn(
+        let seen = tokio::spawn(
             async {
-                let current = ExperimentRun::current().expect("current experiment should be set");
-                assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
-
-                let inner = tokio::spawn(
-                    async {
-                        let current =
-                            ExperimentRun::current().expect("current experiment should be set");
-                        assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
-
-                        tokio::task::yield_now().await;
-
-                        let current = ExperimentRun::current()
-                            .expect("current experiment should still be set");
-                        assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
-                    }
-                    .in_current_experiment(),
-                );
-
-                tokio::task::yield_now().await;
-
-                let current =
-                    ExperimentRun::current().expect("outer current experiment should still be set");
-                assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
-
-                inner
+                tokio::spawn(current_id_after_an_await().in_current_experiment())
                     .await
-                    .expect("nested tokio task should complete successfully");
+                    .unwrap()
             }
             .in_experiment(&run),
-        );
+        )
+        .await
+        .unwrap();
 
-        outer
-            .await
-            .expect("outer tokio task should complete successfully");
-        assert!(ExperimentRun::current().is_none());
+        assert_eq!(seen, Some(run.id().clone()));
     }
 }

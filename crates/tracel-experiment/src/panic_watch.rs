@@ -109,3 +109,41 @@ fn describe(info: &PanicHookInfo<'_>) -> String {
         None => format!("thread '{name}' panicked: {payload}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use crate::LogLevel;
+    use crate::test_support::{MockRun, mock_run};
+
+    const PANIC: &str = "unsupported op: plane.elect";
+
+    fn panic_on_another_thread() {
+        std::thread::spawn(|| panic!("{PANIC}")).join().unwrap_err();
+    }
+
+    #[rstest]
+    fn a_watched_run_logs_a_panic_on_another_thread_as_an_error(mock_run: MockRun) {
+        let _watch = mock_run.run.capture_panics();
+
+        panic_on_another_thread();
+
+        assert!(
+            mock_run
+                .session
+                .logs()
+                .iter()
+                .any(|record| record.level == LogLevel::Error && record.message.ends_with(PANIC))
+        );
+    }
+
+    #[rstest]
+    fn a_watched_run_flushes_the_panic_it_logged(mock_run: MockRun) {
+        let _watch = mock_run.run.capture_panics();
+
+        panic_on_another_thread();
+
+        assert!(*mock_run.session.flushes.lock().unwrap() > 0);
+    }
+}

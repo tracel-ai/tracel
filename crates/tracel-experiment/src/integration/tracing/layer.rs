@@ -224,3 +224,85 @@ impl Visit for JsonFieldVisitor {
         self.record(field, Value::String(format!("{value:?}")));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use rstest::rstest;
+    use serde_json::json;
+
+    use crate::ExperimentGlobalExt;
+    use crate::test_support::{MockRun, MockSession, create_run_with_id, mock_run, traced};
+
+    #[rstest]
+    fn an_event_in_the_current_experiment_is_logged_to_it(mock_run: MockRun) {
+        traced(|| mock_run.run.in_scope(|| tracing::info!("epoch completed")));
+
+        assert_eq!(mock_run.session.logs().len(), 1);
+    }
+
+    #[test]
+    fn an_event_in_a_span_naming_an_experiment_is_logged_to_it() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run_with_id("layer-span", session.clone());
+
+        traced(|| {
+            tracing::info_span!("experiment", experiment_id = %run.id())
+                .in_scope(|| tracing::info!("epoch completed"))
+        });
+
+        assert_eq!(session.logs().len(), 1);
+    }
+
+    #[rstest]
+    fn an_event_outside_any_experiment_is_not_logged(mock_run: MockRun) {
+        traced(|| tracing::info!("outside any experiment"));
+
+        assert!(mock_run.session.logs().is_empty());
+    }
+
+    #[rstest]
+    fn an_event_field_is_an_attribute_of_its_log(mock_run: MockRun) {
+        traced(|| {
+            mock_run
+                .run
+                .in_scope(|| tracing::info!(step = 3u64, "epoch completed"))
+        });
+
+        assert_eq!(
+            mock_run.session.logs()[0].attributes.get("step"),
+            Some(&json!(3))
+        );
+    }
+
+    #[rstest]
+    fn a_span_field_is_an_attribute_of_the_logs_inside_it(mock_run: MockRun) {
+        traced(|| {
+            mock_run.run.in_scope(|| {
+                tracing::info_span!("phase", stage = "train")
+                    .in_scope(|| tracing::info!("step done"))
+            })
+        });
+
+        assert_eq!(
+            mock_run.session.logs()[0].attributes.get("stage"),
+            Some(&json!("train"))
+        );
+    }
+
+    #[rstest]
+    fn an_event_field_wins_over_a_span_field_of_the_same_name(mock_run: MockRun) {
+        traced(|| {
+            mock_run.run.in_scope(|| {
+                tracing::info_span!("phase", shard = 2u64)
+                    .in_scope(|| tracing::info!(shard = 5u64, "step done"))
+            })
+        });
+
+        assert_eq!(
+            mock_run.session.logs()[0].attributes.get("shard"),
+            Some(&json!(5))
+        );
+    }
+}

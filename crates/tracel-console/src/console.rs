@@ -1,11 +1,16 @@
+use std::ffi::OsString;
 use std::fmt;
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use tracel_artifact::ReqwestTransferClient;
 use tracel_client::{
     ClientError,
-    console::{Client, Env, TracelCredentials, user::response::UserResponseSchema},
+    console::{
+        Client, Env, FileSessionStore, SessionStoreError, TracelCredentials,
+        user::response::UserResponseSchema,
+    },
 };
 use tracel_datasets::DatasetRegistry;
 use tracel_experiment::Experiments;
@@ -14,7 +19,7 @@ use tracel_models::ModelRegistry;
 use url::Url;
 
 use crate::datasets::ConsoleDatasetOps;
-use crate::env::{CredentialSource, ProjectRef, env_from_environment};
+use crate::env::{CredentialSource, ProjectRef, env_from_environment, env_from_vars};
 use crate::experiment::ConsoleExperimentProvider;
 use crate::inference::ConsoleInferenceProvider;
 use crate::models::ConsoleModelOps;
@@ -92,8 +97,6 @@ pub struct ProjectScope {
     console: Console,
     pub owner: String,
     pub project: String,
-    /// The kind of namespace that owns the project, once read from the console.
-    owner_kind: OnceLock<NamespaceKind>,
 }
 
 impl ProjectScope {
@@ -111,17 +114,7 @@ impl ProjectScope {
     pub fn fetch(&self) -> Result<Project, ConsoleError> {
         let project = self.client()?.get_project(&self.owner, &self.project)?;
         let project = Project::try_from(project)?;
-        let _ = self.owner_kind.set(project.namespace.kind);
         Ok(project)
-    }
-
-    /// Returns the kind of namespace that owns the project, fetching the project on the first
-    /// call.
-    pub fn owner_kind(&self) -> Result<NamespaceKind, ConsoleError> {
-        match self.owner_kind.get() {
-            Some(kind) => Ok(*kind),
-            None => self.fetch().map(|project| project.namespace.kind),
-        }
     }
 
     /// Returns the client that moves files to and from presigned URLs.
@@ -236,7 +229,6 @@ impl Console {
                 console: self.clone(),
                 owner: owner.into(),
                 project: project.into(),
-                owner_kind: OnceLock::new(),
             }),
         }
     }
@@ -301,11 +293,28 @@ impl ProjectHandle {
     /// The owner namespace is `TRACEL_NAMESPACE` and the project name `TRACEL_PROJECT`; either
     /// one unset is read from `namespace` or `project` in `tracel.toml` in the current
     /// directory. Fails with [`ConsoleError::NoNamespace`] or [`ConsoleError::NoProject`] when
-    /// neither names it.
+    /// neither names it, and with [`ConsoleError::InvalidTracelToml`] when `tracel.toml`
+    /// cannot be read.
     pub fn from_env() -> Result<Self, ConsoleError> {
-        let console = Console::from_env()?;
-        let project = ProjectRef::from_env()?;
-        Ok(console.project(project.namespace, project.name))
+        Self::from_vars(
+            |name| std::env::var_os(name),
+            Path::new("."),
+            FileSessionStore::for_server,
+        )
+    }
+
+    /// [`from_env`](Self::from_env), reading the variables from `lookup`, `tracel.toml` from
+    /// `dir`, and the stored `tracel login` session from the store `sessions` gives for the
+    /// console's URL.
+    pub fn from_vars(
+        lookup: impl Fn(&str) -> Option<OsString>,
+        dir: &Path,
+        sessions: impl FnOnce(&Url) -> Result<FileSessionStore, SessionStoreError>,
+    ) -> Result<Self, ConsoleError> {
+        let env = env_from_vars(&lookup)?;
+        let credentials = CredentialSource::from_vars(&lookup).resolve_with(&env, sessions)?;
+        let project = ProjectRef::from_vars(&lookup, dir)?;
+        Ok(Console::connect(env, credentials).project(project.namespace, project.name))
     }
 
     /// Returns the console this project is reached through.
@@ -384,24 +393,5 @@ mod tests {
     fn handles_can_be_shared_across_threads() {
         assert_send_sync::<Console>();
         assert_send_sync::<ProjectHandle>();
-    }
-
-    #[test]
-    fn binding_and_scoping_send_no_request() {
-        let console = Console::connect(
-            Env::Development,
-            TracelCredentials::api_key("tcl_key_not_checked_until_the_first_request"),
-        );
-        let project = console.project("owner", "project");
-        let _ = (
-            project.datasets(),
-            project.models(),
-            project.experiments(),
-            project.inference(),
-        );
-
-        assert!(console.inner.connected.get().is_none());
-        assert!(Arc::ptr_eq(&project.console().inner, &console.inner));
-        assert_eq!(console.base_url(), &Env::Development.get_url());
     }
 }

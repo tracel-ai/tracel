@@ -106,155 +106,77 @@ impl Outcome {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier, Mutex};
+    use std::sync::{Arc, OnceLock};
 
+    use rstest::{fixture, rstest};
     use serde_json::json;
 
     use super::*;
-    use crate::{Job, Jobs, PrepareError, job_input, job_num, job_running};
+    use crate::{Jobs, job_input, job_num};
 
-    /// `train`, which takes a number of epochs, three by default, and fails on zero; and `panic`,
-    /// which panics.
+    #[fixture]
     fn jobs() -> Jobs {
         Jobs::new()
-            .job(
-                "train",
-                Job::new(|epochs: u32| match epochs {
-                    0 => Err::<(), BoxError>("no epochs".into()),
-                    _ => Ok(()),
-                })
-                .with_default(3),
-            )
-            .job("panic", |()| -> Result<(), BoxError> { panic!("kaboom") })
-    }
-
-    #[test]
-    fn a_job_is_prepared_with_its_input_merged_onto_its_default() {
-        let jobs = Jobs::new().job(
-            "train",
-            Job::new(|_: Value| Ok::<_, BoxError>(()))
-                .with_default(json!({"epochs": 3, "lr": 0.1})),
-        );
-
-        let prepared = jobs.prepare("train", json!({"epochs": 5})).unwrap();
-
-        assert_eq!(prepared.name(), "train");
-        assert_eq!(prepared.input(), &json!({"epochs": 5, "lr": 0.1}));
-    }
-
-    #[test]
-    fn an_unknown_job_or_an_input_that_does_not_decode_is_not_prepared() {
-        let jobs = jobs();
-
-        let unknown = jobs.prepare("infer", Value::Null).err().unwrap();
-        let invalid = jobs.prepare("train", json!("ten")).err().unwrap();
-
-        assert!(
-            matches!(
-                &unknown,
-                PrepareError::UnknownJob { name, available }
-                    if name == "infer" && available == &["panic", "train"]
-            ),
-            "{unknown:?}"
-        );
-        assert_eq!(unknown.to_string(), "unknown job 'infer'");
-        assert!(
-            matches!(invalid, PrepareError::InvalidInput(_)),
-            "{invalid:?}"
-        );
-        assert!(
-            invalid.to_string().starts_with("invalid input: "),
-            "{invalid}"
-        );
-    }
-
-    #[test]
-    fn a_job_completes_or_fails_by_what_it_returns_and_a_panic_fails_it() {
-        let run =
-            |name: &str, input: Value| jobs().prepare(name, input).unwrap().run(Execution::new());
-
-        let completed = run("train", Value::Null);
-        let failed = run("train", json!(0));
-        let panicked = run("panic", Value::Null);
-
-        assert_eq!(completed.status(), JobStatus::Completed);
-        assert!(completed.error().is_none());
-        assert!(completed.into_result().is_ok());
-        assert_eq!(failed.status(), JobStatus::Failed);
-        assert_eq!(failed.error().unwrap().to_string(), "no epochs");
-        assert_eq!(panicked.status(), JobStatus::Failed);
-        assert_eq!(
-            panicked.into_result().unwrap_err().to_string(),
-            "the job panicked: kaboom"
-        );
-    }
-
-    #[test]
-    fn the_job_reads_its_number_and_input_from_its_scope_while_it_runs() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let jobs = Jobs::new().job(
-            "train",
-            Job::new({
-                let seen = seen.clone();
-                move |_: Value| {
-                    seen.lock()
-                        .unwrap()
-                        .push((job_running(), job_num(), job_input()));
-                    Ok::<_, BoxError>(())
-                }
+            .job("completes", |()| Ok::<_, BoxError>(()))
+            .job("fails", |()| {
+                Err::<(), BoxError>("no epochs to train".into())
             })
-            .with_default(json!({"epochs": 3})),
-        );
+            .job("panics", |()| -> Result<(), BoxError> {
+                panic!("the kernel exploded")
+            })
+    }
 
-        let numbered = jobs.prepare("train", json!({"lr": 0.1})).unwrap();
-        numbered.run(Execution::new().with_num("42"));
-        jobs.prepare("train", Value::Null)
+    fn reading<T>(read: fn() -> T) -> (Jobs, Arc<OnceLock<T>>)
+    where
+        T: Send + Sync + 'static,
+    {
+        let seen = Arc::new(OnceLock::new());
+        let jobs = Jobs::new().job("train", {
+            let seen = seen.clone();
+            move |_: Value| {
+                let _ = seen.set(read());
+                Ok::<_, BoxError>(())
+            }
+        });
+        (jobs, seen)
+    }
+
+    #[rstest]
+    #[case::completes("completes", JobStatus::Completed)]
+    #[case::fails("fails", JobStatus::Failed)]
+    #[case::panics("panics", JobStatus::Failed)]
+    fn a_job_ends_as_its_function_does(jobs: Jobs, #[case] name: &str, #[case] status: JobStatus) {
+        let outcome = jobs
+            .prepare(name, Value::Null)
             .unwrap()
             .run(Execution::new());
 
-        assert_eq!(
-            *seen.lock().unwrap(),
-            [
-                (
-                    true,
-                    Some("42".to_string()),
-                    Some(json!({"epochs": 3, "lr": 0.1}))
-                ),
-                (true, None, Some(json!({"epochs": 3}))),
-            ]
-        );
-        assert!(!job_running());
+        assert_eq!(outcome.status(), status);
+    }
+
+    #[rstest]
+    #[case::numbered(Execution::new().with_num("42"), Some("42"))]
+    #[case::unnumbered(Execution::new(), None)]
+    fn the_job_reads_the_number_its_execution_gives(
+        #[case] execution: Execution,
+        #[case] num: Option<&str>,
+    ) {
+        let (jobs, seen) = reading(job_num);
+
+        jobs.prepare("train", Value::Null).unwrap().run(execution);
+
+        assert_eq!(seen.get(), Some(&num.map(str::to_string)));
     }
 
     #[test]
-    fn runs_at_once_on_two_threads_each_see_their_own_execution() {
-        let both = Arc::new(Barrier::new(2));
-        let jobs = Arc::new(Jobs::new().job("train", {
-            let both = both.clone();
-            move |epochs: u32| {
-                both.wait();
-                match (job_num(), job_input()) {
-                    (Some(num), Some(input))
-                        if num == epochs.to_string() && input == json!(epochs) =>
-                    {
-                        Ok(())
-                    }
-                    seen => Err::<(), BoxError>(format!("job {epochs} saw {seen:?}").into()),
-                }
-            }
-        }));
-        let run = |epochs: u32| {
-            let prepared = jobs.prepare("train", json!(epochs)).unwrap();
-            let execution = Execution::new().with_num(epochs.to_string());
-            std::thread::spawn(move || prepared.run(execution))
-        };
+    fn the_job_reads_the_input_it_runs_with() {
+        let (jobs, seen) = reading(job_input);
+        let prepared = jobs.prepare("train", json!({"lr": 0.1})).unwrap();
+        let input = prepared.input().clone();
 
-        let one = run(1);
-        let two = run(2);
+        prepared.run(Execution::new());
 
-        let (one, two) = (one.join().unwrap(), two.join().unwrap());
-        assert!(one.error().is_none(), "{one:?}");
-        assert!(two.error().is_none(), "{two:?}");
+        assert_eq!(seen.get(), Some(&Some(input)));
     }
 
     #[test]

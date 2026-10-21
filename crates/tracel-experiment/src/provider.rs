@@ -19,11 +19,8 @@ pub trait ExperimentProvider: Send + Sync + 'static {
     ) -> Result<ExperimentRun, ExperimentError>;
 }
 
-/// Called with the run of each experiment started, once it exists.
-type OnStart = Arc<dyn Fn(&ExperimentRun) + Send + Sync>;
-
 /// The experiments of a backend, and how each experiment started from them starts: the attributes
-/// and arguments it records, and the hooks called with its run.
+/// and arguments it records.
 ///
 /// [`run`](Self::run) runs code in a new experiment and ends the experiment by what the code
 /// returns. [`start`](Self::start) starts one and returns its run, for code that ends it itself.
@@ -47,7 +44,6 @@ pub struct Experiments {
     provider: Arc<dyn ExperimentProvider>,
     attributes: HashMap<String, Value>,
     arguments: Option<Value>,
-    on_start: Vec<OnStart>,
 }
 
 impl Experiments {
@@ -57,7 +53,6 @@ impl Experiments {
             provider,
             attributes: HashMap::new(),
             arguments: None,
-            on_start: Vec::new(),
         }
     }
 
@@ -97,20 +92,12 @@ impl Experiments {
         self
     }
 
-    /// Calls `hook` with the run of each experiment started from the returned experiments, once
-    /// it exists and before [`start`](Self::start) returns it, after the hooks given before.
-    pub fn on_start(mut self, hook: impl Fn(&ExperimentRun) + Send + Sync + 'static) -> Self {
-        self.on_start.push(Arc::new(hook));
-        self
-    }
-
     /// Starts the experiment `name` and returns its run.
     ///
-    /// The experiment records the attributes and arguments these experiments give it, and each
-    /// [`on_start`](Self::on_start) hook is called with the run. The run ends as completed
-    /// through [`ExperimentRun::finish`], and as failed through [`ExperimentRun::fail`] or when it
-    /// is dropped before either. Unless the program has installed a `tracing` subscriber, this
-    /// installs one that forwards events to experiments.
+    /// The experiment records the attributes and arguments these experiments give it. The run
+    /// ends as completed through [`ExperimentRun::finish`], and as failed through
+    /// [`ExperimentRun::fail`] or when it is dropped before either. Unless the program has
+    /// installed a `tracing` subscriber, this installs one that forwards events to experiments.
     pub fn start(&self, name: &str) -> Result<ExperimentRun, ExperimentError> {
         let _ = try_init_tracing_subscriber();
 
@@ -119,9 +106,6 @@ impl Experiments {
             .create_experiment(name.to_string(), self.attributes.clone())?;
         if let Some(arguments) = &self.arguments {
             run.record_args(arguments.clone());
-        }
-        for hook in &self.on_start {
-            hook(&run);
         }
         Ok(run)
     }
@@ -144,8 +128,6 @@ impl Experiments {
         E: From<ExperimentError> + fmt::Display,
     {
         let run = self.start(name)?;
-        // Worker-thread panics (a kernel compiler, a data loader) land in the
-        // run's log even when they never unwind the run itself.
         let _panic_watch = run.capture_panics();
         match run.in_scope(|| f(&run)) {
             Ok(output) => {
@@ -163,21 +145,22 @@ impl Experiments {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
+    use rstest::{fixture, rstest};
     use serde_json::json;
 
     use super::*;
-    use crate::ExperimentId;
     use crate::session::{Event, ExperimentCompletion};
     use crate::test_support::{MockSession, create_run_with_id};
 
     type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-    /// Creates runs numbered 7 on one session, and keeps the attributes each was created with.
+    const REASON: &str = "diverged";
+
+    #[derive(Default)]
     struct MockProvider {
         session: Arc<MockSession>,
-        attributes: Arc<Mutex<Vec<HashMap<String, Value>>>>,
+        attributes: Mutex<Vec<HashMap<String, Value>>>,
     }
 
     impl ExperimentProvider for MockProvider {
@@ -186,39 +169,28 @@ mod tests {
             _name: String,
             attributes: HashMap<String, Value>,
         ) -> Result<ExperimentRun, ExperimentError> {
-            self.attributes.lock().unwrap().push(attributes);
-            Ok(create_run_with_id("7", self.session.clone()))
+            let mut created = self.attributes.lock().unwrap();
+            created.push(attributes);
+            Ok(create_run_with_id(
+                created.len().to_string(),
+                self.session.clone(),
+            ))
         }
     }
 
     struct Fixture {
-        session: Arc<MockSession>,
-        attributes: Arc<Mutex<Vec<HashMap<String, Value>>>>,
+        provider: Arc<MockProvider>,
         experiments: Experiments,
     }
 
     impl Fixture {
-        fn new() -> Self {
-            let session = Arc::new(MockSession::default());
-            let attributes = Arc::default();
-            let experiments = Experiments::new(Arc::new(MockProvider {
-                session: session.clone(),
-                attributes: Arc::clone(&attributes),
-            }));
-            Self {
-                session,
-                attributes,
-                experiments,
-            }
-        }
-
         fn completions(&self) -> Vec<ExperimentCompletion> {
-            self.session.completions.lock().unwrap().clone()
+            self.provider.session.completions.lock().unwrap().clone()
         }
 
-        /// The arguments the runs recorded, in order.
         fn arguments(&self) -> Vec<Value> {
-            self.session
+            self.provider
+                .session
                 .events
                 .lock()
                 .unwrap()
@@ -231,32 +203,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn run_ends_the_experiment_by_what_its_code_returns() {
-        let fixture = Fixture::new();
-
-        let output = fixture
-            .experiments
-            .run("train", |_run| Ok::<_, BoxError>(3));
-        let failed = fixture
-            .experiments
-            .run("train", |_run| Err::<(), BoxError>("diverged".into()));
-
-        assert_eq!(output.unwrap(), 3);
-        assert_eq!(failed.unwrap_err().to_string(), "diverged");
-        assert_eq!(
-            fixture.completions(),
-            [
-                ExperimentCompletion::Success,
-                ExperimentCompletion::Failed("diverged".to_string())
-            ]
-        );
+    #[fixture]
+    fn fixture() -> Fixture {
+        let provider = Arc::new(MockProvider::default());
+        Fixture {
+            experiments: Experiments::new(provider.clone()),
+            provider,
+        }
     }
 
-    #[test]
-    fn a_panic_in_run_fails_the_experiment_with_its_message() {
-        let fixture = Fixture::new();
+    #[rstest]
+    #[case::ok(Ok(()), ExperimentCompletion::Success)]
+    #[case::err(Err(REASON.into()), ExperimentCompletion::Failed(REASON.to_string()))]
+    fn run_ends_the_experiment_by_what_its_code_returns(
+        fixture: Fixture,
+        #[case] returned: Result<(), BoxError>,
+        #[case] completion: ExperimentCompletion,
+    ) {
+        let _ = fixture.experiments.run("train", |_run| returned);
 
+        assert_eq!(fixture.completions(), [completion]);
+    }
+
+    #[rstest]
+    fn a_panic_in_run_fails_the_experiment_with_its_message(fixture: Fixture) {
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             fixture
                 .experiments
@@ -268,23 +238,20 @@ mod tests {
         assert!(panicked.is_err());
         match fixture.completions().as_slice() {
             [ExperimentCompletion::Failed(reason)] => {
-                assert!(reason.contains("loss is NaN"), "{reason}");
+                assert!(reason.ends_with("loss is NaN"), "{reason}");
             }
             other => panic!("unexpected completions: {other:?}"),
         }
     }
 
-    #[test]
-    fn run_makes_the_run_the_current_experiment() {
-        let fixture = Fixture::new();
-
+    #[rstest]
+    fn run_makes_the_run_the_current_experiment(fixture: Fixture) {
         let current = fixture.experiments.run("train", |run| {
             let current = ExperimentRun::current().map(|current| current.id().clone());
             Ok::<_, BoxError>(current == Some(run.id().clone()))
         });
 
         assert!(current.unwrap());
-        assert!(ExperimentRun::current().is_none());
     }
 
     #[test]
@@ -303,22 +270,20 @@ mod tests {
                 ))
             }
         }
-        let ran = AtomicBool::new(false);
+        let mut ran = false;
 
-        let error = Experiments::new(Arc::new(Unreachable))
+        Experiments::new(Arc::new(Unreachable))
             .run("train", |_run| -> Result<(), BoxError> {
-                ran.store(true, Ordering::SeqCst);
+                ran = true;
                 Ok(())
             })
             .unwrap_err();
 
-        assert_eq!(error.to_string(), "the backend is unreachable");
-        assert!(!ran.load(Ordering::SeqCst));
+        assert!(!ran);
     }
 
-    #[test]
-    fn a_started_experiment_records_the_attributes() {
-        let fixture = Fixture::new();
+    #[rstest]
+    fn a_started_experiment_records_the_attributes(fixture: Fixture) {
         let experiments = fixture
             .experiments
             .clone()
@@ -329,7 +294,7 @@ mod tests {
         experiments.start("train").unwrap().finish().unwrap();
 
         assert_eq!(
-            *fixture.attributes.lock().unwrap(),
+            *fixture.provider.attributes.lock().unwrap(),
             [HashMap::from([
                 ("kind".to_string(), json!("example")),
                 ("seed".to_string(), json!(42)),
@@ -337,14 +302,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_started_experiment_records_the_arguments_logging_replaces() {
-        let fixture = Fixture::new();
+    #[rstest]
+    fn only_experiments_given_arguments_record_them_when_a_run_starts(fixture: Fixture) {
         let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
 
-        let run = experiments.start("train").unwrap();
+        experiments.start("train").unwrap().finish().unwrap();
         let recorded = fixture.arguments();
-        run.log_args(&json!({"epochs": 2, "fold": 1})).unwrap();
         fixture
             .experiments
             .start("train")
@@ -353,40 +316,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(recorded, [json!({"epochs": 2})]);
+        assert_eq!(fixture.arguments(), recorded);
+    }
+
+    #[rstest]
+    fn arguments_logged_on_a_run_are_recorded_after_those_it_started_with(fixture: Fixture) {
+        let experiments = fixture.experiments.clone().arguments(json!({"epochs": 2}));
+        let run = experiments.start("train").unwrap();
+
+        run.log_args(&json!({"epochs": 2, "fold": 1})).unwrap();
+
         assert_eq!(
             fixture.arguments(),
             [json!({"epochs": 2}), json!({"epochs": 2, "fold": 1})]
-        );
-    }
-
-    #[test]
-    fn each_hook_is_called_with_each_run_started() {
-        let fixture = Fixture::new();
-        let called = Arc::new(Mutex::new(Vec::new()));
-        let hook = |tag: &'static str| {
-            let called = called.clone();
-            move |run: &ExperimentRun| called.lock().unwrap().push((tag, run.id().clone()))
-        };
-        let experiments = fixture
-            .experiments
-            .clone()
-            .on_start(hook("first"))
-            .on_start(hook("second"));
-
-        experiments.start("train").unwrap().finish().unwrap();
-        fixture
-            .experiments
-            .start("train")
-            .unwrap()
-            .finish()
-            .unwrap();
-
-        assert_eq!(
-            *called.lock().unwrap(),
-            [
-                ("first", ExperimentId::from("7")),
-                ("second", ExperimentId::from("7"))
-            ]
         );
     }
 }

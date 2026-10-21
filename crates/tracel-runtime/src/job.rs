@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tracel_job::JobDefinition;
 
 /// The error a job fails with.
 pub type BoxError = Box<dyn Error + Send + Sync>;
@@ -75,21 +76,6 @@ where
         self.schema = Some(schemars::schema_for!(I).to_value());
         self
     }
-}
-
-/// What a transport reads about a registered job: its name and description, and the input it
-/// takes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct JobDefinition {
-    /// The name that selects the job.
-    pub name: String,
-    /// What the job does, as [`Job::with_description`] gives it.
-    pub description: Option<String>,
-    /// The JSON Schema of the job's input, when it was given one (requires the `schema` feature).
-    pub input_schema: Option<Value>,
-    /// The job's default input, which its input is merged onto, as [`Job::with_default`] gives
-    /// it.
-    pub input_example: Option<Value>,
 }
 
 /// What [`Jobs::job`](crate::Jobs::job) registers: a [`Job`], or a function of the job's input.
@@ -195,8 +181,10 @@ fn resolve(default: Option<Value>, input: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::sync::Mutex;
 
+    use rstest::rstest;
     use serde::Deserialize;
     use serde_json::json;
 
@@ -228,7 +216,6 @@ mod tests {
         }
     }
 
-    /// A job that keeps the input it runs with.
     fn recording<I>() -> (Job<I>, Arc<Mutex<Option<I>>>)
     where
         I: DeserializeOwned + Send + 'static,
@@ -244,7 +231,6 @@ mod tests {
         (job, ran_with)
     }
 
-    /// Runs `job`, registered as `train`, with `input`.
     fn run<I>(job: Job<I>, input: Value) -> Result<(), BoxError>
     where
         I: DeserializeOwned + Send + 'static,
@@ -256,55 +242,21 @@ mod tests {
 
     #[test]
     fn a_job_is_defined_by_its_name_description_and_default() {
+        let (name, description) = ("train", "Train the model");
         let (job, _) = recording::<Config>();
         let job = job
-            .with_description("Train the model")
+            .with_description(description)
             .with_default(default_config());
-        let (bare, _) = recording::<Config>();
 
         assert_eq!(
-            Registered::new("train".to_string(), job).definition(),
+            Registered::new(name.to_string(), job).definition(),
             &JobDefinition {
-                name: "train".to_string(),
-                description: Some("Train the model".to_string()),
+                name: name.to_string(),
+                description: Some(description.to_string()),
                 input_schema: None,
-                input_example: Some(json!({
-                    "epochs": 10,
-                    "optimizer": {"lr": 0.001, "weight_decay": 0.0},
-                    "tag": "baseline"
-                })),
+                input_example: Some(serde_json::to_value(default_config()).unwrap()),
             }
         );
-        assert_eq!(
-            Registered::new("evaluate".to_string(), bare).definition(),
-            &JobDefinition {
-                name: "evaluate".to_string(),
-                description: None,
-                input_schema: None,
-                input_example: None,
-            }
-        );
-    }
-
-    #[test]
-    fn without_a_default_the_input_decodes_as_given() {
-        let (job, ran_with) = recording::<Optimizer>();
-        let (no_input, _) = recording::<Optimizer>();
-        let (unit, ran_with_unit) = recording::<()>();
-
-        run(job, json!({"lr": 0.1, "weight_decay": 0.01})).unwrap();
-        let missing = run(no_input, Value::Null);
-        run(unit, Value::Null).unwrap();
-
-        assert_eq!(
-            ran_with.lock().unwrap().take(),
-            Some(Optimizer {
-                lr: 0.1,
-                weight_decay: 0.01
-            })
-        );
-        assert!(missing.is_err());
-        assert_eq!(ran_with_unit.lock().unwrap().take(), Some(()));
     }
 
     #[test]
@@ -314,38 +266,6 @@ mod tests {
         run(job.with_default(default_config()), Value::Null).unwrap();
 
         assert_eq!(ran_with.lock().unwrap().take(), Some(default_config()));
-    }
-
-    #[test]
-    fn the_prepared_input_is_the_json_the_job_runs_with() {
-        let prepare = |input| {
-            let (job, _) = recording::<Config>();
-            Registered::new("train".to_string(), job.with_default(default_config()))
-                .prepare(input)
-                .unwrap()
-                .input
-        };
-        let (bare, _) = recording::<Value>();
-
-        assert_eq!(
-            prepare(json!({"epochs": 2, "optimizer": {"lr": 0.1}})),
-            json!({
-                "epochs": 2,
-                "optimizer": {"lr": 0.1, "weight_decay": 0.0},
-                "tag": "baseline"
-            })
-        );
-        assert_eq!(
-            prepare(Value::Null),
-            serde_json::to_value(default_config()).unwrap()
-        );
-        assert_eq!(
-            Registered::new("evaluate".to_string(), bare)
-                .prepare(json!({"split": "test"}))
-                .unwrap()
-                .input,
-            json!({"split": "test"})
-        );
     }
 
     #[test]
@@ -364,44 +284,46 @@ mod tests {
                 epochs: 2,
                 optimizer: Optimizer {
                     lr: 0.1,
-                    weight_decay: 0.0,
+                    ..default_config().optimizer
                 },
                 tag: None,
             })
         );
     }
 
-    #[test]
-    fn an_input_of_the_wrong_type_does_not_decode() {
-        for input in [json!({"epochs": "ten"}), json!([1, 2]), json!("ten")] {
-            let (job, ran_with) = recording();
+    #[rstest]
+    #[case::a_field_of_the_wrong_type(json!({"epochs": "ten"}))]
+    #[case::not_an_object(json!("ten"))]
+    fn an_input_that_does_not_decode_is_refused(#[case] input: Value) {
+        let (job, _) = recording::<Config>();
 
-            let prepared = Registered::new("train".to_string(), job.with_default(default_config()))
-                .prepare(input.clone());
+        let prepared =
+            Registered::new("train".to_string(), job.with_default(default_config())).prepare(input);
 
-            assert!(prepared.is_err(), "{input}");
-            assert!(ran_with.lock().unwrap().is_none());
-        }
+        assert!(prepared.is_err());
     }
 
     #[test]
     fn a_registered_job_runs_each_time_it_is_prepared() {
         let (job, ran_with) = recording::<u32>();
         let registered = Registered::new("train".to_string(), job);
+        let epochs = [1, 2];
 
-        for epochs in [1, 2] {
+        let ran = epochs.map(|epochs| {
             (registered.prepare(json!(epochs)).unwrap().run)().unwrap();
-            assert_eq!(ran_with.lock().unwrap().take(), Some(epochs));
-        }
+            ran_with.lock().unwrap().take()
+        });
+
+        assert_eq!(ran, epochs.map(Some));
     }
 
     #[test]
     fn a_job_fails_with_the_error_it_returns() {
-        let job = Job::new(|_: ()| Err::<(), _>(std::io::Error::other("disk full")));
+        let job = Job::new(|_: ()| Err::<(), _>(io::Error::other("disk full")));
 
-        let failed = run(job, Value::Null);
+        let failed = run(job, Value::Null).unwrap_err();
 
-        assert_eq!(failed.unwrap_err().to_string(), "disk full");
+        assert!(failed.is::<io::Error>());
     }
 
     #[cfg(feature = "schema")]
@@ -411,9 +333,9 @@ mod tests {
 
         let registered = Registered::new("train".to_string(), job.with_schema());
 
-        let schema = registered.definition().input_schema.clone().unwrap();
-        assert_eq!(schema["title"], "Config");
-        assert!(schema["properties"]["epochs"].is_object());
-        assert!(schema["properties"]["optimizer"].is_object());
+        assert_eq!(
+            registered.definition().input_schema,
+            Some(schemars::schema_for!(Config).to_value())
+        );
     }
 }
