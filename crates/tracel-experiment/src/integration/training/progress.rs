@@ -1,6 +1,36 @@
+use burn::data::dataloader::Progress;
 use burn::train::logger::{EvaluationProgressLogger, TrainingProgressLogger};
 
-use crate::{ActivityGuard, ExperimentRunHandle};
+use crate::{ActivityBuilder, ActivityGuard, ExperimentRunHandle};
+
+/// What a split or a test is metered in where burn names no unit.
+const DEFAULT_UNIT: &str = "steps";
+
+/// Starts the activity a split or a test runs as, metered against its total where burn knows
+/// it and open-ended where it does not.
+fn start_metered(builder: ActivityBuilder, progress: &Progress) -> ActivityGuard {
+    let builder = match progress.total {
+        Some(total) => builder.meter(
+            total as u64,
+            progress.unit.as_deref().unwrap_or(DEFAULT_UNIT),
+        ),
+        None => builder,
+    };
+    let guard = builder.start();
+    if progress.items_processed > 0 {
+        guard.set(progress.items_processed as u64);
+    }
+    guard
+}
+
+/// Whether a split's or a test's final snapshot says it ran to the end. Burn ends one whether
+/// its loader ran dry or died under it, and only the count says which; one of unknown length is
+/// taken as finished, there being nothing to compare it with.
+fn ran_to_the_end(progress: &Progress) -> bool {
+    progress
+        .total
+        .is_none_or(|total| progress.items_processed >= total)
+}
 
 /// Experiment-backed implementation of Burn's [`TrainingProgressLogger`] trait.
 ///
@@ -14,8 +44,6 @@ pub struct ExperimentTrainingProgressLogger {
     split_guard: Option<ActivityGuard>,
     completed_epochs: usize,
     total_epochs: Option<usize>,
-    split_seen: usize,
-    split_total: usize,
 }
 
 impl ExperimentTrainingProgressLogger {
@@ -29,8 +57,6 @@ impl ExperimentTrainingProgressLogger {
             split_guard: None,
             completed_epochs: 0,
             total_epochs: None,
-            split_seen: 0,
-            split_total: 0,
         }
     }
 
@@ -83,7 +109,7 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         );
     }
 
-    fn start_split(&mut self, name: &str, total_items: usize) {
+    fn start_split(&mut self, name: &str, progress: &Progress) {
         self.ensure_epoch_scope();
 
         let builder = if let Some(epoch_guard) = &self.epoch_guard {
@@ -93,23 +119,18 @@ impl TrainingProgressLogger for ExperimentTrainingProgressLogger {
         } else {
             self.experiment.activity(name)
         };
-        self.split_seen = 0;
-        self.split_total = total_items;
-        self.split_guard = Some(builder.meter(total_items as u64, "steps").start());
+        self.split_guard = Some(start_metered(builder, progress));
     }
 
-    fn update_split(&mut self, items_processed: usize) {
-        self.split_seen = items_processed;
+    fn update_split(&mut self, progress: &Progress) {
         if let Some(guard) = &self.split_guard {
-            guard.set(items_processed as u64);
+            guard.set(progress.items_processed as u64);
         }
     }
 
-    fn end_split(&mut self) {
+    fn end_split(&mut self, progress: &Progress) {
         if let Some(guard) = self.split_guard.take() {
-            // Burn ends a split whether its loader ran dry or died under it;
-            // only the meter says which.
-            match self.split_seen >= self.split_total {
+            match ran_to_the_end(progress) {
                 true => guard.finish(),
                 false => guard.abandon(),
             }
@@ -157,8 +178,6 @@ pub struct ExperimentEvaluationProgressLogger {
     test_guard: Option<ActivityGuard>,
     tests_total: usize,
     tests_done: usize,
-    test_seen: usize,
-    test_total: usize,
 }
 
 impl ExperimentEvaluationProgressLogger {
@@ -171,8 +190,6 @@ impl ExperimentEvaluationProgressLogger {
             test_guard: None,
             tests_total: 0,
             tests_done: 0,
-            test_seen: 0,
-            test_total: 0,
         }
     }
 
@@ -195,27 +212,24 @@ impl EvaluationProgressLogger for ExperimentEvaluationProgressLogger {
         );
     }
 
-    fn start_test(&mut self, name: &str, total_items: usize) {
+    fn start_test(&mut self, name: &str, progress: &Progress) {
         let builder = if let Some(guard) = &self.eval_guard {
             guard.activity(name)
         } else {
             self.experiment.activity(name)
         };
-        self.test_seen = 0;
-        self.test_total = total_items;
-        self.test_guard = Some(builder.meter(total_items as u64, "steps").start());
+        self.test_guard = Some(start_metered(builder, progress));
     }
 
-    fn update_test_progress(&mut self, items_processed: usize) {
-        self.test_seen = items_processed;
+    fn update_test_progress(&mut self, progress: &Progress) {
         if let Some(guard) = &self.test_guard {
-            guard.set(items_processed as u64);
+            guard.set(progress.items_processed as u64);
         }
     }
 
-    fn end_test(&mut self) {
+    fn end_test(&mut self, progress: &Progress) {
         if let Some(guard) = self.test_guard.take() {
-            match self.test_seen >= self.test_total {
+            match ran_to_the_end(progress) {
                 true => {
                     self.tests_done += 1;
                     if let Some(eval) = &self.eval_guard {
@@ -254,6 +268,11 @@ mod tests {
 
     use super::*;
 
+    /// A snapshot of `items_processed` out of a known `total`, in burn's default unit.
+    fn progress(items_processed: usize, total: usize) -> Progress {
+        Progress::new(items_processed, total, None)
+    }
+
     #[test]
     fn training_progress_groups_splits_under_supplied_scope() {
         let session = Arc::new(MockSession::default());
@@ -263,11 +282,11 @@ mod tests {
         let mut logger = parent.training_progress_logger();
 
         logger.start(2, 1, None, None);
-        logger.start_split("train", 10);
-        logger.update_split(4);
-        logger.end_split();
-        logger.start_split("valid", 5);
-        logger.end_split();
+        logger.start_split("train", &progress(0, 10));
+        logger.update_split(&progress(4, 10));
+        logger.end_split(&progress(4, 10));
+        logger.start_split("valid", &progress(0, 5));
+        logger.end_split(&progress(0, 5));
         logger.update_epoch(1);
         logger.end();
 
@@ -314,6 +333,33 @@ mod tests {
         assert_eq!(valid.meter.as_ref().unwrap().total, Some(5));
     }
 
+    /// A loader that cannot tell its length meters nothing, and its split is taken as finished:
+    /// there is no total to fall short of.
+    #[test]
+    fn a_split_of_unknown_length_is_open_ended_and_finishes() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let mut logger = run.training_progress_logger();
+
+        logger.start(1, 1, None, None);
+        logger.start_split("train", &Progress::new(0, None, None));
+        logger.end_split(&Progress::new(7, None, None));
+
+        let events = session.activity_events();
+        let split_started = events.iter().find_map(|event| match event {
+            ActivityEvent::Started { activity } if activity.name == "train" => Some(activity),
+            _ => None,
+        });
+        assert!(split_started.expect("the split started").meter.is_none());
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ActivityEvent::Finished {
+                status: crate::ActivityStatus::Success,
+                ..
+            }
+        )));
+    }
+
     #[test]
     fn training_progress_uses_supplied_name() {
         let session = Arc::new(MockSession::default());
@@ -342,12 +388,12 @@ mod tests {
         let mut logger = parent.training_progress_logger();
 
         logger.start(2, 1, None, None);
-        logger.start_split("train", 10);
-        logger.update_split(10);
-        logger.end_split();
-        logger.start_split("valid", 10);
-        logger.update_split(3);
-        logger.end_split();
+        logger.start_split("train", &progress(0, 10));
+        logger.update_split(&progress(10, 10));
+        logger.end_split(&progress(10, 10));
+        logger.start_split("valid", &progress(0, 10));
+        logger.update_split(&progress(3, 10));
+        logger.end_split(&progress(3, 10));
         logger.end();
 
         let completions = session
@@ -382,9 +428,9 @@ mod tests {
         let mut logger = parent.evaluation_progress_logger().with_name("Holdout");
 
         logger.start_global_progress(2);
-        logger.start_test("test", 4);
-        logger.update_test_progress(2);
-        logger.end_test();
+        logger.start_test("test", &progress(0, 4));
+        logger.update_test_progress(&progress(2, 4));
+        logger.end_test(&progress(2, 4));
         logger.end_global_progress();
 
         let events = session.events.lock().unwrap();
