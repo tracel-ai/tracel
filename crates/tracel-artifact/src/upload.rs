@@ -153,9 +153,10 @@ pub fn upload_bundle_multipart_with_client_and_observer<
 /// `signer` for fresh URLs when the store refuses a part's.
 ///
 /// The refused part is sent again with the fresh URLs, and so are the parts not yet sent; parts
-/// already uploaded are not sent again. Parts refused while the URLs they were sent with are
-/// being signed again share that signing. An upload signs its URLs again at most three times;
-/// a refusal after that fails it with [`TransferError::Refused`].
+/// already uploaded are not sent again. A part refused with URLs that have been signed again
+/// since it was sent is sent again with the fresh ones, so parts refused together share one
+/// signing. An upload signs its URLs again at most three times; a refusal after that fails it
+/// with [`TransferError::Refused`].
 pub fn upload_bundle_multipart_with_signer<
     FTC: FileTransferClient,
     S: MultipartUploadSource,
