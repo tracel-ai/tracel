@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
-    upload_bundle_multipart_with_client_and_observer,
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, PartUrlSigner, UploadError,
+    upload_bundle_multipart_with_signer,
 };
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
+use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferError, TransferObserver};
 use tracel_client::{
     console::Client,
     console::model::request::{
@@ -12,7 +12,7 @@ use tracel_client::{
     },
     console::model::response::{
         ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
-        ModelVersionResponse, ModelVersionStateResponse,
+        ModelVersionResponse, ModelVersionStateResponse, PresignedModelFileUploadUrlsResponse,
     },
     error::{ApiErrorCode, ClientError},
 };
@@ -144,29 +144,19 @@ impl ModelOps for ConsoleModelOps {
             .request_model_version_upload(&self.scope.owner, &self.scope.project, model, request)
             .map_err(|error| map_model_error(error, model))?;
 
-        let uploads = planned
-            .files
-            .into_iter()
-            .map(|file| MultipartUploadFile {
-                rel_path: file.rel_path,
-                parts: file
-                    .urls
-                    .parts
-                    .into_iter()
-                    .map(|part| MultipartUploadPart {
-                        part: part.part,
-                        url: part.url,
-                        size_bytes: part.size_bytes,
-                    })
-                    .collect(),
-            })
-            .collect::<Vec<_>>();
+        let uploads = upload_files_from_wire(planned.files);
+        let signer = ConsolePartUrlSigner {
+            ops: self,
+            model,
+            version: planned.version,
+        };
 
-        upload_bundle_multipart_with_client_and_observer(
+        upload_bundle_multipart_with_signer(
             self.scope.transfer_client(),
             &contents,
             &uploads,
             &mut observer,
+            &signer,
         )
         .map_err(model_upload_failure)?;
 
@@ -190,6 +180,55 @@ impl ModelOps for ConsoleModelOps {
             .map(model_version_from_wire)
             .map_err(|error| map_version_error(error, model, &version))
     }
+}
+
+struct ConsolePartUrlSigner<'a> {
+    ops: &'a ConsoleModelOps,
+    model: &'a str,
+    version: u32,
+}
+
+impl PartUrlSigner for ConsolePartUrlSigner<'_> {
+    fn sign_again(
+        &self,
+    ) -> Result<Vec<MultipartUploadFile>, Box<dyn std::error::Error + Send + Sync>> {
+        let scope = &self.ops.scope;
+        let signed = self
+            .ops
+            .client()?
+            .presign_model_version_upload_again(
+                &scope.owner,
+                &scope.project,
+                self.model,
+                self.version,
+            )
+            .map_err(|error| {
+                let version = VersionSpec::Exact(VersionId::new(self.version.to_string()));
+                map_version_error(error, self.model, &version)
+            })?;
+        Ok(upload_files_from_wire(signed.files))
+    }
+}
+
+fn upload_files_from_wire(
+    files: Vec<PresignedModelFileUploadUrlsResponse>,
+) -> Vec<MultipartUploadFile> {
+    files
+        .into_iter()
+        .map(|file| MultipartUploadFile {
+            rel_path: file.rel_path,
+            parts: file
+                .urls
+                .parts
+                .into_iter()
+                .map(|part| MultipartUploadPart {
+                    part: part.part,
+                    url: part.url,
+                    size_bytes: part.size_bytes,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn models_from_wire(response: ModelListResponse) -> Vec<Model> {
@@ -356,7 +395,10 @@ fn console_failure(error: ClientError) -> ModelsError {
 fn model_upload_failure(error: UploadError) -> ModelsError {
     match error {
         UploadError::Cancelled { .. } => ModelsError::Cancelled,
-        error @ UploadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
+        error @ UploadError::Transfer {
+            source: TransferError::Transport(_),
+            ..
+        } => ModelsError::Transport(error.to_string()),
         error => ModelsError::other(error),
     }
 }
