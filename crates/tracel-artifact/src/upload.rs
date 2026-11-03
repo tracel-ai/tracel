@@ -155,8 +155,9 @@ pub fn upload_bundle_multipart_with_client_and_observer<
 /// The refused part is sent again with the fresh URLs, and so are the parts not yet sent; parts
 /// already uploaded are not sent again. A part refused with URLs that have been signed again
 /// since it was sent is sent again with the fresh ones, so parts refused together share one
-/// signing. An upload signs its URLs again at most three times; a refusal after that fails it
-/// with [`TransferError::Refused`].
+/// signing. An upload signs its URLs again at most three times in a row with no part uploaded
+/// in between, so a long upload can outlive any number of them; a refusal after the third fails
+/// it with [`TransferError::Refused`].
 pub fn upload_bundle_multipart_with_signer<
     FTC: FileTransferClient,
     S: MultipartUploadSource,
@@ -226,8 +227,8 @@ fn upload<FTC: FileTransferClient, S: MultipartUploadSource, O: TransferObserver
 /// The most parts uploaded at once.
 const UPLOAD_WORKERS: usize = 8;
 
-/// The most times an upload signs its part URLs again.
-const SIGNINGS_AGAIN_PER_UPLOAD: usize = 3;
+/// The most times in a row an upload signs its part URLs again with no part uploaded in between.
+const SIGNINGS_AGAIN_WITHOUT_PROGRESS: usize = 3;
 
 /// A file of the plan, checked against its source.
 struct PlannedFile<'a> {
@@ -433,6 +434,7 @@ struct UploadRun<'p, 'a, O: TransferObserver> {
     progress: Vec<Vec<PartProgress>>,
     parts_left: Vec<usize>,
     signings_again: usize,
+    signings_again_without_progress: usize,
     refused: VecDeque<PartId>,
     handed_over: usize,
     finished: usize,
@@ -458,6 +460,7 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
             signer,
             stop,
             signings_again: 0,
+            signings_again_without_progress: 0,
             refused: VecDeque::new(),
             handed_over: 0,
             finished: 0,
@@ -640,6 +643,7 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
                 ..
             } => {
                 self.finished += 1;
+                self.signings_again_without_progress = 0;
                 self.parts_left[part.file] -= 1;
                 if self.parts_left[part.file] == 0 && self.failure.is_none() {
                     let planned = &self.plan[part.file];
@@ -686,10 +690,14 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
     }
 
     /// Signs the upload's URLs again for the refusal of `part`, or fails with that refusal once
-    /// they were signed again as often as an upload may.
+    /// they were signed again as often in a row as an upload may with no part uploaded.
     fn sign_again(&mut self, part: PartId, refusal: TransferError) -> Result<(), UploadError> {
         let signer = match self.signer {
-            Some(signer) if self.signings_again < SIGNINGS_AGAIN_PER_UPLOAD => signer,
+            Some(signer)
+                if self.signings_again_without_progress < SIGNINGS_AGAIN_WITHOUT_PROGRESS =>
+            {
+                signer
+            }
             _ => return Err(self.transfer_failure(part, refusal)),
         };
         let signed = signer.sign_again().map_err(|source| {
@@ -704,6 +712,7 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
         })?;
         replace_part_urls(&mut self.plan, signed)?;
         self.signings_again += 1;
+        self.signings_again_without_progress += 1;
         Ok(())
     }
 
@@ -1289,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_after_the_last_signing_allowed_fails_the_upload_with_the_refusal() {
+    fn a_url_refused_three_signings_in_a_row_fails_the_upload_with_the_refusal() {
         let client = RefusingClient::new(
             |_| true,
             || TransferError::Refused {
@@ -1307,7 +1316,7 @@ mod tests {
         let err = upload_bundle_multipart_with_signer(&client, &source, &files, &mut (), &signer)
             .expect_err("a URL refused however often it is signed fails the upload");
 
-        assert_eq!(signer.signings.get(), SIGNINGS_AGAIN_PER_UPLOAD);
+        assert_eq!(signer.signings.get(), SIGNINGS_AGAIN_WITHOUT_PROGRESS);
         assert!(
             matches!(
                 &err,
@@ -1454,5 +1463,103 @@ mod tests {
             accepted,
             ["weights.bin/1?signed=1", "weights.bin/2?signed=1"]
         );
+    }
+
+    const PROGRESSING_FILES: usize = 5;
+
+    fn one_part_file(number: usize) -> MultipartUploadFile {
+        MultipartUploadFile {
+            rel_path: format!("{number}.bin"),
+            parts: vec![MultipartUploadPart {
+                part: 1,
+                url: format!("{number}.bin/1"),
+                size_bytes: 2,
+            }],
+        }
+    }
+
+    /// Records the files completed, for [`ProgressingClient`] to wait on.
+    struct CompletionObserver {
+        completed: Arc<Mutex<HashSet<String>>>,
+    }
+
+    impl TransferObserver for CompletionObserver {
+        fn file_completed(&mut self, rel_path: &str, _transferred_bytes: u64) {
+            self.completed.lock().unwrap().insert(rel_path.to_string());
+        }
+    }
+
+    /// Accepts file `n` once its URL has been signed again `n - 1` times, so each signing lets one
+    /// more file through. A refusal of URLs signed again `s` times waits for file `s + 1`, which
+    /// those URLs let through, to be completed first, so a part is always uploaded between two
+    /// signings.
+    #[derive(Clone)]
+    struct ProgressingClient {
+        completed: Arc<Mutex<HashSet<String>>>,
+        accepted: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FileTransferClient for ProgressingClient {
+        fn put_reader<R: Read + Send + 'static>(
+            &self,
+            url: &str,
+            mut reader: R,
+            _size_bytes: u64,
+        ) -> Result<(), TransferError> {
+            let mut sink = Vec::new();
+            reader.read_to_end(&mut sink).expect("read the part");
+            let file: usize = url.split('.').next().unwrap().parse().unwrap();
+            let signing: usize = url
+                .split_once("?signed=")
+                .map_or(0, |(_, signing)| signing.parse().unwrap());
+            if signing + 1 >= file {
+                self.accepted.lock().unwrap().push(url.to_string());
+                return Ok(());
+            }
+            if signing > 0 {
+                let let_through = format!("{}.bin", signing + 1);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while !self.completed.lock().unwrap().contains(&let_through)
+                    && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+            Err(expired_token())
+        }
+
+        fn get_reader(
+            &self,
+            _url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Box<dyn Read + Send>, TransferError> {
+            unreachable!("uploads only")
+        }
+    }
+
+    #[test]
+    fn an_upload_that_progresses_between_refusals_signs_again_as_often_as_it_needs() {
+        let completed = Arc::new(Mutex::new(HashSet::new()));
+        let client = ProgressingClient {
+            completed: Arc::clone(&completed),
+            accepted: Arc::default(),
+        };
+        let files: Vec<MultipartUploadFile> = (1..=PROGRESSING_FILES).map(one_part_file).collect();
+        let source = MockSource::new(
+            files
+                .iter()
+                .map(|file| (file.rel_path.clone(), b"ab".to_vec()))
+                .collect(),
+        );
+        let signer = CountingSigner::new(&files);
+        let mut observer = CompletionObserver { completed };
+
+        upload_bundle_multipart_with_signer(&client, &source, &files, &mut observer, &signer)
+            .expect("an upload that keeps progressing keeps signing its URLs again");
+
+        assert_eq!(signer.signings.get(), PROGRESSING_FILES - 1);
+        assert!(signer.signings.get() > SIGNINGS_AGAIN_WITHOUT_PROGRESS);
+        assert_eq!(observer.completed.lock().unwrap().len(), PROGRESSING_FILES);
+        assert_eq!(client.accepted.lock().unwrap().len(), PROGRESSING_FILES);
     }
 }
