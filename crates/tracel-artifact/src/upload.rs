@@ -2,7 +2,7 @@
 //!
 //! The upload process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +27,20 @@ pub enum UploadError {
         rel_path: String,
         #[source]
         source: TransferError,
+    },
+    /// The store refused a part's URL, and the [`PartUrlSigner`] could not sign the upload's
+    /// part URLs again.
+    #[error(
+        "part {part_index} of {total_parts} for {rel_path} was refused ({refusal}), and signing \
+         its URLs again failed: {source}"
+    )]
+    SigningAgain {
+        part_index: usize,
+        total_parts: usize,
+        rel_path: String,
+        refusal: TransferError,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
     /// Errors related to invalid multipart upload plans (e.g. duplicate paths, invalid part numbering).
     #[error("invalid multipart upload plan: {0}")]
@@ -85,6 +99,18 @@ impl<S: MultipartUploadSource + ?Sized> MultipartUploadSource for &S {
     }
 }
 
+/// Signs an upload's part URLs again when the store refuses the ones it was given, as S3 does to
+/// every presigned URL once the credentials that signed it have expired.
+///
+/// Called on the thread that started the upload.
+pub trait PartUrlSigner {
+    /// Returns every file of the upload with each of its parts signed afresh, numbered and sized
+    /// as when the upload started.
+    fn sign_again(
+        &self,
+    ) -> Result<Vec<MultipartUploadFile>, Box<dyn std::error::Error + Send + Sync>>;
+}
+
 /// Upload multiple files from a multipart source using presigned URLs.
 pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     source: &S,
@@ -120,13 +146,44 @@ pub fn upload_bundle_multipart_with_client_and_observer<
     files: &[MultipartUploadFile],
     observer: &mut O,
 ) -> Result<(), UploadError> {
+    upload(client, source, files, observer, None)
+}
+
+/// Upload multiple files as [`upload_bundle_multipart_with_client_and_observer`] does, asking
+/// `signer` for fresh URLs when the store refuses a part's.
+///
+/// The refused part is sent again with the fresh URLs, and so are the parts not yet sent; parts
+/// already uploaded are not sent again. Parts refused while the URLs they were sent with are
+/// being signed again share that signing. An upload signs its URLs again at most three times;
+/// a refusal after that fails it with [`TransferError::Refused`].
+pub fn upload_bundle_multipart_with_signer<
+    FTC: FileTransferClient,
+    S: MultipartUploadSource,
+    O: TransferObserver,
+>(
+    client: &FTC,
+    source: &S,
+    files: &[MultipartUploadFile],
+    observer: &mut O,
+    signer: &dyn PartUrlSigner,
+) -> Result<(), UploadError> {
+    upload(client, source, files, observer, Some(signer))
+}
+
+fn upload<FTC: FileTransferClient, S: MultipartUploadSource, O: TransferObserver>(
+    client: &FTC,
+    source: &S,
+    files: &[MultipartUploadFile],
+    observer: &mut O,
+    signer: Option<&dyn PartUrlSigner>,
+) -> Result<(), UploadError> {
     let plan = plan_uploads(source, files)?;
     let workers = UPLOAD_WORKERS.min(plan.iter().map(|file| file.parts.len()).sum::<usize>());
     let stop = Arc::new(AtomicBool::new(false));
-    let mut run = UploadRun::new(&plan, observer, Arc::clone(&stop));
+    let mut run = UploadRun::new(plan, observer, signer, Arc::clone(&stop));
 
     thread::scope(|scope| {
-        let (jobs, queue) = channel::bounded::<PartJob<'_>>(0);
+        let (jobs, queue) = channel::bounded::<PartJob>(0);
         let (events, reports) = channel::unbounded();
         for _ in 0..workers {
             let queue = queue.clone();
@@ -136,14 +193,15 @@ pub fn upload_bundle_multipart_with_client_and_observer<
                 for job in queue {
                     let reader = CountingReader {
                         inner: job.reader,
-                        file: job.file,
+                        part: job.part,
+                        signing: job.signing,
                         events: events.clone(),
                         stop: Arc::clone(&stop),
                     };
-                    let result = client.put_reader(job.url, reader, job.size);
+                    let result = client.put_reader(&job.url, reader, job.size);
                     let _ = events.send(PartEvent::Finished {
-                        file: job.file,
                         part: job.part,
+                        signing: job.signing,
                         result,
                     });
                 }
@@ -152,41 +210,13 @@ pub fn upload_bundle_multipart_with_client_and_observer<
         drop(queue);
         drop(events);
 
-        'files: for (file, planned) in plan.iter().enumerate() {
-            if !run.start(file) {
-                break;
-            }
-            for part in &planned.parts {
-                run.check_cancelled(file);
-                if run.stopped() {
-                    break 'files;
-                }
-                let reader = match source.open_part(planned.rel_path, part.offset, part.size) {
-                    Ok(reader) => reader,
-                    Err(error) => {
-                        run.fail(error);
-                        break 'files;
-                    }
-                };
-                let job = PartJob {
-                    file,
-                    part: part.number,
-                    url: part.url,
-                    size: part.size,
-                    reader,
-                };
-                if !run.hand_over(job, &jobs, &reports) {
-                    break 'files;
-                }
-            }
-        }
+        let channels = WorkerChannels {
+            jobs: &jobs,
+            reports: &reports,
+        };
+        run.send_every_part(source, &channels);
+        run.wait_for_parts_in_flight(source, &channels);
         drop(jobs);
-        while run.in_flight() {
-            match reports.recv() {
-                Ok(event) => run.handle(event),
-                Err(_) => break,
-            }
-        }
     });
 
     run.finish()
@@ -195,17 +225,20 @@ pub fn upload_bundle_multipart_with_client_and_observer<
 /// The most parts uploaded at once.
 const UPLOAD_WORKERS: usize = 8;
 
+/// The most times an upload signs its part URLs again.
+const SIGNINGS_AGAIN_PER_UPLOAD: usize = 3;
+
 /// A file of the plan, checked against its source.
 struct PlannedFile<'a> {
     rel_path: &'a str,
     len: u64,
-    parts: Vec<PlannedPart<'a>>,
+    parts: Vec<PlannedPart>,
 }
 
 /// A part of a planned file: its 1-based number, URL, and the bytes of the file it covers.
-struct PlannedPart<'a> {
+struct PlannedPart {
     number: usize,
-    url: &'a str,
+    url: String,
     offset: u64,
     size: u64,
 }
@@ -248,7 +281,7 @@ fn plan_uploads<'a, S: MultipartUploadSource>(
                 }
                 planned.push(PlannedPart {
                     number,
-                    url: &part.url,
+                    url: part.url.clone(),
                     offset,
                     size: part.size_bytes,
                 });
@@ -270,23 +303,79 @@ fn plan_uploads<'a, S: MultipartUploadSource>(
         .collect()
 }
 
-/// A part handed to a worker, with its open reader.
-struct PartJob<'a> {
+/// Gives the plan the URLs of `signed`, which must describe the same files with the same parts.
+fn replace_part_urls(
+    plan: &mut [PlannedFile<'_>],
+    signed: Vec<MultipartUploadFile>,
+) -> Result<(), UploadError> {
+    if signed.len() != plan.len() {
+        return Err(UploadError::InvalidMultipart(format!(
+            "The parts signed again describe {} files, the upload {}",
+            signed.len(),
+            plan.len()
+        )));
+    }
+    let mut signed: HashMap<String, Vec<MultipartUploadPart>> = signed
+        .into_iter()
+        .map(|file| (file.rel_path, file.parts))
+        .collect();
+    let mut urls = Vec::with_capacity(plan.len());
+    for planned in plan.iter() {
+        let mismatch = || {
+            UploadError::InvalidMultipart(format!(
+                "The parts signed again do not match the upload of {}",
+                planned.rel_path
+            ))
+        };
+        let mut parts = signed.remove(planned.rel_path).ok_or_else(mismatch)?;
+        parts.sort_by_key(|part| part.part);
+        let matches = parts.len() == planned.parts.len()
+            && parts.iter().zip(&planned.parts).all(|(part, planned)| {
+                part.part as usize == planned.number && part.size_bytes == planned.size
+            });
+        if !matches {
+            return Err(mismatch());
+        }
+        urls.push(parts.into_iter().map(|part| part.url));
+    }
+
+    for (planned, urls) in plan.iter_mut().zip(urls) {
+        for (part, url) in planned.parts.iter_mut().zip(urls) {
+            part.url = url;
+        }
+    }
+    Ok(())
+}
+
+/// A part of the plan: the index of its file, and its own index among that file's parts.
+#[derive(Debug, Clone, Copy)]
+struct PartId {
     file: usize,
-    part: usize,
-    url: &'a str,
+    index: usize,
+}
+
+/// A part handed to a worker, with its open reader. `signing` counts the times the upload's URLs
+/// had been signed again when `url` was taken from the plan.
+struct PartJob {
+    part: PartId,
+    signing: usize,
+    url: String,
     size: u64,
     reader: Box<dyn Read + Send>,
 }
 
 /// What a worker reports to the calling thread.
 enum PartEvent {
-    /// Bytes of a part of `file` were read to be sent.
-    Sent { file: usize, bytes: u64 },
-    /// A part of `file` was uploaded, or failed.
+    /// Bytes of `part`, sent with the URLs of `signing`, were read to be sent.
+    Sent {
+        part: PartId,
+        signing: usize,
+        bytes: u64,
+    },
+    /// `part`, sent with the URLs of `signing`, was uploaded, or failed.
     Finished {
-        file: usize,
-        part: usize,
+        part: PartId,
+        signing: usize,
         result: Result<(), TransferError>,
     },
 }
@@ -295,7 +384,8 @@ enum PartEvent {
 /// aborts the request sending it.
 struct CountingReader {
     inner: Box<dyn Read + Send>,
-    file: usize,
+    part: PartId,
+    signing: usize,
     events: Sender<PartEvent>,
     stop: Arc<AtomicBool>,
 }
@@ -308,7 +398,8 @@ impl Read for CountingReader {
         let read = self.inner.read(buf)?;
         if read > 0 {
             let _ = self.events.send(PartEvent::Sent {
-                file: self.file,
+                part: self.part,
+                signing: self.signing,
                 bytes: read as u64,
             });
         }
@@ -316,31 +407,120 @@ impl Read for CountingReader {
     }
 }
 
-/// The calling thread's view of an upload: what each file has sent, what remains, and the first
-/// failure.
+/// The calling thread's ends of the channels to and from the workers.
+struct WorkerChannels<'c> {
+    jobs: &'c Sender<PartJob>,
+    reports: &'c Receiver<PartEvent>,
+}
+
+/// The bytes counted for the latest sending of a part, and the signing of the URLs it was sent
+/// with.
+#[derive(Default, Clone, Copy)]
+struct PartProgress {
+    signing: usize,
+    bytes: u64,
+}
+
+/// The calling thread's view of an upload: what each file has sent, what remains, the parts to
+/// send again, and the first failure.
 struct UploadRun<'p, 'a, O: TransferObserver> {
-    plan: &'p [PlannedFile<'a>],
+    plan: Vec<PlannedFile<'a>>,
     observer: &'p mut O,
+    signer: Option<&'p dyn PartUrlSigner>,
     stop: Arc<AtomicBool>,
     sent: Vec<u64>,
+    progress: Vec<Vec<PartProgress>>,
     parts_left: Vec<usize>,
+    signings_again: usize,
+    refused: VecDeque<PartId>,
     handed_over: usize,
     finished: usize,
     failure: Option<UploadError>,
 }
 
 impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
-    fn new(plan: &'p [PlannedFile<'a>], observer: &'p mut O, stop: Arc<AtomicBool>) -> Self {
+    fn new(
+        plan: Vec<PlannedFile<'a>>,
+        observer: &'p mut O,
+        signer: Option<&'p dyn PartUrlSigner>,
+        stop: Arc<AtomicBool>,
+    ) -> Self {
         Self {
+            sent: vec![0; plan.len()],
+            progress: plan
+                .iter()
+                .map(|file| vec![PartProgress::default(); file.parts.len()])
+                .collect(),
+            parts_left: plan.iter().map(|file| file.parts.len()).collect(),
             plan,
             observer,
+            signer,
             stop,
-            sent: vec![0; plan.len()],
-            parts_left: plan.iter().map(|file| file.parts.len()).collect(),
+            signings_again: 0,
+            refused: VecDeque::new(),
             handed_over: 0,
             finished: 0,
             failure: None,
         }
+    }
+
+    /// Hands every part of the plan to the workers in file and part order, sending refused parts
+    /// again first. Returns once all are handed over, or the upload stopped.
+    fn send_every_part<S: MultipartUploadSource>(
+        &mut self,
+        source: &S,
+        channels: &WorkerChannels<'_>,
+    ) {
+        for file in 0..self.plan.len() {
+            if !self.start(file) {
+                return;
+            }
+            for index in 0..self.plan[file].parts.len() {
+                self.check_cancelled(file);
+                if !self.send_refused_parts_again(source, channels)
+                    || !self.send(PartId { file, index }, source, channels)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Handles reports until no part is in flight, sending refused parts again meanwhile.
+    fn wait_for_parts_in_flight<S: MultipartUploadSource>(
+        &mut self,
+        source: &S,
+        channels: &WorkerChannels<'_>,
+    ) {
+        loop {
+            if !self.stopped()
+                && let Some(part) = self.refused.pop_front()
+            {
+                self.send(part, source, channels);
+                continue;
+            }
+            if !self.in_flight() {
+                return;
+            }
+            match channels.reports.recv() {
+                Ok(event) => self.handle(event),
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// False once stopped.
+    fn send_refused_parts_again<S: MultipartUploadSource>(
+        &mut self,
+        source: &S,
+        channels: &WorkerChannels<'_>,
+    ) -> bool {
+        while let Some(part) = self.refused.pop_front() {
+            if !self.send(part, source, channels) {
+                return false;
+            }
+        }
+        !self.stopped()
     }
 
     /// Announces `file`, completing it at once when it has no parts. False once stopped.
@@ -358,35 +538,70 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
         true
     }
 
-    /// Hands `job` to a worker, handling reports while all are busy. False once stopped.
-    fn hand_over(
+    /// Opens `part` and hands it to a worker with the plan's current URL. False once stopped.
+    fn send<S: MultipartUploadSource>(
         &mut self,
-        job: PartJob<'a>,
-        jobs: &Sender<PartJob<'a>>,
-        reports: &Receiver<PartEvent>,
+        part: PartId,
+        source: &S,
+        channels: &WorkerChannels<'_>,
     ) -> bool {
+        if self.stopped() {
+            return false;
+        }
+        let file = &self.plan[part.file];
+        let planned = &file.parts[part.index];
+        let reader = match source.open_part(file.rel_path, planned.offset, planned.size) {
+            Ok(reader) => reader,
+            Err(error) => {
+                self.fail(error);
+                return false;
+            }
+        };
+        let job = self.job(part, reader);
+        self.hand_over(job, channels)
+    }
+
+    /// A job sending `part` from `reader` with the plan's current URL, its bytes counted afresh.
+    fn job(&mut self, part: PartId, reader: Box<dyn Read + Send>) -> PartJob {
+        self.forget_sent_bytes(part);
+        self.progress[part.file][part.index].signing = self.signings_again;
+        let planned = &self.plan[part.file].parts[part.index];
+        PartJob {
+            part,
+            signing: self.signings_again,
+            url: planned.url.clone(),
+            size: planned.size,
+            reader,
+        }
+    }
+
+    /// Hands `job` to a worker, handling reports while all are busy. False once stopped.
+    fn hand_over(&mut self, job: PartJob, channels: &WorkerChannels<'_>) -> bool {
         let mut job = Some(job);
-        while let Some(pending) = job.take() {
+        while let Some(mut pending) = job.take() {
             let mut select = Select::new();
-            let send = select.send(jobs);
-            let receive = select.recv(reports);
+            let send = select.send(channels.jobs);
+            let receive = select.recv(channels.reports);
             let operation = select.select();
             match operation.index() {
                 index if index == send => {
-                    if operation.send(jobs, pending).is_err() {
+                    if operation.send(channels.jobs, pending).is_err() {
                         return false;
                     }
                     self.handed_over += 1;
                 }
                 index if index == receive => {
-                    job = Some(pending);
-                    match operation.recv(reports) {
+                    match operation.recv(channels.reports) {
                         Ok(event) => self.handle(event),
                         Err(_) => return false,
                     }
                     if self.stopped() {
                         return false;
                     }
+                    if pending.signing < self.signings_again {
+                        pending = self.job(pending.part, pending.reader);
+                    }
+                    job = Some(pending);
                 }
                 _ => unreachable!("only two operations are selected"),
             }
@@ -401,46 +616,110 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
 
     /// Takes in a worker's report.
     fn handle(&mut self, event: PartEvent) {
-        if let PartEvent::Finished { .. } = event {
-            self.finished += 1;
-        }
         let file = match event {
-            PartEvent::Sent { file, bytes } => {
-                self.sent[file] += bytes;
-                if self.failure.is_none() {
-                    self.observer
-                        .file_progress(self.plan[file].rel_path, self.sent[file]);
+            PartEvent::Sent {
+                part,
+                signing,
+                bytes,
+            } => {
+                let progress = &mut self.progress[part.file][part.index];
+                if progress.signing == signing {
+                    progress.bytes += bytes;
+                    self.sent[part.file] += bytes;
+                    if self.failure.is_none() {
+                        self.observer
+                            .file_progress(self.plan[part.file].rel_path, self.sent[part.file]);
+                    }
                 }
-                file
+                part.file
             }
             PartEvent::Finished {
-                file,
+                part,
                 result: Ok(()),
                 ..
             } => {
-                self.parts_left[file] -= 1;
-                if self.parts_left[file] == 0 && self.failure.is_none() {
-                    let planned = &self.plan[file];
+                self.finished += 1;
+                self.parts_left[part.file] -= 1;
+                if self.parts_left[part.file] == 0 && self.failure.is_none() {
+                    let planned = &self.plan[part.file];
                     self.observer.file_completed(planned.rel_path, planned.len);
                 }
-                file
+                part.file
             }
             PartEvent::Finished {
-                file,
+                part,
+                signing,
+                result: Err(refusal @ TransferError::Refused { .. }),
+            } => {
+                self.finished += 1;
+                self.forget_sent_bytes(part);
+                self.send_again_after_refusal(part, signing, refusal);
+                part.file
+            }
+            PartEvent::Finished {
                 part,
                 result: Err(source),
+                ..
             } => {
-                let planned = &self.plan[file];
-                self.fail(UploadError::Transfer {
-                    part_index: part,
-                    total_parts: planned.parts.len(),
-                    rel_path: planned.rel_path.to_string(),
-                    source,
-                });
-                file
+                self.finished += 1;
+                self.fail(self.transfer_failure(part, source));
+                part.file
             }
         };
         self.check_cancelled(file);
+    }
+
+    /// Queues `part` to be sent again, signing the URLs again first unless that was done since
+    /// `part` was sent with the URLs of `signing`.
+    fn send_again_after_refusal(&mut self, part: PartId, signing: usize, refusal: TransferError) {
+        if self.stopped() {
+            return;
+        }
+        if signing == self.signings_again
+            && let Err(error) = self.sign_again(part, refusal)
+        {
+            self.fail(error);
+            return;
+        }
+        self.refused.push_back(part);
+    }
+
+    /// Signs the upload's URLs again for the refusal of `part`, or fails with that refusal once
+    /// they were signed again as often as an upload may.
+    fn sign_again(&mut self, part: PartId, refusal: TransferError) -> Result<(), UploadError> {
+        let signer = match self.signer {
+            Some(signer) if self.signings_again < SIGNINGS_AGAIN_PER_UPLOAD => signer,
+            _ => return Err(self.transfer_failure(part, refusal)),
+        };
+        let signed = signer.sign_again().map_err(|source| {
+            let planned = &self.plan[part.file];
+            UploadError::SigningAgain {
+                part_index: planned.parts[part.index].number,
+                total_parts: planned.parts.len(),
+                rel_path: planned.rel_path.to_string(),
+                refusal,
+                source,
+            }
+        })?;
+        replace_part_urls(&mut self.plan, signed)?;
+        self.signings_again += 1;
+        Ok(())
+    }
+
+    fn forget_sent_bytes(&mut self, part: PartId) {
+        let progress = &mut self.progress[part.file][part.index];
+        self.sent[part.file] -= progress.bytes;
+        progress.bytes = 0;
+    }
+
+    fn transfer_failure(&self, part: PartId, source: TransferError) -> UploadError {
+        let planned = &self.plan[part.file];
+        UploadError::Transfer {
+            part_index: planned.parts[part.index].number,
+            total_parts: planned.parts.len(),
+            rel_path: planned.rel_path.to_string(),
+            source,
+        }
     }
 
     fn check_cancelled(&mut self, file: usize) {
@@ -456,6 +735,7 @@ impl<'p, 'a, O: TransferObserver> UploadRun<'p, 'a, O> {
         if self.failure.is_none() {
             self.failure = Some(error);
         }
+        self.refused.clear();
         self.stop.store(true, Ordering::Relaxed);
     }
 
@@ -877,5 +1157,301 @@ mod tests {
 
         assert!(matches!(err, UploadError::Cancelled { .. }), "{err:?}");
         assert!(client.puts.lock().unwrap().is_empty());
+    }
+
+    fn expired_token() -> TransferError {
+        TransferError::Refused {
+            status: 400,
+            code: Some("ExpiredToken".to_string()),
+        }
+    }
+
+    /// Signs every part of `files` again as `{url}?signed={n}`, `n` counting the signings.
+    struct CountingSigner {
+        files: Vec<MultipartUploadFile>,
+        signings: std::cell::Cell<usize>,
+    }
+
+    impl CountingSigner {
+        fn new(files: &[MultipartUploadFile]) -> Self {
+            Self {
+                files: files.to_vec(),
+                signings: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl PartUrlSigner for CountingSigner {
+        fn sign_again(
+            &self,
+        ) -> Result<Vec<MultipartUploadFile>, Box<dyn std::error::Error + Send + Sync>> {
+            let signing = self.signings.get() + 1;
+            self.signings.set(signing);
+            Ok(self
+                .files
+                .iter()
+                .map(|file| MultipartUploadFile {
+                    rel_path: file.rel_path.clone(),
+                    parts: file
+                        .parts
+                        .iter()
+                        .map(|part| MultipartUploadPart {
+                            url: format!("{}?signed={signing}", part.url),
+                            ..part.clone()
+                        })
+                        .collect(),
+                })
+                .collect())
+        }
+    }
+
+    type AcceptedParts = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+    /// Answers `refusal` to the URLs `refuses` picks, and records the parts it accepts.
+    #[derive(Clone)]
+    struct RefusingClient {
+        refuses: fn(&str) -> bool,
+        refusal: fn() -> TransferError,
+        accepted: AcceptedParts,
+    }
+
+    impl RefusingClient {
+        fn new(refuses: fn(&str) -> bool, refusal: fn() -> TransferError) -> Self {
+            Self {
+                refuses,
+                refusal,
+                accepted: Arc::default(),
+            }
+        }
+
+        fn accepted(&self) -> Vec<(String, Vec<u8>)> {
+            let mut accepted = self.accepted.lock().unwrap().clone();
+            accepted.sort();
+            accepted
+        }
+    }
+
+    impl FileTransferClient for RefusingClient {
+        fn put_reader<R: Read + Send + 'static>(
+            &self,
+            url: &str,
+            mut reader: R,
+            _size_bytes: u64,
+        ) -> Result<(), TransferError> {
+            let mut bytes = Vec::new();
+            if reader.read_to_end(&mut bytes).is_err() {
+                return Err(TransferError::Transport("the part was aborted".to_string()));
+            }
+            if (self.refuses)(url) {
+                return Err((self.refusal)());
+            }
+            self.accepted.lock().unwrap().push((url.to_string(), bytes));
+            Ok(())
+        }
+
+        fn get_reader(
+            &self,
+            _url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Box<dyn Read + Send>, TransferError> {
+            unreachable!("uploads only")
+        }
+    }
+
+    #[test]
+    fn a_refused_part_is_sent_again_with_its_urls_signed_again() {
+        let client = RefusingClient::new(|url| url == "weights.bin/2", expired_token);
+        let source = MockSource::new(HashMap::from([(
+            "weights.bin".to_string(),
+            b"abcd".to_vec(),
+        )]));
+        let files = [two_part_file("weights.bin")];
+        let signer = CountingSigner::new(&files);
+        let mut observer = RecordingObserver::default();
+
+        upload_bundle_multipart_with_signer(&client, &source, &files, &mut observer, &signer)
+            .expect("the refused part goes through once signed again");
+
+        assert_eq!(signer.signings.get(), 1);
+        assert_eq!(
+            client.accepted(),
+            [
+                ("weights.bin/1".to_string(), b"ab".to_vec()),
+                ("weights.bin/2?signed=1".to_string(), b"cd".to_vec()),
+            ]
+        );
+        assert_eq!(
+            observer.progress,
+            HashMap::from([("weights.bin".to_string(), 4)])
+        );
+        assert_eq!(observer.completed, [("weights.bin".to_string(), 4)]);
+    }
+
+    #[test]
+    fn a_refusal_after_the_last_signing_allowed_fails_the_upload_with_the_refusal() {
+        let client = RefusingClient::new(
+            |_| true,
+            || TransferError::Refused {
+                status: 403,
+                code: Some("AccessDenied".to_string()),
+            },
+        );
+        let source = MockSource::new(HashMap::from([(
+            "weights.bin".to_string(),
+            b"abcd".to_vec(),
+        )]));
+        let files = [two_part_file("weights.bin")];
+        let signer = CountingSigner::new(&files);
+
+        let err = upload_bundle_multipart_with_signer(&client, &source, &files, &mut (), &signer)
+            .expect_err("a URL refused however often it is signed fails the upload");
+
+        assert_eq!(signer.signings.get(), SIGNINGS_AGAIN_PER_UPLOAD);
+        assert!(
+            matches!(
+                &err,
+                UploadError::Transfer {
+                    source: TransferError::Refused { status: 403, code: Some(code) },
+                    ..
+                } if code == "AccessDenied"
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_transport_failure_is_not_signed_again() {
+        let client = FailingClient {
+            failing_url: "weights.bin/2",
+        };
+        let source = MockSource::new(HashMap::from([(
+            "weights.bin".to_string(),
+            b"abcd".to_vec(),
+        )]));
+        let files = [two_part_file("weights.bin")];
+        let signer = CountingSigner::new(&files);
+
+        let err = upload_bundle_multipart_with_signer(&client, &source, &files, &mut (), &signer)
+            .expect_err("a failed part fails the upload");
+
+        assert_eq!(signer.signings.get(), 0);
+        assert!(
+            matches!(
+                err,
+                UploadError::Transfer {
+                    source: TransferError::Transport(_),
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    struct FailingSigner;
+
+    impl PartUrlSigner for FailingSigner {
+        fn sign_again(
+            &self,
+        ) -> Result<Vec<MultipartUploadFile>, Box<dyn std::error::Error + Send + Sync>> {
+            Err("the version is no longer pending".into())
+        }
+    }
+
+    #[test]
+    fn a_failed_signing_fails_the_upload_naming_the_refusal() {
+        let client = RefusingClient::new(|url| url == "weights.bin/2", expired_token);
+        let source = MockSource::new(HashMap::from([(
+            "weights.bin".to_string(),
+            b"abcd".to_vec(),
+        )]));
+
+        let err = upload_bundle_multipart_with_signer(
+            &client,
+            &source,
+            &[two_part_file("weights.bin")],
+            &mut (),
+            &FailingSigner,
+        )
+        .expect_err("a refused part that cannot be signed again fails the upload");
+
+        match err {
+            UploadError::SigningAgain {
+                part_index,
+                refusal: TransferError::Refused { code, .. },
+                ..
+            } => assert_eq!((part_index, code.as_deref()), (2, Some("ExpiredToken"))),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// Refuses every URL that was not signed again, holding each refusal until another one is in
+    /// flight, or a while has passed, and records the most refused at once and the parts it
+    /// accepts.
+    #[derive(Clone, Default)]
+    struct ExpiredUrlsClient {
+        refusing: Arc<Mutex<usize>>,
+        most_refusing: Arc<Mutex<usize>>,
+        accepted: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FileTransferClient for ExpiredUrlsClient {
+        fn put_reader<R: Read + Send + 'static>(
+            &self,
+            url: &str,
+            mut reader: R,
+            _size_bytes: u64,
+        ) -> Result<(), TransferError> {
+            let mut sink = Vec::new();
+            reader.read_to_end(&mut sink).expect("read the part");
+            if url.contains("?signed=") {
+                self.accepted.lock().unwrap().push(url.to_string());
+                return Ok(());
+            }
+            *self.refusing.lock().unwrap() += 1;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let refusing = *self.refusing.lock().unwrap();
+                let mut most = self.most_refusing.lock().unwrap();
+                *most = (*most).max(refusing);
+                if *most > 1 || std::time::Instant::now() > deadline {
+                    break;
+                }
+                drop(most);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            *self.refusing.lock().unwrap() -= 1;
+            Err(expired_token())
+        }
+
+        fn get_reader(
+            &self,
+            _url: &str,
+            _expected_size_bytes: Option<u64>,
+        ) -> Result<Box<dyn Read + Send>, TransferError> {
+            unreachable!("uploads only")
+        }
+    }
+
+    #[test]
+    fn parts_refused_together_share_one_signing() {
+        let client = ExpiredUrlsClient::default();
+        let source = MockSource::new(HashMap::from([(
+            "weights.bin".to_string(),
+            b"abcd".to_vec(),
+        )]));
+        let files = [two_part_file("weights.bin")];
+        let signer = CountingSigner::new(&files);
+
+        upload_bundle_multipart_with_signer(&client, &source, &files, &mut (), &signer)
+            .expect("both parts go through once signed again");
+
+        assert_eq!(*client.most_refusing.lock().unwrap(), 2);
+        assert_eq!(signer.signings.get(), 1);
+        let mut accepted = client.accepted.lock().unwrap().clone();
+        accepted.sort();
+        assert_eq!(
+            accepted,
+            ["weights.bin/1?signed=1", "weights.bin/2?signed=1"]
+        );
     }
 }
