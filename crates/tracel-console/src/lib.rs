@@ -10,6 +10,11 @@
 //! project from `TRACEL_ENV`, `TRACEL_API_KEY`, `TRACEL_NAMESPACE` and `TRACEL_PROJECT`, falling
 //! back to the `tracel login` sign-in and to `tracel.toml`. [`env_from_environment`],
 //! [`CredentialSource::from_env`] and [`ProjectRef::from_env`] read each of the three on its own.
+//!
+//! An application that keeps its own sign-in hands [`Console::connect`] an
+//! [`AppSession`] over its own [`SessionStore`], through [`TracelCredentials::app_session`]: the
+//! client then renews the session's access token as it expires, with the [`DeviceAuthClient`]
+//! the session was given.
 
 mod console;
 mod datasets;
@@ -27,5 +32,8 @@ pub use domain::{Namespace, NamespaceKind, Organization, Project, User, Visibili
 pub use env::{CredentialSource, ProjectRef, env_from_environment};
 pub use error::ConsoleError;
 pub use login::{DeviceApproval, DeviceLogin, refresh_session, sign_out};
-pub use tracel_client::console::auth::IssuedAppSession;
-pub use tracel_client::console::{AccessToken, Env, RefreshToken, TracelCredentials};
+pub use tracel_client::console::auth::{DeviceAuthClient, IssuedAppSession};
+pub use tracel_client::console::{
+    AccessToken, AppSession, Env, RefreshToken, SessionStore, SessionStoreError, StoredAppSession,
+    TracelCredentials,
+};
