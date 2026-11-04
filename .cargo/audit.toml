@@ -7,4 +7,14 @@
 # See example file at: https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
 
 [advisories]
-ignore = ["RUSTSEC-2026-0009", "RUSTSEC-2026-0007"]
+ignore = [
+    "RUSTSEC-2026-0009",
+    "RUSTSEC-2026-0007",
+    # zip 0.6 and zstd-safe 5 are locked only through burn-dispatch's optional burn-tch, which
+    # no feature of this workspace enables, so nothing here builds them. Burn 0.23 drops tch.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+    "RUSTSEC-2026-0403",
+]

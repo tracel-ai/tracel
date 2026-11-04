@@ -94,6 +94,10 @@ impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
 pub enum TransferError {
     #[error("Transport error: {0}")]
     Transport(String),
+    /// The store answered 400 or 403 to the URL, as S3 does to a presigned URL once the
+    /// credentials that signed it have expired.
+    #[error("Refused by the store with HTTP {status}")]
+    Refused { status: u16 },
 }
 
 /// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
@@ -186,6 +190,15 @@ impl FileTransferClient for ReqwestTransferClient {
             .send()
             .map_err(|error| transport_failure(&error))?;
 
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(TransferError::Refused {
+                status: status.as_u16(),
+            });
+        }
         if !response.status().is_success() {
             return Err(transport_failure(
                 &response.error_for_status().err().unwrap(),
