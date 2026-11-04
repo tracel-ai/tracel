@@ -1170,10 +1170,7 @@ mod tests {
     }
 
     fn expired_token() -> TransferError {
-        TransferError::Refused {
-            status: 400,
-            code: Some("ExpiredToken".to_string()),
-        }
+        TransferError::Refused { status: 400 }
     }
 
     /// Signs every part of `files` again as `{url}?signed={n}`, `n` counting the signings.
@@ -1299,13 +1296,7 @@ mod tests {
 
     #[test]
     fn a_url_refused_three_signings_in_a_row_fails_the_upload_with_the_refusal() {
-        let client = RefusingClient::new(
-            |_| true,
-            || TransferError::Refused {
-                status: 403,
-                code: Some("AccessDenied".to_string()),
-            },
-        );
+        let client = RefusingClient::new(|_| true, || TransferError::Refused { status: 403 });
         let source = MockSource::new(HashMap::from([(
             "weights.bin".to_string(),
             b"abcd".to_vec(),
@@ -1321,9 +1312,9 @@ mod tests {
             matches!(
                 &err,
                 UploadError::Transfer {
-                    source: TransferError::Refused { status: 403, code: Some(code) },
+                    source: TransferError::Refused { status: 403 },
                     ..
-                } if code == "AccessDenied"
+                }
             ),
             "{err:?}"
         );
@@ -1387,9 +1378,9 @@ mod tests {
         match err {
             UploadError::SigningAgain {
                 part_index,
-                refusal: TransferError::Refused { code, .. },
+                refusal: TransferError::Refused { status },
                 ..
-            } => assert_eq!((part_index, code.as_deref()), (2, Some("ExpiredToken"))),
+            } => assert_eq!((part_index, status), (2, 400)),
             other => panic!("unexpected error: {other:?}"),
         }
     }

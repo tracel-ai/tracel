@@ -34,7 +34,6 @@ fn transport_failure(error: &dyn std::error::Error) -> TransferError {
 }
 
 mod ranged;
-mod refusal;
 
 /// Watches a transfer as it runs, and can stop it.
 ///
@@ -96,16 +95,9 @@ pub enum TransferError {
     #[error("Transport error: {0}")]
     Transport(String),
     /// The store answered 400 or 403 to the URL, as S3 does to a presigned URL once the
-    /// credentials that signed it have expired. `code` is S3's error code, such as `ExpiredToken`
-    /// or `AccessDenied`, when the answer named one.
-    #[error("Refused by the store with HTTP {status}{}", in_parentheses(.code))]
-    Refused { status: u16, code: Option<String> },
-}
-
-fn in_parentheses(code: &Option<String>) -> String {
-    code.as_ref()
-        .map(|code| format!(" ({code})"))
-        .unwrap_or_default()
+    /// credentials that signed it have expired.
+    #[error("Refused by the store with HTTP {status}")]
+    Refused { status: u16 },
 }
 
 /// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
@@ -198,8 +190,14 @@ impl FileTransferClient for ReqwestTransferClient {
             .send()
             .map_err(|error| transport_failure(&error))?;
 
-        if refusal::is_refusal(response.status()) {
-            return Err(refusal::from_response(response));
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(TransferError::Refused {
+                status: status.as_u16(),
+            });
         }
         if !response.status().is_success() {
             return Err(transport_failure(
