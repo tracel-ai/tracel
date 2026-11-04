@@ -7297,8 +7297,8 @@ dependencies = [
 
 [[package]]
 name = "tracel-client"
-version = "0.25.0"
-source = "git+https://github.com/tracel-ai/tracel-client?rev=cea7def5306f907cb10169b098068dce9dc86956#cea7def5306f907cb10169b098068dce9dc86956"
+version = "0.26.0"
+source = "git+https://github.com/tracel-ai/tracel-client?rev=2ee7ff4608ea7a4eb820499e7d3a96cc542e7164#2ee7ff4608ea7a4eb820499e7d3a96cc542e7164"
 dependencies = [
  "directories",
  "reqwest",
