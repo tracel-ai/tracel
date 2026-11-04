@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tracel_client::console::project::{
     request::Visibility as ClientVisibility, response::ProjectResponse,
 };
+use tracel_client::console::user::response::UserResponseSchema;
 
 use crate::ConsoleError;
 
@@ -61,6 +62,21 @@ pub struct User {
     pub email: Option<String>,
     /// Namespace owned by the user.
     pub namespace: Namespace,
+    /// The profile image selected in the console, when one is available.
+    #[serde(default)]
+    pub profile_picture_url: Option<String>,
+}
+
+impl From<UserResponseSchema> for User {
+    fn from(user: UserResponseSchema) -> Self {
+        Self {
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            namespace: Namespace::user(user.namespace),
+            profile_picture_url: user.profile_picture_url,
+        }
+    }
 }
 
 /// An organization visible to the current session.
@@ -125,5 +141,32 @@ impl TryFrom<ProjectResponse> for Project {
                 ClientVisibility::Public => Visibility::Public,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_console_user_preserves_the_profile_picture() {
+        let response: UserResponseSchema = serde_json::from_value(serde_json::json!({
+            "id": 7,
+            "username": "ada",
+            "email": "ada@example.com",
+            "namespace": "ada",
+            "profile_picture_url": "https://example.com/ada.png",
+            "credential": { "kind": "app_session", "expires_at": null }
+        }))
+        .unwrap();
+        let user = User::from(response);
+        assert_eq!(user.username, "ada");
+        assert_eq!(user.namespace, Namespace::user("ada"));
+        assert_eq!(
+            user.profile_picture_url.as_deref(),
+            Some("https://example.com/ada.png")
+        );
+        let serialized = serde_json::to_value(&user).unwrap();
+        assert_eq!(serde_json::from_value::<User>(serialized).unwrap(), user);
     }
 }

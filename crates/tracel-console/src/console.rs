@@ -181,12 +181,7 @@ impl Console {
     /// Returns the current user, or `None` when the console no longer accepts the credential.
     pub fn me(&self) -> Result<Option<User>, ConsoleError> {
         match self.inner.current_user() {
-            Ok(user) => Ok(Some(User {
-                id: user._id,
-                username: user.username,
-                email: user.email,
-                namespace: Namespace::user(user.namespace),
-            })),
+            Ok(user) => Ok(Some(User::from(user))),
             Err(ClientError::Unauthenticated) => Ok(None),
             Err(error) => Err(error.into()),
         }
