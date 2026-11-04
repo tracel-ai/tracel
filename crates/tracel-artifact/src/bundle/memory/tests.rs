@@ -102,10 +102,9 @@ impl BundleDecode for ExampleConfig {
             if metadata_reader
                 .read_to_string(&mut metadata_content)
                 .is_ok()
+                && let Ok(_metadata) = serde_json::from_str::<ConfigMetadata>(&metadata_content)
             {
-                if let Ok(_metadata) = serde_json::from_str::<ConfigMetadata>(&metadata_content) {
-                    // Could validate version compatibility here
-                }
+                // Could validate version compatibility here
             }
         }
 

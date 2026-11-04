@@ -5,8 +5,8 @@
 //!
 //! High-level Tracel SDK.
 //!
-//! This crate re-exports the main crates used to build training, experiment tracking, inference,
-//! and fleet workflows on top of Tracel.
+//! The SDK gives a program clients for the platform's services, which it picks from the
+//! environment, and the runtime that runs the program's jobs, launched remotely or run locally.
 //!
 //! Features:
 //! - Artifact creation and management
@@ -16,51 +16,143 @@
 //!
 //! ## Crate Layout
 //!
+//! [`Target`] says where a program records its experiments and reaches models, datasets and
+//! inference telemetry: offline under `./runs` by default, or a console project.
+//! [`Target::from_env`] reads it from `TRACEL_TARGET` and the variables that target needs.
+//!
 //! The most commonly used re-exports are:
 //! - [`experiment`]: experiment runs, logging, artifacts, and Burn learner integrations.
-//! - [`app`]: job registration, plus CLI and HTTP server front-ends to run those jobs.
+//! - [`runtime`]: jobs, plain functions of their input, and the entry point that runs one.
 //! - [`console`]: organizations, projects, and users on the Tracel console.
-//! - [`datasets`]: the dataset domain and the capability over it.
-//! - [`models`]: the model domain and the capability over it.
+//! - [`datasets`]: the dataset domain and its registry.
+//! - [`models`]: the model domain and its registry.
 //! - [`artifact`]: bundle and artifact utilities.
 //!
-//! ## Registering Routines
+//! ## Jobs
 //!
-//! Wrap a routine into a job with [`experiment::ExperimentModule::create`], then register it
-//! with a [`app::cli::Cli`] (to dispatch from the command line) or a `app::server::Server`
-//! (to dispatch over HTTP, requires the `server` feature):
+//! A job is a function of its typed input. Register a program's jobs by name with
+//! [`runtime::Jobs`], and return its [`run`](runtime::Jobs::run) from `main`: the program runs the
+//! job its command line names. A job starts experiments, or none, with the clients a [`Target`]
+//! builds:
 //!
-//! ```ignore
-//! use tracel::app::cli::Cli;
-//! use tracel::app::cli::mapper::JsonMapper;
-//! use tracel::experiment::ExperimentRun;
-//! use tracel::{Connection, Context};
+//! ```no_run
+//! use std::process::ExitCode;
 //!
-//! fn main() -> anyhow::Result<()> {
-//!     let module = Context::new(Connection::Cloud)?.experiment();
+//! use serde::{Deserialize, Serialize};
+//! use tracel::Target;
+//! use tracel::runtime::{BoxError, Job, Jobs};
 //!
-//!     let job = module.create("my_training_procedure", |session: &ExperimentRun, config| {
+//! #[derive(Default, Serialize, Deserialize)]
+//! struct TrainingConfig {
+//!     epochs: usize,
+//! }
+//!
+//! fn train(config: TrainingConfig) -> Result<(), BoxError> {
+//!     let experiments = Target::from_env()?.experiments()?;
+//!     experiments.run("train", |run| {
 //!         // Your training code here
-//!         my_training_function(session, config)
-//!     });
+//!         run.log_info(format!("training for {} epochs", config.epochs));
+//!         Ok(())
+//!     })
+//! }
 //!
-//!     Cli::new()
-//!         .register(job, JsonMapper::with_default(MyConfig::default()))
-//!         .run()?;
-//!
-//!     Ok(())
+//! fn main() -> ExitCode {
+//!     Jobs::new()
+//!         .version(env!("CARGO_PKG_VERSION"))
+//!         .job(
+//!             "train",
+//!             Job::new(train)
+//!                 .with_description("Train the model")
+//!                 .with_default(TrainingConfig::default()),
+//!         )
+//!         .run()
 //! }
 //! ```
 //!
-//! The job's name (`"my_training_procedure"` above) is what callers use to select it, whether
-//! from the CLI or from an HTTP request path.
+//! Run it as `<binary> train '{"epochs": 5}'`: the job's name selects it, and its input, one JSON
+//! document, is merged onto its default. Left out, the job runs with the default. A function
+//! registered without [`Job`](runtime::Job) is a job with no description or default.
+//!
+//! [`Experiments::run`](experiment::Experiments::run) ends the experiment by what its code
+//! returns: completed on `Ok`, and failed on `Err` or a panic.
+//! [`Experiments::start`](experiment::Experiments::start) returns the run instead, for code that
+//! ends it with `finish()` or `fail()`; a run dropped before either ends as failed.
+//! An experiment started in a job, from the experiments a [`Target`] built, records the job's
+//! input, merged onto its default, as its arguments, which the console lists as the experiment's
+//! config; [`log_args`](experiment::ExperimentRun::log_args) replaces them.
+//!
+//! The experiments [`Target::experiments`] builds in a job, on the thread that runs it, are linked
+//! to that job, even for runs started on other threads: each one started from them records the
+//! job's number and input, and prints where it records to stderr as it starts, such as
+//! `Recording experiment 42: <url>`, which `tracel run` and a remote job's logs show. Experiments
+//! built another way, such as [`console::ProjectHandle::experiments`], are not linked unless the
+//! code links them, through [`Experiments::attribute`](experiment::Experiments::attribute),
+//! [`arguments`](experiment::Experiments::arguments) and
+//! [`on_start`](experiment::Experiments::on_start).
+//!
+//! [`version`](runtime::Jobs::version) gives the binary its `--version`, which prints the binary's
+//! name and that version; without it, the binary has no `--version`.
+//!
+//! Without a [`Target`], build the services from an adapter directly:
+//! [`console::ProjectHandle::from_env`] for a console project, or
+//! [`experiment::local::LocalExperiments`] to record offline.
+//!
+//! ## Command-Line Flags
+//!
+//! A job given its input's JSON Schema has a flag per field of its input. With
+//! `schemars::JsonSchema` derived for its input type, the `schema` feature enabled and
+//! `.with_schema()` added to the job above, `<binary> train --epochs 5` runs it with the same
+//! input as `<binary> train '{"epochs": 5}'`. `<binary> --help` lists the jobs, and
+//! `<binary> train --help` the job's flags with their defaults:
+//!
+//! ```text
+//! Train the model
+//!
+//! Usage: my-binary train [OPTIONS] [INPUT]
+//!
+//! Arguments:
+//!   [INPUT]  JSON merged after --config and before the flags
+//!
+//! Options:
+//!       --epochs <INT>   [default: 0]
+//!   -c, --config <FILE>  JSON merged before the input and the flags
+//!   -h, --help           Print help
+//! ```
+//!
+//! - A flag takes its field's type, allowed values and requiredness from the schema, and the
+//!   field's doc comment as its help. A job without a schema has no flags: its input is the JSON
+//!   document or the `--config` file.
+//! - A nested field's flag joins the keys with dots and writes `_` as `-`: the field
+//!   `optimizer.weight_decay` is `--optimizer.weight-decay`. A field that is an array, a map, an
+//!   optional object or an enum with data takes a JSON literal, such as `--layers '[64, 32]'`. A
+//!   boolean flag given no value is `true`.
+//! - The input is the default input, then the `--config` file, then the JSON document, then the
+//!   flags, each merged onto the one before, so a later one wins. Launchers pass the JSON document.
+//! - `help`, `version` and `config` are the command line's names: a field with one of them has no
+//!   flag, and is set through `--config` or the JSON document.
+//! - `<binary> --completions <SHELL>` prints the completion script for `bash`, `elvish`, `fish`,
+//!   `powershell` or `zsh`.
+//!
+//! ## Launching Jobs
+//!
+//! `tracel run <job>` builds the program and runs one of its jobs, taking the job's flags on its
+//! own command line, and `tracel run --list` lists the jobs with their descriptions. The program's
+//! exit code says how the job ended:
+//!
+//! | Exit code | Meaning |
+//! | --- | --- |
+//! | 0 | The job completed, or the help, version or completion script was printed |
+//! | 1 | The job failed |
+//! | 2 | No job or an unknown job is named, and stderr lists the job names; or a flag or the input is unusable or does not decode |
+
+mod running_job;
+mod target;
+
+pub use target::{Target, TargetError};
 
 /// Experiment tracking and management.
-pub mod experiment {
-    pub use tracel_core::experiment::*;
-    #[doc(inline)]
-    pub use tracel_experiment::*;
-}
+#[doc(inline)]
+pub use tracel_experiment as experiment;
 
 /// The Tracel console: its organizations, projects, and users.
 #[doc(inline)]
@@ -72,11 +164,11 @@ pub use tracel_console as console;
 #[doc(inline)]
 pub use tracel_station as station;
 
-/// The dataset domain the console or a Station serves, and the operations over it.
+/// The dataset domain the console or a Station serves, and its registry.
 #[doc(inline)]
 pub use tracel_datasets as datasets;
 
-/// The model domain the console or a Station serves, and the operations over it.
+/// The model domain the console or a Station serves, and its registry.
 #[doc(inline)]
 pub use tracel_models as models;
 
@@ -89,16 +181,6 @@ pub use tracel_inference as inference;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
-/// App module for job registration, CLI, and config mappers
+/// Jobs, plain functions of their input, and the entry point that runs one.
 #[doc(inline)]
-pub use tracel_app as app;
-
-/// Station runner front-end: serve registered jobs to a Tracel Station job queue (requires the
-/// `runner` feature).
-#[cfg(feature = "runner")]
-#[doc(inline)]
-pub use tracel_runner as runner;
-
-pub use tracel_core::Connection;
-pub use tracel_core::Context;
-pub use tracel_core::ContextError;
+pub use tracel_runtime as runtime;

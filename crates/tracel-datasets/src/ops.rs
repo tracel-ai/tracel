@@ -25,7 +25,7 @@ pub trait Publication {
     fn cancel(&mut self) -> Result<(), DatasetsError>;
 }
 
-/// Backend primitives required by the dataset capability.
+/// Backend primitives required by the dataset registry.
 ///
 /// An implementation is already scoped to one location, so it is never asked which one.
 ///

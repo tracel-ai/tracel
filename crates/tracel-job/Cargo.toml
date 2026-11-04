@@ -1,0 +1,27 @@
+[package]
+name = "tracel-job"
+description = "Tracel jobs run as processes: the protocol between job binaries and the programs that launch them, and, with the `cli` feature, the command line of their jobs, generated from their input schemas."
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+cli = ["dep:clap", "dep:clap_complete", "dep:referencing", "dep:thiserror"]
+
+[dependencies]
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+clap = { workspace = true, features = ["string"], optional = true }
+clap_complete = { workspace = true, optional = true }
+referencing = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+[dev-dependencies]
+schemars.workspace = true

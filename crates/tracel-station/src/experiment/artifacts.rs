@@ -37,14 +37,14 @@ impl ExperimentArtifactReader for StationArtifactReader {
         })?;
 
         scope
-            .download(name)
+            .download(&artifact.id)
             .map_err(|err| {
                 ExperimentReaderError::with_source("Failed to download experiment artifact", err)
             })
             .map(|bundle| {
                 LoadedArtifact::new(
                     ArtifactRef {
-                        id: artifact.id.to_string(),
+                        id: artifact.id,
                         name: name.to_string(),
                     },
                     bundle,

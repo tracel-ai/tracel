@@ -2,13 +2,13 @@
 
 //! Backend-independent model operations.
 //!
-//! [`Models`] validates, transfers, stages, and loads model versions. Backends implement the
+//! [`ModelRegistry`] validates, transfers, stages, and loads model versions. Backends implement the
 //! blocking operations in [`ModelOps`] for a specific scope.
 
 mod domain;
 mod error;
-mod models;
 mod ops;
+mod registry;
 #[cfg(test)]
 mod test_support;
 
@@ -16,5 +16,5 @@ pub use domain::{
     Model, ModelVersion, VersionFile, VersionId, VersionManifest, VersionSpec, VersionState,
 };
 pub use error::ModelsError;
-pub use models::Models;
 pub use ops::{ModelOps, VersionFileReader, VersionFileSource};
+pub use registry::ModelRegistry;

@@ -98,8 +98,6 @@ pub fn run(
     config: MnistTrainingConfig,
     devices: Vec<Device>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    experiment.log_args(&config)?;
-
     let device = devices.first().expect("No devices available").clone();
     device.seed(config.seed);
 
@@ -107,6 +105,10 @@ pub fn run(
 
     // Training phase
     let result = train(model, &config, experiment);
+    if experiment.cancel_token().is_cancelled() {
+        // The interrupter stopped training early: the model is not worth evaluating or keeping.
+        return Ok(());
+    }
 
     // Evaluation phase
     let dataset_test_plain = Arc::new(MnistDataset::test());

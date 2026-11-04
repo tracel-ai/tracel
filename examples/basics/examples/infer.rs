@@ -6,9 +6,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use basics::{Prompt, WordTokenizer};
+use tracel::Target;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let module = common::context()?.inference();
+    let module = Target::from_env()?.inference()?;
     let job = module.create(
         "wordtok",
         WordTokenizer::with_delay(Duration::from_millis(120)),

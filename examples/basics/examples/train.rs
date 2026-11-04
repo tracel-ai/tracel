@@ -3,18 +3,17 @@
 //! cargo run -p basics --example train
 
 use basics::training::{self, TrainingConfig};
-use tracel::experiment::ExperimentRun;
+use tracel::Target;
 
 fn main() -> anyhow::Result<()> {
-    let module = common::context()?.experiment();
+    let experiments = Target::from_env()?.experiments()?;
+    let config = TrainingConfig::default();
 
-    module
-        .create("toy-training", |run: &ExperimentRun, config| {
+    experiments
+        .attribute("kind", "example")?
+        .run("toy-training", |run| {
+            run.log_args(&config)?;
             training::train(run, config)
         })
-        .attribute("kind", "example")?
-        .run(TrainingConfig::default())
-        .map_err(|e| anyhow::anyhow!("training failed: {e}"))?;
-
-    Ok(())
+        .map_err(|e| anyhow::anyhow!("training failed: {e}"))
 }

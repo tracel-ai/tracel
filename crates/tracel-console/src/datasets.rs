@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::error::client_error_is_not_found;
+use tracel_client::console::Client;
 use tracel_client::console::dataset::request::{
     AddDatasetVersionUploadItemsRequest, CompleteDatasetVersionUploadRequest, CreateDatasetRequest,
     DatasetVersionUploadItemRequest, QueryDatasetVersionsRequest, QueryDatasetsRequest,
@@ -15,6 +15,7 @@ use tracel_datasets::{
 
 use crate::ConsoleError;
 use crate::console::ProjectScope;
+use crate::error::client_error_is_not_found;
 use crate::wire::console_timestamp;
 
 /// What one item-upload request is allowed to reach. The console rejects a larger body, so a
@@ -29,11 +30,13 @@ pub struct ConsoleDatasetOps {
 }
 
 impl ConsoleDatasetOps {
+    fn client(&self) -> Result<&Client, DatasetsError> {
+        self.scope.client().map_err(console_failure)
+    }
+
     fn versions(&self, dataset: &str) -> Result<Vec<DatasetVersion>, DatasetsError> {
         collect_pages(|page| {
-            self.scope
-                .console
-                .client
+            self.client()?
                 .query_dataset_versions(
                     &self.scope.owner,
                     &self.scope.project,
@@ -58,9 +61,7 @@ impl ConsoleDatasetOps {
 impl DatasetOps for ConsoleDatasetOps {
     fn list_datasets(&self) -> Result<Vec<Dataset>, DatasetsError> {
         collect_pages(|page| {
-            self.scope
-                .console
-                .client
+            self.client()?
                 .query_datasets(
                     &self.scope.owner,
                     &self.scope.project,
@@ -76,9 +77,7 @@ impl DatasetOps for ConsoleDatasetOps {
     }
 
     fn get_dataset(&self, name: &str) -> Result<Dataset, DatasetsError> {
-        self.scope
-            .console
-            .client
+        self.client()?
             .get_dataset(&self.scope.owner, &self.scope.project, name)
             .map(dataset_from_wire)
             .map_err(|error| map_dataset_error(error, name))
@@ -113,9 +112,7 @@ impl DatasetOps for ConsoleDatasetOps {
         description: Option<&str>,
         metadata: Option<&serde_json::Value>,
     ) -> Result<Dataset, DatasetsError> {
-        self.scope
-            .console
-            .client
+        self.client()?
             .create_dataset(
                 &self.scope.owner,
                 &self.scope.project,
@@ -131,9 +128,7 @@ impl DatasetOps for ConsoleDatasetOps {
 
     fn start_publication(&self, dataset: &str) -> Result<Box<dyn Publication>, DatasetsError> {
         let started = self
-            .scope
-            .console
-            .client
+            .client()?
             .start_dataset_version_upload(&self.scope.owner, &self.scope.project, dataset)
             .map_err(|error| map_dataset_error(error, dataset))?;
 
@@ -159,9 +154,7 @@ impl DatasetOps for ConsoleDatasetOps {
             let mut next = run.start;
             while next < run.end {
                 let page = self
-                    .scope
-                    .console
-                    .client
+                    .client()?
                     .stream_dataset_version_items(
                         &self.scope.owner,
                         &self.scope.project,
@@ -220,9 +213,7 @@ impl ConsolePublication {
         self.pending_bytes = 0;
 
         self.ops
-            .scope
-            .console
-            .client
+            .client()?
             .add_dataset_version_upload_items(
                 &self.ops.scope.owner,
                 &self.ops.scope.project,
@@ -268,9 +259,7 @@ impl Publication for ConsolePublication {
         self.flush()?;
 
         self.ops
-            .scope
-            .console
-            .client
+            .client()?
             .complete_dataset_version_upload(
                 &self.ops.scope.owner,
                 &self.ops.scope.project,
@@ -288,9 +277,7 @@ impl Publication for ConsolePublication {
         self.pending.clear();
         self.pending_bytes = 0;
         self.ops
-            .scope
-            .console
-            .client
+            .client()?
             .cancel_dataset_version_upload(
                 &self.ops.scope.owner,
                 &self.ops.scope.project,

@@ -24,7 +24,7 @@ pub struct DatasetItem<A> {
 
 /// One dataset at one version, ready to read.
 ///
-/// Obtain one from [`Datasets::open`](crate::Datasets::open).
+/// Obtain one from [`DatasetRegistry::open`](crate::DatasetRegistry::open).
 pub struct DatasetHandle<A> {
     ops: Arc<dyn DatasetOps>,
     version: DatasetVersion,
@@ -120,8 +120,7 @@ where
 
     /// Iterates from `from` to the end of the version, reading in batches.
     ///
-    /// Each read asks for [`ITEMS_PER_READ`] items unless
-    /// [`Items::with_items_per_read`] says otherwise.
+    /// Each read asks for 64 items unless [`Items::with_items_per_read`] says otherwise.
     pub fn iter(&self, from: u64) -> Items<A> {
         Items {
             handle: self.clone(),
@@ -253,7 +252,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::Datasets;
+    use crate::DatasetRegistry;
     use crate::VersionId;
     use crate::test_support::{FakeOps, Label, version};
 
@@ -386,7 +385,7 @@ mod tests {
     #[test]
     fn opening_resolves_the_version_once() {
         let ops = Arc::new(FakeOps::new());
-        let datasets = Datasets::new(ops.clone());
+        let datasets = DatasetRegistry::new(ops.clone());
 
         let data = datasets.open::<Label>("ds", VersionId::new("v1")).unwrap();
 
@@ -448,7 +447,7 @@ mod tests {
         #[test]
         fn committing_publishes_every_item_added() {
             let ops = Arc::new(FakeOps::new());
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let mut draft = datasets.draft("ds").unwrap();
             draft.add(item("a")).unwrap();
@@ -465,7 +464,7 @@ mod tests {
             let mut ops = FakeOps::new();
             ops.flush_every = 100;
             let ops = Arc::new(ops);
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let mut draft = datasets.draft("ds").unwrap();
             draft
@@ -475,7 +474,7 @@ mod tests {
             assert_eq!(
                 ops.batch_count(),
                 2,
-                "the backend's own batch size decides, not the capability's"
+                "the backend's own batch size decides, not the registry's"
             );
 
             draft.commit(None).unwrap();
@@ -486,7 +485,7 @@ mod tests {
         #[test]
         fn a_dropped_draft_cancels_instead_of_publishing() {
             let ops = Arc::new(FakeOps::new());
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let mut draft = datasets.draft("ds").unwrap();
             draft.add(item("a")).unwrap();
@@ -499,7 +498,7 @@ mod tests {
         #[test]
         fn cancelling_reports_what_the_backend_said() {
             let ops = Arc::new(FakeOps::new());
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let mut draft = datasets.draft("ds").unwrap();
             draft.add(item("a")).unwrap();
@@ -512,7 +511,7 @@ mod tests {
         #[test]
         fn a_committed_draft_is_not_cancelled_when_it_drops() {
             let ops = Arc::new(FakeOps::new());
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let mut draft = datasets.draft("ds").unwrap();
             draft.add(item("a")).unwrap();
@@ -527,7 +526,7 @@ mod tests {
             let mut ops = FakeOps::new();
             ops.commit_fails = true;
             let ops = Arc::new(ops);
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let mut draft = datasets.draft("ds").unwrap();
             draft.add(item("a")).unwrap();
@@ -543,7 +542,7 @@ mod tests {
         #[test]
         fn items_without_an_identity_are_never_refused() {
             let ops = Arc::new(FakeOps::new());
-            let datasets = Datasets::new(ops.clone());
+            let datasets = DatasetRegistry::new(ops.clone());
 
             let anonymous = || NewItem {
                 source_item_id: None,
@@ -563,7 +562,7 @@ mod tests {
         #[test]
         fn a_repeated_source_item_id_is_refused_rather_than_quietly_collapsed() {
             let ops = Arc::new(FakeOps::new());
-            let datasets = Datasets::new(ops);
+            let datasets = DatasetRegistry::new(ops);
 
             let mut draft = datasets.draft("ds").unwrap();
             draft.add(item("a")).unwrap();

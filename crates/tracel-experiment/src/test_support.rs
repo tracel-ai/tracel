@@ -7,14 +7,14 @@ use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 use crate::{ArtifactKind, ExperimentId, ExperimentRun, ExperimentRunControl};
 
 #[derive(Default)]
-pub(crate) struct MockSession {
-    pub(crate) events: Mutex<Vec<Event>>,
-    pub(crate) completions: Mutex<Vec<ExperimentCompletion>>,
-    pub(crate) flushes: Mutex<usize>,
+pub struct MockSession {
+    pub events: Mutex<Vec<Event>>,
+    pub completions: Mutex<Vec<ExperimentCompletion>>,
+    pub flushes: Mutex<usize>,
 }
 
 impl MockSession {
-    pub(crate) fn activity_events(&self) -> Vec<ActivityEvent> {
+    pub fn activity_events(&self) -> Vec<ActivityEvent> {
         self.events
             .lock()
             .unwrap()
@@ -66,14 +66,11 @@ impl ExperimentArtifactReader for NoopExperimentDataReader {
     }
 }
 
-pub(crate) fn create_run(session: Arc<MockSession>) -> ExperimentRun {
+pub fn create_run(session: Arc<MockSession>) -> ExperimentRun {
     create_run_with_id("test/experiment/1", session)
 }
 
-pub(crate) fn create_run_with_id(
-    id: impl Into<ExperimentId>,
-    session: Arc<MockSession>,
-) -> ExperimentRun {
+pub fn create_run_with_id(id: impl Into<ExperimentId>, session: Arc<MockSession>) -> ExperimentRun {
     ExperimentRun::new(
         id,
         session,
@@ -82,7 +79,7 @@ pub(crate) fn create_run_with_id(
     )
 }
 
-pub(crate) fn create_run_with_control(
+pub fn create_run_with_control(
     session: Arc<MockSession>,
     control: ExperimentRunControl,
 ) -> ExperimentRun {

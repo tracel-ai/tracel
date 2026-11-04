@@ -1,30 +1,50 @@
-//! A CLI serving both jobs. Select one by name and pass its JSON config.
+//! A program with two jobs. Select one by name and give its input as flags, built from the
+//! input's schema, or as JSON.
 //!
-//! cargo run -p basics --example cli -- wordtok '{"text":"hello streaming world"}'
+//! cargo run -p basics --example cli -- toy-training --help
+//! cargo run -p basics --example cli -- toy-training --epochs 2 --batches-per-epoch 4
 //! cargo run -p basics --example cli -- toy-training '{"epochs":2,"batches_per_epoch":4}'
+//! cargo run -p basics --example cli -- wordtok --text "hello streaming world"
 
-use basics::WordTokenizer;
+use std::process::ExitCode;
+
 use basics::training::{self, TrainingConfig};
-use tracel::app::cli::Cli;
-use tracel::app::cli::mapper::JsonMapper;
-use tracel::experiment::ExperimentRun;
+use basics::{Prompt, WordTokenizer};
+use tracel::Target;
+use tracel::runtime::{BoxError, Job, Jobs};
 
-fn main() -> anyhow::Result<()> {
-    let context = common::context()?;
+/// Runs the toy training loop in an experiment, which records the job's input as its arguments.
+fn toy_training(config: TrainingConfig) -> Result<(), BoxError> {
+    let experiments = Target::from_env()?.experiments()?;
+    experiments.run("toy-training", |run| training::train(run, config))
+}
 
-    let infer = context
-        .inference()
+/// Splits the prompt into tokens and prints them, one per line. It starts no experiment.
+fn wordtok(prompt: Prompt) -> Result<(), BoxError> {
+    let tokenizer = Target::from_env()?
+        .inference()?
         .create("wordtok", WordTokenizer::default());
-    let train = context
-        .experiment()
-        .create("toy-training", |run: &ExperimentRun, config| {
-            training::train(run, config)
-        });
-
-    Cli::new()
-        .register(infer, JsonMapper::new())
-        .register(train, JsonMapper::with_default(TrainingConfig::default()))
-        .run()?;
-
+    for token in tokenizer.stream_once(prompt)? {
+        println!("{}", token?.token);
+    }
     Ok(())
+}
+
+fn main() -> ExitCode {
+    Jobs::new()
+        .version(env!("CARGO_PKG_VERSION"))
+        .job(
+            "toy-training",
+            Job::new(toy_training)
+                .with_description("Run a toy training loop")
+                .with_default(TrainingConfig::default())
+                .with_schema(),
+        )
+        .job(
+            "wordtok",
+            Job::new(wordtok)
+                .with_description("Split a prompt into tokens")
+                .with_schema(),
+        )
+        .run()
 }

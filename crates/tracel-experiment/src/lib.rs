@@ -22,11 +22,15 @@
 //!   (behind the `burn` feature).
 //! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
 //!
-//! Backends are connected through the [`ExperimentProvider`] port. [`ExperimentModule`] and
-//! [`ExperimentJob`] are the user-facing entry points for running a job and logging its result.
+//! Backends are connected through the [`ExperimentProvider`] port. [`Experiments`] is the
+//! user-facing entry point: [`Experiments::run`] runs code in a new experiment and ends it by what
+//! the code returns, and [`Experiments::start`] starts one and returns its run. With the `local`
+//! feature, `local::LocalExperiments` records experiments on this machine.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
@@ -36,6 +40,8 @@ mod activity;
 mod cancellation;
 mod context;
 mod control;
+#[cfg(feature = "local")]
+pub mod local;
 mod log;
 mod panic_watch;
 mod provider;
@@ -58,7 +64,7 @@ pub use context::{
 pub use control::ExperimentRunControl;
 pub use log::{LogLevel, LogRecord};
 pub use panic_watch::PanicWatch;
-pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
+pub use provider::{ExperimentProvider, Experiments};
 
 use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
@@ -127,6 +133,15 @@ impl From<u32> for ExperimentId {
     }
 }
 
+/// Where an experiment run can be looked at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExperimentLocation {
+    /// The experiment's page on the console.
+    Url(String),
+    /// The directory the run is recorded in on this machine.
+    Dir(PathBuf),
+}
+
 /// Artifact category associated with an experiment run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
@@ -168,17 +183,22 @@ struct ExperimentMetadata {
 /// An active experiment run.
 ///
 /// `ExperimentRun` owns finalization. As long as the run remains active, it can log structured
-/// events, persist artifacts, and expose a cancellation token to child work.
+/// events, persist artifacts, and expose a cancellation token to child work. When that token is
+/// cancelled while the run is active, the run logs a warning that a stop was requested, once.
 ///
 /// Use [`ExperimentRun::handle`] when you need to share logging and artifact access without
-/// transferring lifecycle ownership. If the run is dropped without an explicit completion, it is
-/// finalized automatically.
+/// transferring lifecycle ownership.
+///
+/// A run ends as completed only through [`Self::finish`]. One dropped before [`Self::finish`] or
+/// [`Self::fail`] ends as failed: with the panic's message while a panic unwinds it, and otherwise
+/// because nothing said it succeeded, as when an error returns early past it.
 ///
 /// Use [`ExperimentGlobalExt`] when you want to make the run available as the ambient
 /// thread-local experiment for tracing or other integrations.
 pub struct ExperimentRun {
     inner: Arc<RunInner>,
     handle: ExperimentRunHandle,
+    location: Option<ExperimentLocation>,
     _tracing_registration: TracingRegistration,
 }
 
@@ -239,8 +259,8 @@ enum RunState {
 impl ExperimentRun {
     /// Create a run from backend-specific session and artifact reader implementations.
     ///
-    /// This is the low-level constructor used by the built-in local and remote backends. Most
-    /// callers should prefer [`Self::local`] or [`Self::remote`].
+    /// This is the low-level constructor an [`ExperimentProvider`] uses. Most callers start a run
+    /// with [`Experiments::start`] or [`Experiments::run`] instead.
     pub fn new<S, R>(
         id: impl Into<ExperimentId>,
         session: S,
@@ -278,6 +298,10 @@ impl ExperimentRun {
             reader: Box::new(reader),
             activity_id_allocator: Arc::new(AtomicActivityIdAllocator::new()),
         });
+        control.cancel_token().link(StopRequestLog {
+            run: Arc::downgrade(&inner),
+            requested: AtomicBool::new(false),
+        });
 
         let handle = ExperimentRunHandle {
             metadata,
@@ -292,8 +316,22 @@ impl ExperimentRun {
         Self {
             inner,
             handle,
+            location: None,
             _tracing_registration: tracing_registration,
         }
+    }
+
+    /// Records where the run can be looked at, such as its page on the console.
+    ///
+    /// A provider sets it when it creates the run.
+    pub fn with_location(mut self, location: ExperimentLocation) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    /// Where the run can be looked at, when its provider says.
+    pub fn location(&self) -> Option<&ExperimentLocation> {
+        self.location.as_ref()
     }
 
     /// Stream every panic on any thread into this run's log until the guard
@@ -305,16 +343,16 @@ impl ExperimentRun {
 
     /// Return a cancellation token that can be linked to child work.
     ///
-    /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
-    /// tasks and adapters.
+    /// Cancelling the token does not finish the run: it broadcasts cancellation to linked tasks
+    /// and adapters, and the run logs, once, that a stop was requested.
     pub fn cancel_token(&self) -> CancelToken {
         self.inner.control.cancel_token()
     }
 
-    /// Signal that the experiment run has been cancelled.
+    /// Ask the run to stop: cancels its [`cancel_token`](Self::cancel_token).
     ///
-    /// The run remains usable until it is explicitly finished, failed, or dropped. If it is later
-    /// dropped without an explicit completion, it will be marked as cancelled.
+    /// The run remains usable. It still ends as completed or failed, as [`Self::finish`],
+    /// [`Self::fail`] or dropping it records.
     pub fn cancel(&self) -> Result<(), ExperimentError> {
         self.inner.ensure_active()?;
         self.inner.control.cancel_run();
@@ -323,18 +361,17 @@ impl ExperimentRun {
 
     /// Mark the run as successful and finalize the backend session.
     ///
-    /// If the run is dropped without calling [`Self::finish`] or [`Self::fail`], it is finalized
-    /// as successful by default. Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
+    /// A run dropped without calling [`Self::finish`] or [`Self::fail`] is finalized as failed.
+    /// Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn finish(self) -> Result<(), ExperimentError> {
-        self.inner.finish_once(ExperimentCompletion::Success)
+        self.complete(ExperimentCompletion::Success)
     }
 
     /// Mark the run as failed and finalize the backend session.
     ///
     /// Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
-        self.inner
-            .finish_once(ExperimentCompletion::Failed(reason.into()))
+        self.complete(ExperimentCompletion::Failed(reason.into()))
     }
 
     /// Borrow the identifier for the underlying run.
@@ -342,9 +379,13 @@ impl ExperimentRun {
         self.handle.id()
     }
 
-    /// Log the serialized input arguments for the run.
+    /// Log the serialized input arguments for the run, such as the configuration it trains with,
+    /// which the console lists as the experiment's config.
     ///
-    /// Fails only if `args` cannot be serialized.
+    /// A run started from [`Experiments`] given [`arguments`](Experiments::arguments) records them
+    /// when it starts, so this is only needed to record different ones. The arguments logged last
+    /// are the run's: logging them replaces those recorded before. Fails only if `args` cannot be
+    /// serialized.
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|error| {
             ExperimentError::with_source(
@@ -354,8 +395,13 @@ impl ExperimentRun {
             )
         })?;
 
-        self.handle.emit(Event::Args(value));
+        self.record_args(value);
         Ok(())
+    }
+
+    /// Records `args`, the run's input as JSON, as its arguments.
+    fn record_args(&self, args: serde_json::Value) {
+        self.handle.emit(Event::Args(args));
     }
 
     /// Log a `trace`-level message.
@@ -458,6 +504,14 @@ impl ExperimentRun {
     /// objects that should not own run finalization.
     pub fn handle(&self) -> ExperimentRunHandle {
         self.handle.clone()
+    }
+
+    /// Finalizes the backend session with `completion`.
+    ///
+    /// Fails with [`ExperimentErrorKind::AlreadyFinished`] when the run has already finished.
+    fn complete(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        self.inner.mark_finished()?;
+        self.inner.session.finish(completion)
     }
 }
 
@@ -727,14 +781,9 @@ impl ExperimentRunHandle {
     /// storage, argument and config serialization — report errors through their own return types
     /// instead.
     fn emit(&self, event: Event) {
-        let Ok(inner) = self.upgrade() else {
-            return;
-        };
-        if inner.ensure_active().is_err() {
-            return;
+        if let Ok(inner) = self.upgrade() {
+            inner.emit(event);
         }
-
-        inner.session.record_event(event).ok();
     }
 
     fn upgrade(&self) -> Result<Arc<RunInner>, ExperimentError> {
@@ -746,6 +795,13 @@ impl ExperimentRunHandle {
 }
 
 impl RunInner {
+    /// Hands `event` to the backend session, or discards it once the run has finished.
+    fn emit(&self, event: Event) {
+        if self.ensure_active().is_ok() {
+            self.session.record_event(event).ok();
+        }
+    }
+
     fn ensure_active(&self) -> Result<(), ExperimentError> {
         let state = self.state.lock().unwrap();
         match *state {
@@ -757,7 +813,8 @@ impl RunInner {
         }
     }
 
-    fn finish_once(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+    /// Moves the run to finished, once: fails when it already is.
+    fn mark_finished(&self) -> Result<(), ExperimentError> {
         let mut state = self.state.lock().unwrap();
         match *state {
             RunState::Finished => Err(ExperimentError::new(
@@ -766,34 +823,63 @@ impl RunInner {
             )),
             RunState::Active => {
                 *state = RunState::Finished;
-                drop(state);
-                self.session.finish(completion)
+                Ok(())
             }
         }
     }
 }
 
-/// Finalize the run on drop if it has not already been completed.
+/// The warning a run logs when its cancel token is cancelled while it is active.
+const STOP_REQUESTED: &str = "Stop requested; the run ends when the code recording it returns";
+
+/// Logs [`STOP_REQUESTED`] to a run, once, when the run's cancel token is cancelled.
+///
+/// Linked to the run's token, it logs on the thread that cancels it. It holds the run weakly, as
+/// the token can outlive the run, and logs nothing once the run has finished.
+struct StopRequestLog {
+    run: Weak<RunInner>,
+    requested: AtomicBool,
+}
+
+impl Cancellable for StopRequestLog {
+    fn cancel(&self) {
+        if self.requested.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if let Some(run) = self.run.upgrade() {
+            run.emit(Event::Log {
+                record: LogRecord::warn(STOP_REQUESTED),
+                activity: None,
+            });
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
+}
+
+/// Why a run dropped before it was finished or failed fails, when no panic unwinds it.
+const DROPPED_UNFINISHED: &str = "the run was dropped without finish() or fail()";
+
+/// Finalize the run on drop if it has not already been completed: as failed, with the panic's
+/// message while a panic unwinds it.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
-        let completion = if std::thread::panicking() {
-            let reason =
-                panic_watch::take_thread_panic().unwrap_or_else(|| "the run panicked".to_string());
-            ExperimentCompletion::Failed(reason)
-        } else if self.inner.control.is_run_cancelled() {
-            ExperimentCompletion::Cancelled
+        let reason = if std::thread::panicking() {
+            panic_watch::take_thread_panic().unwrap_or_else(|| "the run panicked".to_string())
         } else {
-            ExperimentCompletion::Success
+            DROPPED_UNFINISHED.to_string()
         };
 
-        let _ = self.inner.finish_once(completion);
+        let _ = self.complete(ExperimentCompletion::Failed(reason));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::activity::ActivityEvent;
-    use crate::test_support::{MockSession, create_run};
+    use crate::test_support::{MockSession, create_run, create_run_with_control};
 
     use super::*;
 
@@ -1103,28 +1189,42 @@ mod tests {
     }
 
     #[test]
-    fn drop_marks_run_as_finished_successfully() {
+    fn a_run_dropped_before_it_finishes_fails() {
         let session = Arc::new(MockSession::default());
+        let finished = create_run(session.clone());
 
-        {
-            let _run = create_run(session.clone());
-        }
+        drop(create_run(session.clone()));
+        finished.finish().unwrap();
 
         let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Success]);
+        assert_eq!(
+            completions.as_slice(),
+            &[
+                ExperimentCompletion::Failed(DROPPED_UNFINISHED.to_string()),
+                ExperimentCompletion::Success,
+            ]
+        );
     }
 
     #[test]
-    fn cancel_marks_run_cancelled_on_drop() {
+    fn a_cancelled_run_ends_by_how_it_is_finished() {
         let session = Arc::new(MockSession::default());
 
-        {
-            let run = create_run(session.clone());
-            run.cancel().unwrap();
-        }
+        let completed = create_run(session.clone());
+        completed.cancel().unwrap();
+        completed.finish().unwrap();
+        let failed = create_run(session.clone());
+        failed.cancel().unwrap();
+        failed.fail("interrupted").unwrap();
 
         let completions = session.completions.lock().unwrap();
-        assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+        assert_eq!(
+            completions.as_slice(),
+            &[
+                ExperimentCompletion::Success,
+                ExperimentCompletion::Failed("interrupted".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1136,11 +1236,73 @@ mod tests {
         run.log_info("still-logging");
 
         let events = session.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Log { record, .. } => assert_eq!(record.message, "still-logging"),
+        match events.last() {
+            Some(Event::Log { record, .. }) => assert_eq!(record.message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    /// The level, message, attributes and activity of each log `session` recorded.
+    fn logs(session: &MockSession) -> Vec<(LogLevel, String, usize, Option<ActivityId>)> {
+        session
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Log { record, activity } => Some((
+                    record.level,
+                    record.message.clone(),
+                    record.attributes.len(),
+                    *activity,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_stop_request_is_logged_once_while_the_run_is_active() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let activity = run.activity("epoch 1").cancellable().start();
+
+        activity.cancel_token().cancel();
+        assert!(logs(&session).is_empty());
+        run.cancel_token().cancel();
+        run.cancel().unwrap();
+        run.cancel_token().cancel();
+
+        assert_eq!(
+            logs(&session),
+            [(LogLevel::Warn, STOP_REQUESTED.to_string(), 0, None)]
+        );
+    }
+
+    #[test]
+    fn a_run_whose_token_is_already_cancelled_logs_the_stop_request_when_it_starts() {
+        let session = Arc::new(MockSession::default());
+        let control = ExperimentRunControl::default();
+        control.cancel_run();
+
+        let _run = create_run_with_control(session.clone(), control);
+
+        assert_eq!(
+            logs(&session),
+            [(LogLevel::Warn, STOP_REQUESTED.to_string(), 0, None)]
+        );
+    }
+
+    #[test]
+    fn a_stop_requested_once_the_run_has_finished_is_not_logged() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+        let cancel_token = run.cancel_token();
+
+        run.finish().unwrap();
+        cancel_token.cancel();
+
+        assert!(logs(&session).is_empty());
     }
 
     #[test]

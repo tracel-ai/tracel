@@ -38,8 +38,9 @@ mod ranged;
 /// Watches a transfer as it runs, and can stop it.
 ///
 /// Every method defaults to doing nothing, so an implementation only has to define the events it
-/// cares about. Callbacks run on the transferring thread and block it, so an implementation that
-/// does real work should hand it off.
+/// cares about. Callbacks run on the thread that started the transfer and block it, so an
+/// implementation that does real work should hand it off. An upload sends several parts at once,
+/// so it can report on more than one file at a time; each call names its file.
 pub trait TransferObserver {
     /// Returns whether the active transfer should stop.
     ///
@@ -55,8 +56,8 @@ pub trait TransferObserver {
         let _ = (rel_path, total_bytes);
     }
 
-    /// Bytes have moved for the file being transferred. `transferred_bytes` is the running total
-    /// for that file, not an increment.
+    /// Bytes have moved for the file `rel_path`. `transferred_bytes` is the running total for that
+    /// file, not an increment.
     fn file_progress(&mut self, rel_path: &str, transferred_bytes: u64) {
         let _ = (rel_path, transferred_bytes);
     }
@@ -93,6 +94,10 @@ impl<O: TransferObserver + ?Sized> TransferObserver for &mut O {
 pub enum TransferError {
     #[error("Transport error: {0}")]
     Transport(String),
+    /// The store answered 400 or 403 to the URL, as S3 does to a presigned URL once the
+    /// credentials that signed it have expired.
+    #[error("Refused by the store with HTTP {status}")]
+    Refused { status: u16 },
 }
 
 /// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
@@ -185,6 +190,15 @@ impl FileTransferClient for ReqwestTransferClient {
             .send()
             .map_err(|error| transport_failure(&error))?;
 
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(TransferError::Refused {
+                status: status.as_u16(),
+            });
+        }
         if !response.status().is_success() {
             return Err(transport_failure(
                 &response.error_for_status().err().unwrap(),

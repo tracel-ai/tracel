@@ -9,15 +9,18 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! In code that runs in an experiment, given its run, such as code
+//! [`Experiments::run`](crate::Experiments::run) runs:
+//!
+//! ```no_run
 //! use tracel_experiment::ExperimentRun;
 //! use tracel_experiment::integration::training::ExperimentTrainingExt;
 //!
-//! let experiment = ExperimentRun::local("./runs").unwrap();
-//!
-//! let _metrics = experiment.metric_logger();
-//! let _checkpoints = experiment.checkpointers();
-//! let _interrupter = experiment.interrupter();
+//! fn train(experiment: &ExperimentRun) {
+//!     let _metrics = experiment.metric_logger();
+//!     let _checkpoints = experiment.checkpointers();
+//!     let _interrupter = experiment.interrupter();
+//! }
 //! ```
 
 mod checkpoint;

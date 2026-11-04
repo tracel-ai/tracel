@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use tracel_artifact::upload::{
-    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, UploadError,
-    upload_bundle_multipart_with_client_and_observer,
+    MultipartUploadFile, MultipartUploadPart, MultipartUploadSource, PartUrlSigner, UploadError,
+    upload_bundle_multipart_with_signer,
 };
-use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferObserver};
+use tracel_artifact::{FileTransferClient, ReqwestTransferClient, TransferError, TransferObserver};
 use tracel_client::{
+    console::Client,
     console::model::request::{
         CreateModelRequest, ModelFileSpecRequest, RequestModelVersionUploadRequest,
     },
     console::model::response::{
         ModelDownloadResponse, ModelListResponse, ModelResponse, ModelVersionListResponse,
-        ModelVersionResponse, ModelVersionStateResponse,
+        ModelVersionResponse, ModelVersionStateResponse, PresignedModelFileUploadUrlsResponse,
     },
     error::{ApiErrorCode, ClientError},
 };
@@ -31,6 +32,10 @@ pub struct ConsoleModelOps {
 }
 
 impl ConsoleModelOps {
+    fn client(&self) -> Result<&Client, ModelsError> {
+        self.scope.client().map_err(console_failure)
+    }
+
     fn route_version(&self, model: &str, id: &VersionId) -> Result<u32, ModelsError> {
         id.as_str()
             .parse()
@@ -44,18 +49,14 @@ impl ConsoleModelOps {
 impl ModelOps for ConsoleModelOps {
     fn list_models(&self) -> Result<Vec<Model>, ModelsError> {
         let response = self
-            .scope
-            .console
-            .client
+            .client()?
             .list_models(&self.scope.owner, &self.scope.project)
             .map_err(console_failure)?;
         Ok(models_from_wire(response))
     }
 
     fn get_model(&self, name: &str) -> Result<Model, ModelsError> {
-        self.scope
-            .console
-            .client
+        self.client()?
             .get_model(&self.scope.owner, &self.scope.project, name)
             .map(model_from_wire)
             .map_err(|error| map_model_error(error, name))
@@ -63,16 +64,14 @@ impl ModelOps for ConsoleModelOps {
 
     fn list_versions(&self, model: &str) -> Result<Vec<ModelVersion>, ModelsError> {
         let response = self
-            .scope
-            .console
-            .client
+            .client()?
             .list_model_versions(&self.scope.owner, &self.scope.project, model)
             .map_err(|error| map_model_error(error, model))?;
         Ok(model_versions_from_wire(response))
     }
 
     fn get_version(&self, model: &str, spec: VersionSpec) -> Result<ModelVersion, ModelsError> {
-        let client = &self.scope.console.client;
+        let client = self.client()?;
         let (owner, project) = (&self.scope.owner, &self.scope.project);
         let response = match &spec {
             VersionSpec::Exact(id) => {
@@ -98,21 +97,17 @@ impl ModelOps for ConsoleModelOps {
     ) -> Result<Vec<Box<dyn VersionFileSource>>, ModelsError> {
         let version = self.route_version(model, id)?;
         let response = self
-            .scope
-            .console
-            .client
+            .client()?
             .presign_model_download(&self.scope.owner, &self.scope.project, model, version)
             .map_err(|error| map_version_error(error, model, &VersionSpec::Exact(id.clone())))?;
         Ok(file_sources_from_wire(
-            &self.scope.console.transfer_client,
+            self.scope.transfer_client(),
             response,
         ))
     }
 
     fn create_model(&self, name: &str, description: Option<&str>) -> Result<Model, ModelsError> {
-        self.scope
-            .console
-            .client
+        self.client()?
             .create_model(
                 &self.scope.owner,
                 &self.scope.project,
@@ -145,42 +140,28 @@ impl ModelOps for ConsoleModelOps {
             metadata: metadata.cloned(),
         };
         let planned = self
-            .scope
-            .console
-            .client
+            .client()?
             .request_model_version_upload(&self.scope.owner, &self.scope.project, model, request)
             .map_err(|error| map_model_error(error, model))?;
 
-        let uploads = planned
-            .files
-            .into_iter()
-            .map(|file| MultipartUploadFile {
-                rel_path: file.rel_path,
-                parts: file
-                    .urls
-                    .parts
-                    .into_iter()
-                    .map(|part| MultipartUploadPart {
-                        part: part.part,
-                        url: part.url,
-                        size_bytes: part.size_bytes,
-                    })
-                    .collect(),
-            })
-            .collect::<Vec<_>>();
+        let uploads = upload_files_from_wire(planned.files);
+        let signer = ConsolePartUrlSigner {
+            ops: self,
+            model,
+            version: planned.version,
+        };
 
-        upload_bundle_multipart_with_client_and_observer(
-            &self.scope.console.transfer_client,
+        upload_bundle_multipart_with_signer(
+            self.scope.transfer_client(),
             &contents,
             &uploads,
             &mut observer,
+            &signer,
         )
         .map_err(model_upload_failure)?;
 
         let version = VersionSpec::Exact(VersionId::new(planned.version.to_string()));
-        self.scope
-            .console
-            .client
+        self.client()?
             .complete_model_version_upload(
                 &self.scope.owner,
                 &self.scope.project,
@@ -189,9 +170,7 @@ impl ModelOps for ConsoleModelOps {
             )
             .map_err(|error| map_version_error(error, model, &version))?;
 
-        self.scope
-            .console
-            .client
+        self.client()?
             .get_model_version(
                 &self.scope.owner,
                 &self.scope.project,
@@ -201,6 +180,55 @@ impl ModelOps for ConsoleModelOps {
             .map(model_version_from_wire)
             .map_err(|error| map_version_error(error, model, &version))
     }
+}
+
+struct ConsolePartUrlSigner<'a> {
+    ops: &'a ConsoleModelOps,
+    model: &'a str,
+    version: u32,
+}
+
+impl PartUrlSigner for ConsolePartUrlSigner<'_> {
+    fn sign_again(
+        &self,
+    ) -> Result<Vec<MultipartUploadFile>, Box<dyn std::error::Error + Send + Sync>> {
+        let scope = &self.ops.scope;
+        let signed = self
+            .ops
+            .client()?
+            .presign_model_version_upload_again(
+                &scope.owner,
+                &scope.project,
+                self.model,
+                self.version,
+            )
+            .map_err(|error| {
+                let version = VersionSpec::Exact(VersionId::new(self.version.to_string()));
+                map_version_error(error, self.model, &version)
+            })?;
+        Ok(upload_files_from_wire(signed.files))
+    }
+}
+
+fn upload_files_from_wire(
+    files: Vec<PresignedModelFileUploadUrlsResponse>,
+) -> Vec<MultipartUploadFile> {
+    files
+        .into_iter()
+        .map(|file| MultipartUploadFile {
+            rel_path: file.rel_path,
+            parts: file
+                .urls
+                .parts
+                .into_iter()
+                .map(|part| MultipartUploadPart {
+                    part: part.part,
+                    url: part.url,
+                    size_bytes: part.size_bytes,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn models_from_wire(response: ModelListResponse) -> Vec<Model> {
@@ -367,7 +395,10 @@ fn console_failure(error: ClientError) -> ModelsError {
 fn model_upload_failure(error: UploadError) -> ModelsError {
     match error {
         UploadError::Cancelled { .. } => ModelsError::Cancelled,
-        error @ UploadError::Transfer { .. } => ModelsError::Transport(error.to_string()),
+        error @ UploadError::Transfer {
+            source: TransferError::Transport(_),
+            ..
+        } => ModelsError::Transport(error.to_string()),
         error => ModelsError::other(error),
     }
 }

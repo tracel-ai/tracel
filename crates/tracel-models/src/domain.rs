@@ -8,12 +8,12 @@ const LATEST: &str = "latest";
 
 const MAX_ALIAS_LENGTH: usize = 64;
 
-/// A model available from a model capability.
+/// A model available from a model registry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Model {
     /// Opaque model identifier.
     pub id: String,
-    /// Model name within the capability's backend-defined scope.
+    /// Model name within the registry's backend-defined scope.
     pub name: String,
     /// Optional model description.
     pub description: Option<String>,
